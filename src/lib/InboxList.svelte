@@ -95,7 +95,6 @@
             <Tooltip label={e.done ? "Mark not done" : "Mark done"} side="bottom">
               <button
                 class="star"
-                class:is-always={e.done}
                 class:done={e.done}
                 title={e.done ? "Mark not done" : "Mark done"}
                 onclick={(ev) => {
@@ -103,7 +102,7 @@
                   onAction(e.id, "done");
                 }}
               >
-                <Icon d={DONE_D} size={15} strokeWidth={e.done ? 2.2 : 1.6} />
+                <Icon d={DONE_D} size={11} strokeWidth={2.6} />
               </button>
             </Tooltip>
             <span class="avatar-wrap">
@@ -268,33 +267,34 @@
     border-color: transparent !important;
     box-shadow: none !important;
   }
+  /* Todo-style checkbox: empty light-gray box, green when done. */
   .star {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
-    border: none;
+    border: 1.5px solid var(--border-default);
+    border-radius: 4px;
     background: none;
     padding: 0;
     cursor: pointer;
-    color: var(--text-tertiary);
+    color: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
+    box-sizing: border-box;
     transition:
-      opacity 100ms,
+      background 100ms,
+      border-color 100ms,
       color 100ms;
   }
-  .star.done {
-    color: var(--tag-mint-fg);
-  }
-  .star.is-always,
-  .row:hover .star,
-  .row.is-selected .star {
-    opacity: 1;
-  }
   .star:hover {
-    color: var(--blue-600, var(--tag-sky-fg));
+    border-color: var(--text-tertiary);
+    color: var(--text-tertiary);
+  }
+  .star.done {
+    background: var(--tag-mint-fg);
+    border-color: var(--tag-mint-fg);
+    color: #fff;
   }
   .avatar-wrap {
     position: relative;

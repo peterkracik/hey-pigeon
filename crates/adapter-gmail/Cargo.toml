@@ -1,0 +1,12 @@
+[package]
+name = "heypigeon-adapter-gmail"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+heypigeon-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true

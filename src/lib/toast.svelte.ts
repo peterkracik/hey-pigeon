@@ -7,16 +7,31 @@ export interface ToastItem {
   tone: ToastTone;
   title: string;
   description?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+export interface ToastOpts {
+  actionLabel?: string;
+  onAction?: () => void;
+  duration?: number;
 }
 
 let nextId = 1;
 
 export const toasts = $state<ToastItem[]>([]);
 
-export function toast(tone: ToastTone, title: string, description?: string) {
+export function toast(tone: ToastTone, title: string, description?: string, opts?: ToastOpts) {
   const id = nextId++;
-  toasts.push({ id, tone, title, description });
-  setTimeout(() => dismissToast(id), tone === "danger" ? 7000 : 4000);
+  // Invoking the action dismisses the toast first, then runs the callback.
+  const onAction = opts?.onAction
+    ? () => {
+        dismissToast(id);
+        opts.onAction!();
+      }
+    : undefined;
+  toasts.push({ id, tone, title, description, actionLabel: opts?.actionLabel, onAction });
+  setTimeout(() => dismissToast(id), opts?.duration ?? (tone === "danger" ? 7000 : 4000));
 }
 
 export function dismissToast(id: number) {

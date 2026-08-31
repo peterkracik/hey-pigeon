@@ -11,6 +11,7 @@
   import Icon from "./lib/ds/Icon.svelte";
   import Toast from "./lib/ds/Toast.svelte";
   import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type ThreadMsg } from "./lib/data";
+  import type { ComposeData } from "./lib/Composer.svelte";
   import { toasts, toast, dismissToast } from "./lib/toast.svelte";
   import * as ipc from "./lib/ipc";
 
@@ -22,6 +23,8 @@
   let selectedId: string | null = $state(null);
   let threadOpen = $state(false);
   let composeOpen = $state(false);
+  // Restored draft after a send-undo; non-null reopens the composer prefilled.
+  let composeDraft: ComposeData | null = $state(null);
   let searchOpen = $state(false);
   let paletteOpen = $state(false);
   let fullscreen = $state(false);
@@ -118,24 +121,58 @@
   const composeFromId = $derived(unified ? accounts[0]?.id : activeAccountId);
   const signatureFor = (accountId: string) => accounts.find((a) => a.id === accountId)?.signature;
 
+  // Deferred-commit undo window: destructive/irreversible actions apply
+  // optimistically in the UI but the backend mutation only fires after this
+  // delay, so the toast's Undo can cancel it without any backend call.
+  // ponytail: quitting the app inside the undo window silently drops the
+  // pending action (the mutation never reaches the backend) — accepted.
+  const UNDO_MS = 5000;
+
   function onEmailAction(id: string, action: string) {
     const em = emailsData.find((e) => e.id === id);
-    if (ipc.isTauri && em && (action === "done" || action === "delete")) {
-      // Optimistic: drop from the local list now; backend applies + queues outbox.
+    if (em && (action === "done" || action === "delete")) {
+      // Optimistic: drop from the local list now; the backend mutation is
+      // deferred so Undo can cancel it and reinsert the row in place.
+      const index = emailsData.indexOf(em);
       emailsData = emailsData.filter((e) => e.id !== id);
       if (selectedId === id) selectedId = null;
-      const mutation =
-        action === "done"
-          ? ({ kind: "archive", thread_id: id } as const)
-          : ({ kind: "trash", thread_id: id } as const);
-      ipc.mutate(em.accountId, mutation).catch((e) => {
-        console.error("mutate failed", e);
-        toast("danger", action === "done" ? "Could not archive" : "Could not delete", String(e));
+      const timer = setTimeout(() => {
+        if (!ipc.isTauri) return;
+        const mutation =
+          action === "done"
+            ? ({ kind: "archive", thread_id: id } as const)
+            : ({ kind: "trash", thread_id: id } as const);
+        ipc.mutate(em.accountId, mutation).catch((e) => {
+          console.error("mutate failed", e);
+          toast("danger", action === "done" ? "Could not archive" : "Could not delete", String(e));
+        });
+      }, UNDO_MS);
+      toast("success", action === "done" ? "Archived" : "Deleted", em.subject, {
+        actionLabel: "Undo",
+        duration: UNDO_MS,
+        onAction: () => {
+          clearTimeout(timer);
+          // A refresh may have re-added the row already (backend never mutated).
+          if (emailsData.some((e) => e.id === id)) return;
+          const i = Math.min(index, emailsData.length);
+          emailsData = [...emailsData.slice(0, i), em, ...emailsData.slice(i)];
+        },
       });
       return;
     }
+    if (em && action === "unread") {
+      // Trivially reversible — immediate mutate, no undo deferral.
+      const read = em.unread;
+      emailsData = emailsData.map((e) => (e.id === id ? { ...e, unread: !e.unread } : e));
+      if (ipc.isTauri) {
+        ipc.mutate(em.accountId, { kind: "mark_read", thread_id: id, read }).catch((e) => {
+          console.error("mutate failed", e);
+          toast("danger", "Could not update read state", String(e));
+        });
+      }
+      return;
+    }
     if (action === "pin") emailsData = emailsData.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e));
-    else if (action === "done") emailsData = emailsData.map((e) => (e.id === id ? { ...e, done: !e.done } : e));
     else console.log(id, action);
   }
 
@@ -174,61 +211,96 @@
     fullscreen = false;
   }
 
-  function sendCompose(data: { accountId: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }) {
-    if (!ipc.isTauri) return;
-    // Before refreshLive resolves, `accounts` is mock data — a send routed to
-    // a mock account id would sit in the outbox failing forever.
-    if (!liveAccounts.some((a) => a.id === data.accountId)) {
+  function sendCompose(data: ComposeData) {
+    // Pre-send validation runs BEFORE the undo deferral. Before refreshLive
+    // resolves, `accounts` is mock data — a send routed to a mock account id
+    // would sit in the outbox failing forever.
+    if (ipc.isTauri && !liveAccounts.some((a) => a.id === data.accountId)) {
       console.error("compose account not connected", data.accountId);
       toast("danger", "Could not send", "Account is not connected yet");
       return;
     }
     const n = data.to.length + data.cc.length + data.bcc.length;
-    ipc
-      .mutate(data.accountId, {
-        kind: "send",
-        to: data.to,
-        cc: data.cc,
-        bcc: data.bcc,
-        subject: data.subject,
-        body_text: data.body,
-        reply_to_thread: null,
-      })
-      .then(() => toast("success", "Message sent", n === 1 ? `To ${data.to[0]}` : `Delivered to ${n} recipients`))
-      .catch((e) => {
-        console.error("send failed", e);
-        toast("danger", "Could not send", String(e));
-      });
+    const desc = n === 1 ? `To ${data.to[0] ?? data.cc[0] ?? data.bcc[0]}` : `To ${n} recipients`;
+    const timer = setTimeout(() => {
+      if (!ipc.isTauri) {
+        toast("success", "Message sent", desc);
+        return;
+      }
+      ipc
+        .mutate(data.accountId, {
+          kind: "send",
+          to: data.to,
+          cc: data.cc,
+          bcc: data.bcc,
+          subject: data.subject,
+          body_text: data.body,
+          reply_to_thread: null,
+        })
+        .then(() => toast("success", "Message sent", n === 1 ? `To ${data.to[0]}` : `Delivered to ${n} recipients`))
+        .catch((e) => {
+          console.error("send failed", e);
+          toast("danger", "Could not send", String(e));
+        });
+    }, UNDO_MS);
+    toast("info", "Sending…", desc, {
+      actionLabel: "Undo",
+      duration: UNDO_MS,
+      onAction: () => {
+        clearTimeout(timer);
+        // Reopen the composer prefilled with the cancelled draft.
+        composeDraft = { ...data };
+        composeOpen = true;
+      },
+    });
   }
 
   function sendReply(em: Email, msg: ThreadMsg, body: string) {
-    if (!ipc.isTauri) return;
-    // Reply goes to the sender of the replied-to message; replying to your own
-    // message targets the other participant.
+    // Pre-send validation runs BEFORE the undo deferral. Reply goes to the
+    // sender of the replied-to message; replying to your own message targets
+    // the other participant.
     const to = msg.isMe
       ? (em.thread?.findLast((m) => !m.isMe)?.fromAddr ?? "")
       : (msg.fromAddr ?? "");
-    if (!to) {
+    if (ipc.isTauri && !to) {
       console.error("no reply address available");
       toast("danger", "Could not reply", "No reply address available");
       return;
     }
     const subject = /^re:/i.test(em.subject) ? em.subject : `Re: ${em.subject}`;
-    ipc
-      .mutate(em.accountId, {
-        kind: "send",
-        to: [to],
-        cc: [],
-        bcc: [],
-        subject,
-        body_text: body,
-        reply_to_thread: em.id,
-      })
-      .then(() => toast("success", "Reply sent", `To ${to}`))
-      .catch((e) => {
-        console.error("send failed", e);
-        toast("danger", "Could not send reply", String(e));
-      });
+    const timer = setTimeout(() => {
+      if (!ipc.isTauri) {
+        toast("success", "Reply sent", to ? `To ${to}` : em.from);
+        return;
+      }
+      ipc
+        .mutate(em.accountId, {
+          kind: "send",
+          to: [to],
+          cc: [],
+          bcc: [],
+          subject,
+          body_text: body,
+          reply_to_thread: em.id,
+        })
+        .then(() => toast("success", "Reply sent", `To ${to}`))
+        .catch((e) => {
+          console.error("send failed", e);
+          toast("danger", "Could not send reply", String(e));
+        });
+    }, UNDO_MS);
+    toast("info", "Sending…", subject, {
+      actionLabel: "Undo",
+      duration: UNDO_MS,
+      onAction: () => {
+        clearTimeout(timer);
+        // ponytail: restoring the reply text into the inline reply box would
+        // require plumbing draft state through ThreadView/InboxList/InlineReply;
+        // best-effort fallback for reply only — copy the body to the clipboard.
+        navigator.clipboard?.writeText(body).catch(() => {});
+        toast("info", "Reply cancelled", "Your reply text was copied to the clipboard");
+      },
+    });
   }
 
   function updateAccount(id: string, fields: { displayName?: string; color?: string; signature?: string }) {
@@ -318,6 +390,7 @@
   function closeCompose() {
     composeOpen = false;
     composeFullscreen = false;
+    composeDraft = null;
   }
 
   function isEditable(t: EventTarget | null): boolean {
@@ -365,6 +438,11 @@
     if (ev.key === "#" && selectedId !== null) {
       ev.preventDefault();
       onEmailAction(selectedId, "delete");
+      return;
+    }
+    if (ev.key === "u" && selectedId !== null) {
+      ev.preventDefault();
+      onEmailAction(selectedId, "unread");
       return;
     }
     if (ev.key === "j" || ev.key === "ArrowDown") {
@@ -587,7 +665,9 @@
         </div>
         <div class="compose-fs-scroll">
           <div class="compose-fs-column">
-            <Composer onClose={closeCompose} onSend={sendCompose} {accounts} initialAccountId={composeFromId} />
+            {#key composeDraft}
+              <Composer onClose={closeCompose} onSend={sendCompose} {accounts} initialAccountId={composeFromId} initialDraft={composeDraft ?? undefined} />
+            {/key}
           </div>
         </div>
       </div>
@@ -596,7 +676,7 @@
       <div
         class="compose-backdrop"
         onmousedown={(ev) => {
-          if (ev.target === ev.currentTarget) composeOpen = false;
+          if (ev.target === ev.currentTarget) closeCompose();
         }}
       >
         <div class="compose-modal">
@@ -615,7 +695,9 @@
           </div>
           <div class="compose-body">
             <div class="compose-body-inner">
-              <Composer onClose={closeCompose} onSend={sendCompose} {accounts} initialAccountId={composeFromId} />
+              {#key composeDraft}
+                <Composer onClose={closeCompose} onSend={sendCompose} {accounts} initialAccountId={composeFromId} initialDraft={composeDraft ?? undefined} />
+              {/key}
             </div>
           </div>
         </div>
@@ -626,7 +708,14 @@
   {#if toasts.length}
     <div class="toast-stack">
       {#each toasts as t (t.id)}
-        <Toast tone={t.tone} title={t.title} description={t.description} onClose={() => dismissToast(t.id)} />
+        <Toast
+          tone={t.tone}
+          title={t.title}
+          description={t.description}
+          actionLabel={t.actionLabel}
+          onAction={t.onAction}
+          onClose={() => dismissToast(t.id)}
+        />
       {/each}
     </div>
   {/if}

@@ -124,6 +124,11 @@ export const EMAIL_ACTIONS: EmailAction[] = [
   },
   { key: "reply", label: "Reply", d: "M9 17l-5-5 5-5M4 12h11a5 5 0 010 10h-1" },
   {
+    key: "unread",
+    label: "Mark unread",
+    d: "M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z",
+  },
+  {
     key: "pin",
     label: "Pin",
     d: "M12 3l2.6 5.6 6.1.6-4.6 4.2 1.3 6-5.4-3.2-5.4 3.2 1.3-6-4.6-4.2 6.1-.6z",

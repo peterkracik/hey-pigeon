@@ -3,11 +3,15 @@
     tone = "info",
     title,
     description,
+    actionLabel,
+    onAction,
     onClose,
   }: {
     tone?: "success" | "warning" | "danger" | "info";
     title: string;
     description?: string;
+    actionLabel?: string;
+    onAction?: () => void;
     onClose?: () => void;
   } = $props();
 
@@ -28,6 +32,9 @@
       <div class="desc">{description}</div>
     {/if}
   </div>
+  {#if actionLabel && onAction}
+    <button class="action" onclick={onAction}>{actionLabel}</button>
+  {/if}
   {#if onClose}
     <button class="close" aria-label="Dismiss" onclick={onClose}>
       <svg width="12" height="12" viewBox="0 0 10 10">
@@ -74,6 +81,22 @@
     color: var(--navy-300);
     margin-top: 2px;
     overflow-wrap: break-word;
+  }
+  .action {
+    border: 1px solid var(--navy-500);
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-inverse);
+    font-family: var(--font-body);
+    font-size: var(--text-small);
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+    align-self: center;
+  }
+  .action:hover {
+    border-color: var(--navy-300);
   }
   .close {
     border: none;

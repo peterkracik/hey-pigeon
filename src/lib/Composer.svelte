@@ -25,29 +25,44 @@
     onSend,
     accounts = [],
     initialAccountId,
+    initialDraft,
   }: {
     onClose: () => void;
     onSend: (data: ComposeData) => void;
     accounts?: Account[];
     initialAccountId?: string;
+    // Restores a cancelled send (undo) — prefills all fields.
+    initialDraft?: ComposeData;
   } = $props();
 
+  const chipsFrom = (addrs: string[]): Chip[] => addrs.map((email) => ({ name: email, email }));
+
   let sent = $state(false);
-  let showCc = $state(false);
-  let toChips: Chip[] = $state([]);
-  let ccChips: Chip[] = $state([]);
-  let bccChips: Chip[] = $state([]);
-  let subject = $state("");
+  // Draft restore intentionally captures only the initial value — the user
+  // owns the fields after mount ({#key} remounts on a new restored draft).
+  // svelte-ignore state_referenced_locally
+  let showCc = $state(Boolean(initialDraft && (initialDraft.cc.length || initialDraft.bcc.length)));
+  // svelte-ignore state_referenced_locally
+  let toChips: Chip[] = $state(chipsFrom(initialDraft?.to ?? []));
+  // svelte-ignore state_referenced_locally
+  let ccChips: Chip[] = $state(chipsFrom(initialDraft?.cc ?? []));
+  // svelte-ignore state_referenced_locally
+  let bccChips: Chip[] = $state(chipsFrom(initialDraft?.bcc ?? []));
+  // svelte-ignore state_referenced_locally
+  let subject = $state(initialDraft?.subject ?? "");
   // From defaults to the viewed account filter (if any), else the first account.
   // svelte-ignore state_referenced_locally
-  let fromId = $state(initialAccountId ?? accounts[0]?.id ?? "");
+  let fromId = $state(initialDraft?.accountId ?? initialAccountId ?? accounts[0]?.id ?? "");
   const fromAccount = $derived(accounts.find((a) => a.id === fromId));
 
   const prefillFor = (sig?: string) => (sig ? `\n\n${sig}` : "");
   // Prefill once at mount — the user owns the body afterwards. Switching the
   // From account only swaps the signature while the body is still pristine.
   // svelte-ignore state_referenced_locally
-  let body = $state(prefillFor(accounts.find((a) => a.id === (initialAccountId ?? accounts[0]?.id))?.signature));
+  let body = $state(
+    initialDraft?.body ??
+      prefillFor(accounts.find((a) => a.id === (initialAccountId ?? accounts[0]?.id))?.signature),
+  );
 
   function switchFrom(id: string) {
     const prev = accounts.find((a) => a.id === fromId);

@@ -42,7 +42,8 @@
   // the design's fixed slices.
   const groups = $derived.by(() => {
     const head = pinned.length ? [{ label: "Pinned", items: pinned, isPinnedGroup: true }] : [];
-    if (!rest.every((e) => e.lastMsgAt !== undefined)) {
+    if (!rest.some((e) => e.lastMsgAt !== undefined)) {
+      // Pure mock data (browser demo) — keep the design's fixed slices.
       return [
         ...head,
         { label: "Today", items: rest.slice(0, 2), isPinnedGroup: false },
@@ -51,9 +52,10 @@
     }
     const startOfToday = new Date().setHours(0, 0, 0, 0);
     const weekAgo = startOfToday - 7 * 86_400_000;
-    const today = rest.filter((e) => e.lastMsgAt! >= startOfToday);
-    const week = rest.filter((e) => e.lastMsgAt! < startOfToday && e.lastMsgAt! >= weekAgo);
-    const older = rest.filter((e) => e.lastMsgAt! < weekAgo);
+    const at = (e: Email) => e.lastMsgAt ?? 0;
+    const today = rest.filter((e) => at(e) >= startOfToday);
+    const week = rest.filter((e) => at(e) < startOfToday && at(e) >= weekAgo);
+    const older = rest.filter((e) => at(e) < weekAgo);
     return [
       ...head,
       { label: "Today", items: today, isPinnedGroup: false },

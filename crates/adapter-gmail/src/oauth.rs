@@ -24,7 +24,12 @@ pub enum OauthError {
     Token(String),
     #[error("authorization failed: {0}")]
     Authorization(String),
+    #[error("authorization timed out — the consent tab was never completed")]
+    Timeout,
 }
+
+// Abandoned consent tabs must not hang the app: give up after this long.
+const AUTHORIZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfig {
@@ -84,7 +89,9 @@ pub async fn authorize(
     .expect("static url");
     open_url(auth_url.as_str());
 
-    let code = wait_for_code(listener, &state).await?;
+    let code = tokio::time::timeout(AUTHORIZE_TIMEOUT, wait_for_code(listener, &state))
+        .await
+        .map_err(|_| OauthError::Timeout)??;
 
     let resp = reqwest::Client::new()
         .post(TOKEN_ENDPOINT)

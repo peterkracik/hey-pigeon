@@ -40,7 +40,7 @@
 {/snippet}
 
 {#snippet avatar(a: Account, size: number = 28)}
-  <Avatar email={a.email} name={a.label} {size} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
+  <Avatar src={a.avatarUrl} email={a.email} name={a.label} {size} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
 {/snippet}
 
 <div bind:this={root} class="root">

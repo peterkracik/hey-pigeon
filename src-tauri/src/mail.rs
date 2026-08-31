@@ -165,6 +165,7 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
     let profile = provider.profile(&bootstrap_id).await.map_err(estr)?;
     let email = profile.email.clone();
     provider.install_tokens(&email, &tokens).await.map_err(estr)?;
+    let avatar_url = provider.fetch_profile_photo(&email).await;
 
     let existing = state.store.list_accounts().map_err(estr)?;
     let color = ACCOUNT_COLORS[existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count()
@@ -177,6 +178,7 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
             display_name: email.split('@').next().unwrap_or(&email).to_string(),
             color: color.to_string(),
             history_id: None,
+            avatar_url,
         })
         .map_err(estr)?;
     // Real mail replaces the dev fake account.
@@ -241,6 +243,7 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 display_name: "Fake".to_string(),
                 color: "sky".to_string(),
                 history_id: None,
+                avatar_url: None,
             })?;
             (
                 Backend::Fake(FakeProvider::with_sample_data(FAKE_ACCOUNT_ID, 40, 15)),

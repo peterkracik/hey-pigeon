@@ -9,6 +9,7 @@ export interface BackendAccount {
   display_name: string;
   color: string;
   history_id: string | null;
+  avatar_url: string | null;
 }
 
 export interface BackendThread {

@@ -14,6 +14,7 @@ pub fn sample_account(id: &str) -> Account {
         display_name: id.to_uppercase(),
         color: "sky".to_string(),
         history_id: None,
+        avatar_url: None,
     }
 }
 

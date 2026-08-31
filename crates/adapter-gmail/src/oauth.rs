@@ -12,8 +12,7 @@ use tokio::net::TcpListener;
 
 const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
-pub const SCOPE: &str =
-    "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
+pub const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.profile";
 
 #[derive(Debug, thiserror::Error)]
 pub enum OauthError {

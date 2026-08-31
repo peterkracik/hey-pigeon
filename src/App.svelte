@@ -36,6 +36,7 @@
       email: a.email,
       label: a.display_name,
       tag: a.color,
+      avatarUrl: a.avatar_url ?? undefined,
     }));
     // Preserve already-loaded bodies + local flags across refreshes.
     const prev = new Map(emailsData.map((e) => [e.id, e]));

@@ -6,6 +6,8 @@ export interface Account {
   email: string;
   label: string;
   tag: string;
+  /** Provider profile photo (live mode). */
+  avatarUrl?: string;
 }
 
 export interface LabelDef {
@@ -318,20 +320,4 @@ export const EMAILS_SEED: Email[] = [
   },
 ];
 
-export function initials(s: string): string {
-  return s
-    .split(/[@.\s]/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join("");
-}
-
-export function nameInitials(s: string): string {
-  return s
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((n) => n[0].toUpperCase())
-    .join("");
-}
+// Initials rendering lives in ds/Avatar.svelte.

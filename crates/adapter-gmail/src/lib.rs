@@ -93,6 +93,20 @@ impl GmailProvider {
         Ok(access)
     }
 
+    /// Google profile photo for the signed-in user (userinfo.profile scope).
+    /// Absent photo or a failed call is not an error worth surfacing.
+    pub async fn fetch_profile_photo(&self, account_id: &AccountId) -> Option<String> {
+        #[derive(Deserialize)]
+        struct UserInfo {
+            picture: Option<String>,
+        }
+        let info: UserInfo = self
+            .get_json(account_id, "https://openidconnect.googleapis.com/v1/userinfo")
+            .await
+            .ok()?;
+        info.picture
+    }
+
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         account_id: &AccountId,

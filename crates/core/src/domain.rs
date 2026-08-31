@@ -17,6 +17,9 @@ pub struct Account {
     pub color: String,
     /// Gmail `historyId` checkpoint captured before backfill; None until first sync.
     pub history_id: Option<String>,
+    /// Profile photo URL (Google userinfo), when the provider offers one.
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

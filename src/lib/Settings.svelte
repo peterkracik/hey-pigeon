@@ -3,7 +3,8 @@
   import Select from "./ds/Select.svelte";
   import Radio from "./ds/Radio.svelte";
   import Button from "./ds/Button.svelte";
-  import { EMAIL_ACTIONS, initials, type Account } from "./data";
+  import Avatar from "./ds/Avatar.svelte";
+  import { EMAIL_ACTIONS, type Account } from "./data";
 
   let {
     accounts,
@@ -63,9 +64,7 @@
     <div class="group-body">
       {#each accounts as a (a.id)}
         <div class="account-row">
-          <span class="account-avatar" style:background="var(--tag-{a.tag}-bg)" style:color="var(--tag-{a.tag}-fg)"
-            >{initials(a.label)}</span
-          >
+          <Avatar src={a.avatarUrl} email={a.email} name={a.label} size={32} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
           <div class="account-text">
             <div class="setting-title">{a.label}</div>
             <div class="account-email">{a.email}</div>
@@ -376,18 +375,6 @@
     gap: 12px;
     padding: 12px 0;
     border-bottom: 1px solid var(--navy-50);
-  }
-  .account-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: 700;
-    flex-shrink: 0;
   }
   .account-text {
     flex: 1;

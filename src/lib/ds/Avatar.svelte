@@ -5,6 +5,7 @@
   // ponytail: leaks a SHA-256 of the sender address to gravatar.com per row;
   // gate behind the remote-image privacy setting when M3 lands.
   let {
+    src,
     email,
     name,
     size = 26,
@@ -12,6 +13,8 @@
     fg = "var(--text-secondary)",
     fontWeight = 600,
   }: {
+    /** Explicit photo URL (e.g. Google profile picture); wins over gravatar. */
+    src?: string;
     email?: string;
     name: string;
     size?: number;
@@ -35,6 +38,10 @@
   $effect(() => {
     failed = false;
     url = null;
+    if (src) {
+      url = src;
+      return;
+    }
     const addr = email?.trim().toLowerCase();
     if (!addr) return;
     crypto.subtle.digest("SHA-256", new TextEncoder().encode(addr)).then((buf) => {

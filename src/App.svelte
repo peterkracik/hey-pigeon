@@ -9,13 +9,14 @@
   import IconButton from "./lib/ds/IconButton.svelte";
   import Tooltip from "./lib/ds/Tooltip.svelte";
   import Icon from "./lib/ds/Icon.svelte";
-  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Email } from "./lib/data";
+  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email } from "./lib/data";
+  import * as ipc from "./lib/ipc";
 
   let sidebarOpen = $state(false);
   let unified = $state(true);
   let activeAccountId = $state("a1");
   let folder = $state("inbox");
-  let selectedId: number | null = $state(null);
+  let selectedId: string | null = $state(null);
   let threadOpen = $state(false);
   let composeOpen = $state(false);
   let searchOpen = $state(false);
@@ -25,6 +26,34 @@
   let emailsData: Email[] = $state(EMAILS_SEED);
   let hoverActions: string[] = $state(["delete", "pin", "remind"]);
   let pinListEnabled = $state(true);
+  let liveAccounts: Account[] = $state([]);
+
+  // Live mode: inside Tauri the mock seed is replaced by real store data.
+  async function refreshLive() {
+    const [accounts, threads] = await Promise.all([ipc.listAccounts(), ipc.listThreads()]);
+    liveAccounts = accounts.map((a) => ({
+      id: a.id,
+      email: a.email,
+      label: a.display_name,
+      tag: a.color,
+    }));
+    emailsData = threads.map(ipc.threadToEmail);
+    if (liveAccounts.length && !liveAccounts.some((a) => a.id === activeAccountId)) {
+      activeAccountId = liveAccounts[0].id;
+    }
+  }
+
+  $effect(() => {
+    if (!ipc.isTauri) return;
+    refreshLive().catch((e) => console.error("ipc refresh failed", e));
+    let unsub: (() => void) | undefined;
+    ipc.onThreadsUpdated(() => {
+      refreshLive().catch((e) => console.error("ipc refresh failed", e));
+    }).then((u) => (unsub = u));
+    return () => unsub?.();
+  });
+
+  const accounts = $derived(ipc.isTauri && liveAccounts.length ? liveAccounts : ACCOUNTS);
 
   const emails = $derived(
     emailsData
@@ -44,10 +73,43 @@
   });
   const title = $derived(unified && folder === "inbox" ? "All inboxes" : FOLDER_TITLES[folder]);
 
-  function onEmailAction(id: number, action: string) {
+  function onEmailAction(id: string, action: string) {
+    const em = emailsData.find((e) => e.id === id);
+    if (ipc.isTauri && em && (action === "done" || action === "delete")) {
+      // Optimistic: drop from the local list now; backend applies + queues outbox.
+      emailsData = emailsData.filter((e) => e.id !== id);
+      if (selectedId === id) selectedId = null;
+      const mutation =
+        action === "done"
+          ? ({ kind: "archive", thread_id: id } as const)
+          : ({ kind: "trash", thread_id: id } as const);
+      ipc.mutate(em.accountId, mutation).catch((e) => console.error("mutate failed", e));
+      return;
+    }
     if (action === "pin") emailsData = emailsData.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e));
     else if (action === "done") emailsData = emailsData.map((e) => (e.id === id ? { ...e, done: !e.done } : e));
     else console.log(id, action);
+  }
+
+  async function openThread(id: string) {
+    selectedId = id;
+    threadOpen = true;
+    if (!ipc.isTauri) return;
+    const em = emailsData.find((e) => e.id === id);
+    if (!em || em.thread) return;
+    try {
+      const res = await ipc.getThread(id);
+      if (res) {
+        const myEmail = accounts.find((a) => a.id === em.accountId)?.email ?? "";
+        const msgs = ipc.messagesToThreadMsgs(res.messages, myEmail);
+        emailsData = emailsData.map((e) => (e.id === id ? { ...e, thread: msgs } : e));
+        if (!res.thread.is_read) {
+          ipc.mutate(em.accountId, { kind: "mark_read", thread_id: id, read: true }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error("getThread failed", e);
+    }
   }
 
   function selectFolder(f: string) {
@@ -90,6 +152,16 @@
       return;
     }
     if (threadOpen || folder === "settings") return;
+    if (ev.key === "e" && selectedId !== null) {
+      ev.preventDefault();
+      onEmailAction(selectedId, "done");
+      return;
+    }
+    if (ev.key === "#" && selectedId !== null) {
+      ev.preventDefault();
+      onEmailAction(selectedId, "delete");
+      return;
+    }
     if (ev.key === "j" || ev.key === "ArrowDown") {
       ev.preventDefault();
       const i = emails.findIndex((e) => e.id === selectedId);
@@ -115,7 +187,7 @@
     onClose={() => (sidebarOpen = false)}
     active={folder}
     onSelect={selectFolder}
-    accounts={ACCOUNTS}
+    {accounts}
     {activeAccountId}
     {unified}
     onSelectAccount={(id) => (activeAccountId = id)}
@@ -218,7 +290,7 @@
         {/if}
         {#if folder === "settings"}
           <Settings
-            accounts={ACCOUNTS}
+            {accounts}
             {hoverActions}
             onHoverActionsChange={(next) => (hoverActions = next)}
             {pinListEnabled}
@@ -241,10 +313,7 @@
             {emails}
             {selectedId}
             onSelect={(id) => (selectedId = id)}
-            onOpen={(id) => {
-              selectedId = id;
-              threadOpen = true;
-            }}
+            onOpen={openThread}
             onAction={onEmailAction}
             {hoverActions}
             {pinListEnabled}

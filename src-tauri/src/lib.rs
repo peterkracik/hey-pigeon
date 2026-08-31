@@ -1,3 +1,5 @@
+mod mail;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -9,8 +11,16 @@ pub fn run() {
             .build(),
         )?;
       }
+      mail::init(app)?;
       Ok(())
     })
+    .invoke_handler(tauri::generate_handler![
+      mail::list_accounts,
+      mail::list_threads,
+      mail::get_thread,
+      mail::mutate,
+      mail::sync_now,
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

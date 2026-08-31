@@ -32,7 +32,7 @@ export interface ThreadMsg {
 }
 
 export interface Email {
-  id: number;
+  id: string;
   accountId: string;
   folder: string;
   from: string;
@@ -176,7 +176,7 @@ a{color:#111318}
 
 export const EMAILS_SEED: Email[] = [
   {
-    id: 1,
+    id: "1",
     accountId: "a1",
     folder: "inbox",
     from: "Priya Nair",
@@ -227,7 +227,7 @@ export const EMAILS_SEED: Email[] = [
     ],
   },
   {
-    id: 2,
+    id: "2",
     accountId: "a2",
     folder: "inbox",
     from: "Linear",
@@ -240,7 +240,7 @@ export const EMAILS_SEED: Email[] = [
     body: 'Jordan Lee moved HI-1 "Redesign onboarding" from Todo to In Progress.',
   },
   {
-    id: 3,
+    id: "3",
     accountId: "a1",
     folder: "inbox",
     done: true,
@@ -254,7 +254,7 @@ export const EMAILS_SEED: Email[] = [
     body: "Works for me - 7pm at the usual spot? Let me know if that still works for you.",
   },
   {
-    id: 4,
+    id: "4",
     accountId: "a1",
     folder: "inbox",
     from: "Hey Pigeon Team",
@@ -267,7 +267,7 @@ export const EMAILS_SEED: Email[] = [
     body: DIGEST_HTML,
   },
   {
-    id: 5,
+    id: "5",
     accountId: "a2",
     folder: "inbox",
     pinned: true,
@@ -284,7 +284,7 @@ export const EMAILS_SEED: Email[] = [
     attachments: [{ name: "Invoice-4021.pdf", size: "212 KB" }],
   },
   {
-    id: 6,
+    id: "6",
     accountId: "a1",
     folder: "inbox",
     pinned: true,
@@ -302,7 +302,7 @@ export const EMAILS_SEED: Email[] = [
     attachments: [{ name: "Renewal-Q4-2026.pdf", size: "486 KB" }],
   },
   {
-    id: 7,
+    id: "7",
     accountId: "a1",
     folder: "starred",
     from: "Priya Nair",

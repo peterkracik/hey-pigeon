@@ -15,17 +15,17 @@
     pinListEnabled,
   }: {
     emails: Email[];
-    selectedId: number | null;
-    onSelect: (id: number | null) => void;
-    onOpen: (id: number) => void;
-    onAction: (id: number, action: string) => void;
+    selectedId: string | null;
+    onSelect: (id: string | null) => void;
+    onOpen: (id: string) => void;
+    onAction: (id: string, action: string) => void;
     hoverActions: string[];
     pinListEnabled: boolean;
   } = $props();
 
   const DONE_D = "M20 6L9 17l-5-5";
 
-  let replyingId: number | null = $state(null);
+  let replyingId: string | null = $state(null);
 
   $effect(() => {
     void selectedId;

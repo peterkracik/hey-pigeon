@@ -47,7 +47,10 @@
 
   function previewBody(e: Email): string {
     if (e.html) return e.snippet;
-    return (e.thread ? e.thread[e.thread.length - 1].body : e.body) || e.snippet;
+    const last = e.thread?.[e.thread.length - 1];
+    // HTML bodies must not render as raw source in the text preview — use the snippet.
+    if (last?.html) return e.snippet;
+    return last?.body || e.body || e.snippet;
   }
 
   function selectedDate(e: Email): string {

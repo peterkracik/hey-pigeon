@@ -110,6 +110,9 @@
     width: 248px;
     opacity: 1;
     border-right: 1px solid var(--navy-50);
+    /* let the account-switcher dropdown (and its shadow) escape the sidebar;
+       hidden is only needed for the width-collapse animation when closing */
+    overflow: visible;
   }
   .inner {
     width: 248px;

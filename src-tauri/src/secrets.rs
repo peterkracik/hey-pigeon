@@ -27,7 +27,10 @@ impl FileSecretStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
             Err(e) => return Err(err(e)),
         };
-        Ok(Self { path, cache: Mutex::new(cache) })
+        Ok(Self {
+            path,
+            cache: Mutex::new(cache),
+        })
     }
 
     fn persist(&self, cache: &HashMap<String, String>) -> Result<(), StoreError> {
@@ -69,7 +72,9 @@ pub struct KeyringSecretStore {
 
 impl KeyringSecretStore {
     pub fn new(service: &str) -> Self {
-        Self { service: service.to_string() }
+        Self {
+            service: service.to_string(),
+        }
     }
 
     fn entry(&self, key: &str) -> Result<keyring::Entry, StoreError> {
@@ -103,7 +108,9 @@ pub fn default_secret_store(
     data_dir: &std::path::Path,
 ) -> Result<Box<dyn SecretStore + Send + Sync>, StoreError> {
     if cfg!(debug_assertions) {
-        Ok(Box::new(FileSecretStore::open(data_dir.join("secrets.dev.json"))?))
+        Ok(Box::new(FileSecretStore::open(
+            data_dir.join("secrets.dev.json"),
+        )?))
     } else {
         Ok(Box::new(KeyringSecretStore::new("app.heypigeon")))
     }

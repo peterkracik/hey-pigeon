@@ -54,13 +54,20 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 }
 
 export const listAccounts = () => invoke<BackendAccount[]>("list_accounts");
-export const listThreads = (accountId?: string, before?: number, limit?: number) =>
-  invoke<BackendThread[]>("list_threads", { accountId, before, limit });
+export const listThreads = (
+  accountId?: string,
+  before?: number,
+  limit?: number,
+) => invoke<BackendThread[]>("list_threads", { accountId, before, limit });
 export const getThread = (threadId: string) =>
-  invoke<{ thread: BackendThread; messages: BackendMessage[] } | null>("get_thread", { threadId });
+  invoke<{ thread: BackendThread; messages: BackendMessage[] } | null>(
+    "get_thread",
+    { threadId },
+  );
 export const mutate = (accountId: string, mutation: BackendMutation) =>
   invoke<void>("mutate", { accountId, mutation });
-export const syncNow = (accountId: string) => invoke<number>("sync_now", { accountId });
+export const syncNow = (accountId: string) =>
+  invoke<number>("sync_now", { accountId });
 /** Runs the browser consent flow; resolves with the connected email address. */
 export const startGmailOauth = () => invoke<string>("start_gmail_oauth");
 
@@ -76,7 +83,8 @@ function fmtTime(epochMs: number): string {
   const d = new Date(epochMs);
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay)
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
@@ -110,7 +118,10 @@ export function threadToEmail(t: BackendThread): Email {
   };
 }
 
-export function messagesToThreadMsgs(messages: BackendMessage[], myEmail: string): ThreadMsg[] {
+export function messagesToThreadMsgs(
+  messages: BackendMessage[],
+  myEmail: string,
+): ThreadMsg[] {
   return messages.map((m) => ({
     id: m.id,
     from: m.from_addr.replace(/<.*>/, "").trim() || m.from_addr,

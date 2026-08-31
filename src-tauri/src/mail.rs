@@ -15,6 +15,10 @@ use tokio::sync::RwLock;
 
 const FAKE_ACCOUNT_ID: &str = "fake";
 const BACKFILL_DAYS: u32 = 30;
+/// Background delta-sync poll cadence (DESIGN.md: polling tier).
+const DELTA_POLL_SECS: u64 = 60;
+/// Focus-triggered delta syncs at most this often.
+const FOCUS_SYNC_MIN_SECS: u64 = 5;
 const THREADS_UPDATED: &str = "threads_updated";
 const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
@@ -38,6 +42,8 @@ pub struct MailState {
     pub store: SqliteStore,
     pub secrets: Arc<dyn SecretStore + Send + Sync>,
     pub backend: RwLock<Backend>,
+    /// Debounce for focus-triggered delta syncs.
+    last_focus_sync: std::sync::Mutex<std::time::Instant>,
 }
 
 #[derive(Serialize)]
@@ -268,6 +274,72 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
     Ok(email)
 }
 
+// ---------------------------------------------------------------- delta sync
+
+/// One delta sync for one account; returns whether anything changed.
+async fn delta_account(handle: AppHandle, account_id: AccountId) -> bool {
+    let state = handle.state::<MailState>();
+    let backend = state.backend.read().await;
+    let result =
+        with_provider!(&*backend, p => sync::delta_sync(p, &state.store, &account_id, BACKFILL_DAYS).await);
+    match result {
+        Ok(changed) => changed,
+        Err(e) => {
+            log::warn!("delta({account_id}) failed: {e}");
+            false
+        }
+    }
+}
+
+/// Delta-sync every account in parallel; emit `threads_updated` when any
+/// account changed. One failing account must not block another.
+pub async fn delta_sync_all(handle: &AppHandle) {
+    let accounts = match handle.state::<MailState>().store.list_accounts() {
+        Ok(a) => a,
+        Err(e) => {
+            log::warn!("delta sync: list_accounts failed: {e}");
+            return;
+        }
+    };
+    let tasks: Vec<_> = accounts
+        .into_iter()
+        .map(|a| tauri::async_runtime::spawn(delta_account(handle.clone(), a.id)))
+        .collect();
+    let mut any_changed = false;
+    for t in tasks {
+        any_changed |= t.await.unwrap_or(false);
+    }
+    if any_changed {
+        let _ = handle.emit(THREADS_UPDATED, ());
+    }
+}
+
+/// Background poll: delta sync all accounts every `DELTA_POLL_SECS`.
+pub fn spawn_delta_loop(handle: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(DELTA_POLL_SECS));
+        interval.tick().await; // fires immediately — skip, startup backfill just ran
+        loop {
+            interval.tick().await;
+            delta_sync_all(&handle).await;
+        }
+    });
+}
+
+/// Window focus → immediate delta sync, rate-limited to one per
+/// `FOCUS_SYNC_MIN_SECS` (focus events fire liberally on macOS).
+pub fn on_focus(handle: AppHandle) {
+    {
+        let state = handle.state::<MailState>();
+        let mut last = state.last_focus_sync.lock().unwrap();
+        if last.elapsed() < std::time::Duration::from_secs(FOCUS_SYNC_MIN_SECS) {
+            return;
+        }
+        *last = std::time::Instant::now();
+    }
+    tauri::async_runtime::spawn(async move { delta_sync_all(&handle).await });
+}
+
 // ------------------------------------------------------------------- startup
 
 fn spawn_backfill(handle: AppHandle, account_id: AccountId) {
@@ -335,10 +407,16 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    app.manage(MailState { store, secrets, backend: RwLock::new(backend) });
+    app.manage(MailState {
+        store,
+        secrets,
+        backend: RwLock::new(backend),
+        last_focus_sync: std::sync::Mutex::new(std::time::Instant::now()),
+    });
     // Every account syncs independently — one failing must not block another.
     for account_id in sync_accounts {
         spawn_backfill(app.handle().clone(), account_id);
     }
+    spawn_delta_loop(app.handle().clone());
     Ok(())
 }

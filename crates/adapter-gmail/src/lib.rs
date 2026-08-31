@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use heypigeon_core::domain::*;
-use heypigeon_core::ports::{MailError, MailProvider, SecretStore, ThreadPage};
+use heypigeon_core::ports::{
+    HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage,
+};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -206,6 +208,9 @@ impl GmailProvider {
         let body = resp.text().await.unwrap_or_default();
         Err(match status.as_u16() {
             401 => MailError::AuthExpired,
+            // Gmail 404s an expired startHistoryId (and vanished resources) —
+            // callers treat it as "resync from scratch".
+            404 => MailError::HistoryExpired,
             429 => MailError::RateLimited { retry_after_secs: retry_after },
             _ => MailError::Provider(format!("{status}: {body}")),
         })
@@ -257,6 +262,48 @@ struct WireThreadsList {
 #[derive(Deserialize)]
 struct WireThreadRef {
     id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireHistoryList {
+    #[serde(default)]
+    history: Vec<WireHistory>,
+    next_page_token: Option<String>,
+    history_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireHistory {
+    #[serde(default)]
+    messages_added: Vec<WireHistoryMessage>,
+    #[serde(default)]
+    messages_deleted: Vec<WireHistoryMessage>,
+    #[serde(default)]
+    labels_added: Vec<WireHistoryLabels>,
+    #[serde(default)]
+    labels_removed: Vec<WireHistoryLabels>,
+}
+
+#[derive(Deserialize)]
+struct WireHistoryMessage {
+    message: WireMessageRef,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireHistoryLabels {
+    message: WireMessageRef,
+    #[serde(default)]
+    label_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireMessageRef {
+    id: String,
+    thread_id: String,
 }
 
 #[derive(Deserialize)]
@@ -533,6 +580,84 @@ impl MailProvider for GmailProvider {
         }
 
         Ok(ThreadPage { threads, next_page_token: list.next_page_token })
+    }
+
+    async fn list_history(
+        &self,
+        account_id: &AccountId,
+        start_history_id: &str,
+        page_token: Option<String>,
+    ) -> Result<HistoryPage, MailError> {
+        let mut url = url::Url::parse(&format!("{API}/history")).expect("static url");
+        url.query_pairs_mut()
+            .append_pair("startHistoryId", start_history_id)
+            .append_pair("maxResults", "100");
+        if let Some(t) = &page_token {
+            url.query_pairs_mut().append_pair("pageToken", t);
+        }
+        let list: WireHistoryList = self.get_json(account_id, url.as_str()).await?;
+
+        let mut changes = Vec::new();
+        let mut added_threads: Vec<String> = Vec::new();
+        for h in &list.history {
+            for m in &h.messages_added {
+                if !added_threads.contains(&m.message.thread_id) {
+                    added_threads.push(m.message.thread_id.clone());
+                }
+            }
+            for m in &h.messages_deleted {
+                changes.push(HistoryChange::MessageDeleted {
+                    thread_id: m.message.thread_id.clone(),
+                    message_id: m.message.id.clone(),
+                });
+            }
+            for l in &h.labels_added {
+                changes.push(HistoryChange::LabelsAdded {
+                    thread_id: l.message.thread_id.clone(),
+                    message_id: l.message.id.clone(),
+                    labels: l.label_ids.clone(),
+                });
+            }
+            for l in &h.labels_removed {
+                changes.push(HistoryChange::LabelsRemoved {
+                    thread_id: l.message.thread_id.clone(),
+                    message_id: l.message.id.clone(),
+                    labels: l.label_ids.clone(),
+                });
+            }
+        }
+
+        // New mail: refetch the whole thread at the metadata tier (the feed
+        // carries no headers) — same shape as backfill, bodies stay lazy.
+        for chunk in added_threads.chunks(FETCH_CONCURRENCY) {
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|tid| async move {
+                    let url = format!(
+                        "{API}/threads/{tid}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject"
+                    );
+                    match self.get_json::<WireThread>(account_id, &url).await {
+                        Ok(wire) => Ok(Some(to_thread(account_id, &wire))),
+                        // 404: thread vanished again since the feed entry.
+                        Err(MailError::HistoryExpired) => Ok(None),
+                        Err(e) => Err(e),
+                    }
+                })
+                .collect();
+            for fetched in futures::future::try_join_all(futs).await? {
+                if let Some((thread, messages)) = fetched {
+                    changes.push(HistoryChange::MessageAdded { thread, messages });
+                }
+            }
+        }
+
+        Ok(HistoryPage {
+            changes,
+            next_page_token: list.next_page_token,
+            latest_history_id: list
+                .history_id
+                .unwrap_or_else(|| start_history_id.to_string()),
+        })
     }
 
     async fn fetch_bodies(

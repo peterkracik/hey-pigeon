@@ -28,6 +28,41 @@ pub struct ThreadPage {
     pub next_page_token: Option<String>,
 }
 
+/// One change from the provider's history feed since a checkpoint.
+#[derive(Debug, Clone)]
+pub enum HistoryChange {
+    /// New mail. The adapter refetches the whole thread (metadata tier) —
+    /// the history feed itself carries no headers, and the fresh thread
+    /// snapshot makes applying the change a plain upsert.
+    MessageAdded {
+        thread: Thread,
+        messages: Vec<Message>,
+    },
+    MessageDeleted {
+        thread_id: ThreadId,
+        message_id: MessageId,
+    },
+    LabelsAdded {
+        thread_id: ThreadId,
+        message_id: MessageId,
+        labels: Vec<String>,
+    },
+    LabelsRemoved {
+        thread_id: ThreadId,
+        message_id: MessageId,
+        labels: Vec<String>,
+    },
+}
+
+/// One page of the provider's history feed.
+#[derive(Debug, Clone)]
+pub struct HistoryPage {
+    pub changes: Vec<HistoryChange>,
+    pub next_page_token: Option<String>,
+    /// Checkpoint to store once the whole feed has been applied.
+    pub latest_history_id: String,
+}
+
 /// Mail backend (Gmail REST in v1). Async because it's all network.
 pub trait MailProvider {
     fn profile(
@@ -42,6 +77,16 @@ pub trait MailProvider {
         window_days: u32,
         page_token: Option<String>,
     ) -> impl std::future::Future<Output = Result<ThreadPage, MailError>> + Send;
+
+    /// Changes since `start_history_id` (Gmail `users.history.list`).
+    /// Must return `MailError::HistoryExpired` when the checkpoint is too
+    /// old for the provider (Gmail 404) — the caller re-runs backfill.
+    fn list_history(
+        &self,
+        account_id: &AccountId,
+        start_history_id: &str,
+        page_token: Option<String>,
+    ) -> impl std::future::Future<Output = Result<HistoryPage, MailError>> + Send;
 
     /// Full messages (with bodies) for one thread — fetched lazily when the
     /// user opens a thread whose bodies are not local yet.
@@ -69,6 +114,10 @@ pub trait Store {
 
     fn upsert_thread(&self, thread: &Thread) -> Result<(), StoreError>;
     fn upsert_message(&self, message: &Message) -> Result<(), StoreError>;
+    /// Remove one message (history `messageDeleted`). Missing id is a no-op.
+    fn delete_message(&self, message_id: &MessageId) -> Result<(), StoreError>;
+    /// Remove a thread and its messages (last message deleted/trashed).
+    fn delete_thread(&self, thread_id: &ThreadId) -> Result<(), StoreError>;
 
     /// Inbox list query: newest first, keyset pagination via `before` (epoch ms).
     fn list_threads(

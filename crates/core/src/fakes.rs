@@ -73,6 +73,19 @@ impl Store for MemStore {
         Ok(())
     }
 
+    fn delete_message(&self, message_id: &MessageId) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.messages.remove(message_id);
+        Ok(())
+    }
+
+    fn delete_thread(&self, thread_id: &ThreadId) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.threads.remove(thread_id);
+        g.messages.retain(|_, m| &m.thread_id != thread_id);
+        Ok(())
+    }
+
     fn list_threads(
         &self,
         account_id: Option<&AccountId>,
@@ -180,6 +193,9 @@ pub struct FakeProvider {
     page_size: usize,
     applied: Mutex<Vec<(AccountId, Mutation)>>,
     fail_applies: Mutex<bool>,
+    history: Mutex<Vec<HistoryChange>>,
+    latest_history_id: Mutex<String>,
+    history_expired: Mutex<bool>,
 }
 
 impl FakeProvider {
@@ -225,7 +241,21 @@ impl FakeProvider {
             page_size,
             applied: Mutex::new(Vec::new()),
             fail_applies: Mutex::new(false),
+            history: Mutex::new(Vec::new()),
+            latest_history_id: Mutex::new("hist-1".to_string()),
+            history_expired: Mutex::new(false),
         }
+    }
+
+    /// Queue a history change and advance the fake's latest history id.
+    pub fn push_history(&self, change: HistoryChange, new_history_id: &str) {
+        self.history.lock().unwrap().push(change);
+        *self.latest_history_id.lock().unwrap() = new_history_id.to_string();
+    }
+
+    /// Make `list_history` return `HistoryExpired` (Gmail 404 on an old id).
+    pub fn expire_history(&self) {
+        *self.history_expired.lock().unwrap() = true;
     }
 
     pub fn applied_mutations(&self) -> Vec<(AccountId, Mutation)> {
@@ -261,6 +291,25 @@ impl MailProvider for FakeProvider {
             threads: self.threads[start..end].to_vec(),
             next_page_token: next,
         })
+    }
+
+    async fn list_history(
+        &self,
+        _account_id: &AccountId,
+        start_history_id: &str,
+        _page_token: Option<String>,
+    ) -> Result<HistoryPage, MailError> {
+        if *self.history_expired.lock().unwrap() {
+            return Err(MailError::HistoryExpired);
+        }
+        let latest = self.latest_history_id.lock().unwrap().clone();
+        // Caught up — empty feed, like Gmail's cheap no-op response.
+        let changes = if start_history_id == latest {
+            Vec::new()
+        } else {
+            self.history.lock().unwrap().clone()
+        };
+        Ok(HistoryPage { changes, next_page_token: None, latest_history_id: latest })
     }
 
     async fn fetch_bodies(

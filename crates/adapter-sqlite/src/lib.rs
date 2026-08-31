@@ -227,6 +227,19 @@ impl Store for SqliteStore {
         })
     }
 
+    fn delete_message(&self, message_id: &MessageId) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute("DELETE FROM messages WHERE id = ?1", params![message_id]).map(|_| ())
+        })
+    }
+
+    fn delete_thread(&self, thread_id: &ThreadId) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute("DELETE FROM messages WHERE thread_id = ?1", params![thread_id])?;
+            c.execute("DELETE FROM threads WHERE id = ?1", params![thread_id]).map(|_| ())
+        })
+    }
+
     fn list_threads(
         &self,
         account_id: Option<&AccountId>,

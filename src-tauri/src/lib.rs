@@ -15,6 +15,12 @@ pub fn run() {
       mail::init(app)?;
       Ok(())
     })
+    // Refocusing the app is the strongest "is there new mail?" signal.
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::Focused(true) = event {
+        mail::on_focus(tauri::Manager::app_handle(window).clone());
+      }
+    })
     .invoke_handler(tauri::generate_handler![
       mail::list_accounts,
       mail::list_threads,

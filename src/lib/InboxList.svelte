@@ -1,0 +1,428 @@
+<script lang="ts">
+  import IconButton from "./ds/IconButton.svelte";
+  import Tooltip from "./ds/Tooltip.svelte";
+  import Icon from "./ds/Icon.svelte";
+  import InlineReply from "./InlineReply.svelte";
+  import { EMAIL_ACTIONS, nameInitials, type Email } from "./data";
+
+  let {
+    emails,
+    selectedId,
+    onSelect,
+    onOpen,
+    onAction,
+    hoverActions,
+    pinListEnabled,
+  }: {
+    emails: Email[];
+    selectedId: number | null;
+    onSelect: (id: number | null) => void;
+    onOpen: (id: number) => void;
+    onAction: (id: number, action: string) => void;
+    hoverActions: string[];
+    pinListEnabled: boolean;
+  } = $props();
+
+  const DONE_D = "M20 6L9 17l-5-5";
+
+  let replyingId: number | null = $state(null);
+
+  $effect(() => {
+    void selectedId;
+    replyingId = null;
+  });
+
+  const pinned = $derived(pinListEnabled ? emails.filter((e) => e.pinned) : []);
+  const rest = $derived(pinListEnabled ? emails.filter((e) => !e.pinned) : emails);
+  const groups = $derived([
+    ...(pinned.length ? [{ label: "Pinned", items: pinned, isPinnedGroup: true }] : []),
+    { label: "Today", items: rest.slice(0, 2), isPinnedGroup: false },
+    { label: "Last 7 days", items: rest.slice(2), isPinnedGroup: false },
+  ]);
+  const activeActions = $derived(
+    (hoverActions.length ? hoverActions : ["done", "delete", "pin"])
+      .map((k) => EMAIL_ACTIONS.find((a) => a.key === k))
+      .filter((a): a is NonNullable<typeof a> => Boolean(a)),
+  );
+
+  function previewBody(e: Email): string {
+    if (e.html) return e.snippet;
+    return (e.thread ? e.thread[e.thread.length - 1].body : e.body) || e.snippet;
+  }
+
+  function selectedDate(e: Email): string {
+    return e.fullDate || (e.thread && e.thread[e.thread.length - 1].fullDate) || e.time;
+  }
+</script>
+
+<div>
+  {#each groups as g, gi (gi)}
+    <div class:pinned-group={g.isPinnedGroup}>
+      <div class="group-label">{g.label}</div>
+      {#each g.items as e (e.id)}
+        <div class:selected-card={selectedId === e.id}>
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="row" class:is-selected={selectedId === e.id} onclick={() => onSelect(selectedId === e.id ? null : e.id)}>
+            <Tooltip label={e.done ? "Mark not done" : "Mark done"} side="bottom">
+              <button
+                class="star"
+                class:is-always={e.done}
+                class:done={e.done}
+                title={e.done ? "Mark not done" : "Mark done"}
+                onclick={(ev) => {
+                  ev.stopPropagation();
+                  onAction(e.id, "done");
+                }}
+              >
+                <Icon d={DONE_D} size={15} strokeWidth={e.done ? 2.2 : 1.6} />
+              </button>
+            </Tooltip>
+            <span class="avatar-wrap">
+              <span class="avatar">{nameInitials(e.from)}</span>
+              {#if e.accountTag}
+                <span class="account-dot" title="account" style:background="var(--tag-{e.accountTag}-fg)"></span>
+              {/if}
+            </span>
+            <span class="from" class:unread={e.unread}>{e.from}</span>
+            <span class="subject-wrap">
+              <span class="label-dot" style:background={e.labelTag ? `var(--tag-${e.labelTag}-fg)` : "transparent"}></span>
+              <span class="subject" class:unread={e.unread}>{e.subject}</span>
+            </span>
+            <span class="snippet">{e.snippet}</span>
+            {#if e.attachment}
+              <span class="clip" title="Has attachment">
+                <Icon d="M21 12.5l-8.4 8.4a5 5 0 01-7-7l8.4-8.4a3.5 3.5 0 015 5l-7.9 7.9" size={14} />
+              </span>
+            {/if}
+            <span class="right" style:width={selectedId === e.id ? "190px" : "118px"}>
+              <span class="time">{selectedId === e.id ? selectedDate(e) : e.time}</span>
+              <div class="actions">
+                {#each activeActions as def (def.key)}
+                  {@const active = def.key === "pin" && e.pinned}
+                  <button
+                    class="action-btn"
+                    class:pin-active={active}
+                    title={def.label}
+                    onclick={(ev) => {
+                      ev.stopPropagation();
+                      onAction(e.id, def.key);
+                    }}
+                  >
+                    <Icon d={def.d} size={15} fill={active ? "currentColor" : "none"} />
+                  </button>
+                {/each}
+                <button
+                  class="action-btn"
+                  title="Open"
+                  onclick={(ev) => {
+                    ev.stopPropagation();
+                    onOpen(e.id);
+                  }}
+                >
+                  <Icon d="M9 6l6 6-6 6" size={15} />
+                </button>
+              </div>
+            </span>
+          </div>
+          {#if selectedId === e.id}
+            <div class="preview">
+              <p class="preview-body">{previewBody(e)}</p>
+              <div class="preview-actions">
+                <div class="reply-btns">
+                  <Tooltip label="Reply" side="top">
+                    <IconButton
+                      size="sm"
+                      label="Reply"
+                      onclick={(ev) => {
+                        ev.stopPropagation();
+                        replyingId = e.id;
+                      }}
+                    >
+                      <Icon d="M9 17l-5-5 5-5M4 12h11a5 5 0 010 10h-1" size={15} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip label="Reply all" side="top">
+                    <IconButton
+                      size="sm"
+                      label="Reply all"
+                      onclick={(ev) => {
+                        ev.stopPropagation();
+                        replyingId = e.id;
+                      }}
+                    >
+                      <Icon d="M13 17l-5-5 5-5M6 17l-5-5 5-5M1 12h14a5 5 0 010 10h-1" size={15} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip label="Forward" side="top">
+                    <IconButton size="sm" label="Forward">
+                      <Icon d="M15 17l5-5-5-5M20 12H9a5 5 0 000 10h1" size={15} />
+                    </IconButton>
+                  </Tooltip>
+                </div>
+                <div class="spacer"></div>
+                <button
+                  class="open-thread"
+                  onclick={(ev) => {
+                    ev.stopPropagation();
+                    onOpen(e.id);
+                  }}
+                >
+                  Open full thread
+                  <Icon d="M9 6l6 6-6 6" size={15} />
+                </button>
+              </div>
+              {#if replyingId === e.id}
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <div onclick={(ev) => ev.stopPropagation()}>
+                  <InlineReply toName={e.from} onCancel={() => (replyingId = null)} onSend={() => (replyingId = null)} />
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/each}
+</div>
+
+<style>
+  .pinned-group {
+    padding-bottom: 24px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .group-label {
+    padding: 18px 0 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-highlight);
+    font-weight: 600;
+  }
+  .selected-card {
+    margin: 0 -16px 8px;
+    background: var(--surface-card);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-sizing: border-box;
+    text-align: left;
+    padding: 11px 16px;
+    margin: 0 -16px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    position: relative;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background 120ms;
+  }
+  .selected-card .row {
+    margin: 0;
+    border-radius: 0;
+  }
+  .row:hover {
+    background: var(--surface-card);
+    box-shadow: var(--shadow-xs);
+    border-color: var(--border-subtle);
+  }
+  .row.is-selected {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  .star {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition:
+      opacity 100ms,
+      color 100ms;
+  }
+  .star.done {
+    color: var(--tag-mint-fg);
+  }
+  .star.is-always,
+  .row:hover .star,
+  .row.is-selected .star {
+    opacity: 1;
+  }
+  .star:hover {
+    color: var(--blue-600, var(--tag-sky-fg));
+  }
+  .avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--surface-sunken);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .account-dot {
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--surface-card);
+  }
+  .from {
+    width: 120px;
+    flex-shrink: 0;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .subject-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 1 auto;
+    min-width: 60px;
+    max-width: 270px;
+  }
+  .label-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .subject {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .unread {
+    font-weight: 600;
+  }
+  .snippet {
+    flex: 1 1 100px;
+    min-width: 0;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .clip {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+    display: flex;
+  }
+  .right {
+    position: relative;
+    flex-shrink: 0;
+    height: 17px;
+  }
+  .time {
+    position: absolute;
+    inset: 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+    text-align: right;
+    overflow: hidden;
+    white-space: nowrap;
+    transition: opacity 100ms;
+  }
+  .actions {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 100ms;
+  }
+  .row:hover .time {
+    opacity: 0;
+  }
+  .row:hover .actions {
+    opacity: 1;
+  }
+  .action-btn {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    display: flex;
+    padding: 4px;
+  }
+  .action-btn:hover {
+    color: var(--text-primary);
+  }
+  .action-btn.pin-active,
+  .action-btn.pin-active:hover {
+    color: var(--blue-600, var(--tag-sky-fg));
+  }
+  .preview {
+    padding: 20px 16px 12px;
+  }
+  .preview-body {
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+  }
+  .preview-actions {
+    display: flex;
+    align-items: center;
+    margin-top: 20px;
+  }
+  .reply-btns {
+    display: flex;
+    gap: 2px;
+    margin-left: -6px;
+  }
+  .spacer {
+    flex: 1;
+  }
+  .open-thread {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--accent-highlight);
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+  }
+</style>

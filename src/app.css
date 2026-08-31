@@ -1,0 +1,27 @@
+@import "./styles/fonts.css";
+@import "./styles/colors.css";
+@import "./styles/typography.css";
+@import "./styles/spacing.css";
+@import "./styles/effects.css";
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-page);
+  font-family: var(--font-body);
+  color: var(--text-primary);
+}
+
+#app {
+  height: 100vh;
+}
+
+a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--accent-interactive-hover);
+  text-decoration: underline;
+}

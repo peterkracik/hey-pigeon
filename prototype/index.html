@@ -1,0 +1,264 @@
+<!DOCTYPE html><html><head>
+
+<meta charset="utf-8"><title>Hey Pigeon - Web</title>
+<link rel="stylesheet" href="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/tokens/colors.css">
+<link rel="stylesheet" href="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/tokens/typography.css">
+<link rel="stylesheet" href="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/tokens/effects.css">
+<link rel="stylesheet" href="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="_ds/vibemail-design-system-b5a4d18d-561d-4bb5-a454-0d9b940f8b47/_ds_bundle.js"></script>
+<style>html,body{margin:0;height:100%;background:var(--bg-page)}a{color:var(--text-link)}a:hover{color:var(--accent-interactive-hover)}</style>
+</head>
+<body>
+<div id="root" style="height:100vh"></div>
+<script type="text/babel" src="Sidebar.jsx"></script>
+<script type="text/babel" src="ThreadView.jsx"></script>
+<script type="text/babel" src="InboxList.jsx"></script>
+<script type="text/babel" src="Composer.jsx"></script>
+<script type="text/babel" src="SearchOverlay.jsx"></script>
+<script type="text/babel" src="CommandPalette.jsx"></script>
+<script type="text/babel" src="Settings.jsx"></script>
+<script type="text/babel">
+const ACCOUNTS = [
+  { id: 'a1', email: 'peter@heypigeon.app', label: 'Peter', tag: 'sky' },
+  { id: 'a2', email: 'team@heypigeon.app', label: 'Team', tag: 'lavender' },
+];
+const LABELS = [
+  { key: 'label-invoice', label: 'Invoice', tag: 'amber' },
+  { key: 'label-marketing', label: 'Marketing', tag: 'coral' },
+  { key: 'label-projects', label: 'Projects', tag: 'mint' },
+];
+const EMAILS_SEED = [
+  { id: 1, accountId: 'a1', folder: 'inbox', from: 'Priya Nair', subject: 'Q3 planning doc', snippet: 'Could you take a look before Thursday standup...', time: '9:14 AM', unread: true, thread: [
+    { id: 't1', from: 'Priya Nair', isMe: false, date: 'Mon', fullDate: 'Mon, Aug 24, 2026, 2:08 PM', snippet: 'Sharing the first draft of the Q3 plan, would love your eyes on it...', body: 'Sharing the first draft of the Q3 plan, would love your eyes on it before we circulate to the team.' },
+    { id: 't2', from: 'Priya Nair', isMe: true, date: 'Tue', fullDate: 'Tue, Aug 25, 2026, 10:32 AM', snippet: 'Skimmed it - timeline in section 2 looks tight, will comment...', body: 'Skimmed it - the timeline in section 2 looks tight, I will leave comments by end of day.' },
+    { id: 't3', from: 'Priya Nair', isMe: false, date: 'Wed', fullDate: 'Wed, Aug 26, 2026, 4:51 PM', snippet: 'Thanks, updated based on your comments, one open question left...', body: 'Thanks, I updated the doc based on your comments. One open question left on staffing for the migration workstream.' },
+    { id: 't4', from: 'Priya Nair', isMe: false, date: '9:14 AM', fullDate: 'Mon, Aug 31, 2026, 9:14 AM', snippet: 'Could you take a look before Thursday\'s standup...', body: 'Hi - could you take a look at the Q3 planning doc before Thursday\'s standup? Mainly want your read on the timeline in section 2.' },
+  ] },
+  { id: 2, accountId: 'a2', folder: 'inbox', from: 'Linear', subject: 'HI-1 moved to In Progress', snippet: 'Jordan Lee updated the status of HI-1 "Redesign onboarding" from Todo to In Progress and left a comment about the new empty states...', time: '8:02 AM', fullDate: 'Mon, Aug 31, 2026, 8:02 AM', unread: true, body: 'Jordan Lee moved HI-1 "Redesign onboarding" from Todo to In Progress.' },
+  { id: 3, accountId: 'a1', folder: 'inbox', done: true, from: 'Sam Okoye', subject: 'Re: Dinner Friday?', snippet: 'Works for me - 7pm at the usual spot? I can grab a table on the patio if the weather holds, otherwise inside is fine too...', time: 'Yesterday', fullDate: 'Sun, Aug 30, 2026, 6:47 PM', unread: false, body: 'Works for me - 7pm at the usual spot? Let me know if that still works for you.' },
+  { id: 4, accountId: 'a1', folder: 'inbox', from: 'Hey Pigeon Team', subject: 'What happened in your inbox this week', snippet: 'Your weekly digest - top threads, product notes...', time: 'Yesterday', fullDate: 'Sun, Aug 30, 2026, 7:00 AM', unread: false, html: true, body: `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+body{margin:0;background:#F7F7F8;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111318}
+.wrap{max-width:600px;margin:0 auto;background:#fff}
+.pad{padding:32px 36px}
+h1,h2{margin:0;font-family:Georgia,'Times New Roman',serif}
+p{margin:0 0 14px;line-height:1.6;font-size:15px;color:#33363E}
+.btn{display:inline-block;background:#111318;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:4px 10px;border-radius:999px}
+.divider{height:1px;background:#EEEEF0}
+.stat{text-align:center}
+.stat .num{font-family:Georgia,serif;font-size:28px;font-weight:700;color:#111318}
+.stat .lbl{font-size:12px;color:#75787F;margin-top:2px}
+a{color:#111318}
+</style></head>
+<body>
+<div class="wrap">
+  <div style="background:#111318;padding:28px 36px;">
+    <span style="font-family:Georgia,serif;font-weight:700;font-size:18px;color:#fff;letter-spacing:.01em">Hey Pigeon</span>
+  </div>
+  <div class="pad" style="padding-bottom:8px;">
+    <span class="tag" style="background:#DDEAFB;color:#2A6BAE;">Weekly digest</span>
+    <h1 style="font-size:26px;margin-top:14px;line-height:1.25;">What happened in your inbox this week</h1>
+    <p style="margin-top:14px;">Hi Priya - here's a quick summary of activity across your accounts, plus a few things worth a look before Monday.</p>
+  </div>
+  <div class="divider"></div>
+  <div class="pad" style="display:flex;gap:0;">
+    <div class="stat" style="flex:1;"><div class="num">128</div><div class="lbl">Messages received</div></div>
+    <div class="stat" style="flex:1;"><div class="num">34</div><div class="lbl">Replied to</div></div>
+    <div class="stat" style="flex:1;"><div class="num">6</div><div class="lbl">Snoozed</div></div>
+  </div>
+  <div class="divider"></div>
+  <div class="pad">
+    <h2 style="font-size:18px;margin-bottom:14px;">Top threads waiting on you</h2>
+    <p><strong>Marcus Webb</strong> - Contract renewal, sign by Friday. <em>3 days waiting.</em></p>
+    <p><strong>Ana Torres</strong> - Invoice #4021 needs review. <em>1 day waiting.</em></p>
+    <p><strong>Sam Okoye</strong> - Re: Dinner Friday? A quick yes/no would close this out.</p>
+  </div>
+  <div class="divider"></div>
+  <div class="pad">
+    <h2 style="font-size:18px;margin-bottom:14px;">Product notes</h2>
+    <p><strong>Unified inbox</strong> - switch between accounts or view everything together from one list. Turn it on from the account switcher in the sidebar.</p>
+    <p><strong>Command palette</strong> - press <code>Cmd+K</code> anywhere to archive, snooze, label, or jump to a folder without touching the mouse.</p>
+    <p><strong>Resizable reading pane</strong> - drag the left edge of any open message to widen it, or expand to full screen for long threads.</p>
+  </div>
+  <div class="divider"></div>
+  <div class="pad" style="text-align:center;background:#F7F7F8;">
+    <p style="margin-bottom:18px;">Ready to clear the rest of your week?</p>
+    <a class="btn" href="#">Open inbox</a>
+  </div>
+  <div class="pad" style="text-align:center;">
+    <p style="font-size:12px;color:#9A9CA2;margin:0;">Hey Pigeon • You're receiving this because you subscribed to weekly digests.<br><a href="#" style="color:#9A9CA2;text-decoration:underline;">Unsubscribe</a> • <a href="#" style="color:#9A9CA2;text-decoration:underline;">Manage preferences</a></p>
+  </div>
+</div>
+</body></html>` },
+  { id: 5, accountId: 'a2', folder: 'inbox', pinned: true, from: 'Ana Torres', subject: 'Invoice #4021', snippet: 'Attached is the invoice for last month\'s work, broken down by hours and expenses - let me know if anything looks off before you send it to accounting...', time: 'Mon', fullDate: 'Mon, Aug 24, 2026, 11:20 AM', unread: false, labelTag: 'amber', attachment: true, body: 'Attached is the invoice for last month\'s work. Let me know if anything looks off.', attachments: [{ name: 'Invoice-4021.pdf', size: '212 KB' }] },
+  { id: 6, accountId: 'a1', folder: 'inbox', pinned: true, done: true, from: 'Marcus Webb', subject: 'Contract renewal - sign by Friday', snippet: 'Sending over the renewal for next quarter, terms are unchanged from last year aside from the updated billing address - happy to hop on a call if anything needs discussion...', time: 'Mon', fullDate: 'Mon, Aug 24, 2026, 3:45 PM', unread: false, labelTag: 'mint', attachment: true, body: 'Sending over the renewal for next quarter. Please sign and return by Friday if the terms look right.', attachments: [{ name: 'Renewal-Q4-2026.pdf', size: '486 KB' }] },
+  { id: 7, accountId: 'a1', folder: 'starred', from: 'Priya Nair', subject: 'Q3 planning doc', snippet: 'Could you take a look before Thursday standup...', time: '9:14 AM', unread: false, body: 'Hi - could you take a look at the Q3 planning doc before Thursday\'s standup?' },
+];
+const FOLDER_TITLES = { all: 'All emails', inbox: 'Inbox', starred: 'Starred', sent: 'Sent', drafts: 'Drafts', archive: 'Archive', spam: 'Spam', trash: 'Trash', scheduled: 'Scheduled', settings: 'Settings', 'label-invoice': 'Invoice', 'label-marketing': 'Marketing', 'label-projects': 'Projects' };
+
+function App() {
+  const { IconButton, Tooltip } = window.VibeMailDesignSystem_b5a4d1;
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [unified, setUnified] = React.useState(true);
+  const [activeAccountId, setActiveAccountId] = React.useState('a1');
+  const [folder, setFolder] = React.useState('inbox');
+  const [selectedId, setSelectedId] = React.useState(null);
+  const [threadOpen, setThreadOpen] = React.useState(false);
+  const [composeOpen, setComposeOpen] = React.useState(false);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const [composeFullscreen, setComposeFullscreen] = React.useState(false);
+  const [emailsData, setEmailsData] = React.useState(EMAILS_SEED);
+  const [hoverActions, setHoverActions] = React.useState(['delete', 'pin', 'remind']);
+  const [pinListEnabled, setPinListEnabled] = React.useState(true);
+  const onEmailAction = (id, action) => {
+    if (action === 'pin') setEmailsData((prev) => prev.map((e) => e.id === id ? { ...e, pinned: !e.pinned } : e));
+    else if (action === 'done') setEmailsData((prev) => prev.map((e) => e.id === id ? { ...e, done: !e.done } : e));
+    else console.log(id, action);
+  };
+  const A = (d) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d={d} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+
+  React.useEffect(() => {
+    const onKey = (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') { ev.preventDefault(); setPaletteOpen(true); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  const emails = emailsData.filter((e) => (folder === 'all' ? true : e.folder === folder) && (unified || e.accountId === activeAccountId));
+  const email = emails.find((e) => e.id === selectedId) || emailsData.find((e) => e.id === selectedId);
+  const accountOf = (id) => ACCOUNTS.find((a) => a.id === id);
+  const counts = { inbox: emailsData.filter((e) => e.folder === 'inbox' && e.unread && (unified || e.accountId === activeAccountId)).length };
+
+  const onPaletteAction = (key) => {
+    if (key === 'compose') setComposeOpen(true);
+    else if (key === 'inbox') setFolder('inbox');
+    else if (key === 'unified') setUnified(true);
+    else if (key === 'reply' && email) {}
+  };
+
+  return (
+    <div style={{ height: '100%', display: 'flex', fontFamily: 'var(--font-body)', background: 'var(--bg-page)' }}>
+      <Sidebar
+        open={sidebarOpen} onClose={() => setSidebarOpen(false)} active={folder} onSelect={(f) => { setFolder(f); setSelectedId(null); setThreadOpen(false); }}
+        accounts={ACCOUNTS} activeAccountId={activeAccountId} unified={unified}
+        onSelectAccount={setActiveAccountId} onToggleUnified={setUnified} counts={counts} labels={LABELS}
+      />
+      {!sidebarOpen && (
+        <div style={{ position: 'fixed', top: 18, left: 20, zIndex: 40 }}><BurgerButton onClick={() => setSidebarOpen(true)}/></div>
+      )}
+
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, overflowY: 'auto', minWidth: 0 }}>
+        <div style={{ maxWidth: 1180, margin: '0 auto', width: '100%', boxSizing: 'border-box', padding: '0 32px 40px 96px', display: 'flex', flexDirection: 'column' }}>
+          {!fullscreen && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '18px 0 20px', position: 'relative' }}>
+            {threadOpen && (
+              <div style={{ position: 'absolute', left: -40, top: '50%', transform: 'translateY(-50%)' }}>
+                <Tooltip label="Back" side="bottom">
+                  <IconButton size="sm" icon={A('M15 18l-6-6 6-6')} label="Back" onClick={() => setThreadOpen(false)}/>
+                </Tooltip>
+              </div>
+            )}
+            <span onClick={() => { if (threadOpen) return; setFolder('inbox'); setUnified(true); }} style={{ cursor: threadOpen ? 'default' : 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 20, color: 'var(--text-primary)' }}>
+              {unified && folder === 'inbox' ? 'All inboxes' : FOLDER_TITLES[folder]}
+              {!threadOpen && folder !== 'settings' && <span style={{ fontSize: 14, color: 'var(--text-tertiary)', fontWeight: 400 }}> {emails.length}</span>}
+            </span>
+            <div style={{ flex: 1 }}/>
+            {!threadOpen && folder !== 'settings' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginRight: -6 }}>
+                <button onClick={() => setPaletteOpen(true)} title="Command palette (Cmd+K)" style={{ border: '1px solid var(--border-default)', background: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', borderRadius: 'var(--radius-pill)', padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 11.5, marginRight: 6 }}
+                  onMouseEnter={(ev) => { ev.currentTarget.style.color = 'var(--text-primary)'; }} onMouseLeave={(ev) => { ev.currentTarget.style.color = 'var(--text-tertiary)'; }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.6"/><path d="M20 20l-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                  Cmd+K
+                </button>
+                <Tooltip label="Compose" side="bottom"><IconButton icon={A('M4 20l1-4L17 4l3 3L8 19l-4 1z')} label="Compose" onClick={() => setComposeOpen(true)}/></Tooltip>
+                <Tooltip label="Search" side="bottom"><IconButton icon={<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.6"/><path d="M20 20l-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>} label="Search" onClick={() => setSearchOpen(true)}/></Tooltip>
+              </div>
+            )}
+            {threadOpen && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginRight: -6 }}>
+                <Tooltip label={email && email.done ? 'Mark not done' : 'Mark done'} side="bottom"><IconButton icon={email && email.done ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="var(--tag-mint-fg)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg> : A('M20 6L9 17l-5-5')} label="Mark done" onClick={() => onEmailAction(email.id, 'done')}/></Tooltip>
+                <Tooltip label="Delete" side="bottom"><IconButton icon={A('M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-9 0l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13')} label="Delete"/></Tooltip>
+                <Tooltip label="Full screen" side="bottom"><IconButton icon={A('M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3')} label="Full screen" onClick={() => setFullscreen(true)}/></Tooltip>
+              </div>
+            )}
+          </div>
+          )}
+          {folder === 'settings' ? (
+            <Settings accounts={ACCOUNTS} hoverActions={hoverActions} onHoverActionsChange={setHoverActions} pinListEnabled={pinListEnabled} onPinListChange={setPinListEnabled}/>
+          ) : threadOpen ? (
+            <ThreadView email={email} onClose={() => { setThreadOpen(false); setFullscreen(false); }} onReplySent={() => {}} fullscreen={fullscreen} onToggleFullscreen={setFullscreen} onToggleDone={() => onEmailAction(email.id, 'done')}/>
+          ) : (
+            <React.Fragment>
+              <InboxList
+                emails={unified ? emails.map((e) => ({ ...e, accountTag: accountOf(e.accountId).tag })) : emails}
+                selectedId={selectedId} onSelect={setSelectedId} onOpen={(id) => { setSelectedId(id); setThreadOpen(true); }} onAction={onEmailAction}
+                hoverActions={hoverActions} pinListEnabled={pinListEnabled}
+              />
+              {emails.length === 0 && <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontFamily: 'var(--font-body)', fontSize: 14 }}>Nothing here yet</div>}
+            </React.Fragment>
+          )}
+        </div>
+        </div>
+        {!threadOpen && !fullscreen && (
+          <div style={{ padding: '10px 32px 14px 96px', textAlign: 'center', flexShrink: 0, borderTop: '1px solid var(--navy-50)' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', opacity: 0.6 }}>© 2026 heypigeon.app · v1.0.0</span>
+          </div>
+        )}
+      </div>
+      <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)}/>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onAction={onPaletteAction}/>
+      {composeOpen && (
+        composeFullscreen ? (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'var(--surface-card)', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ maxWidth: 1180, margin: '0 auto', width: '100%', boxSizing: 'border-box', padding: '18px 32px 0', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <span style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 20, color: 'var(--text-primary)' }}>New message</span>
+              <Tooltip label="Exit full screen" side="bottom">
+                <IconButton icon={A('M9 4H5a1 1 0 00-1 1v4M15 4h4a1 1 0 011 1v4M9 20H5a1 1 0 01-1-1v-4M15 20h4a1 1 0 001-1v-4')} label="Exit full screen" onClick={() => setComposeFullscreen(false)}/>
+              </Tooltip>
+              <Tooltip label="Close" side="bottom">
+                <IconButton icon={A('M6 6l12 12M18 6L6 18')} label="Close" onClick={() => { setComposeOpen(false); setComposeFullscreen(false); }}/>
+              </Tooltip>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 0 40px' }}>
+              <div style={{ maxWidth: 1180, margin: '0 auto', width: '100%', boxSizing: 'border-box', padding: '20px 32px 0', display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+                <Composer onClose={() => { setComposeOpen(false); setComposeFullscreen(false); }} onSend={() => { setComposeOpen(false); setComposeFullscreen(false); }}/>
+              </div>
+            </div>
+          </div>
+        ) : (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(17,19,24,0.32)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }} onMouseDown={(ev) => { if (ev.target === ev.currentTarget) setComposeOpen(false); }}>
+          <div style={{ background: 'var(--surface-card)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', width: 720, maxWidth: '100%', height: 'min(680px, 88vh)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 24px', flexShrink: 0 }}>
+              <span style={{ flex: 1, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>New message</span>
+              <Tooltip label="Full screen" side="bottom">
+                <IconButton size="sm" icon={A('M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3')} label="Full screen" onClick={() => setComposeFullscreen(true)}/>
+              </Tooltip>
+              <Tooltip label="Close" side="bottom">
+                <IconButton size="sm" icon={A('M6 6l12 12M18 6L6 18')} label="Close" onClick={() => { setComposeOpen(false); setComposeFullscreen(false); }}/>
+              </Tooltip>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: '100%' }}>
+                <Composer onClose={() => { setComposeOpen(false); setComposeFullscreen(false); }} onSend={() => { setComposeOpen(false); setComposeFullscreen(false); }}/>
+              </div>
+            </div>
+          </div>
+        </div>
+        )
+      )}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body></html>

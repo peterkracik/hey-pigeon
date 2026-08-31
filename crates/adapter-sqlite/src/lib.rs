@@ -69,8 +69,18 @@ const MIGRATIONS: &[&str] = &[
     // so the view joins; sync always upserts the thread before its messages.
     // Body falls back to the message snippet so metadata-tier mail is still
     // findable before its body is fetched.
-    // ponytail: a later thread-subject edit leaves stale subject tokens for
-    // already-indexed messages — Gmail subjects are immutable in practice.
+    // Constraints:
+    // - `messages` has a TEXT PK ⇒ implicit rowid, and the FTS index is
+    //   keyed on it. VACUUM may renumber implicit rowids — if a VACUUM is
+    //   ever added, it must be followed by
+    //   INSERT INTO messages_fts(messages_fts) VALUES('rebuild')
+    //   or the index silently maps to the wrong messages.
+    // - The AU/AD triggers' 'delete' rows read the *current* thread subject;
+    //   for external-content FTS5 a 'delete' whose values differ from what
+    //   was indexed silently corrupts the index (phantom/missing hits). Fine
+    //   while thread subjects never change after indexing (Gmail subjects
+    //   are immutable in practice); reindex the thread's messages if subject
+    //   edits ever become real.
     "
     CREATE VIEW messages_fts_content AS
       SELECT m.rowid AS rowid,
@@ -134,12 +144,19 @@ impl SqliteStore {
     }
 
     fn init(conn: Connection) -> Result<Self, StoreError> {
+        Self::init_to(conn, MIGRATIONS.len())
+    }
+
+    /// Run migrations up to `target` (count, not index). Split from `init`
+    /// so tests can build a DB at an older schema version and prove the real
+    /// upgrade path over pre-existing data.
+    fn init_to(conn: Connection, target: usize) -> Result<Self, StoreError> {
         conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
         conn.pragma_update(None, "foreign_keys", "ON").map_err(err)?;
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(err)?;
-        for (i, migration) in MIGRATIONS.iter().enumerate().skip(version as usize) {
+        for (i, migration) in MIGRATIONS.iter().enumerate().take(target).skip(version as usize) {
             conn.execute_batch(migration).map_err(err)?;
             conn.pragma_update(None, "user_version", i as i64 + 1)
                 .map_err(err)?;
@@ -382,14 +399,23 @@ impl Store for SqliteStore {
                 // break that context) scores each matching message; the outer
                 // query joins, groups per thread, and keeps the best message.
                 // GROUP BY + single min() aggregate: SQLite guarantees bare
-                // columns (the snippet) come from the min-bm25 row.
+                // columns (f.rowid in the snippet subquery) come from the
+                // min-bm25 row.
+                // Work is bounded: the CTE keeps only the top-?10 rows by
+                // bm25 (cheap — no re-tokenization), and snippet() (expensive)
+                // runs per surviving row via a rowid-constrained MATCH, never
+                // over the whole match set. The cap trades exact recency
+                // blending on huge result sets for bounded per-keystroke cost.
                 let mut stmt = c.prepare(&format!(
                     "WITH f AS MATERIALIZED (
                         SELECT rowid,
-                               snippet(messages_fts, -1, ?2, ?3, '…', 12) AS snip,
                                bm25(messages_fts, 8.0, 4.0, 2.0, 1.0) AS score
-                        FROM messages_fts WHERE messages_fts MATCH ?1)
-                     SELECT {}, f.snip,
+                        FROM messages_fts WHERE messages_fts MATCH ?1
+                        ORDER BY score LIMIT ?10)
+                     SELECT {},
+                            (SELECT snippet(messages_fts, -1, ?2, ?3, '…', 12)
+                             FROM messages_fts
+                             WHERE messages_fts MATCH ?1 AND rowid = f.rowid) AS snip,
                             min(f.score)
                               + ((?4 - t.last_msg_at) / 86400000.0) * 0.05 AS rank
                      FROM f
@@ -404,6 +430,7 @@ impl Store for SqliteStore {
                      LIMIT ?9",
                     thread_cols("t.")
                 ))?;
+                let candidate_cap = (limit as i64).saturating_mul(10).max(200);
                 let rows = stmt.query_map(
                     params![
                         fts,
@@ -414,7 +441,8 @@ impl Store for SqliteStore {
                         q.to_contains,
                         q.unread_only,
                         q.account_contains,
-                        limit
+                        limit,
+                        candidate_cap
                     ],
                     |r| {
                         Ok(SearchResult {
@@ -784,11 +812,29 @@ mod tests {
     }
 
     #[test]
-    fn search_migration_backfills_existing_rows() {
-        // rows inserted before v5 must be searchable after the migration —
-        // simulated by the rebuild step running over sync-inserted data on a
-        // fresh db (rebuild reads the content view; triggers are exercised
-        // above). Also: empty + garbage queries never error.
+    fn search_v5_migration_rebuild_indexes_preexisting_rows() {
+        // The one upgrade path every existing install takes: data written at
+        // v4 (no FTS, no triggers), then opening at v5 must make it
+        // searchable via the 'rebuild' backfill alone.
+        let dir = std::env::temp_dir()
+            .join(format!("heypigeon-test-migr-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v4.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 4).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            seed_thread(&s, "t1", "Zanzibar itinerary", "a@x.com", "flights and hotels", 1000, false);
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v5 incl. rebuild
+        assert_eq!(search(&s, "zanzibar").len(), 1, "subject indexed by rebuild");
+        assert_eq!(search(&s, "flights").len(), 1, "body indexed by rebuild");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn search_never_errors_on_empty_or_garbage_queries() {
         let s = store();
         seed_thread(&s, "t1", "Hello", "a@x.com", "world", 1000, false);
         assert!(search(&s, "").is_empty());

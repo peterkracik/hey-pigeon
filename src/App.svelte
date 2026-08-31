@@ -46,6 +46,13 @@
       const old = prev.get(t.id);
       return old?.thread ? { ...mapped, thread: old.thread } : mapped;
     });
+    // Search hits merged from outside the inbox (archived etc.) are not in
+    // list_threads; while one is selected/open, dropping it would blank the
+    // open ThreadView (mark_read fires threads_updated right after opening).
+    if (selectedId && !emailsData.some((e) => e.id === selectedId)) {
+      const kept = prev.get(selectedId);
+      if (kept) emailsData = [...emailsData, kept];
+    }
     if (liveAccounts.length && !liveAccounts.some((a) => a.id === activeAccountId)) {
       activeAccountId = liveAccounts[0].id;
     }
@@ -239,8 +246,22 @@
       paletteOpen = true;
       return;
     }
+    // The search overlay owns the keyboard, but Escape must close it even
+    // when focus has left its input (e.g. after clicking overlay whitespace).
+    if (searchOpen) {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        searchOpen = false;
+      }
+      return;
+    }
     // List navigation — never while typing or while an overlay owns the keyboard.
-    if (isEditable(ev.target) || paletteOpen || searchOpen || composeOpen) return;
+    if (isEditable(ev.target) || paletteOpen || composeOpen) return;
+    if (ev.key === "/") {
+      ev.preventDefault();
+      searchOpen = true;
+      return;
+    }
     if (ev.key === "Escape") {
       if (threadOpen) {
         threadOpen = false;

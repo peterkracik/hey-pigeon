@@ -99,8 +99,10 @@ pub fn list_threads(
 
 /// Local FTS5 search: Gmail-style operators + bare text → ranked threads
 /// with a snippet preview (same thread shape as `list_threads`).
+/// Async so the FTS scan runs off the main thread — search-as-you-type
+/// fires per keystroke and must never stall the UI.
 #[tauri::command]
-pub fn search_threads(
+pub async fn search_threads(
     state: State<'_, MailState>,
     query: String,
     limit: Option<u32>,

@@ -145,6 +145,20 @@ pub async fn sync_now(
     Ok(n)
 }
 
+/// Sender contact photo via the People API (Gmail backend only).
+#[tauri::command]
+pub async fn lookup_avatar(
+    state: State<'_, MailState>,
+    account_id: AccountId,
+    email: String,
+) -> Result<Option<String>, String> {
+    let backend = state.backend.read().await;
+    Ok(match &*backend {
+        Backend::Gmail(p) => p.contact_photo(&account_id, &email).await,
+        Backend::Fake(_) => None,
+    })
+}
+
 /// Run the OAuth consent flow, connect the Gmail account, start backfill.
 /// The one command that changes the active backend.
 #[tauri::command]

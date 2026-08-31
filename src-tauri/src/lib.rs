@@ -22,6 +22,7 @@ pub fn run() {
       mail::mutate,
       mail::sync_now,
       mail::start_gmail_oauth,
+      mail::lookup_avatar,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

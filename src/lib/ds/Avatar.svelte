@@ -1,12 +1,15 @@
 <script lang="ts">
-  // Image avatar with a fallback chain: explicit photo → gravatar → sender
-  // domain favicon (brand logos) → initials. Gmail's API exposes no sender
-  // photos, so this is the best serverless coverage available.
+  // Image avatar with a fallback chain: explicit photo → Google contact photo
+  // (People API, people you've corresponded with) → gravatar → sender-domain
+  // favicon (brand logos) → initials.
   // ponytail: leaks sender-address hash to gravatar.com and sender domain to
-  // gstatic.com per row; gate behind the remote-image privacy setting in M3.
+  // duckduckgo.com per row; gate behind the remote-image privacy setting in M3.
+  import { lookupAvatar } from "../ipc";
+
   let {
     src,
     email,
+    accountId,
     name,
     size = 26,
     bg = "var(--surface-sunken)",
@@ -16,6 +19,8 @@
     /** Explicit photo URL (e.g. Google profile picture); wins over lookups. */
     src?: string;
     email?: string;
+    /** Enables the People-API contact-photo lookup for this sender. */
+    accountId?: string;
     name: string;
     size?: number;
     bg?: string;
@@ -42,28 +47,43 @@
       .join(""),
   );
 
-  $effect(() => {
-    phase = 0;
-    const list: string[] = [];
-    if (src) list.push(src);
+  // Priority slots; the visible list is derived so late async arrivals keep
+  // their intended rank instead of appending at the end.
+  let contactUrl: string | null = $state(null);
+  let gravatarUrl: string | null = $state(null);
+
+  const slots = $derived.by(() => {
     const addr = email?.trim().toLowerCase();
     const domain = addr?.split("@")[1];
-    if (domain && !FREEMAIL.has(domain)) {
-      // 404s when the domain has no known icon → chain advances to initials.
-      list.push(
-        `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&url=https://${domain}&size=${size * 2}`,
-      );
+    const favicon =
+      domain && !FREEMAIL.has(domain)
+        ? `https://icons.duckduckgo.com/ip3/${domain}.ico`
+        : null;
+    return [src ?? null, contactUrl, gravatarUrl, favicon].filter((s): s is string => Boolean(s));
+  });
+
+  $effect(() => {
+    phase = 0;
+    contactUrl = null;
+    gravatarUrl = null;
+    const addr = email?.trim().toLowerCase();
+    if (!addr) {
+      sources = slots;
+      return;
     }
-    sources = list;
-    if (!addr) return;
+    if (accountId) {
+      lookupAvatar(accountId, addr).then((u) => (contactUrl = u));
+    }
     crypto.subtle.digest("SHA-256", new TextEncoder().encode(addr)).then((buf) => {
       const hex = Array.from(new Uint8Array(buf))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
-      // Gravatar outranks the domain favicon: personal photo beats brand logo.
-      const at = src ? 1 : 0;
-      sources = [...sources.slice(0, at), `https://gravatar.com/avatar/${hex}?d=404&s=${size * 2}`, ...sources.slice(at)];
+      gravatarUrl = `https://gravatar.com/avatar/${hex}?d=404&s=${size * 2}`;
     });
+  });
+
+  $effect(() => {
+    sources = slots;
   });
 </script>
 

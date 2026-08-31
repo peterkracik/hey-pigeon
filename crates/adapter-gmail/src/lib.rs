@@ -33,6 +33,10 @@ pub struct GmailProvider {
     client: ClientConfig,
     secrets: Arc<dyn SecretStore + Send + Sync>,
     tokens: Mutex<HashMap<AccountId, CachedToken>>,
+    /// (account, sender-email) → contact photo URL; negative results cached too.
+    photo_cache: Mutex<HashMap<(AccountId, String), Option<String>>>,
+    /// Accounts whose People-API search cache was warmed this session.
+    photo_warmed: Mutex<std::collections::HashSet<AccountId>>,
 }
 
 impl GmailProvider {
@@ -42,6 +46,8 @@ impl GmailProvider {
             client,
             secrets,
             tokens: Mutex::new(HashMap::new()),
+            photo_cache: Mutex::new(HashMap::new()),
+            photo_warmed: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -91,6 +97,52 @@ impl GmailProvider {
             },
         );
         Ok(access)
+    }
+
+    /// Contact photo for a sender via the People API (contacts +
+    /// otherContacts — people you've corresponded with). None for strangers.
+    pub async fn contact_photo(&self, account_id: &AccountId, email: &str) -> Option<String> {
+        let key = (account_id.clone(), email.to_lowercase());
+        if let Some(cached) = self.photo_cache.lock().await.get(&key) {
+            return cached.clone();
+        }
+        // People API search caches need one warmup request per session.
+        if self.photo_warmed.lock().await.insert(account_id.clone()) {
+            let _ = self
+                .get_json::<serde_json::Value>(
+                    account_id,
+                    "https://people.googleapis.com/v1/people:searchContacts?query=&readMask=photos",
+                )
+                .await;
+            let _ = self
+                .get_json::<serde_json::Value>(
+                    account_id,
+                    "https://people.googleapis.com/v1/otherContacts:search?query=&readMask=photos",
+                )
+                .await;
+        }
+        let query = urlencode(email);
+        let mut found: Option<String> = None;
+        for endpoint in [
+            format!("https://people.googleapis.com/v1/people:searchContacts?query={query}&readMask=photos,emailAddresses&pageSize=3"),
+            format!("https://people.googleapis.com/v1/otherContacts:search?query={query}&readMask=photos,emailAddresses&pageSize=3"),
+        ] {
+            if found.is_some() {
+                break;
+            }
+            if let Ok(resp) = self.get_json::<WirePeopleSearch>(account_id, &endpoint).await {
+                found = resp
+                    .results
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|r| r.person)
+                    .flat_map(|p| p.photos.unwrap_or_default())
+                    .find(|p| !p.default.unwrap_or(false) && p.url.is_some())
+                    .and_then(|p| p.url);
+            }
+        }
+        self.photo_cache.lock().await.insert(key, found.clone());
+        found
     }
 
     /// Google profile photo for the signed-in user (userinfo.profile scope).
@@ -160,7 +212,32 @@ impl GmailProvider {
     }
 }
 
+fn urlencode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
 // ---------------------------------------------------------------- wire types
+
+#[derive(Deserialize)]
+struct WirePeopleSearch {
+    results: Option<Vec<WirePeopleResult>>,
+}
+
+#[derive(Deserialize)]
+struct WirePeopleResult {
+    person: Option<WirePerson>,
+}
+
+#[derive(Deserialize)]
+struct WirePerson {
+    photos: Option<Vec<WirePhoto>>,
+}
+
+#[derive(Deserialize)]
+struct WirePhoto {
+    url: Option<String>,
+    default: Option<bool>,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

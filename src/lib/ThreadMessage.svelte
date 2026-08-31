@@ -8,6 +8,7 @@
 
   let {
     msg,
+    accountId,
     expanded,
     onToggle,
     showActions,
@@ -16,6 +17,7 @@
     onForward,
   }: {
     msg: ThreadMsg;
+    accountId?: string;
     expanded: boolean;
     onToggle: () => void;
     showActions: boolean;
@@ -28,7 +30,7 @@
 </script>
 
 {#snippet avatar(size: number)}
-  <Avatar email={msg.fromAddr} {name} {size} />
+  <Avatar email={msg.fromAddr} {accountId} {name} {size} />
 {/snippet}
 
 {#if !expanded}

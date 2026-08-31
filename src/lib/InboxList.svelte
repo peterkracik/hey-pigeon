@@ -85,7 +85,7 @@
               </button>
             </Tooltip>
             <span class="avatar-wrap">
-              <Avatar email={e.fromAddr} name={e.from} size={26} />
+              <Avatar email={e.fromAddr} accountId={e.accountId} name={e.from} size={26} />
               {#if e.accountTag}
                 <span class="account-dot" title="account" style:background="var(--tag-{e.accountTag}-fg)"></span>
               {/if}

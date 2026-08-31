@@ -58,6 +58,7 @@
       {#each messages as m (m.id)}
         <ThreadMessage
           msg={m}
+          accountId={em.accountId}
           expanded={expandedId === m.id}
           onToggle={() => (expandedId = expandedId === m.id ? null : m.id)}
           showActions={replyTargetId !== m.id}

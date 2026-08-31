@@ -38,11 +38,29 @@
 
   const pinned = $derived(pinListEnabled ? emails.filter((e) => e.pinned) : []);
   const rest = $derived(pinListEnabled ? emails.filter((e) => !e.pinned) : emails);
-  const groups = $derived([
-    ...(pinned.length ? [{ label: "Pinned", items: pinned, isPinnedGroup: true }] : []),
-    { label: "Today", items: rest.slice(0, 2), isPinnedGroup: false },
-    { label: "Last 7 days", items: rest.slice(2), isPinnedGroup: false },
-  ]);
+  // Real date buckets when timestamps exist (live mode); the mock seed keeps
+  // the design's fixed slices.
+  const groups = $derived.by(() => {
+    const head = pinned.length ? [{ label: "Pinned", items: pinned, isPinnedGroup: true }] : [];
+    if (!rest.every((e) => e.lastMsgAt !== undefined)) {
+      return [
+        ...head,
+        { label: "Today", items: rest.slice(0, 2), isPinnedGroup: false },
+        { label: "Last 7 days", items: rest.slice(2), isPinnedGroup: false },
+      ];
+    }
+    const startOfToday = new Date().setHours(0, 0, 0, 0);
+    const weekAgo = startOfToday - 7 * 86_400_000;
+    const today = rest.filter((e) => e.lastMsgAt! >= startOfToday);
+    const week = rest.filter((e) => e.lastMsgAt! < startOfToday && e.lastMsgAt! >= weekAgo);
+    const older = rest.filter((e) => e.lastMsgAt! < weekAgo);
+    return [
+      ...head,
+      { label: "Today", items: today, isPinnedGroup: false },
+      { label: "Last 7 days", items: week, isPinnedGroup: false },
+      { label: "Older", items: older, isPinnedGroup: false },
+    ].filter((g) => g.items.length > 0);
+  });
   const activeActions = $derived(
     (hoverActions.length ? hoverActions : ["done", "delete", "pin"])
       .map((k) => EMAIL_ACTIONS.find((a) => a.key === k))

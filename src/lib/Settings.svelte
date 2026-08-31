@@ -14,7 +14,7 @@
     onPinListChange,
     onAddAccount,
     onRemoveAccount,
-    onSetAccountColor,
+    onUpdateAccount,
   }: {
     accounts: Account[];
     hoverActions: string[];
@@ -23,14 +23,12 @@
     onPinListChange: (v: boolean) => void;
     onAddAccount?: () => void;
     onRemoveAccount?: (id: string) => void;
-    onSetAccountColor?: (id: string, color: string) => void;
+    onUpdateAccount?: (id: string, fields: { displayName?: string; color?: string; signature?: string }) => void;
   } = $props();
 
   // confirm()/alert() are no-ops in the macOS webview — two-click confirm instead.
   let confirmingRemoveId: string | null = $state(null);
 
-  let signature = $state(true);
-  let signatureText = $state("Peter\nHey Pigeon");
   let dragKey: string | null = $state(null);
   let readReceipts = $state(false);
   let desktopNotif = $state(true);
@@ -72,38 +70,63 @@
     </div>
     <div class="group-body">
       {#each accounts as a (a.id)}
-        <div class="account-row">
-          <Avatar src={a.avatarUrl} email={a.email} name={a.label} size={32} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
-          <div class="account-text">
-            <div class="setting-title">{a.label}</div>
-            <div class="account-email">{a.email}</div>
+        <div class="account-block">
+          <div class="account-row">
+            <Avatar src={a.avatarUrl} email={a.email} name={a.label} size={32} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
+            <div class="account-text">
+              <div class="setting-title">{a.label}</div>
+              <div class="account-email">{a.email}</div>
+            </div>
+            {#if confirmingRemoveId === a.id}
+              <Button
+                variant="danger"
+                size="sm"
+                onclick={() => {
+                  confirmingRemoveId = null;
+                  onRemoveAccount?.(a.id);
+                }}>Really remove?</Button
+              >
+            {:else}
+              <Button variant="ghost" size="sm" onclick={() => (confirmingRemoveId = a.id)}>Remove</Button>
+            {/if}
           </div>
-          <div class="color-picker" role="radiogroup" aria-label="Account color">
-            {#each ACCOUNT_COLOR_TAGS as c (c)}
-              <button
-                class="color-dot"
-                class:selected={a.tag === c}
-                style:background="var(--tag-{c}-fg)"
-                title={c}
-                role="radio"
-                aria-checked={a.tag === c}
-                aria-label={c}
-                onclick={() => onSetAccountColor?.(a.id, c)}
-              ></button>
-            {/each}
+          <div class="account-subsettings">
+            <div class="sub-row">
+              <span class="sub-label">Name</span>
+              <input
+                class="sub-input"
+                value={a.label}
+                onchange={(ev) => onUpdateAccount?.(a.id, { displayName: ev.currentTarget.value })}
+              />
+            </div>
+            <div class="sub-row">
+              <span class="sub-label">Color</span>
+              <div class="color-picker" role="radiogroup" aria-label="Account color">
+                {#each ACCOUNT_COLOR_TAGS as c (c)}
+                  <button
+                    class="color-dot"
+                    class:selected={a.tag === c}
+                    style:background="var(--tag-{c}-fg)"
+                    title={c}
+                    role="radio"
+                    aria-checked={a.tag === c}
+                    aria-label={c}
+                    onclick={() => onUpdateAccount?.(a.id, { color: c })}
+                  ></button>
+                {/each}
+              </div>
+            </div>
+            <div class="sub-row signature-row">
+              <span class="sub-label">Signature</span>
+              <textarea
+                class="sub-signature"
+                rows="3"
+                placeholder="Appended to new messages from this account"
+                value={a.signature ?? ""}
+                onchange={(ev) => onUpdateAccount?.(a.id, { signature: ev.currentTarget.value })}
+              ></textarea>
+            </div>
           </div>
-          {#if confirmingRemoveId === a.id}
-            <Button
-              variant="danger"
-              size="sm"
-              onclick={() => {
-                confirmingRemoveId = null;
-                onRemoveAccount?.(a.id);
-              }}>Really remove?</Button
-            >
-          {:else}
-            <Button variant="ghost" size="sm" onclick={() => (confirmingRemoveId = a.id)}>Remove</Button>
-          {/if}
         </div>
       {/each}
       <div class="add-account">
@@ -273,18 +296,6 @@
   <section>
     <div class="group-head"><h2>Reading &amp; replying</h2></div>
     <div class="group-body">
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Include signature</div>
-          <div class="setting-desc">Add your signature to new messages automatically.</div>
-        </div>
-        <div class="setting-control"><Switch bind:checked={signature} /></div>
-      </div>
-      {#if signature}
-        <div class="signature-wrap">
-          <textarea bind:value={signatureText} rows="4"></textarea>
-        </div>
-      {/if}
       <div class="setting-row">
         <div class="setting-text">
           <div class="setting-title">Send read receipts</div>
@@ -505,8 +516,57 @@
     font-size: 13px;
     color: var(--text-tertiary);
   }
-  .signature-wrap {
-    padding: 0 0 16px;
+  .account-block {
+    border-bottom: 1px solid var(--navy-50);
+    padding-bottom: 14px;
+  }
+  .account-subsettings {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 0 0 44px;
+  }
+  .sub-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .sub-row.signature-row {
+    align-items: flex-start;
+  }
+  .sub-label {
+    width: 70px;
+    flex-shrink: 0;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-tertiary);
+  }
+  .sub-input {
+    flex: 0 1 260px;
+    border: none;
+    border-bottom: 1px solid var(--border-default);
+    background: none;
+    outline: none;
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    color: var(--text-primary);
+    padding: 4px 2px;
+  }
+  .sub-input:focus {
+    border-bottom-color: var(--text-primary);
+  }
+  .sub-signature {
+    flex: 0 1 420px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    resize: vertical;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    background: none;
   }
   .copyright {
     text-align: center;
@@ -515,18 +575,5 @@
     color: var(--text-tertiary);
     opacity: 0.6;
     padding-top: 8px;
-  }
-  .signature-wrap textarea {
-    width: 100%;
-    box-sizing: border-box;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    padding: 12px;
-    resize: vertical;
-    font-family: var(--font-body);
-    font-size: 13.5px;
-    color: var(--text-primary);
-    outline: none;
-    background: none;
   }
 </style>

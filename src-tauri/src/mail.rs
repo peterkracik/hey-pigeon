@@ -145,16 +145,21 @@ pub async fn sync_now(
     Ok(n)
 }
 
-/// Change an account's color (predefined palette only).
+/// Update per-account settings: display name, color (predefined palette),
+/// signature. Omitted fields stay unchanged.
 #[tauri::command]
-pub async fn set_account_color(
+pub async fn update_account(
     app: AppHandle,
     state: State<'_, MailState>,
     account_id: AccountId,
-    color: String,
+    display_name: Option<String>,
+    color: Option<String>,
+    signature: Option<String>,
 ) -> Result<(), String> {
-    if !ACCOUNT_COLORS.contains(&color.as_str()) {
-        return Err(format!("unknown color {color}"));
+    if let Some(c) = &color {
+        if !ACCOUNT_COLORS.contains(&c.as_str()) {
+            return Err(format!("unknown color {c}"));
+        }
     }
     let mut account = state
         .store
@@ -163,7 +168,18 @@ pub async fn set_account_color(
         .into_iter()
         .find(|a| a.id == account_id)
         .ok_or_else(|| format!("unknown account {account_id}"))?;
-    account.color = color;
+    if let Some(n) = display_name {
+        let n = n.trim().to_string();
+        if !n.is_empty() {
+            account.display_name = n;
+        }
+    }
+    if let Some(c) = color {
+        account.color = c;
+    }
+    if let Some(s) = signature {
+        account.signature = s;
+    }
     state.store.upsert_account(&account).map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
     Ok(())
@@ -240,6 +256,7 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
             color,
             history_id: None,
             avatar_url,
+            signature: String::new(),
         })
         .map_err(estr)?;
     // Real mail replaces the dev fake account.
@@ -309,6 +326,7 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 color: "sky".to_string(),
                 history_id: None,
                 avatar_url: None,
+                signature: String::new(),
             })?;
             (
                 Backend::Fake(FakeProvider::with_sample_data(FAKE_ACCOUNT_ID, 40, 15)),

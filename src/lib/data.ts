@@ -8,6 +8,8 @@ export interface Account {
   tag: string;
   /** Provider profile photo (live mode). */
   avatarUrl?: string;
+  /** Appended to composed mail from this account. */
+  signature?: string;
 }
 
 export interface LabelDef {
@@ -42,6 +44,8 @@ export interface Email {
   from: string;
   /** Bare address of the latest sender (live mode) — avatar lookups. */
   fromAddr?: string;
+  /** Epoch ms of the newest message (live mode) — date grouping. */
+  lastMsgAt?: number;
   subject: string;
   snippet: string;
   time: string;

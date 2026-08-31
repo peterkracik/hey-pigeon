@@ -60,6 +60,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE threads ADD COLUMN last_from_addr TEXT NOT NULL DEFAULT '';",
     // v3 — account profile photo (Google userinfo picture).
     "ALTER TABLE accounts ADD COLUMN avatar_url TEXT;",
+    // v4 — per-account signature.
+    "ALTER TABLE accounts ADD COLUMN signature TEXT NOT NULL DEFAULT '';",
 ];
 
 pub struct SqliteStore {
@@ -136,12 +138,13 @@ impl Store for SqliteStore {
     fn upsert_account(&self, a: &Account) -> Result<(), StoreError> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO accounts (id, email, display_name, color, history_id, avatar_url)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO accounts (id, email, display_name, color, history_id, avatar_url, signature)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
                    email = excluded.email, display_name = excluded.display_name,
-                   color = excluded.color, avatar_url = excluded.avatar_url",
-                params![a.id, a.email, a.display_name, a.color, a.history_id, a.avatar_url],
+                   color = excluded.color, avatar_url = excluded.avatar_url,
+                   signature = excluded.signature",
+                params![a.id, a.email, a.display_name, a.color, a.history_id, a.avatar_url, a.signature],
             )
             .map(|_| ())
         })
@@ -150,7 +153,7 @@ impl Store for SqliteStore {
     fn list_accounts(&self) -> Result<Vec<Account>, StoreError> {
         self.with(|c| {
             let mut stmt =
-                c.prepare("SELECT id, email, display_name, color, history_id, avatar_url FROM accounts ORDER BY id")?;
+                c.prepare("SELECT id, email, display_name, color, history_id, avatar_url, signature FROM accounts ORDER BY id")?;
             let rows = stmt.query_map([], |r| {
                 Ok(Account {
                     id: r.get(0)?,
@@ -159,6 +162,7 @@ impl Store for SqliteStore {
                     color: r.get(3)?,
                     history_id: r.get(4)?,
                     avatar_url: r.get(5)?,
+                    signature: r.get(6)?,
                 })
             })?;
             rows.collect()

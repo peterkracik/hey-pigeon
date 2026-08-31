@@ -37,6 +37,7 @@
       label: a.display_name,
       tag: a.color,
       avatarUrl: a.avatar_url ?? undefined,
+      signature: a.signature,
     }));
     // Preserve already-loaded bodies + local flags across refreshes.
     const prev = new Map(emailsData.map((e) => [e.id, e]));
@@ -139,9 +140,9 @@
       .catch((e) => console.error("send failed", e));
   }
 
-  function setAccountColor(id: string, color: string) {
+  function updateAccount(id: string, fields: { displayName?: string; color?: string; signature?: string }) {
     if (!ipc.isTauri) return;
-    ipc.setAccountColor(id, color).catch((e) => console.error("set color failed", e));
+    ipc.updateAccount(id, fields).catch((e) => console.error("update account failed", e));
   }
 
   function removeAccount(id: string) {
@@ -378,7 +379,7 @@
             onPinListChange={(v) => (pinListEnabled = v)}
             onAddAccount={addAccount}
             onRemoveAccount={removeAccount}
-            onSetAccountColor={setAccountColor}
+            onUpdateAccount={updateAccount}
           />
         {:else if threadOpen}
           <ThreadView
@@ -435,7 +436,7 @@
         </div>
         <div class="compose-fs-scroll">
           <div class="compose-fs-column">
-            <Composer onClose={closeCompose} onSend={sendCompose} />
+            <Composer onClose={closeCompose} onSend={sendCompose} signature={liveAccounts[0]?.signature} />
           </div>
         </div>
       </div>
@@ -463,7 +464,7 @@
           </div>
           <div class="compose-body">
             <div class="compose-body-inner">
-              <Composer onClose={closeCompose} onSend={sendCompose} />
+              <Composer onClose={closeCompose} onSend={sendCompose} signature={liveAccounts[0]?.signature} />
             </div>
           </div>
         </div>

@@ -20,6 +20,9 @@ pub struct Account {
     /// Profile photo URL (Google userinfo), when the provider offers one.
     #[serde(default)]
     pub avatar_url: Option<String>,
+    /// Appended to composed mail from this account.
+    #[serde(default)]
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

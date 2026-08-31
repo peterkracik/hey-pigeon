@@ -15,6 +15,7 @@ pub fn sample_account(id: &str) -> Account {
         color: "sky".to_string(),
         history_id: None,
         avatar_url: None,
+        signature: String::new(),
     }
 }
 

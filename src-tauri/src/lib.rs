@@ -23,7 +23,7 @@ pub fn run() {
       mail::sync_now,
       mail::start_gmail_oauth,
       mail::lookup_avatar,
-      mail::set_account_color,
+      mail::update_account,
       mail::remove_account,
     ])
     .run(tauri::generate_context!())

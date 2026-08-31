@@ -19,9 +19,11 @@
   let {
     onClose,
     onSend,
+    signature,
   }: {
     onClose: () => void;
     onSend: (data: ComposeData) => void;
+    signature?: string;
   } = $props();
 
   let sent = $state(false);
@@ -30,7 +32,9 @@
   let ccChips: Chip[] = $state([]);
   let bccChips: Chip[] = $state([]);
   let subject = $state("");
-  let body = $state("");
+  // Prefill once at mount — the user owns the body afterwards.
+  // svelte-ignore state_referenced_locally
+  let body = $state(signature ? `\n\n${signature}` : "");
   let attachments: string[] = $state([]);
   let showFormat = $state(false);
   let selPos: { top: number; left: number } | null = $state(null);

@@ -10,6 +10,7 @@ export interface BackendAccount {
   color: string;
   history_id: string | null;
   avatar_url: string | null;
+  signature: string;
 }
 
 export interface BackendThread {
@@ -82,8 +83,10 @@ export const syncNow = (accountId: string) =>
 /** Runs the browser consent flow; resolves with the connected email address. */
 export const startGmailOauth = () => invoke<string>("start_gmail_oauth");
 
-export const setAccountColor = (accountId: string, color: string) =>
-  invoke<void>("set_account_color", { accountId, color });
+export const updateAccount = (
+  accountId: string,
+  fields: { displayName?: string; color?: string; signature?: string },
+) => invoke<void>("update_account", { accountId, ...fields });
 export const removeAccount = (accountId: string) =>
   invoke<void>("remove_account", { accountId });
 
@@ -127,15 +130,12 @@ function fmtTime(epochMs: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+/** HH:MM DD/MMM/YYYY, e.g. "19:45 31/Aug/2026". */
 function fmtFull(epochMs: number): string {
-  return new Date(epochMs).toLocaleDateString([], {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const d = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const mon = d.toLocaleDateString("en", { month: "short" });
+  return `${pad(d.getHours())}:${pad(d.getMinutes())} ${pad(d.getDate())}/${mon}/${d.getFullYear()}`;
 }
 
 export function threadToEmail(t: BackendThread): Email {
@@ -150,6 +150,7 @@ export function threadToEmail(t: BackendThread): Email {
     fullDate: fmtFull(t.last_msg_at),
     unread: !t.is_read,
     fromAddr: t.last_from_addr || undefined,
+    lastMsgAt: t.last_msg_at,
   };
 }
 

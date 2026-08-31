@@ -3,6 +3,7 @@
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
   import InlineReply from "./InlineReply.svelte";
+  import HtmlEmailFrame from "./HtmlEmailFrame.svelte";
   import { EMAIL_ACTIONS, nameInitials, type Email } from "./data";
 
   let {
@@ -45,12 +46,12 @@
       .filter((a): a is NonNullable<typeof a> => Boolean(a)),
   );
 
-  function previewBody(e: Email): string {
-    if (e.html) return e.snippet;
+  // Preview renders the SAME content as the full thread view: the latest
+  // message, as HTML when it is HTML, as text otherwise.
+  function previewContent(e: Email): { html: boolean; body: string } {
     const last = e.thread?.[e.thread.length - 1];
-    // HTML bodies must not render as raw source in the text preview — use the snippet.
-    if (last?.html) return e.snippet;
-    return last?.body || e.body || e.snippet;
+    if (last) return { html: Boolean(last.html), body: last.body };
+    return { html: Boolean(e.html), body: e.body || e.snippet };
   }
 
   function selectedDate(e: Email): string {
@@ -129,7 +130,11 @@
           </div>
           {#if selectedId === e.id}
             <div class="preview">
-              <p class="preview-body">{previewBody(e)}</p>
+              {#if previewContent(e).html}
+                <HtmlEmailFrame html={previewContent(e).body} />
+              {:else}
+                <p class="preview-body">{previewContent(e).body}</p>
+              {/if}
               <div class="preview-actions">
                 <div class="reply-btns">
                   <Tooltip label="Reply" side="top">

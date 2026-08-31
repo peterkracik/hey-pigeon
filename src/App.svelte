@@ -37,7 +37,13 @@
       label: a.display_name,
       tag: a.color,
     }));
-    emailsData = threads.map(ipc.threadToEmail);
+    // Preserve already-loaded bodies + local flags across refreshes.
+    const prev = new Map(emailsData.map((e) => [e.id, e]));
+    emailsData = threads.map((t) => {
+      const mapped = ipc.threadToEmail(t);
+      const old = prev.get(t.id);
+      return old?.thread ? { ...mapped, thread: old.thread } : mapped;
+    });
     if (liveAccounts.length && !liveAccounts.some((a) => a.id === activeAccountId)) {
       activeAccountId = liveAccounts[0].id;
     }
@@ -102,9 +108,9 @@
     }
   }
 
-  async function openThread(id: string) {
-    selectedId = id;
-    threadOpen = true;
+  // Fetch bodies + mark read; used by both row-select (preview) and full open,
+  // so both always show the same content.
+  async function loadBodies(id: string) {
     if (!ipc.isTauri) return;
     const em = emailsData.find((e) => e.id === id);
     if (!em || em.thread) return;
@@ -113,7 +119,7 @@
       if (res) {
         const myEmail = accounts.find((a) => a.id === em.accountId)?.email ?? "";
         const msgs = ipc.messagesToThreadMsgs(res.messages, myEmail);
-        emailsData = emailsData.map((e) => (e.id === id ? { ...e, thread: msgs } : e));
+        emailsData = emailsData.map((e) => (e.id === id ? { ...e, thread: msgs, unread: false } : e));
         if (!res.thread.is_read) {
           ipc.mutate(em.accountId, { kind: "mark_read", thread_id: id, read: true }).catch(() => {});
         }
@@ -121,6 +127,17 @@
     } catch (e) {
       console.error("getThread failed", e);
     }
+  }
+
+  function selectEmail(id: string | null) {
+    selectedId = id;
+    if (id) loadBodies(id);
+  }
+
+  function openThread(id: string) {
+    selectedId = id;
+    threadOpen = true;
+    loadBodies(id);
   }
 
   function selectFolder(f: string) {
@@ -324,7 +341,7 @@
           <InboxList
             {emails}
             {selectedId}
-            onSelect={(id) => (selectedId = id)}
+            onSelect={selectEmail}
             onOpen={openThread}
             onAction={onEmailAction}
             {hoverActions}

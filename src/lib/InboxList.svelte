@@ -225,8 +225,8 @@
   .group-label {
     padding: 18px 0 8px;
     font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--accent-highlight);
+    font-size: 10px;
+    color: var(--text-tertiary);
     font-weight: 600;
   }
   .selected-card {

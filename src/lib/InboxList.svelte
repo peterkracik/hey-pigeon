@@ -233,7 +233,7 @@
     margin: 0 -16px 8px;
     background: var(--surface-card);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);
     border: 1px solid var(--border-subtle);
     overflow: hidden;
   }
@@ -258,7 +258,7 @@
   }
   .row:hover {
     background: var(--surface-card);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-sm);
     border-color: var(--border-subtle);
   }
   .row.is-selected {

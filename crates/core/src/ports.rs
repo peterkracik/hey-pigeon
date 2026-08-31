@@ -43,6 +43,14 @@ pub trait MailProvider {
         page_token: Option<String>,
     ) -> impl std::future::Future<Output = Result<ThreadPage, MailError>> + Send;
 
+    /// Full messages (with bodies) for one thread — fetched lazily when the
+    /// user opens a thread whose bodies are not local yet.
+    fn fetch_bodies(
+        &self,
+        account_id: &AccountId,
+        thread_id: &ThreadId,
+    ) -> impl std::future::Future<Output = Result<Vec<Message>, MailError>> + Send;
+
     /// Apply one local mutation remotely (used by the outbox drain).
     fn apply(
         &self,

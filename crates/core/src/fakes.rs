@@ -257,6 +257,19 @@ impl MailProvider for FakeProvider {
         })
     }
 
+    async fn fetch_bodies(
+        &self,
+        _account_id: &AccountId,
+        thread_id: &ThreadId,
+    ) -> Result<Vec<Message>, MailError> {
+        Ok(self
+            .threads
+            .iter()
+            .find(|(t, _)| &t.id == thread_id)
+            .map(|(_, msgs)| msgs.clone())
+            .unwrap_or_default())
+    }
+
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
         if *self.fail_applies.lock().unwrap() {
             return Err(MailError::Network("fake failure".to_string()));

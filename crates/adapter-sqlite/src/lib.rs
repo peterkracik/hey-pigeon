@@ -160,6 +160,18 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    /// Remove an account and everything belonging to it (used when the dev
+    /// fake account is replaced by a real one).
+    pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
+            c.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
+            c.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
+            c.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
+            Ok(())
+        })
+    }
+
     fn upsert_thread(&self, t: &Thread) -> Result<(), StoreError> {
         self.with(|c| {
             c.execute(

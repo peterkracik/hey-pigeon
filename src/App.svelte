@@ -9,7 +9,9 @@
   import IconButton from "./lib/ds/IconButton.svelte";
   import Tooltip from "./lib/ds/Tooltip.svelte";
   import Icon from "./lib/ds/Icon.svelte";
+  import Toast from "./lib/ds/Toast.svelte";
   import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type ThreadMsg } from "./lib/data";
+  import { toasts, toast, dismissToast } from "./lib/toast.svelte";
   import * as ipc from "./lib/ipc";
 
   let sidebarOpen = $state(false);
@@ -101,7 +103,10 @@
         action === "done"
           ? ({ kind: "archive", thread_id: id } as const)
           : ({ kind: "trash", thread_id: id } as const);
-      ipc.mutate(em.accountId, mutation).catch((e) => console.error("mutate failed", e));
+      ipc.mutate(em.accountId, mutation).catch((e) => {
+        console.error("mutate failed", e);
+        toast("danger", action === "done" ? "Could not archive" : "Could not delete", String(e));
+      });
       return;
     }
     if (action === "pin") emailsData = emailsData.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e));
@@ -115,8 +120,10 @@
     // a mock account id would sit in the outbox failing forever.
     if (!liveAccounts.some((a) => a.id === data.accountId)) {
       console.error("compose account not connected", data.accountId);
+      toast("danger", "Could not send", "Account is not connected yet");
       return;
     }
+    const n = data.to.length + data.cc.length + data.bcc.length;
     ipc
       .mutate(data.accountId, {
         kind: "send",
@@ -127,7 +134,11 @@
         body_text: data.body,
         reply_to_thread: null,
       })
-      .catch((e) => console.error("send failed", e));
+      .then(() => toast("success", "Message sent", n === 1 ? `To ${data.to[0]}` : `Delivered to ${n} recipients`))
+      .catch((e) => {
+        console.error("send failed", e);
+        toast("danger", "Could not send", String(e));
+      });
   }
 
   function sendReply(em: Email, msg: ThreadMsg, body: string) {
@@ -139,6 +150,7 @@
       : (msg.fromAddr ?? "");
     if (!to) {
       console.error("no reply address available");
+      toast("danger", "Could not reply", "No reply address available");
       return;
     }
     const subject = /^re:/i.test(em.subject) ? em.subject : `Re: ${em.subject}`;
@@ -152,17 +164,27 @@
         body_text: body,
         reply_to_thread: em.id,
       })
-      .catch((e) => console.error("send failed", e));
+      .then(() => toast("success", "Reply sent", `To ${to}`))
+      .catch((e) => {
+        console.error("send failed", e);
+        toast("danger", "Could not send reply", String(e));
+      });
   }
 
   function updateAccount(id: string, fields: { displayName?: string; color?: string; signature?: string }) {
     if (!ipc.isTauri) return;
-    ipc.updateAccount(id, fields).catch((e) => console.error("update account failed", e));
+    ipc.updateAccount(id, fields).catch((e) => {
+      console.error("update account failed", e);
+      toast("danger", "Could not update account", String(e));
+    });
   }
 
   function removeAccount(id: string) {
     if (!ipc.isTauri) return;
-    ipc.removeAccount(id).catch((e) => console.error("remove failed", e));
+    ipc.removeAccount(id).catch((e) => {
+      console.error("remove failed", e);
+      toast("danger", "Could not remove account", String(e));
+    });
   }
 
   async function addAccount() {
@@ -171,8 +193,10 @@
       const email = await ipc.startGmailOauth();
       console.info("connected", email);
       await refreshLive();
+      toast("success", "Account connected", email);
     } catch (e) {
-      alert(String(e));
+      // alert() is a no-op in WKWebView — surface in-UI.
+      toast("danger", "Could not connect account", String(e));
     }
   }
 
@@ -512,6 +536,14 @@
       </div>
     {/if}
   {/if}
+
+  {#if toasts.length}
+    <div class="toast-stack">
+      {#each toasts as t (t.id)}
+        <Toast tone={t.tone} title={t.title} description={t.description} onClose={() => dismissToast(t.id)} />
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -709,5 +741,14 @@
     flex-direction: column;
     flex: 1;
     min-height: 100%;
+  }
+  .toast-stack {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 200;
   }
 </style>

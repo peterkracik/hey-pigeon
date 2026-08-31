@@ -55,14 +55,16 @@
     // list_threads page limit) must still feed the calendar view.
     const inboxIds = new Set(threads.map((t) => t.id));
     const extras = scheduled.filter((t) => !inboxIds.has(t.id));
-    emailsData = [...threads, ...extras].map((t) => {
-      const mapped = ipc.threadToEmail(t);
-      // Merged extras that are no longer in the inbox must not leak into the
-      // inbox folder view.
-      if (!inboxIds.has(t.id) && (!t.is_inbox || t.is_archived)) mapped.folder = "archive";
-      const old = prev.get(t.id);
-      return old?.thread ? { ...mapped, thread: old.thread } : mapped;
-    });
+    emailsData = [...threads, ...extras]
+      .filter((t) => !pendingUndo.has(t.id))
+      .map((t) => {
+        const mapped = ipc.threadToEmail(t);
+        // Merged extras that are no longer in the inbox must not leak into the
+        // inbox folder view.
+        if (!inboxIds.has(t.id) && (!t.is_inbox || t.is_archived)) mapped.folder = "archive";
+        const old = prev.get(t.id);
+        return old?.thread ? { ...mapped, thread: old.thread } : mapped;
+      });
     // Search hits merged from outside the inbox (archived etc.) are not in
     // list_threads; while one is selected/open, dropping it would blank the
     // open ThreadView (mark_read fires threads_updated right after opening).
@@ -127,6 +129,10 @@
   // ponytail: quitting the app inside the undo window silently drops the
   // pending action (the mutation never reaches the backend) — accepted.
   const UNDO_MS = 5000;
+  // Thread ids with a pending deferred archive/trash. refreshLive must not
+  // re-add these rows (the backend hasn't mutated yet) or they would flicker
+  // back in during routine sync inside the undo window.
+  const pendingUndo = new Set<string>();
 
   function onEmailAction(id: string, action: string) {
     const em = emailsData.find((e) => e.id === id);
@@ -136,7 +142,11 @@
       const index = emailsData.indexOf(em);
       emailsData = emailsData.filter((e) => e.id !== id);
       if (selectedId === id) selectedId = null;
+      pendingUndo.add(id);
+      let fired = false;
       const timer = setTimeout(() => {
+        fired = true;
+        pendingUndo.delete(id);
         if (!ipc.isTauri) return;
         const mutation =
           action === "done"
@@ -151,7 +161,11 @@
         actionLabel: "Undo",
         duration: UNDO_MS,
         onAction: () => {
+          // The mutate timer and toast auto-dismiss share the same deadline;
+          // never undo an action that already committed.
+          if (fired) return;
           clearTimeout(timer);
+          pendingUndo.delete(id);
           // A refresh may have re-added the row already (backend never mutated).
           if (emailsData.some((e) => e.id === id)) return;
           const i = Math.min(index, emailsData.length);
@@ -222,7 +236,9 @@
     }
     const n = data.to.length + data.cc.length + data.bcc.length;
     const desc = n === 1 ? `To ${data.to[0] ?? data.cc[0] ?? data.bcc[0]}` : `To ${n} recipients`;
+    let fired = false;
     const timer = setTimeout(() => {
+      fired = true;
       if (!ipc.isTauri) {
         toast("success", "Message sent", desc);
         return;
@@ -237,7 +253,7 @@
           body_text: data.body,
           reply_to_thread: null,
         })
-        .then(() => toast("success", "Message sent", n === 1 ? `To ${data.to[0]}` : `Delivered to ${n} recipients`))
+        .then(() => toast("success", "Message sent", desc))
         .catch((e) => {
           console.error("send failed", e);
           toast("danger", "Could not send", String(e));
@@ -247,6 +263,8 @@
       actionLabel: "Undo",
       duration: UNDO_MS,
       onAction: () => {
+        // A committed send must not reopen the composer (duplicate-send bait).
+        if (fired) return;
         clearTimeout(timer);
         // Reopen the composer prefilled with the cancelled draft.
         composeDraft = { ...data };
@@ -268,7 +286,9 @@
       return;
     }
     const subject = /^re:/i.test(em.subject) ? em.subject : `Re: ${em.subject}`;
+    let fired = false;
     const timer = setTimeout(() => {
+      fired = true;
       if (!ipc.isTauri) {
         toast("success", "Reply sent", to ? `To ${to}` : em.from);
         return;
@@ -293,12 +313,23 @@
       actionLabel: "Undo",
       duration: UNDO_MS,
       onAction: () => {
+        if (fired) return;
         clearTimeout(timer);
         // ponytail: restoring the reply text into the inline reply box would
         // require plumbing draft state through ThreadView/InboxList/InlineReply;
         // best-effort fallback for reply only — copy the body to the clipboard.
-        navigator.clipboard?.writeText(body).catch(() => {});
-        toast("info", "Reply cancelled", "Your reply text was copied to the clipboard");
+        // The clipboard is the only surviving copy — only claim success once
+        // the write resolved; otherwise be honest that the text is gone.
+        const copyFailed = () =>
+          toast("danger", "Reply cancelled", "Could not copy your reply text to the clipboard");
+        if (navigator.clipboard) {
+          navigator.clipboard
+            .writeText(body)
+            .then(() => toast("info", "Reply cancelled", "Your reply text was copied to the clipboard"))
+            .catch(copyFailed);
+        } else {
+          copyFailed();
+        }
       },
     });
   }

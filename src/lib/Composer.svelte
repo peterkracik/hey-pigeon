@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import IconButton from "./ds/IconButton.svelte";
   import Icon from "./ds/Icon.svelte";
   import Select from "./ds/Select.svelte";
@@ -38,6 +39,11 @@
   const chipsFrom = (addrs: string[]): Chip[] => addrs.map((email) => ({ name: email, email }));
 
   let sent = $state(false);
+  // The "Message sent" flash timer calls onClose(); if the instance is
+  // destroyed first (send-undo remounts via {#key}), a stale fire would
+  // close the restored composer and wipe the draft — cancel on destroy.
+  let sentFlashTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(sentFlashTimer));
   // Draft restore intentionally captures only the initial value — the user
   // owns the fields after mount ({#key} remounts on a new restored draft).
   // svelte-ignore state_referenced_locally
@@ -117,7 +123,7 @@
       body,
     });
     sent = true;
-    setTimeout(() => {
+    sentFlashTimer = setTimeout(() => {
       sent = false;
       onClose();
     }, 700);

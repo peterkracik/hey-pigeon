@@ -320,25 +320,30 @@
     pointer-events: none;
     animation: row-out 240ms ease-in 400ms forwards;
   }
+  /* One continuous line across the whole row. */
+  .row.completing::after {
+    content: "";
+    position: absolute;
+    left: 44px;
+    right: 16px;
+    top: 50%;
+    height: 1.5px;
+    border-radius: 1px;
+    background: var(--text-tertiary);
+    transform: scaleX(0);
+    transform-origin: left center;
+    animation: strike 300ms ease-out forwards;
+  }
   .completing .from,
   .completing .subject,
   .completing .snippet {
-    background-image: linear-gradient(currentColor, currentColor);
-    background-repeat: no-repeat;
-    background-position: 0 55%;
-    background-size: 100% 1.5px;
     color: var(--text-tertiary);
-    transition:
-      background-size 300ms ease-out,
-      color 300ms;
+    transition: color 300ms;
   }
-  .row:not(.completing) .from,
-  .row:not(.completing) .subject,
-  .row:not(.completing) .snippet {
-    background-image: linear-gradient(currentColor, currentColor);
-    background-repeat: no-repeat;
-    background-position: 0 55%;
-    background-size: 0% 1.5px;
+  @keyframes strike {
+    to {
+      transform: scaleX(1);
+    }
   }
   @keyframes row-out {
     to {

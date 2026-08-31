@@ -69,7 +69,13 @@ export interface EmailAction {
 }
 
 /** Predefined account colors — mirrors ACCOUNT_COLORS in the Rust backend. */
-export const ACCOUNT_COLOR_TAGS = ["sky", "lavender", "mint", "amber", "coral"] as const;
+export const ACCOUNT_COLOR_TAGS = [
+  "sky",
+  "lavender",
+  "mint",
+  "amber",
+  "coral",
+] as const;
 
 export const ACCOUNTS: Account[] = [
   { id: "a1", email: "peter@heypigeon.app", label: "Peter", tag: "sky" },

@@ -208,17 +208,37 @@ impl GmailProvider {
         let body = resp.text().await.unwrap_or_default();
         Err(match status.as_u16() {
             401 => MailError::AuthExpired,
-            // Gmail 404s an expired startHistoryId (and vanished resources) —
-            // callers treat it as "resync from scratch".
-            404 => MailError::HistoryExpired,
             429 => MailError::RateLimited { retry_after_secs: retry_after },
+            // 404 stays a plain provider error — `HistoryExpired` is scoped to
+            // the history checkpoint (ports.rs); `list_history` maps it there.
             _ => MailError::Provider(format!("{status}: {body}")),
         })
     }
 }
 
+/// Did `check` see an HTTP 404? (`Display` for a 404 status starts with
+/// "404", so the Provider payload does too.)
+fn is_not_found(e: &MailError) -> bool {
+    matches!(e, MailError::Provider(s) if s.starts_with("404"))
+}
+
 fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+/// Next delta checkpoint after applying a history page: the newest history
+/// record actually returned. The top-level `historyId` is the mailbox's
+/// *current* id, which can run ahead of records that haven't surfaced yet —
+/// checkpointing it would skip those records; use it only for an empty feed.
+fn history_checkpoint(list: &WireHistoryList, start_history_id: &str) -> String {
+    list.history
+        .iter()
+        .filter_map(|h| h.id.as_ref().and_then(|s| s.parse::<u64>().ok()))
+        .max()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| {
+            list.history_id.clone().unwrap_or_else(|| start_history_id.to_string())
+        })
 }
 
 // ---------------------------------------------------------------- wire types
@@ -276,6 +296,8 @@ struct WireHistoryList {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireHistory {
+    /// The history record's own id — the delta checkpoint source.
+    id: Option<String>,
     #[serde(default)]
     messages_added: Vec<WireHistoryMessage>,
     #[serde(default)]
@@ -595,7 +617,12 @@ impl MailProvider for GmailProvider {
         if let Some(t) = &page_token {
             url.query_pairs_mut().append_pair("pageToken", t);
         }
-        let list: WireHistoryList = self.get_json(account_id, url.as_str()).await?;
+        // Gmail 404s an expired/too-old startHistoryId — the one place a 404
+        // means "resync from scratch".
+        let list: WireHistoryList =
+            self.get_json(account_id, url.as_str()).await.map_err(|e| {
+                if is_not_found(&e) { MailError::HistoryExpired } else { e }
+            })?;
 
         let mut changes = Vec::new();
         let mut added_threads: Vec<String> = Vec::new();
@@ -639,7 +666,7 @@ impl MailProvider for GmailProvider {
                     match self.get_json::<WireThread>(account_id, &url).await {
                         Ok(wire) => Ok(Some(to_thread(account_id, &wire))),
                         // 404: thread vanished again since the feed entry.
-                        Err(MailError::HistoryExpired) => Ok(None),
+                        Err(e) if is_not_found(&e) => Ok(None),
                         Err(e) => Err(e),
                     }
                 })
@@ -651,12 +678,11 @@ impl MailProvider for GmailProvider {
             }
         }
 
+        let latest_history_id = history_checkpoint(&list, start_history_id);
         Ok(HistoryPage {
             changes,
             next_page_token: list.next_page_token,
-            latest_history_id: list
-                .history_id
-                .unwrap_or_else(|| start_history_id.to_string()),
+            latest_history_id,
         })
     }
 
@@ -757,6 +783,37 @@ mod tests {
         assert_eq!(bare_addr("Priya Nair <p@acme.co>"), "p@acme.co");
         assert_eq!(bare_addr("p@acme.co"), "p@acme.co");
         assert_eq!(bare_addr("<p@acme.co>"), "p@acme.co");
+    }
+
+    #[test]
+    fn wire_history_list_maps_fields() {
+        let json = serde_json::json!({
+            "history": [
+                {"id": "1001", "messagesAdded": [{"message": {"id": "m1", "threadId": "t1"}}]},
+                {"id": "1002", "labelsRemoved": [
+                    {"message": {"id": "m1", "threadId": "t1"}, "labelIds": ["INBOX"]}
+                ]}
+            ],
+            "nextPageToken": "tok",
+            "historyId": "1010"
+        });
+        let list: WireHistoryList = serde_json::from_value(json).unwrap();
+        assert_eq!(list.history.len(), 2);
+        assert_eq!(list.history[0].id.as_deref(), Some("1001"));
+        assert_eq!(list.history[0].messages_added[0].message.thread_id, "t1");
+        assert_eq!(list.history[1].labels_removed[0].label_ids, vec!["INBOX"]);
+        assert_eq!(list.next_page_token.as_deref(), Some("tok"));
+        // checkpoint = newest record id, NOT the (possibly ahead) top-level id
+        assert_eq!(history_checkpoint(&list, "999"), "1002");
+    }
+
+    #[test]
+    fn history_checkpoint_empty_feed_uses_top_level_id() {
+        let empty: WireHistoryList =
+            serde_json::from_value(serde_json::json!({ "historyId": "1010" })).unwrap();
+        assert_eq!(history_checkpoint(&empty, "999"), "1010");
+        let none: WireHistoryList = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(history_checkpoint(&none, "999"), "999");
     }
 
     #[test]

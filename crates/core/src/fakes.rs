@@ -69,7 +69,18 @@ impl Store for MemStore {
 
     fn upsert_message(&self, message: &Message) -> Result<(), StoreError> {
         let mut g = self.inner.lock().unwrap();
-        g.messages.insert(message.id.clone(), message.clone());
+        let mut m = message.clone();
+        // Match SQLite: a metadata-tier re-upsert must not wipe lazily
+        // fetched bodies.
+        if let Some(old) = g.messages.get(&m.id) {
+            if m.body_html.is_none() {
+                m.body_html = old.body_html.clone();
+            }
+            if m.body_text.is_none() {
+                m.body_text = old.body_text.clone();
+            }
+        }
+        g.messages.insert(m.id.clone(), m);
         Ok(())
     }
 

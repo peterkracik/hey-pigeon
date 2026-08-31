@@ -15,8 +15,8 @@ use tokio::sync::RwLock;
 
 const FAKE_ACCOUNT_ID: &str = "fake";
 const BACKFILL_DAYS: u32 = 30;
-/// Background delta-sync poll cadence (DESIGN.md: polling tier).
-const DELTA_POLL_SECS: u64 = 60;
+/// Background delta-sync poll cadence (DESIGN.md: polling tier, ~30s).
+const DELTA_POLL_SECS: u64 = 30;
 /// Focus-triggered delta syncs at most this often.
 const FOCUS_SYNC_MIN_SECS: u64 = 5;
 const THREADS_UPDATED: &str = "threads_updated";
@@ -44,6 +44,8 @@ pub struct MailState {
     pub backend: RwLock<Backend>,
     /// Debounce for focus-triggered delta syncs.
     last_focus_sync: std::sync::Mutex<std::time::Instant>,
+    /// Accounts with a delta sync in flight (focus + interval can overlap).
+    syncing: std::sync::Mutex<std::collections::HashSet<AccountId>>,
 }
 
 #[derive(Serialize)]
@@ -270,18 +272,26 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
 
     *state.backend.write().await = Backend::Gmail(provider);
     let _ = app.emit(THREADS_UPDATED, ());
-    spawn_backfill(app.clone(), email.clone());
+    spawn_startup_sync(app.clone(), email.clone());
     Ok(email)
 }
 
 // ---------------------------------------------------------------- delta sync
 
 /// One delta sync for one account; returns whether anything changed.
+/// Skips (returns false) when a sync for the account is already in flight —
+/// `update_labels` is read-modify-write, and a duplicate expired-checkpoint
+/// backfill would waste quota.
 async fn delta_account(handle: AppHandle, account_id: AccountId) -> bool {
     let state = handle.state::<MailState>();
-    let backend = state.backend.read().await;
-    let result =
-        with_provider!(&*backend, p => sync::delta_sync(p, &state.store, &account_id, BACKFILL_DAYS).await);
+    if !state.syncing.lock().unwrap().insert(account_id.clone()) {
+        return false;
+    }
+    let result = {
+        let backend = state.backend.read().await;
+        with_provider!(&*backend, p => sync::delta_sync(p, &state.store, &account_id, BACKFILL_DAYS).await)
+    };
+    state.syncing.lock().unwrap().remove(&account_id);
     match result {
         Ok(changed) => changed,
         Err(e) => {
@@ -318,7 +328,9 @@ pub async fn delta_sync_all(handle: &AppHandle) {
 pub fn spawn_delta_loop(handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(DELTA_POLL_SECS));
-        interval.tick().await; // fires immediately — skip, startup backfill just ran
+        // Wake-from-sleep must not fire a burst of back-to-back polls.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await; // fires immediately — skip, startup sync just ran
         loop {
             interval.tick().await;
             delta_sync_all(&handle).await;
@@ -342,18 +354,14 @@ pub fn on_focus(handle: AppHandle) {
 
 // ------------------------------------------------------------------- startup
 
-fn spawn_backfill(handle: AppHandle, account_id: AccountId) {
+/// Startup/connect sync: delta from the stored checkpoint. `delta_sync`
+/// falls back to a full backfill when the checkpoint is missing or expired,
+/// but never resets a valid one — so changes made while the app was closed
+/// (archive/trash on another device) are applied, not discarded.
+fn spawn_startup_sync(handle: AppHandle, account_id: AccountId) {
     tauri::async_runtime::spawn(async move {
-        let state = handle.state::<MailState>();
-        let backend = state.backend.read().await;
-        let result =
-            with_provider!(&*backend, p => sync::backfill(p, &state.store, &account_id, BACKFILL_DAYS).await);
-        match result {
-            Ok(n) => {
-                log::info!("backfill({account_id}): {n} threads");
-                let _ = handle.emit(THREADS_UPDATED, ());
-            }
-            Err(e) => log::error!("backfill({account_id}) failed: {e}"),
+        if delta_account(handle.clone(), account_id).await {
+            let _ = handle.emit(THREADS_UPDATED, ());
         }
     });
 }
@@ -412,10 +420,11 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         secrets,
         backend: RwLock::new(backend),
         last_focus_sync: std::sync::Mutex::new(std::time::Instant::now()),
+        syncing: std::sync::Mutex::new(std::collections::HashSet::new()),
     });
     // Every account syncs independently — one failing must not block another.
     for account_id in sync_accounts {
-        spawn_backfill(app.handle().clone(), account_id);
+        spawn_startup_sync(app.handle().clone(), account_id);
     }
     spawn_delta_loop(app.handle().clone());
     Ok(())

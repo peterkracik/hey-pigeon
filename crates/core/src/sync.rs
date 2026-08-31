@@ -70,7 +70,9 @@ pub async fn delta_sync<M: MailProvider, S: Store>(
     let mut changes = 0usize;
     let mut touched: Vec<ThreadId> = Vec::new();
     let mut page_token: Option<String> = None;
-    let latest; // checkpoint from the final page
+    // Checkpoint = newest history id actually applied; never regresses even
+    // if a trailing page reports nothing newer.
+    let mut latest = start.clone();
     loop {
         let page = match provider.list_history(account_id, &start, page_token.take()).await {
             Ok(p) => p,
@@ -85,12 +87,12 @@ pub async fn delta_sync<M: MailProvider, S: Store>(
             apply_change(store, change, &mut touched)?;
             changes += 1;
         }
+        if newer_history_id(&page.latest_history_id, &latest) {
+            latest = page.latest_history_id.clone();
+        }
         match page.next_page_token {
             Some(t) => page_token = Some(t),
-            None => {
-                latest = page.latest_history_id;
-                break;
-            }
+            None => break,
         }
     }
     // Threads whose messages changed in place need their derived row rebuilt.
@@ -180,9 +182,21 @@ fn refresh_thread<S: Store>(store: &S, thread_id: &ThreadId) -> Result<(), Store
     t.msg_count = live.len() as i64;
     t.is_read = live.iter().all(|m| m.is_read);
     t.is_inbox = live.iter().any(|m| m.label_ids.iter().any(|l| l == "INBOX"));
+    // Archived state is label-derived too: back-in-inbox elsewhere must clear
+    // a local archive, or the thread never reappears in the local inbox.
+    t.is_archived = !t.is_inbox;
     t.from_summary = display_name(&last.from_addr);
     t.last_from_addr = bare_addr(&last.from_addr);
     store.upsert_thread(&t)
+}
+
+/// Gmail history ids are numeric strings; compare numerically when possible
+/// (fake ids like "hist-2" fall back to lexicographic comparison).
+fn newer_history_id(candidate: &str, current: &str) -> bool {
+    match (candidate.parse::<u64>(), current.parse::<u64>()) {
+        (Ok(c), Ok(cur)) => c > cur,
+        _ => candidate > current,
+    }
 }
 
 /// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
@@ -345,6 +359,33 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, a.id);
         assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-4"));
+    }
+
+    #[tokio::test]
+    async fn delta_unarchives_locally_archived_thread() {
+        let (provider, store) = synced_fixture(3).await;
+        let victim = store.list_threads(None, None, 1).unwrap()[0].clone();
+        // Local archive (optimistic apply): is_archived=1, is_inbox=0.
+        store
+            .apply_local(&crate::domain::Mutation::Archive { thread_id: victim.id.clone() })
+            .unwrap();
+        assert!(store.list_threads(None, None, 10).unwrap().iter().all(|t| t.id != victim.id));
+        // Another device moves it back to the inbox.
+        provider.push_history(
+            HistoryChange::LabelsAdded {
+                thread_id: victim.id.clone(),
+                message_id: format!("{}:m0", victim.id),
+                labels: vec!["INBOX".to_string()],
+            },
+            "hist-2",
+        );
+
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+
+        assert!(changed);
+        let t = store.get_thread(&victim.id).unwrap().unwrap();
+        assert!(t.is_inbox && !t.is_archived, "remote un-archive clears local archive");
+        assert!(store.list_threads(None, None, 10).unwrap().iter().any(|t| t.id == victim.id));
     }
 
     #[tokio::test]

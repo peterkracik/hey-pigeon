@@ -215,8 +215,12 @@ impl Store for SqliteStore {
                     body_html, body_text, label_ids, is_read)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
-                   snippet = excluded.snippet, body_html = excluded.body_html,
-                   body_text = excluded.body_text, label_ids = excluded.label_ids,
+                   snippet = excluded.snippet,
+                   -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
+                   -- delta thread refetch) must not wipe them
+                   body_html = COALESCE(excluded.body_html, body_html),
+                   body_text = COALESCE(excluded.body_text, body_text),
+                   label_ids = excluded.label_ids,
                    is_read = excluded.is_read",
                 params![
                     m.id, m.thread_id, m.account_id, m.from_addr, to_addrs, m.date,
@@ -448,6 +452,24 @@ mod tests {
         let (applied, failed) = outbox::drain(&provider, &store, 10).await.unwrap();
         assert_eq!((applied, failed), (1, 0));
         assert!(store.outbox_list(10).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_reupsert_preserves_fetched_bodies() {
+        let store = store();
+        let provider = FakeProvider::with_sample_data("a1", 1, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let t = store.list_threads(None, None, 1).unwrap()[0].clone();
+        let mut m = store.list_messages(&t.id).unwrap()[0].clone();
+        assert!(m.body_text.is_some(), "fixture has a body");
+
+        // Metadata-tier refetch of the same message carries no bodies.
+        m.body_html = None;
+        m.body_text = None;
+        store.upsert_message(&m).unwrap();
+
+        let after = store.list_messages(&t.id).unwrap()[0].clone();
+        assert!(after.body_text.is_some(), "body survives metadata re-upsert");
     }
 
     #[test]

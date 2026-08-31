@@ -104,6 +104,12 @@
 
   function sendCompose(data: { accountId: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }) {
     if (!ipc.isTauri) return;
+    // Before refreshLive resolves, `accounts` is mock data — a send routed to
+    // a mock account id would sit in the outbox failing forever.
+    if (!liveAccounts.some((a) => a.id === data.accountId)) {
+      console.error("compose account not connected", data.accountId);
+      return;
+    }
     ipc
       .mutate(data.accountId, {
         kind: "send",

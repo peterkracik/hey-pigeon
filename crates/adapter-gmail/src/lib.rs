@@ -353,6 +353,35 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
     (thread, messages)
 }
 
+/// RFC 2047 encoded-word for header values; plain ASCII passes through.
+fn encode_header(value: &str) -> String {
+    if value.is_ascii() {
+        value.to_string()
+    } else {
+        format!("=?UTF-8?B?{}?=", base64::engine::general_purpose::STANDARD.encode(value))
+    }
+}
+
+/// Minimal RFC 2822 text/plain message. Gmail fills in From/Date/Message-ID.
+fn build_mime(to: &[String], cc: &[String], bcc: &[String], subject: &str, body: &str) -> String {
+    let mut mime = String::new();
+    mime.push_str(&format!("To: {}\r\n", to.join(", ")));
+    if !cc.is_empty() {
+        mime.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
+    }
+    if !bcc.is_empty() {
+        mime.push_str(&format!("Bcc: {}\r\n", bcc.join(", ")));
+    }
+    mime.push_str(&format!("Subject: {}\r\n", encode_header(subject)));
+    mime.push_str("MIME-Version: 1.0\r\n");
+    mime.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
+    mime.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
+    // base64 body sidesteps line-length and bare-CRLF pitfalls entirely.
+    mime.push_str(&base64::engine::general_purpose::STANDARD.encode(body));
+    mime.push_str("\r\n");
+    mime
+}
+
 // ----------------------------------------------------------------- provider
 
 impl MailProvider for GmailProvider {
@@ -416,6 +445,17 @@ impl MailProvider for GmailProvider {
     }
 
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
+        if let Mutation::Send { to, cc, bcc, subject, body_text, reply_to_thread } = mutation {
+            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(build_mime(to, cc, bcc, subject, body_text));
+            let mut payload = serde_json::json!({ "raw": raw });
+            if let Some(tid) = reply_to_thread {
+                payload["threadId"] = serde_json::json!(tid);
+            }
+            return self
+                .post_json(account_id, &format!("{API}/messages/send"), &payload)
+                .await;
+        }
         let (thread_id, body) = match mutation {
             Mutation::Archive { thread_id } => {
                 (thread_id, serde_json::json!({ "removeLabelIds": ["INBOX"] }))
@@ -433,6 +473,7 @@ impl MailProvider for GmailProvider {
                     )
                     .await;
             }
+            Mutation::Send { .. } => unreachable!("handled above"),
         };
         self.post_json(account_id, &format!("{API}/threads/{thread_id}/modify"), &body)
             .await
@@ -442,6 +483,32 @@ impl MailProvider for GmailProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mime_message_shape() {
+        let mime = build_mime(
+            &["a@x.com".to_string()],
+            &["c@x.com".to_string()],
+            &[],
+            "Héllo",
+            "body text",
+        );
+        assert!(mime.starts_with("To: a@x.com\r\n"));
+        assert!(mime.contains("Cc: c@x.com\r\n"));
+        assert!(!mime.contains("Bcc:"));
+        assert!(mime.contains("Subject: =?UTF-8?B?SMOpbGxv?=\r\n"));
+        assert!(mime.contains("Content-Type: text/plain; charset=UTF-8\r\n"));
+        // body is the last base64 chunk
+        let b64 = mime.rsplit("\r\n\r\n").next().unwrap().trim();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "body text");
+    }
+
+    #[test]
+    fn ascii_subject_not_encoded() {
+        let mime = build_mime(&["a@x.com".to_string()], &[], &[], "Plain subject", "b");
+        assert!(mime.contains("Subject: Plain subject\r\n"));
+    }
 
     #[test]
     fn entities_are_decoded() {

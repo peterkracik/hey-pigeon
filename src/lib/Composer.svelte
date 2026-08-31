@@ -3,16 +3,34 @@
   import Icon from "./ds/Icon.svelte";
   import RecipientField from "./RecipientField.svelte";
 
+  export interface ComposeData {
+    to: string[];
+    cc: string[];
+    bcc: string[];
+    subject: string;
+    body: string;
+  }
+
+  interface Chip {
+    name: string;
+    email: string;
+  }
+
   let {
     onClose,
     onSend,
   }: {
     onClose: () => void;
-    onSend: () => void;
+    onSend: (data: ComposeData) => void;
   } = $props();
 
   let sent = $state(false);
   let showCc = $state(false);
+  let toChips: Chip[] = $state([]);
+  let ccChips: Chip[] = $state([]);
+  let bccChips: Chip[] = $state([]);
+  let subject = $state("");
+  let body = $state("");
   let attachments: string[] = $state([]);
   let showFormat = $state(false);
   let selPos: { top: number; left: number } | null = $state(null);
@@ -45,10 +63,19 @@
   }
 
   function send() {
+    // Optimistic: hand the data over immediately (outbox handles retries),
+    // flash the confirmation, then close.
+    onSend({
+      to: toChips.map((c) => c.email),
+      cc: ccChips.map((c) => c.email),
+      bcc: bccChips.map((c) => c.email),
+      subject,
+      body,
+    });
     sent = true;
     setTimeout(() => {
       sent = false;
-      onSend();
+      onClose();
     }, 700);
   }
 </script>
@@ -68,7 +95,7 @@
 {:else}
   <div class="field-row">
     <span class="field-label">To</span>
-    <RecipientField />
+    <RecipientField bind:chips={toChips} />
     {#if !showCc}
       <button class="cc-toggle" onclick={() => (showCc = true)}>Cc/Bcc</button>
     {/if}
@@ -76,18 +103,18 @@
   {#if showCc}
     <div class="field-row">
       <span class="field-label">Cc</span>
-      <RecipientField />
+      <RecipientField bind:chips={ccChips} />
     </div>
     <div class="field-row">
       <span class="field-label">Bcc</span>
-      <RecipientField />
+      <RecipientField bind:chips={bccChips} />
     </div>
   {/if}
   <div class="field-row bordered">
     <span class="field-label">Subject</span>
-    <input class="subject" />
+    <input class="subject" bind:value={subject} />
   </div>
-  <textarea bind:this={bodyEl} onselect={onBodySelect} placeholder="Write your message..." rows="14"></textarea>
+  <textarea bind:this={bodyEl} bind:value={body} onselect={onBodySelect} placeholder="Write your message..." rows="14"></textarea>
   {#if selPos}
     <div bind:this={selRoot} class="sel-toolbar" style:top="{selPos.top}px" style:left="{selPos.left}px">
       {@render toolbar()}

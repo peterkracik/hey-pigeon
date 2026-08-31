@@ -22,6 +22,8 @@ export interface Attachment {
 export interface ThreadMsg {
   id: string;
   from: string;
+  /** Bare email address for replies (live mode). */
+  fromAddr?: string;
   isMe: boolean;
   date: string;
   fullDate?: string;

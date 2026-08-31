@@ -1,14 +1,16 @@
 <script lang="ts">
   import { CONTACTS } from "./data";
 
-  let { placeholder = "" }: { placeholder?: string } = $props();
-
   interface Chip {
     name: string;
     email: string;
   }
 
-  let chips: Chip[] = $state([]);
+  let {
+    placeholder = "",
+    chips = $bindable([]),
+  }: { placeholder?: string; chips?: Chip[] } = $props();
+
   let value = $state("");
   let open = $state(false);
   let highlight = $state(0);

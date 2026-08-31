@@ -41,7 +41,16 @@ export interface BackendMessage {
 export type BackendMutation =
   | { kind: "archive"; thread_id: string }
   | { kind: "mark_read"; thread_id: string; read: boolean }
-  | { kind: "trash"; thread_id: string };
+  | { kind: "trash"; thread_id: string }
+  | {
+      kind: "send";
+      to: string[];
+      cc: string[];
+      bcc: string[];
+      subject: string;
+      body_text: string;
+      reply_to_thread: string | null;
+    };
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -125,6 +134,7 @@ export function messagesToThreadMsgs(
   return messages.map((m) => ({
     id: m.id,
     from: m.from_addr.replace(/<.*>/, "").trim() || m.from_addr,
+    fromAddr: m.from_addr.match(/<([^>]+)>/)?.[1] ?? m.from_addr,
     isMe: m.from_addr.includes(myEmail),
     date: fmtTime(m.date),
     fullDate: fmtFull(m.date),

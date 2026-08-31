@@ -292,6 +292,8 @@ impl Store for SqliteStore {
                 "UPDATE threads SET is_inbox = 0 WHERE id = ?1".to_string(),
                 thread_id,
             ),
+            // Nothing changes locally for outgoing mail (no Sent view in M1).
+            Mutation::Send { .. } => return Ok(()),
         };
         let n = self.with(|c| c.execute(&sql, params![thread_id]))?;
         if n == 0 {

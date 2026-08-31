@@ -64,12 +64,49 @@ impl std::fmt::Debug for Message {
 }
 
 /// A local, optimistic change queued for the provider (outbox pattern).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Mutation {
     Archive { thread_id: ThreadId },
     MarkRead { thread_id: ThreadId, read: bool },
     Trash { thread_id: ThreadId },
+    /// Outgoing mail. Rides the same outbox: optimistic, retried with backoff.
+    Send {
+        to: Vec<String>,
+        #[serde(default)]
+        cc: Vec<String>,
+        #[serde(default)]
+        bcc: Vec<String>,
+        subject: String,
+        body_text: String,
+        /// Reply threading: provider-side thread to attach the message to.
+        #[serde(default)]
+        reply_to_thread: Option<ThreadId>,
+    },
+}
+
+// Log hygiene: Send carries addresses/subject/body — redact them in Debug.
+impl std::fmt::Debug for Mutation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mutation::Archive { thread_id } => {
+                f.debug_struct("Archive").field("thread_id", thread_id).finish()
+            }
+            Mutation::MarkRead { thread_id, read } => f
+                .debug_struct("MarkRead")
+                .field("thread_id", thread_id)
+                .field("read", read)
+                .finish(),
+            Mutation::Trash { thread_id } => {
+                f.debug_struct("Trash").field("thread_id", thread_id).finish()
+            }
+            Mutation::Send { to, reply_to_thread, .. } => f
+                .debug_struct("Send")
+                .field("recipients", &to.len())
+                .field("reply_to_thread", reply_to_thread)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

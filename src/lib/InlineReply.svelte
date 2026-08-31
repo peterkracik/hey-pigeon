@@ -9,10 +9,11 @@
   }: {
     toName: string;
     onCancel: () => void;
-    onSend: () => void;
+    onSend: (body: string) => void;
   } = $props();
 
   let sent = $state(false);
+  let body = $state("");
   let showFormat = $state(false);
   let selPos: { top: number; left: number } | null = $state(null);
   let aaRoot: HTMLDivElement | undefined = $state();
@@ -44,10 +45,11 @@
   }
 
   function send() {
+    onSend(body);
     sent = true;
     setTimeout(() => {
       sent = false;
-      onSend();
+      onCancel();
     }, 700);
   }
 </script>
@@ -68,7 +70,7 @@
   <div class="reply">
     <div class="to">To: {toName}</div>
     <!-- svelte-ignore a11y_autofocus -->
-    <textarea bind:this={bodyEl} onselect={onBodySelect} autofocus placeholder="Reply to {toName}…" rows="6"
+    <textarea bind:this={bodyEl} bind:value={body} onselect={onBodySelect} autofocus placeholder="Reply to {toName}…" rows="6"
     ></textarea>
     {#if selPos}
       <div bind:this={selRoot} class="sel-toolbar" style:top="{selPos.top}px" style:left="{selPos.left}px">

@@ -9,7 +9,7 @@
   import IconButton from "./lib/ds/IconButton.svelte";
   import Tooltip from "./lib/ds/Tooltip.svelte";
   import Icon from "./lib/ds/Icon.svelte";
-  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email } from "./lib/data";
+  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type ThreadMsg } from "./lib/data";
   import * as ipc from "./lib/ipc";
 
   let sidebarOpen = $state(false);
@@ -95,6 +95,47 @@
     if (action === "pin") emailsData = emailsData.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e));
     else if (action === "done") emailsData = emailsData.map((e) => (e.id === id ? { ...e, done: !e.done } : e));
     else console.log(id, action);
+  }
+
+  function sendCompose(data: { to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }) {
+    if (!ipc.isTauri) return;
+    const accountId = liveAccounts[0]?.id ?? activeAccountId;
+    ipc
+      .mutate(accountId, {
+        kind: "send",
+        to: data.to,
+        cc: data.cc,
+        bcc: data.bcc,
+        subject: data.subject,
+        body_text: data.body,
+        reply_to_thread: null,
+      })
+      .catch((e) => console.error("send failed", e));
+  }
+
+  function sendReply(em: Email, msg: ThreadMsg, body: string) {
+    if (!ipc.isTauri) return;
+    // Reply goes to the sender of the replied-to message; replying to your own
+    // message targets the other participant.
+    const to = msg.isMe
+      ? (em.thread?.findLast((m) => !m.isMe)?.fromAddr ?? "")
+      : (msg.fromAddr ?? "");
+    if (!to) {
+      console.error("no reply address available");
+      return;
+    }
+    const subject = /^re:/i.test(em.subject) ? em.subject : `Re: ${em.subject}`;
+    ipc
+      .mutate(em.accountId, {
+        kind: "send",
+        to: [to],
+        cc: [],
+        bcc: [],
+        subject,
+        body_text: body,
+        reply_to_thread: em.id,
+      })
+      .catch((e) => console.error("send failed", e));
   }
 
   async function addAccount() {
@@ -332,7 +373,7 @@
               threadOpen = false;
               fullscreen = false;
             }}
-            onReplySent={() => {}}
+            onSendReply={(msg, body) => email && sendReply(email, msg, body)}
             {fullscreen}
             onToggleFullscreen={(v) => (fullscreen = v)}
             onToggleDone={() => email && onEmailAction(email.id, "done")}
@@ -344,6 +385,10 @@
             onSelect={selectEmail}
             onOpen={openThread}
             onAction={onEmailAction}
+            onSendReply={(em, body) => {
+              const target = em.thread?.[em.thread.length - 1];
+              if (target) sendReply(em, target, body);
+            }}
             {hoverActions}
             {pinListEnabled}
           />
@@ -381,7 +426,7 @@
         </div>
         <div class="compose-fs-scroll">
           <div class="compose-fs-column">
-            <Composer onClose={closeCompose} onSend={closeCompose} />
+            <Composer onClose={closeCompose} onSend={sendCompose} />
           </div>
         </div>
       </div>
@@ -409,7 +454,7 @@
           </div>
           <div class="compose-body">
             <div class="compose-body-inner">
-              <Composer onClose={closeCompose} onSend={closeCompose} />
+              <Composer onClose={closeCompose} onSend={sendCompose} />
             </div>
           </div>
         </div>

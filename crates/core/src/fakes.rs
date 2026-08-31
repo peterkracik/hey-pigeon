@@ -118,11 +118,14 @@ impl Store for MemStore {
             Mutation::Trash { .. } => {
                 t.is_inbox = false;
             }
+            Mutation::Send { .. } => {}
         };
         let id = match mutation {
             Mutation::Archive { thread_id }
             | Mutation::MarkRead { thread_id, .. }
             | Mutation::Trash { thread_id } => thread_id,
+            // Nothing changes locally for outgoing mail (no Sent view in M1).
+            Mutation::Send { .. } => return Ok(()),
         };
         let t = g
             .threads

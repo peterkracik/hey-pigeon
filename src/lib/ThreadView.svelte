@@ -9,14 +9,14 @@
   let {
     email,
     onClose,
-    onReplySent,
+    onSendReply,
     fullscreen,
     onToggleFullscreen,
     onToggleDone,
   }: {
     email: Email | undefined;
     onClose: () => void;
-    onReplySent: () => void;
+    onSendReply: (msg: ThreadMsg, body: string) => void;
     fullscreen: boolean;
     onToggleFullscreen: (v: boolean) => void;
     onToggleDone: () => void;
@@ -70,10 +70,7 @@
             <InlineReply
               toName={m.isMe ? em.from : m.from}
               onCancel={() => (replyTargetId = null)}
-              onSend={() => {
-                replyTargetId = null;
-                onReplySent();
-              }}
+              onSend={(body) => onSendReply(m, body)}
             />
           </div>
         {/if}

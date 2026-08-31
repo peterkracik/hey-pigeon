@@ -96,6 +96,12 @@
       }}
       onfocus={() => (open = true)}
       onkeydown={onKeyDown}
+      onblur={(ev) => {
+        // Commit a typed-but-unchipped address when focus leaves (e.g. user
+        // clicks Send directly) — unless focus moved into our suggestion menu.
+        if (root?.contains(ev.relatedTarget as Node)) return;
+        if (isEmail(value)) addChip({ name: value.trim(), email: value.trim() });
+      }}
     />
   </div>
   {#if open && matches.length > 0}

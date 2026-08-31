@@ -3,6 +3,7 @@
   import Icon from "./ds/Icon.svelte";
   import Select from "./ds/Select.svelte";
   import RecipientField from "./RecipientField.svelte";
+  import { toast } from "./toast.svelte";
   import type { Account } from "./data";
 
   export interface ComposeData {
@@ -86,6 +87,10 @@
   }
 
   function send() {
+    if (!toChips.length && !ccChips.length && !bccChips.length) {
+      toast("danger", "Could not send", "Add at least one recipient");
+      return;
+    }
     // Optimistic: hand the data over immediately (outbox handles retries),
     // flash the confirmation, then close.
     onSend({

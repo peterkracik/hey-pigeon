@@ -220,6 +220,51 @@ fn header<'a>(part: &'a WirePart, name: &str) -> Option<&'a str> {
         .map(|h| h.value.as_str())
 }
 
+/// Gmail's `snippet` is HTML-entity-encoded (&#39;, &lt;, &amp;…). Decode the
+/// named + numeric forms that actually occur; anything unknown passes through.
+fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(end) = rest[..rest.len().min(10)].find(';') else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..end];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some('\u{a0}'),
+            _ => entity
+                .strip_prefix('#')
+                .and_then(|n| {
+                    n.strip_prefix('x')
+                        .or_else(|| n.strip_prefix('X'))
+                        .map_or_else(|| n.parse::<u32>().ok(), |h| u32::from_str_radix(h, 16).ok())
+                })
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
 fn display_name(from: &str) -> String {
     let name = from.split('<').next().unwrap_or("").trim().trim_matches('"');
@@ -275,7 +320,7 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
         from_addr,
         to_addrs,
         date: w.internal_date.parse().unwrap_or(0),
-        snippet: w.snippet.clone(),
+        snippet: decode_entities(&w.snippet),
         body_html,
         body_text,
         label_ids: w.label_ids.clone(),
@@ -397,6 +442,14 @@ impl MailProvider for GmailProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entities_are_decoded() {
+        assert_eq!(decode_entities("Su&#39;s card &lt;a&gt; &amp; more"), "Su's card <a> & more");
+        assert_eq!(decode_entities("caf&#xE9; &nbsp;ok"), "café \u{a0}ok");
+        assert_eq!(decode_entities("5 & 6 &unknown; &#zz;"), "5 & 6 &unknown; &#zz;");
+        assert_eq!(decode_entities("no entities"), "no entities");
+    }
 
     #[test]
     fn display_name_variants() {

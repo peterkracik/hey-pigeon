@@ -434,7 +434,7 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-tertiary);
-    font-weight: 600;
+    font-weight: 400;
   }
   .selected-card {
     margin: 0 -16px 8px;

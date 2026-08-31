@@ -16,6 +16,7 @@
     onSendReply,
     hoverActions,
     pinListEnabled,
+    signatureFor,
   }: {
     emails: Email[];
     selectedId: string | null;
@@ -23,6 +24,7 @@
     onOpen: (id: string) => void;
     onAction: (id: string, action: string) => void;
     onSendReply?: (email: Email, body: string) => void;
+    signatureFor?: (email: Email) => string | undefined;
     hoverActions: string[];
     pinListEnabled: boolean;
   } = $props();
@@ -205,7 +207,7 @@
               {#if replyingId === e.id}
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
                 <div onclick={(ev) => ev.stopPropagation()}>
-                  <InlineReply toName={e.from} onCancel={() => (replyingId = null)} onSend={(body) => onSendReply?.(e, body)} />
+                  <InlineReply toName={e.from} signature={signatureFor?.(e)} onCancel={() => (replyingId = null)} onSend={(body) => onSendReply?.(e, body)} />
                 </div>
               {/if}
             </div>

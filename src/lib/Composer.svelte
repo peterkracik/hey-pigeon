@@ -1,9 +1,12 @@
 <script lang="ts">
   import IconButton from "./ds/IconButton.svelte";
   import Icon from "./ds/Icon.svelte";
+  import Select from "./ds/Select.svelte";
   import RecipientField from "./RecipientField.svelte";
+  import type { Account } from "./data";
 
   export interface ComposeData {
+    accountId: string;
     to: string[];
     cc: string[];
     bcc: string[];
@@ -19,11 +22,13 @@
   let {
     onClose,
     onSend,
-    signature,
+    accounts = [],
+    initialAccountId,
   }: {
     onClose: () => void;
     onSend: (data: ComposeData) => void;
-    signature?: string;
+    accounts?: Account[];
+    initialAccountId?: string;
   } = $props();
 
   let sent = $state(false);
@@ -32,9 +37,23 @@
   let ccChips: Chip[] = $state([]);
   let bccChips: Chip[] = $state([]);
   let subject = $state("");
-  // Prefill once at mount — the user owns the body afterwards.
+  // From defaults to the viewed account filter (if any), else the first account.
   // svelte-ignore state_referenced_locally
-  let body = $state(signature ? `\n\n${signature}` : "");
+  let fromId = $state(initialAccountId ?? accounts[0]?.id ?? "");
+  const fromAccount = $derived(accounts.find((a) => a.id === fromId));
+
+  const prefillFor = (sig?: string) => (sig ? `\n\n${sig}` : "");
+  // Prefill once at mount — the user owns the body afterwards. Switching the
+  // From account only swaps the signature while the body is still pristine.
+  // svelte-ignore state_referenced_locally
+  let body = $state(prefillFor(accounts.find((a) => a.id === (initialAccountId ?? accounts[0]?.id))?.signature));
+
+  function switchFrom(id: string) {
+    const prev = accounts.find((a) => a.id === fromId);
+    const next = accounts.find((a) => a.id === id);
+    if (body === prefillFor(prev?.signature)) body = prefillFor(next?.signature);
+    fromId = id;
+  }
   let attachments: string[] = $state([]);
   let showFormat = $state(false);
   let selPos: { top: number; left: number } | null = $state(null);
@@ -70,6 +89,7 @@
     // Optimistic: hand the data over immediately (outbox handles retries),
     // flash the confirmation, then close.
     onSend({
+      accountId: fromId,
       to: toChips.map((c) => c.email),
       cc: ccChips.map((c) => c.email),
       bcc: bccChips.map((c) => c.email),
@@ -97,6 +117,22 @@
 {#if sent}
   <div class="sent">Message sent</div>
 {:else}
+  {#if accounts.length > 1}
+    <div class="field-row">
+      <span class="field-label">From</span>
+      <div class="from-picker">
+        {#if fromAccount}
+          <span class="from-dot" style:background="var(--tag-{fromAccount.tag}-fg)"></span>
+        {/if}
+        <Select
+          size="sm"
+          value={fromId}
+          options={accounts.map((a) => ({ value: a.id, label: a.email }))}
+          onchange={switchFrom}
+        />
+      </div>
+    </div>
+  {/if}
   <div class="field-row">
     <span class="field-label">To</span>
     <RecipientField bind:chips={toChips} />
@@ -189,6 +225,17 @@
     font-family: var(--font-body);
     font-size: 14px;
     color: var(--text-tertiary);
+  }
+  .from-picker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .from-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
   .cc-toggle {
     border: none;

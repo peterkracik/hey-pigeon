@@ -1,7 +1,5 @@
 <script lang="ts">
   import Switch from "./ds/Switch.svelte";
-  import Select from "./ds/Select.svelte";
-  import Radio from "./ds/Radio.svelte";
   import Button from "./ds/Button.svelte";
   import Avatar from "./ds/Avatar.svelte";
   import { ACCOUNT_COLOR_TAGS, EMAIL_ACTIONS, type Account } from "./data";
@@ -30,15 +28,6 @@
   let confirmingRemoveId: string | null = $state(null);
 
   let dragKey: string | null = $state(null);
-  let readReceipts = $state(false);
-  let desktopNotif = $state(true);
-  let notifSound = $state(true);
-  let notifPreview = $state("sender-subject");
-  let density = $state("comfortable");
-  let theme = $state("system");
-  let swipeRight = $state("done");
-  let autoAdvance = $state("newer");
-  let blockTracking = $state(true);
 
   function reorderOrAdd(targetIndex: number) {
     if (!dragKey) return;
@@ -136,74 +125,6 @@
   </section>
 
   <section>
-    <div class="group-head"><h2>Notifications</h2></div>
-    <div class="group-body">
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Desktop notifications</div>
-          <div class="setting-desc">Show a system notification for new mail while Hey Pigeon is open.</div>
-        </div>
-        <div class="setting-control"><Switch bind:checked={desktopNotif} /></div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Notification sound</div>
-          <div class="setting-desc">Play a sound when new mail arrives.</div>
-        </div>
-        <div class="setting-control"><Switch bind:checked={notifSound} /></div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Preview content</div>
-          <div class="setting-desc">What to show in a new mail notification.</div>
-        </div>
-        <div class="setting-control">
-          <Select
-            bind:value={notifPreview}
-            options={[
-              { value: "sender-subject", label: "Sender & subject" },
-              { value: "sender-only", label: "Sender only" },
-              { value: "none", label: "Nothing" },
-            ]}
-          />
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="group-head"><h2>Appearance</h2></div>
-    <div class="group-body">
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Theme</div>
-          <div class="setting-desc">Match your system, or set Hey Pigeon independently.</div>
-        </div>
-        <div class="setting-control theme-radios">
-          {#each [["system", "System"], ["light", "Light"], ["dark", "Dark"]] as [v, l] (v)}
-            <Radio name="theme" label={l} checked={theme === v} onchange={() => (theme = v)} />
-          {/each}
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">List density</div>
-          <div class="setting-desc">How much space each message row takes up.</div>
-        </div>
-        <div class="setting-control">
-          <Select
-            bind:value={density}
-            options={[
-              { value: "comfortable", label: "Comfortable" },
-              { value: "compact", label: "Compact" },
-            ]}
-          />
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section>
     <div class="group-head">
       <h2>Inbox</h2>
       <p>Control how messages are grouped and which actions appear on hover.</p>
@@ -293,66 +214,6 @@
     </div>
   </section>
 
-  <section>
-    <div class="group-head"><h2>Reading &amp; replying</h2></div>
-    <div class="group-body">
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Send read receipts</div>
-          <div class="setting-desc">Let senders know when you've opened their message.</div>
-        </div>
-        <div class="setting-control"><Switch bind:checked={readReceipts} /></div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Swipe right on a message</div>
-          <div class="setting-desc">Choose what a right swipe does in the inbox list.</div>
-        </div>
-        <div class="setting-control">
-          <Select
-            bind:value={swipeRight}
-            options={[
-              { value: "done", label: "Mark done" },
-              { value: "delete", label: "Delete" },
-              { value: "snooze", label: "Snooze" },
-            ]}
-          />
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">After archiving or deleting</div>
-          <div class="setting-desc">Which message to open next.</div>
-        </div>
-        <div class="setting-control">
-          <Select
-            bind:value={autoAdvance}
-            options={[
-              { value: "newer", label: "Newer message" },
-              { value: "older", label: "Older message" },
-              { value: "list", label: "Back to list" },
-            ]}
-          />
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="group-head"><h2>Privacy</h2></div>
-    <div class="group-body">
-      <div class="setting-row">
-        <div class="setting-text">
-          <div class="setting-title">Block external images by default</div>
-          <div class="setting-desc">
-            Stop remote images from loading until you choose to show them, to limit sender tracking.
-          </div>
-        </div>
-        <div class="setting-control"><Switch bind:checked={blockTracking} /></div>
-      </div>
-    </div>
-  </section>
-
   <div class="copyright">© 2026 heypigeon.app · v1.0.0</div>
 </div>
 
@@ -409,10 +270,6 @@
   }
   .setting-control {
     flex-shrink: 0;
-  }
-  .theme-radios {
-    display: flex;
-    gap: 18px;
   }
   .account-row {
     display: flex;

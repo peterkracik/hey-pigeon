@@ -6,14 +6,18 @@
     toName,
     onCancel,
     onSend,
+    signature,
   }: {
     toName: string;
     onCancel: () => void;
     onSend: (body: string) => void;
+    signature?: string;
   } = $props();
 
   let sent = $state(false);
-  let body = $state("");
+  // Prefill once at mount — the user owns the body afterwards.
+  // svelte-ignore state_referenced_locally
+  let body = $state(signature ? `\n\n${signature}` : "");
   let showFormat = $state(false);
   let selPos: { top: number; left: number } | null = $state(null);
   let aaRoot: HTMLDivElement | undefined = $state();

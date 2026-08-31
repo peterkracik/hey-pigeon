@@ -13,10 +13,12 @@
     fullscreen,
     onToggleFullscreen,
     onToggleDone,
+    replySignature,
   }: {
     email: Email | undefined;
     onClose: () => void;
     onSendReply: (msg: ThreadMsg, body: string) => void;
+    replySignature?: string;
     fullscreen: boolean;
     onToggleFullscreen: (v: boolean) => void;
     onToggleDone: () => void;
@@ -70,6 +72,7 @@
           <div class="reply-card">
             <InlineReply
               toName={m.isMe ? em.from : m.from}
+              signature={replySignature}
               onCancel={() => (replyTargetId = null)}
               onSend={(body) => onSendReply(m, body)}
             />

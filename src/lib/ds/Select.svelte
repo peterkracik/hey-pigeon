@@ -4,17 +4,19 @@
     options = [],
     size = "md",
     disabled = false,
+    onchange,
   }: {
     value?: string;
     options?: { value: string; label: string }[];
     size?: "sm" | "md" | "lg";
     disabled?: boolean;
+    onchange?: (value: string) => void;
   } = $props();
 
   const height = $derived(size === "sm" ? 30 : size === "lg" ? 42 : 36);
 </script>
 
-<select bind:value {disabled} style:height="{height}px">
+<select bind:value {disabled} style:height="{height}px" onchange={() => onchange?.(value)}>
   {#each options as o (o.value)}
     <option value={o.value}>{o.label}</option>
   {/each}

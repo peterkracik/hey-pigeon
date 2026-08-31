@@ -80,6 +80,9 @@
     ).length,
   });
   const title = $derived(unified && folder === "inbox" ? "All inboxes" : FOLDER_TITLES[folder]);
+  // Compose defaults to the viewed account filter; unified view falls back to the first account.
+  const composeFromId = $derived(unified ? accounts[0]?.id : activeAccountId);
+  const signatureFor = (accountId: string) => accounts.find((a) => a.id === accountId)?.signature;
 
   function onEmailAction(id: string, action: string) {
     const em = emailsData.find((e) => e.id === id);
@@ -99,11 +102,10 @@
     else console.log(id, action);
   }
 
-  function sendCompose(data: { to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }) {
+  function sendCompose(data: { accountId: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }) {
     if (!ipc.isTauri) return;
-    const accountId = liveAccounts[0]?.id ?? activeAccountId;
     ipc
-      .mutate(accountId, {
+      .mutate(data.accountId, {
         kind: "send",
         to: data.to,
         cc: data.cc,
@@ -389,6 +391,7 @@
               fullscreen = false;
             }}
             onSendReply={(msg, body) => email && sendReply(email, msg, body)}
+            replySignature={email ? signatureFor(email.accountId) : undefined}
             {fullscreen}
             onToggleFullscreen={(v) => (fullscreen = v)}
             onToggleDone={() => email && onEmailAction(email.id, "done")}
@@ -404,6 +407,7 @@
               const target = em.thread?.[em.thread.length - 1];
               if (target) sendReply(em, target, body);
             }}
+            signatureFor={(em) => signatureFor(em.accountId)}
             {hoverActions}
             {pinListEnabled}
           />
@@ -436,7 +440,7 @@
         </div>
         <div class="compose-fs-scroll">
           <div class="compose-fs-column">
-            <Composer onClose={closeCompose} onSend={sendCompose} signature={liveAccounts[0]?.signature} />
+            <Composer onClose={closeCompose} onSend={sendCompose} {accounts} initialAccountId={composeFromId} />
           </div>
         </div>
       </div>
@@ -464,7 +468,7 @@
           </div>
           <div class="compose-body">
             <div class="compose-body-inner">
-              <Composer onClose={closeCompose} onSend={sendCompose} signature={liveAccounts[0]?.signature} />
+              <Composer onClose={closeCompose} onSend={sendCompose} {accounts} initialAccountId={composeFromId} />
             </div>
           </div>
         </div>

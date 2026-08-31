@@ -145,6 +145,45 @@ pub async fn sync_now(
     Ok(n)
 }
 
+/// Change an account's color (predefined palette only).
+#[tauri::command]
+pub async fn set_account_color(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    account_id: AccountId,
+    color: String,
+) -> Result<(), String> {
+    if !ACCOUNT_COLORS.contains(&color.as_str()) {
+        return Err(format!("unknown color {color}"));
+    }
+    let mut account = state
+        .store
+        .list_accounts()
+        .map_err(estr)?
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| format!("unknown account {account_id}"))?;
+    account.color = color;
+    state.store.upsert_account(&account).map_err(estr)?;
+    let _ = app.emit(THREADS_UPDATED, ());
+    Ok(())
+}
+
+/// Disconnect an account: local data + stored refresh token.
+#[tauri::command]
+pub async fn remove_account(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    account_id: AccountId,
+) -> Result<(), String> {
+    state.store.delete_account(&account_id).map_err(estr)?;
+    let _ = state
+        .secrets
+        .delete(&heypigeon_adapter_gmail::refresh_token_key(&account_id));
+    let _ = app.emit(THREADS_UPDATED, ());
+    Ok(())
+}
+
 /// Sender contact photo via the People API (Gmail backend only).
 #[tauri::command]
 pub async fn lookup_avatar(

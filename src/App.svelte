@@ -139,6 +139,17 @@
       .catch((e) => console.error("send failed", e));
   }
 
+  function setAccountColor(id: string, color: string) {
+    if (!ipc.isTauri) return;
+    ipc.setAccountColor(id, color).catch((e) => console.error("set color failed", e));
+  }
+
+  function removeAccount(id: string) {
+    if (!ipc.isTauri) return;
+    if (!confirm(`Disconnect ${id}? Local mail data for this account will be removed.`)) return;
+    ipc.removeAccount(id).catch((e) => console.error("remove failed", e));
+  }
+
   async function addAccount() {
     if (!ipc.isTauri) return;
     try {
@@ -366,6 +377,9 @@
             onHoverActionsChange={(next) => (hoverActions = next)}
             {pinListEnabled}
             onPinListChange={(v) => (pinListEnabled = v)}
+            onAddAccount={addAccount}
+            onRemoveAccount={removeAccount}
+            onSetAccountColor={setAccountColor}
           />
         {:else if threadOpen}
           <ThreadView

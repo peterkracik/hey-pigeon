@@ -84,6 +84,7 @@
             <div class="item-title">{a.label}</div>
             <div class="item-sub">{a.email}</div>
           </span>
+          <span class="acct-dot" style:background="var(--tag-{a.tag}-fg)"></span>
         </button>
       {/each}
       <div class="divider"></div>
@@ -199,6 +200,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .acct-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
   .divider {
     height: 1px;

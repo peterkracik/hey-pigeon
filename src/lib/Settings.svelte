@@ -4,7 +4,7 @@
   import Radio from "./ds/Radio.svelte";
   import Button from "./ds/Button.svelte";
   import Avatar from "./ds/Avatar.svelte";
-  import { EMAIL_ACTIONS, type Account } from "./data";
+  import { ACCOUNT_COLOR_TAGS, EMAIL_ACTIONS, type Account } from "./data";
 
   let {
     accounts,
@@ -12,12 +12,18 @@
     onHoverActionsChange,
     pinListEnabled,
     onPinListChange,
+    onAddAccount,
+    onRemoveAccount,
+    onSetAccountColor,
   }: {
     accounts: Account[];
     hoverActions: string[];
     onHoverActionsChange: (next: string[]) => void;
     pinListEnabled: boolean;
     onPinListChange: (v: boolean) => void;
+    onAddAccount?: () => void;
+    onRemoveAccount?: (id: string) => void;
+    onSetAccountColor?: (id: string, color: string) => void;
   } = $props();
 
   let signature = $state(true);
@@ -69,11 +75,25 @@
             <div class="setting-title">{a.label}</div>
             <div class="account-email">{a.email}</div>
           </div>
-          <Button variant="ghost" size="sm">Remove</Button>
+          <div class="color-picker" role="radiogroup" aria-label="Account color">
+            {#each ACCOUNT_COLOR_TAGS as c (c)}
+              <button
+                class="color-dot"
+                class:selected={a.tag === c}
+                style:background="var(--tag-{c}-fg)"
+                title={c}
+                role="radio"
+                aria-checked={a.tag === c}
+                aria-label={c}
+                onclick={() => onSetAccountColor?.(a.id, c)}
+              ></button>
+            {/each}
+          </div>
+          <Button variant="ghost" size="sm" onclick={() => onRemoveAccount?.(a.id)}>Remove</Button>
         </div>
       {/each}
       <div class="add-account">
-        <Button variant="secondary" size="sm">Add account</Button>
+        <Button variant="secondary" size="sm" onclick={() => onAddAccount?.()}>Add account</Button>
       </div>
     </div>
   </section>
@@ -379,6 +399,28 @@
   .account-text {
     flex: 1;
     min-width: 0;
+  }
+  .color-picker {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-right: 8px;
+  }
+  .color-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+  .color-dot:hover {
+    transform: scale(1.15);
+  }
+  .color-dot.selected {
+    border-color: var(--text-primary);
   }
   .account-email {
     font-family: var(--font-body);

@@ -82,6 +82,11 @@ export const syncNow = (accountId: string) =>
 /** Runs the browser consent flow; resolves with the connected email address. */
 export const startGmailOauth = () => invoke<string>("start_gmail_oauth");
 
+export const setAccountColor = (accountId: string, color: string) =>
+  invoke<void>("set_account_color", { accountId, color });
+export const removeAccount = (accountId: string) =>
+  invoke<void>("remove_account", { accountId });
+
 const avatarCache = new Map<string, Promise<string | null>>();
 /** Sender contact photo (People API), cached per session. */
 export function lookupAvatar(

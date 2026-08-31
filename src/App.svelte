@@ -146,7 +146,6 @@
 
   function removeAccount(id: string) {
     if (!ipc.isTauri) return;
-    if (!confirm(`Disconnect ${id}? Local mail data for this account will be removed.`)) return;
     ipc.removeAccount(id).catch((e) => console.error("remove failed", e));
   }
 

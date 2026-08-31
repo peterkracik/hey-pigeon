@@ -26,6 +26,9 @@
     onSetAccountColor?: (id: string, color: string) => void;
   } = $props();
 
+  // confirm()/alert() are no-ops in the macOS webview — two-click confirm instead.
+  let confirmingRemoveId: string | null = $state(null);
+
   let signature = $state(true);
   let signatureText = $state("Peter\nHey Pigeon");
   let dragKey: string | null = $state(null);
@@ -89,7 +92,18 @@
               ></button>
             {/each}
           </div>
-          <Button variant="ghost" size="sm" onclick={() => onRemoveAccount?.(a.id)}>Remove</Button>
+          {#if confirmingRemoveId === a.id}
+            <Button
+              variant="danger"
+              size="sm"
+              onclick={() => {
+                confirmingRemoveId = null;
+                onRemoveAccount?.(a.id);
+              }}>Really remove?</Button
+            >
+          {:else}
+            <Button variant="ghost" size="sm" onclick={() => (confirmingRemoveId = a.id)}>Remove</Button>
+          {/if}
         </div>
       {/each}
       <div class="add-account">

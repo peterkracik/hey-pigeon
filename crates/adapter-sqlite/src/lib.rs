@@ -95,6 +95,18 @@ impl SqliteStore {
         let conn = self.conn.lock().map_err(|_| StoreError("lock poisoned".into()))?;
         f(&conn).map_err(err)
     }
+
+    /// Remove an account and everything belonging to it (used when the dev
+    /// fake account is replaced by a real one).
+    pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
+            c.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
+            c.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
+            c.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
+            Ok(())
+        })
+    }
 }
 
 fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
@@ -158,18 +170,6 @@ impl Store for SqliteStore {
             return Err(StoreError(format!("unknown account {account_id}")));
         }
         Ok(())
-    }
-
-    /// Remove an account and everything belonging to it (used when the dev
-    /// fake account is replaced by a real one).
-    pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
-        self.with(|c| {
-            c.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
-            c.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
-            c.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
-            c.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
-            Ok(())
-        })
     }
 
     fn upsert_thread(&self, t: &Thread) -> Result<(), StoreError> {

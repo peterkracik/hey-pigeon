@@ -7,12 +7,14 @@
     unified,
     onSelectAccount,
     onToggleUnified,
+    onAddAccount,
   }: {
     accounts: Account[];
     activeId: string;
     unified: boolean;
     onSelectAccount: (id: string) => void;
     onToggleUnified: (v: boolean) => void;
+    onAddAccount?: () => void;
   } = $props();
 
   let open = $state(false);
@@ -91,7 +93,13 @@
         </button>
       {/each}
       <div class="divider"></div>
-      <button class="item add">
+      <button
+        class="item add"
+        onclick={() => {
+          open = false;
+          onAddAccount?.();
+        }}
+      >
         <span class="add-badge">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
             <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />

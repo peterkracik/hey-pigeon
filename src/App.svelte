@@ -91,6 +91,17 @@
     else console.log(id, action);
   }
 
+  async function addAccount() {
+    if (!ipc.isTauri) return;
+    try {
+      const email = await ipc.startGmailOauth();
+      console.info("connected", email);
+      await refreshLive();
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
   async function openThread(id: string) {
     selectedId = id;
     threadOpen = true;
@@ -192,6 +203,7 @@
     {unified}
     onSelectAccount={(id) => (activeAccountId = id)}
     onToggleUnified={(v) => (unified = v)}
+    onAddAccount={addAccount}
     {counts}
     labels={LABELS}
   />

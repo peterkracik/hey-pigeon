@@ -61,6 +61,8 @@ export const getThread = (threadId: string) =>
 export const mutate = (accountId: string, mutation: BackendMutation) =>
   invoke<void>("mutate", { accountId, mutation });
 export const syncNow = (accountId: string) => invoke<number>("sync_now", { accountId });
+/** Runs the browser consent flow; resolves with the connected email address. */
+export const startGmailOauth = () => invoke<string>("start_gmail_oauth");
 
 /** Subscribe to backend change events. Returns an unsubscribe function. */
 export async function onThreadsUpdated(cb: () => void): Promise<() => void> {

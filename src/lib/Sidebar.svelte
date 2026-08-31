@@ -13,6 +13,7 @@
     unified,
     onSelectAccount,
     onToggleUnified,
+    onAddAccount,
     counts,
     labels,
   }: {
@@ -25,6 +26,7 @@
     unified: boolean;
     onSelectAccount: (id: string) => void;
     onToggleUnified: (v: boolean) => void;
+    onAddAccount?: () => void;
     counts: Record<string, number>;
     labels: LabelDef[];
   } = $props();
@@ -61,7 +63,7 @@
         </svg>
       </button>
     </div>
-    <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} />
+    <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} {onAddAccount} />
     <div class="nav">
       {#each items as it (it.key)}
         <button class="nav-item" class:active={active === it.key} onclick={() => onSelect(it.key)}>

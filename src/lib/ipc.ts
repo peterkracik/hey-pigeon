@@ -22,6 +22,7 @@ export interface BackendThread {
   is_archived: boolean;
   msg_count: number;
   from_summary: string;
+  last_from_addr: string;
 }
 
 export interface BackendMessage {
@@ -124,6 +125,7 @@ export function threadToEmail(t: BackendThread): Email {
     time: fmtTime(t.last_msg_at),
     fullDate: fmtFull(t.last_msg_at),
     unread: !t.is_read,
+    fromAddr: t.last_from_addr || undefined,
   };
 }
 

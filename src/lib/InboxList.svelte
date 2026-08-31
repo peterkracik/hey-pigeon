@@ -4,7 +4,8 @@
   import Icon from "./ds/Icon.svelte";
   import InlineReply from "./InlineReply.svelte";
   import HtmlEmailFrame from "./HtmlEmailFrame.svelte";
-  import { EMAIL_ACTIONS, nameInitials, type Email } from "./data";
+  import Avatar from "./ds/Avatar.svelte";
+  import { EMAIL_ACTIONS, type Email } from "./data";
 
   let {
     emails,
@@ -84,7 +85,7 @@
               </button>
             </Tooltip>
             <span class="avatar-wrap">
-              <span class="avatar">{nameInitials(e.from)}</span>
+              <Avatar email={e.fromAddr} name={e.from} size={26} />
               {#if e.accountTag}
                 <span class="account-dot" title="account" style:background="var(--tag-{e.accountTag}-fg)"></span>
               {/if}
@@ -276,19 +277,6 @@
   .avatar-wrap {
     position: relative;
     flex-shrink: 0;
-  }
-  .avatar {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    background: var(--surface-sunken);
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-body);
-    font-size: 11px;
-    font-weight: 600;
   }
   .account-dot {
     position: absolute;

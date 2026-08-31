@@ -199,6 +199,7 @@ impl FakeProvider {
                     is_archived: false,
                     msg_count: 1,
                     from_summary: format!("Sender {i}"),
+                    last_from_addr: format!("sender{i}@example.com"),
                 };
                 let message = Message {
                     id: format!("{tid}:m0"),

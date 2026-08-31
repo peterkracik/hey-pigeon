@@ -271,6 +271,16 @@ fn display_name(from: &str) -> String {
     if name.is_empty() { from.trim().to_string() } else { name.to_string() }
 }
 
+/// "Priya Nair <priya@acme.co>" → "priya@acme.co".
+fn bare_addr(from: &str) -> String {
+    from.split('<')
+        .nth(1)
+        .and_then(|s| s.split('>').next())
+        .unwrap_or(from)
+        .trim()
+        .to_string()
+}
+
 fn decode_body(data: &str) -> Option<String> {
     base64::engine::general_purpose::URL_SAFE
         .decode(data)
@@ -349,6 +359,7 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         is_archived: false,
         msg_count: messages.len() as i64,
         from_summary: last.map(|m| display_name(&m.from_addr)).unwrap_or_default(),
+        last_from_addr: last.map(|m| bare_addr(&m.from_addr)).unwrap_or_default(),
     };
     (thread, messages)
 }
@@ -523,6 +534,13 @@ mod tests {
         assert_eq!(display_name("Priya Nair <p@acme.co>"), "Priya Nair");
         assert_eq!(display_name("\"Nair, Priya\" <p@acme.co>"), "Nair, Priya");
         assert_eq!(display_name("p@acme.co"), "p@acme.co");
+    }
+
+    #[test]
+    fn bare_addr_variants() {
+        assert_eq!(bare_addr("Priya Nair <p@acme.co>"), "p@acme.co");
+        assert_eq!(bare_addr("p@acme.co"), "p@acme.co");
+        assert_eq!(bare_addr("<p@acme.co>"), "p@acme.co");
     }
 
     #[test]

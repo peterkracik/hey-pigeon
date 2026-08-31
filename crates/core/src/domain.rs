@@ -33,6 +33,9 @@ pub struct Thread {
     pub msg_count: i64,
     /// "Priya Nair", "Priya, Me (3)" — precomputed for list rendering.
     pub from_summary: String,
+    /// Bare address of the latest sender — avatar lookups in the list.
+    #[serde(default)]
+    pub last_from_addr: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

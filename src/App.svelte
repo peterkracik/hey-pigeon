@@ -66,7 +66,7 @@
       .filter((e) => (folder === "all" ? true : e.folder === folder))
       .filter((e) => unified || e.accountId === activeAccountId)
       .map((e) =>
-        unified ? { ...e, accountTag: ACCOUNTS.find((a) => a.id === e.accountId)?.tag } : e,
+        unified ? { ...e, accountTag: accounts.find((a) => a.id === e.accountId)?.tag } : e,
       ),
   );
   const email = $derived(

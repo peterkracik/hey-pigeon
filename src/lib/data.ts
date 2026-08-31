@@ -38,6 +38,8 @@ export interface Email {
   accountId: string;
   folder: string;
   from: string;
+  /** Bare address of the latest sender (live mode) — avatar lookups. */
+  fromAddr?: string;
   subject: string;
   snippet: string;
   time: string;

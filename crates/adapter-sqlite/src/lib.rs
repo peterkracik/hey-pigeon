@@ -56,6 +56,8 @@ const MIGRATIONS: &[&str] = &[
         created_at INTEGER NOT NULL
     );
     ",
+    // v2 — latest-sender address for avatar lookups; heals via backfill upserts.
+    "ALTER TABLE threads ADD COLUMN last_from_addr TEXT NOT NULL DEFAULT '';",
 ];
 
 pub struct SqliteStore {
@@ -121,11 +123,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         is_archived: r.get(7)?,
         msg_count: r.get(8)?,
         from_summary: r.get(9)?,
+        last_from_addr: r.get(10)?,
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr";
 
 impl Store for SqliteStore {
     fn upsert_account(&self, a: &Account) -> Result<(), StoreError> {
@@ -177,16 +180,18 @@ impl Store for SqliteStore {
             c.execute(
                 &format!(
                     "INSERT INTO threads ({THREAD_COLS})
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(id) DO UPDATE SET
                        subject = excluded.subject, snippet = excluded.snippet,
                        last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
                        is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
-                       msg_count = excluded.msg_count, from_summary = excluded.from_summary"
+                       msg_count = excluded.msg_count, from_summary = excluded.from_summary,
+                       last_from_addr = excluded.last_from_addr"
                 ),
                 params![
                     t.id, t.account_id, t.subject, t.snippet, t.last_msg_at,
-                    t.is_read, t.is_inbox, t.is_archived, t.msg_count, t.from_summary
+                    t.is_read, t.is_inbox, t.is_archived, t.msg_count, t.from_summary,
+                    t.last_from_addr
                 ],
             )
             .map(|_| ())

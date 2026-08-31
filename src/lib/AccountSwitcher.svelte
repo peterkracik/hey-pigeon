@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { initials, type Account } from "./data";
+  import Avatar from "./ds/Avatar.svelte";
+  import type { Account } from "./data";
 
   let {
     accounts,
@@ -39,14 +40,7 @@
 {/snippet}
 
 {#snippet avatar(a: Account, size: number = 28)}
-  <span
-    class="avatar"
-    style:width="{size}px"
-    style:height="{size}px"
-    style:background="var(--tag-{a.tag}-bg)"
-    style:color="var(--tag-{a.tag}-fg)"
-    style:font-size="{size * 0.4}px">{initials(a.label)}</span
-  >
+  <Avatar email={a.email} name={a.label} {size} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
 {/snippet}
 
 <div bind:this={root} class="root">
@@ -115,15 +109,6 @@
   .root {
     position: relative;
     margin-bottom: 14px;
-  }
-  .avatar {
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-body);
-    font-weight: 700;
-    flex-shrink: 0;
   }
   .unified-badge {
     width: 28px;

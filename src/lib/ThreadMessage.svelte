@@ -3,7 +3,8 @@
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
   import HtmlEmailFrame from "./HtmlEmailFrame.svelte";
-  import { nameInitials, type ThreadMsg } from "./data";
+  import Avatar from "./ds/Avatar.svelte";
+  import type { ThreadMsg } from "./data";
 
   let {
     msg,
@@ -27,12 +28,7 @@
 </script>
 
 {#snippet avatar(size: number)}
-  <span
-    class="avatar"
-    style:width="{size}px"
-    style:height="{size}px"
-    style:font-size="{size > 30 ? 12 : 11}px">{nameInitials(name)}</span
-  >
+  <Avatar email={msg.fromAddr} {name} {size} />
 {/snippet}
 
 {#if !expanded}
@@ -90,17 +86,6 @@
 {/if}
 
 <style>
-  .avatar {
-    flex-shrink: 0;
-    border-radius: 50%;
-    background: var(--surface-sunken);
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-body);
-    font-weight: 600;
-  }
   .row {
     display: flex;
     align-items: center;

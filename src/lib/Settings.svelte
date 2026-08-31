@@ -308,6 +308,8 @@
       </div>
     </div>
   </section>
+
+  <div class="copyright">© 2026 heypigeon.app · v1.0.0</div>
 </div>
 
 <style>
@@ -462,6 +464,14 @@
   }
   .signature-wrap {
     padding: 0 0 16px;
+  }
+  .copyright {
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    opacity: 0.6;
+    padding-top: 8px;
   }
   .signature-wrap textarea {
     width: 100%;

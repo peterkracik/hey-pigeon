@@ -398,11 +398,6 @@
         {/if}
       </div>
     </div>
-    {#if !threadOpen && !fullscreen}
-      <div class="footer">
-        <span>© 2026 heypigeon.app · v1.0.0</span>
-      </div>
-    {/if}
   </div>
 
   <SearchOverlay open={searchOpen} onClose={() => (searchOpen = false)} />
@@ -567,18 +562,6 @@
     color: var(--text-tertiary);
     font-family: var(--font-body);
     font-size: 14px;
-  }
-  .footer {
-    padding: 10px 32px 14px 96px;
-    text-align: center;
-    flex-shrink: 0;
-    border-top: 1px solid var(--navy-50);
-  }
-  .footer span {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-tertiary);
-    opacity: 0.6;
   }
   .compose-fs {
     position: fixed;

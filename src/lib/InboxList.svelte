@@ -33,6 +33,23 @@
 
   let replyingId: string | null = $state(null);
 
+  // Rows currently playing the strike-through + fade-out before "done" fires.
+  let completing = $state(new Set<string>());
+
+  function clickDone(e: Email, ev: Event) {
+    ev.stopPropagation();
+    if (e.done) {
+      onAction(e.id, "done"); // unchecking: no ceremony
+      return;
+    }
+    if (completing.has(e.id)) return;
+    completing = new Set(completing).add(e.id);
+    setTimeout(() => {
+      completing = new Set([...completing].filter((id) => id !== e.id));
+      onAction(e.id, "done");
+    }, 650);
+  }
+
   $effect(() => {
     void selectedId;
     replyingId = null;
@@ -91,16 +108,18 @@
       {#each g.items as e (e.id)}
         <div class:selected-card={selectedId === e.id}>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div class="row" class:is-selected={selectedId === e.id} onclick={() => onSelect(selectedId === e.id ? null : e.id)}>
+          <div
+            class="row"
+            class:is-selected={selectedId === e.id}
+            class:completing={completing.has(e.id)}
+            onclick={() => onSelect(selectedId === e.id ? null : e.id)}
+          >
             <Tooltip label={e.done ? "Mark not done" : "Mark done"} side="bottom">
               <button
                 class="star"
-                class:done={e.done}
+                class:done={e.done || completing.has(e.id)}
                 title={e.done ? "Mark not done" : "Mark done"}
-                onclick={(ev) => {
-                  ev.stopPropagation();
-                  onAction(e.id, "done");
-                }}
+                onclick={(ev) => clickDone(e, ev)}
               >
                 <Icon d={DONE_D} size={11} strokeWidth={2.6} />
               </button>
@@ -295,6 +314,37 @@
     background: var(--tag-mint-fg);
     border-color: var(--tag-mint-fg);
     color: #fff;
+  }
+  /* Done animation: strike sweeps across the text, then the row fades out. */
+  .row.completing {
+    pointer-events: none;
+    animation: row-out 240ms ease-in 400ms forwards;
+  }
+  .completing .from,
+  .completing .subject,
+  .completing .snippet {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-repeat: no-repeat;
+    background-position: 0 55%;
+    background-size: 100% 1.5px;
+    color: var(--text-tertiary);
+    transition:
+      background-size 300ms ease-out,
+      color 300ms;
+  }
+  .row:not(.completing) .from,
+  .row:not(.completing) .subject,
+  .row:not(.completing) .snippet {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-repeat: no-repeat;
+    background-position: 0 55%;
+    background-size: 0% 1.5px;
+  }
+  @keyframes row-out {
+    to {
+      opacity: 0;
+      transform: translateX(14px);
+    }
   }
   .avatar-wrap {
     position: relative;

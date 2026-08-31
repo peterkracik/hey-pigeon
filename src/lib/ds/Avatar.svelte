@@ -1,9 +1,9 @@
 <script lang="ts">
-  // Image avatar with initials fallback. Gravatar is the only sender-photo
-  // source that needs no server and no extra OAuth scope (Gmail's API exposes
-  // no sender photos).
-  // ponytail: leaks a SHA-256 of the sender address to gravatar.com per row;
-  // gate behind the remote-image privacy setting when M3 lands.
+  // Image avatar with a fallback chain: explicit photo → gravatar → sender
+  // domain favicon (brand logos) → initials. Gmail's API exposes no sender
+  // photos, so this is the best serverless coverage available.
+  // ponytail: leaks sender-address hash to gravatar.com and sender domain to
+  // gstatic.com per row; gate behind the remote-image privacy setting in M3.
   let {
     src,
     email,
@@ -13,7 +13,7 @@
     fg = "var(--text-secondary)",
     fontWeight = 600,
   }: {
-    /** Explicit photo URL (e.g. Google profile picture); wins over gravatar. */
+    /** Explicit photo URL (e.g. Google profile picture); wins over lookups. */
     src?: string;
     email?: string;
     name: string;
@@ -23,8 +23,15 @@
     fontWeight?: number;
   } = $props();
 
-  let failed = $state(false);
-  let url: string | null = $state(null);
+  // Domains where a favicon would be meaningless (personal mail providers).
+  const FREEMAIL = new Set([
+    "gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com",
+    "live.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
+    "gmx.net", "gmx.de", "web.de", "aol.com", "example.com", "heypigeon.app",
+  ]);
+
+  let sources: string[] = $state([]);
+  let phase = $state(0);
 
   const initials = $derived(
     name
@@ -36,31 +43,38 @@
   );
 
   $effect(() => {
-    failed = false;
-    url = null;
-    if (src) {
-      url = src;
-      return;
-    }
+    phase = 0;
+    const list: string[] = [];
+    if (src) list.push(src);
     const addr = email?.trim().toLowerCase();
+    const domain = addr?.split("@")[1];
+    if (domain && !FREEMAIL.has(domain)) {
+      // 404s when the domain has no known icon → chain advances to initials.
+      list.push(
+        `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&url=https://${domain}&size=${size * 2}`,
+      );
+    }
+    sources = list;
     if (!addr) return;
     crypto.subtle.digest("SHA-256", new TextEncoder().encode(addr)).then((buf) => {
       const hex = Array.from(new Uint8Array(buf))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
-      url = `https://gravatar.com/avatar/${hex}?d=404&s=${size * 2}`;
+      // Gravatar outranks the domain favicon: personal photo beats brand logo.
+      const at = src ? 1 : 0;
+      sources = [...sources.slice(0, at), `https://gravatar.com/avatar/${hex}?d=404&s=${size * 2}`, ...sources.slice(at)];
     });
   });
 </script>
 
-{#if url && !failed}
+{#if phase < sources.length}
   <img
-    src={url}
+    src={sources[phase]}
     alt={name}
     width={size}
     height={size}
     class="avatar-img"
-    onerror={() => (failed = true)}
+    onerror={() => (phase = phase + 1)}
   />
 {:else}
   <span
@@ -80,6 +94,7 @@
     object-fit: cover;
     flex-shrink: 0;
     display: block;
+    background: var(--surface-sunken);
   }
   .avatar-initials {
     border-radius: 50%;

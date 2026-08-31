@@ -217,23 +217,27 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let secrets: Arc<dyn SecretStore + Send + Sync> =
         Arc::from(crate::secrets::default_secret_store(&data_dir)?);
 
-    // Gmail mode when config + a stored refresh token for a known account exist.
-    let gmail_account = load_oauth_config().ok().and_then(|config| {
+    // Gmail mode when config + stored refresh tokens for known accounts exist.
+    let gmail_accounts = load_oauth_config().ok().and_then(|config| {
         let accounts = store.list_accounts().ok()?;
-        let account = accounts.iter().find(|a| {
-            a.id != FAKE_ACCOUNT_ID
-                && matches!(
-                    secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)),
-                    Ok(Some(_))
-                )
-        })?;
-        Some((config, account.id.clone()))
+        let with_tokens: Vec<AccountId> = accounts
+            .iter()
+            .filter(|a| {
+                a.id != FAKE_ACCOUNT_ID
+                    && matches!(
+                        secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)),
+                        Ok(Some(_))
+                    )
+            })
+            .map(|a| a.id.clone())
+            .collect();
+        (!with_tokens.is_empty()).then_some((config, with_tokens))
     });
 
-    let (backend, sync_account) = match gmail_account {
-        Some((config, account_id)) => {
-            log::info!("backend: gmail ({account_id})");
-            (Backend::Gmail(GmailProvider::new(config, Arc::clone(&secrets))), account_id)
+    let (backend, sync_accounts) = match gmail_accounts {
+        Some((config, account_ids)) => {
+            log::info!("backend: gmail ({})", account_ids.join(", "));
+            (Backend::Gmail(GmailProvider::new(config, Arc::clone(&secrets))), account_ids)
         }
         None => {
             log::info!("backend: fake");
@@ -247,12 +251,15 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             })?;
             (
                 Backend::Fake(FakeProvider::with_sample_data(FAKE_ACCOUNT_ID, 40, 15)),
-                FAKE_ACCOUNT_ID.to_string(),
+                vec![FAKE_ACCOUNT_ID.to_string()],
             )
         }
     };
 
     app.manage(MailState { store, secrets, backend: RwLock::new(backend) });
-    spawn_backfill(app.handle().clone(), sync_account);
+    // Every account syncs independently — one failing must not block another.
+    for account_id in sync_accounts {
+        spawn_backfill(app.handle().clone(), account_id);
+    }
     Ok(())
 }

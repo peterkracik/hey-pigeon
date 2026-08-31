@@ -9,21 +9,27 @@
 
   function resize() {
     if (frame?.contentWindow) {
+      // Reset first: documentElement.scrollHeight is clamped to the viewport
+      // (the iframe's current height), so a tall frame could never shrink.
+      const prev = frame.style.height;
       try {
+        frame.style.height = "0";
         frame.style.height = frame.contentWindow.document.documentElement.scrollHeight + "px";
       } catch {
-        /* cross-origin — leave default height */
+        frame.style.height = prev; /* cross-origin — keep prior height */
       }
     }
   }
 
-  // True when nothing with visible text follows `el` before the end of `body`.
+  // True when no visible content (text or images/rules) follows `el` in `body`.
   function isTrailing(el: Element, body: Element): boolean {
     let node: Element | null = el;
     while (node && node !== body) {
       let sib = node.nextSibling;
       while (sib) {
         if (sib.textContent?.trim()) return false;
+        if (sib instanceof Element && sib.querySelector("img,svg,hr")) return false;
+        if (sib instanceof Element && /^(img|svg|hr)$/i.test(sib.tagName)) return false;
         sib = sib.nextSibling;
       }
       node = node.parentElement;
@@ -48,16 +54,23 @@
   // Scripts inside srcdoc are blocked by the sandbox, so quote-collapsing is
   // done from the parent reaching into the same-origin iframe document.
   function collapseQuote() {
-    const doc = frame?.contentWindow?.document;
+    let doc: Document | undefined;
+    try {
+      doc = frame?.contentWindow?.document;
+    } catch {
+      return; /* cross-origin (frame navigated) — nothing to collapse */
+    }
     const body = doc?.body;
     if (!doc || !body) return;
     const quote = findTrailingQuote(body);
     if (!quote) return;
-    // Never hide everything: require visible non-quoted content before it.
-    const quoteText = quote.textContent?.trim() ?? "";
-    const bodyText = body.textContent?.trim() ?? "";
+    // Never hide everything: require *visible* non-quoted content before it.
+    // innerText (unlike textContent) skips display:none preheaders etc.
+    const quoteText = quote.innerText.trim();
+    const bodyText = body.innerText.trim();
     if (!quoteText || bodyText.length <= quoteText.length) return;
 
+    const originalDisplay = quote.style.display;
     quote.style.display = "none";
     const pill = doc.createElement("button");
     pill.type = "button";
@@ -70,8 +83,9 @@
       "cursor:pointer;letter-spacing:1px;";
     pill.addEventListener("click", () => {
       const hidden = quote.style.display === "none";
-      quote.style.display = hidden ? "" : "none";
+      quote.style.display = hidden ? originalDisplay : "none";
       pill.style.background = hidden ? "#ddd" : "#ececec";
+      pill.setAttribute("aria-label", hidden ? "Hide quoted text" : "Show quoted text");
       resize();
     });
     quote.parentNode?.insertBefore(pill, quote);

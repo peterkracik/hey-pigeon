@@ -129,6 +129,18 @@ pub trait Store {
     fn get_thread(&self, thread_id: &ThreadId) -> Result<Option<Thread>, StoreError>;
     fn list_messages(&self, thread_id: &ThreadId) -> Result<Vec<Message>, StoreError>;
 
+    /// Local full-text search: ranked threads + snippet preview (FTS5 in the
+    /// SQLite adapter). Default impl returns nothing so existing adapters
+    /// keep compiling (DESIGN.md: new capability = method with default).
+    fn search(
+        &self,
+        query: &crate::search::SearchQuery,
+        limit: u32,
+    ) -> Result<Vec<SearchResult>, StoreError> {
+        let _ = (query, limit);
+        Ok(Vec::new())
+    }
+
     /// Apply a mutation locally (the optimistic half).
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError>;
 

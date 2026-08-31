@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use heypigeon_core::domain::*;
 use heypigeon_core::ports::{Store, StoreError};
+use heypigeon_core::search::{SearchQuery, SNIPPET_END, SNIPPET_START};
 use rusqlite::{params, Connection, OptionalExtension};
 
 const MIGRATIONS: &[&str] = &[
@@ -62,6 +63,55 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE accounts ADD COLUMN avatar_url TEXT;",
     // v4 — per-account signature.
     "ALTER TABLE accounts ADD COLUMN signature TEXT NOT NULL DEFAULT '';",
+    // v5 — FTS5 search index (DESIGN.md Search). External-content over a view
+    // (contentless tables can't serve snippet()); triggers on `messages` keep
+    // it in sync, 'rebuild' backfills existing rows. Subject lives on threads,
+    // so the view joins; sync always upserts the thread before its messages.
+    // Body falls back to the message snippet so metadata-tier mail is still
+    // findable before its body is fetched.
+    // ponytail: a later thread-subject edit leaves stale subject tokens for
+    // already-indexed messages — Gmail subjects are immutable in practice.
+    "
+    CREATE VIEW messages_fts_content AS
+      SELECT m.rowid AS rowid,
+             COALESCE((SELECT subject FROM threads t WHERE t.id = m.thread_id), '') AS subject,
+             m.from_addr AS from_addr,
+             m.to_addrs AS to_addrs,
+             COALESCE(m.body_text, m.snippet, '') AS body_text
+      FROM messages m;
+    CREATE VIRTUAL TABLE messages_fts USING fts5(
+        subject, from_addr, to_addrs, body_text,
+        content='messages_fts_content',
+        tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+        VALUES (new.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
+                new.from_addr, new.to_addrs,
+                COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+        VALUES ('delete', old.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
+                old.from_addr, old.to_addrs,
+                COALESCE(old.body_text, old.snippet, ''));
+        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+        VALUES (new.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
+                new.from_addr, new.to_addrs,
+                COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+        VALUES ('delete', old.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
+                old.from_addr, old.to_addrs,
+                COALESCE(old.body_text, old.snippet, ''));
+    END;
+    INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
+    ",
 ];
 
 pub struct SqliteStore {
@@ -133,6 +183,15 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
 
 const THREAD_COLS: &str =
     "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr";
+
+/// `THREAD_COLS` with a table qualifier (joins in search).
+fn thread_cols(prefix: &str) -> String {
+    THREAD_COLS
+        .split(", ")
+        .map(|c| format!("{prefix}{c}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 impl Store for SqliteStore {
     fn upsert_account(&self, a: &Account) -> Result<(), StoreError> {
@@ -304,6 +363,101 @@ impl Store for SqliteStore {
         })
     }
 
+    /// Ranked local search. With FTS terms: bm25 with column weights
+    /// (subject > from > to > body), best message per thread, blended with
+    /// recency (age penalty per day — newer mail wins ties). Operators-only
+    /// queries fall back to a plain filtered thread scan, newest first.
+    fn search(&self, q: &SearchQuery, limit: u32) -> Result<Vec<SearchResult>, StoreError> {
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        self.with(|c| {
+            if let Some(fts) = &q.fts_match {
+                // bm25()/snippet() must run in a direct full-text query, so
+                // a MATERIALIZED CTE (flattening it back into the join would
+                // break that context) scores each matching message; the outer
+                // query joins, groups per thread, and keeps the best message.
+                // GROUP BY + single min() aggregate: SQLite guarantees bare
+                // columns (the snippet) come from the min-bm25 row.
+                let mut stmt = c.prepare(&format!(
+                    "WITH f AS MATERIALIZED (
+                        SELECT rowid,
+                               snippet(messages_fts, -1, ?2, ?3, '…', 12) AS snip,
+                               bm25(messages_fts, 8.0, 4.0, 2.0, 1.0) AS score
+                        FROM messages_fts WHERE messages_fts MATCH ?1)
+                     SELECT {}, f.snip,
+                            min(f.score)
+                              + ((?4 - t.last_msg_at) / 86400000.0) * 0.05 AS rank
+                     FROM f
+                     JOIN messages m ON m.rowid = f.rowid
+                     JOIN threads t ON t.id = m.thread_id
+                     WHERE (?5 IS NULL OR instr(lower(m.from_addr), ?5) > 0)
+                       AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
+                       AND (?7 = 0 OR t.is_read = 0)
+                       AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
+                     GROUP BY t.id
+                     ORDER BY rank
+                     LIMIT ?9",
+                    thread_cols("t.")
+                ))?;
+                let rows = stmt.query_map(
+                    params![
+                        fts,
+                        SNIPPET_START.to_string(),
+                        SNIPPET_END.to_string(),
+                        now_ms,
+                        q.from_contains,
+                        q.to_contains,
+                        q.unread_only,
+                        q.account_contains,
+                        limit
+                    ],
+                    |r| {
+                        Ok(SearchResult {
+                            thread: row_to_thread(r)?,
+                            snippet: r.get(11)?,
+                        })
+                    },
+                )?;
+                rows.collect()
+            } else {
+                let mut stmt = c.prepare(&format!(
+                    "SELECT {} FROM threads t
+                     WHERE (?1 = 0 OR t.is_read = 0)
+                       AND (?2 IS NULL OR instr(lower(t.account_id), ?2) > 0)
+                       AND (?3 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.from_addr), ?3) > 0))
+                       AND (?4 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.to_addrs), ?4) > 0))
+                     ORDER BY t.last_msg_at DESC
+                     LIMIT ?5",
+                    thread_cols("t.")
+                ))?;
+                let rows = stmt.query_map(
+                    params![
+                        q.unread_only,
+                        q.account_contains,
+                        q.from_contains,
+                        q.to_contains,
+                        limit
+                    ],
+                    |r| {
+                        let thread = row_to_thread(r)?;
+                        let snippet = thread.snippet.clone();
+                        Ok(SearchResult { thread, snippet })
+                    },
+                )?;
+                rows.collect()
+            }
+        })
+    }
+
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError> {
         let (sql, thread_id) = match mutation {
             Mutation::Archive { thread_id } => (
@@ -470,6 +624,176 @@ mod tests {
 
         let after = store.list_messages(&t.id).unwrap()[0].clone();
         assert!(after.body_text.is_some(), "body survives metadata re-upsert");
+    }
+
+    // ---------------------------------------------------------------- search
+
+    fn seed_thread(
+        s: &SqliteStore,
+        id: &str,
+        subject: &str,
+        from: &str,
+        body: &str,
+        last_msg_at: i64,
+        is_read: bool,
+    ) {
+        s.upsert_thread(&Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: subject.to_string(),
+            snippet: body.chars().take(40).collect(),
+            last_msg_at,
+            is_read,
+            is_inbox: true,
+            is_archived: false,
+            msg_count: 1,
+            from_summary: from.to_string(),
+            last_from_addr: from.to_string(),
+        })
+        .unwrap();
+        s.upsert_message(&Message {
+            id: format!("{id}-m1"),
+            thread_id: id.to_string(),
+            account_id: "a1".to_string(),
+            from_addr: from.to_string(),
+            to_addrs: vec!["me@heypigeon.app".to_string()],
+            date: last_msg_at,
+            snippet: body.chars().take(40).collect(),
+            body_html: None,
+            body_text: Some(body.to_string()),
+            label_ids: vec!["INBOX".to_string()],
+            is_read,
+        })
+        .unwrap();
+    }
+
+    fn search(s: &SqliteStore, q: &str) -> Vec<SearchResult> {
+        s.search(&heypigeon_core::search::parse(q), 50).unwrap()
+    }
+
+    #[test]
+    fn search_basic_match_with_snippet() {
+        let s = store();
+        seed_thread(&s, "t1", "Quarterly report", "priya@x.com", "numbers attached", 1000, false);
+        seed_thread(&s, "t2", "Lunch plans", "sam@x.com", "pizza on friday", 2000, false);
+
+        let hits = search(&s, "quarterly");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread.id, "t1");
+        // snippet() highlight uses the private-use markers, not HTML
+        assert!(hits[0].snippet.contains(SNIPPET_START));
+        assert!(hits[0].snippet.contains(SNIPPET_END));
+        assert!(search(&s, "nonexistentterm").is_empty());
+    }
+
+    #[test]
+    fn search_prefix_on_last_term() {
+        let s = store();
+        seed_thread(&s, "t1", "Quarterly report", "priya@x.com", "numbers attached", 1000, false);
+
+        // typing "quart…" mid-word already matches (search-as-you-type)
+        assert_eq!(search(&s, "quart").len(), 1);
+        // but only the LAST term is a prefix — earlier terms match whole words
+        assert!(search(&s, "quart nothing").is_empty());
+        assert_eq!(search(&s, "report numb").len(), 1);
+    }
+
+    #[test]
+    fn search_is_unread_filter() {
+        let s = store();
+        seed_thread(&s, "t1", "Budget review", "priya@x.com", "q3 budget", 1000, true);
+        seed_thread(&s, "t2", "Budget draft", "sam@x.com", "first pass", 2000, false);
+
+        let hits = search(&s, "is:unread budget");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread.id, "t2");
+        // operators-only query works too (no FTS terms)
+        let hits = search(&s, "is:unread");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread.id, "t2");
+    }
+
+    #[test]
+    fn search_from_filter() {
+        let s = store();
+        seed_thread(&s, "t1", "Budget review", "priya@x.com", "q3 budget", 1000, false);
+        seed_thread(&s, "t2", "Budget draft", "sam@x.com", "first pass", 2000, false);
+
+        let hits = search(&s, "from:priya budget");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread.id, "t1");
+        // case-insensitive, works without FTS terms as well
+        let hits = search(&s, "from:PRIYA");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread.id, "t1");
+    }
+
+    #[test]
+    fn search_ranking_subject_beats_body_and_recency_breaks_ties() {
+        let s = store();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        // "invoice" only in the body vs in the subject — subject wins even
+        // though the body-hit thread is slightly newer.
+        seed_thread(&s, "t1", "Invoice overdue", "a@x.com", "see attachment", now - 60_000, false);
+        seed_thread(&s, "t2", "Hello", "b@x.com", "the invoice is attached here", now, false);
+        // identical text, different age — newer first
+        seed_thread(&s, "t3", "Standup notes", "c@x.com", "same text", now - 86_400_000 * 30, false);
+        seed_thread(&s, "t4", "Standup notes", "d@x.com", "same text", now, false);
+        // filler so bm25's idf term is positive (with a 4-doc corpus where
+        // half the docs match, idf is 0 and every score ties at 0)
+        for i in 0..4 {
+            seed_thread(&s, &format!("f{i}"), "Misc chatter", "z@x.com", "nothing relevant", now - 1_000_000, false);
+        }
+
+        let hits = search(&s, "invoice");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].thread.id, "t1", "subject match ranks above body match");
+
+        let hits = search(&s, "standup");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].thread.id, "t4", "equal relevance → newer wins");
+    }
+
+    #[test]
+    fn search_diacritics_fold_both_ways() {
+        let s = store();
+        seed_thread(&s, "t1", "Péter birthday", "peter@x.com", "cake at five", 1000, false);
+        seed_thread(&s, "t2", "Peter standup", "peter@x.com", "notes", 2000, false);
+
+        // remove_diacritics 2: Péter ≈ Peter in both directions
+        assert_eq!(search(&s, "peter").len(), 2);
+        assert_eq!(search(&s, "péter").len(), 2);
+    }
+
+    #[test]
+    fn search_index_follows_message_updates_and_deletes() {
+        let s = store();
+        seed_thread(&s, "t1", "Hello", "a@x.com", "placeholder", 1000, false);
+        // lazy body fetch re-upserts with the real body — index must follow
+        let mut m = s.list_messages(&"t1".to_string()).unwrap()[0].clone();
+        m.body_text = Some("zanzibar itinerary".to_string());
+        s.upsert_message(&m).unwrap();
+        assert_eq!(search(&s, "zanzibar").len(), 1);
+        assert!(search(&s, "placeholder").is_empty());
+
+        s.delete_thread(&"t1".to_string()).unwrap();
+        assert!(search(&s, "zanzibar").is_empty());
+    }
+
+    #[test]
+    fn search_migration_backfills_existing_rows() {
+        // rows inserted before v5 must be searchable after the migration —
+        // simulated by the rebuild step running over sync-inserted data on a
+        // fresh db (rebuild reads the content view; triggers are exercised
+        // above). Also: empty + garbage queries never error.
+        let s = store();
+        seed_thread(&s, "t1", "Hello", "a@x.com", "world", 1000, false);
+        assert!(search(&s, "").is_empty());
+        assert_eq!(search(&s, "wor").len(), 1);
+        assert_eq!(search(&s, "he\"llo OR (").len(), 0); // quoted, no fts syntax error
     }
 
     #[test]

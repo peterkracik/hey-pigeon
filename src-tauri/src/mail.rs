@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use heypigeon_adapter_gmail::{oauth, GmailProvider};
 use heypigeon_adapter_sqlite::SqliteStore;
-use heypigeon_core::domain::{Account, AccountId, Message, Mutation, Thread, ThreadId};
+use heypigeon_core::domain::{Account, AccountId, Message, Mutation, SearchResult, Thread, ThreadId};
 use heypigeon_core::fakes::FakeProvider;
 use heypigeon_core::ports::{MailProvider, SecretStore, Store};
 use heypigeon_core::{outbox, sync};
@@ -95,6 +95,18 @@ pub fn list_threads(
         .store
         .list_threads(account_id.as_ref(), before, limit.unwrap_or(200))
         .map_err(estr)
+}
+
+/// Local FTS5 search: Gmail-style operators + bare text → ranked threads
+/// with a snippet preview (same thread shape as `list_threads`).
+#[tauri::command]
+pub fn search_threads(
+    state: State<'_, MailState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<SearchResult>, String> {
+    let parsed = heypigeon_core::search::parse(&query);
+    state.store.search(&parsed, limit.unwrap_or(50)).map_err(estr)
 }
 
 /// Thread + messages; fetches bodies from the provider on first open

@@ -141,6 +141,14 @@ pub struct OutboxItem {
     pub created_at: i64,
 }
 
+/// One local search hit: the thread plus an FTS5 snippet() preview line
+/// (matches wrapped in `search::SNIPPET_START`/`SNIPPET_END` markers).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SearchResult {
+    pub thread: Thread,
+    pub snippet: String,
+}
+
 /// Provider profile snapshot fetched at connect/sync time.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Profile {

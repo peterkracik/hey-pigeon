@@ -24,6 +24,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       mail::list_accounts,
       mail::list_threads,
+      mail::search_threads,
       mail::get_thread,
       mail::mutate,
       mail::sync_now,

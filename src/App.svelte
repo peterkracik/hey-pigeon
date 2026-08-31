@@ -207,6 +207,16 @@
     threadOpen = false;
   }
 
+  // Search hits can be threads outside the inbox list (archived etc.) —
+  // merge them in so ThreadView can find the email until the next refresh.
+  function openSearchResult(t: ipc.BackendThread) {
+    searchOpen = false;
+    if (!emailsData.some((e) => e.id === t.id)) {
+      emailsData = [...emailsData, ipc.threadToEmail(t)];
+    }
+    openThread(t.id);
+  }
+
   function onPaletteAction(key: string) {
     if (key === "compose") composeOpen = true;
     else if (key === "inbox") folder = "inbox";
@@ -425,7 +435,7 @@
     </div>
   </div>
 
-  <SearchOverlay open={searchOpen} onClose={() => (searchOpen = false)} />
+  <SearchOverlay open={searchOpen} onClose={() => (searchOpen = false)} onOpen={openSearchResult} />
   <CommandPalette open={paletteOpen} onClose={() => (paletteOpen = false)} onAction={onPaletteAction} />
 
   {#if composeOpen}

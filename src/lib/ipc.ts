@@ -41,6 +41,15 @@ export interface BackendMessage {
   is_read: boolean;
 }
 
+export interface BackendSearchResult {
+  thread: BackendThread;
+  snippet: string;
+}
+
+/** Markers wrapped around search snippet highlights (core::search). */
+export const SNIPPET_START = "\ue000";
+export const SNIPPET_END = "\ue001";
+
 export type BackendMutation =
   | { kind: "archive"; thread_id: string }
   | { kind: "mark_read"; thread_id: string; read: boolean }
@@ -71,6 +80,9 @@ export const listThreads = (
   before?: number,
   limit?: number,
 ) => invoke<BackendThread[]>("list_threads", { accountId, before, limit });
+/** Local FTS5 search (operators + bare text); ranked, with snippet. */
+export const searchThreads = (query: string, limit?: number) =>
+  invoke<BackendSearchResult[]>("search_threads", { query, limit });
 export const getThread = (threadId: string) =>
   invoke<{ thread: BackendThread; messages: BackendMessage[] } | null>(
     "get_thread",

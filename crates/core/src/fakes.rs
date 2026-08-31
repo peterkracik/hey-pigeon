@@ -63,7 +63,15 @@ impl Store for MemStore {
 
     fn upsert_thread(&self, thread: &Thread) -> Result<(), StoreError> {
         let mut g = self.inner.lock().unwrap();
-        g.threads.insert(thread.id.clone(), thread.clone());
+        let mut t = thread.clone();
+        // Match SQLite: scheduled_at is local-only metadata — a provider
+        // re-upsert (backfill/delta) must not clobber it.
+        if let Some(old) = g.threads.get(&t.id) {
+            if t.scheduled_at.is_none() {
+                t.scheduled_at = old.scheduled_at;
+            }
+        }
+        g.threads.insert(t.id.clone(), t);
         Ok(())
     }
 
@@ -229,6 +237,7 @@ impl FakeProvider {
                     msg_count: 1,
                     from_summary: format!("Sender {i}"),
                     last_from_addr: format!("sender{i}@example.com"),
+                    scheduled_at: None,
                 };
                 let message = Message {
                     id: format!("{tid}:m0"),

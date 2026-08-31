@@ -520,6 +520,8 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         msg_count: messages.len() as i64,
         from_summary: last.map(|m| display_name(&m.from_addr)).unwrap_or_default(),
         last_from_addr: last.map(|m| bare_addr(&m.from_addr)).unwrap_or_default(),
+        // Local-only metadata — the wire never carries a schedule.
+        scheduled_at: None,
     };
     (thread, messages)
 }

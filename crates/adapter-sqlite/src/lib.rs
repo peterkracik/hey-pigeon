@@ -122,6 +122,9 @@ const MIGRATIONS: &[&str] = &[
     END;
     INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
     ",
+    // v6 — local-only "remind me" schedule (epoch ms). Never synced to
+    // Gmail; sync re-upserts must not clobber it (see upsert_thread).
+    "ALTER TABLE threads ADD COLUMN scheduled_at INTEGER;",
 ];
 
 pub struct SqliteStore {
@@ -169,6 +172,25 @@ impl SqliteStore {
         f(&conn).map_err(err)
     }
 
+    /// Set or clear a thread's local "remind me" schedule (epoch ms).
+    /// Local-only metadata — never synced to Gmail.
+    pub fn set_schedule(
+        &self,
+        thread_id: &ThreadId,
+        scheduled_at: Option<i64>,
+    ) -> Result<(), StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET scheduled_at = ?2 WHERE id = ?1",
+                params![thread_id, scheduled_at],
+            )
+        })?;
+        if n == 0 {
+            return Err(StoreError(format!("unknown thread {thread_id}")));
+        }
+        Ok(())
+    }
+
     /// Remove an account and everything belonging to it (used when the dev
     /// fake account is replaced by a real one).
     pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
@@ -195,11 +217,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         msg_count: r.get(8)?,
         from_summary: r.get(9)?,
         last_from_addr: r.get(10)?,
+        scheduled_at: r.get(11)?,
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -260,17 +283,20 @@ impl Store for SqliteStore {
 
     fn upsert_thread(&self, t: &Thread) -> Result<(), StoreError> {
         self.with(|c| {
+            // scheduled_at is deliberately absent from the column list AND
+            // the UPDATE set: it is local-only metadata (never synced to
+            // Gmail), so a sync re-upsert of provider data must not clobber
+            // an existing schedule. Writes go through `set_schedule` only.
             c.execute(
-                &format!(
-                    "INSERT INTO threads ({THREAD_COLS})
+                "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                                      is_inbox, is_archived, msg_count, from_summary, last_from_addr)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(id) DO UPDATE SET
                        subject = excluded.subject, snippet = excluded.snippet,
                        last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
                        is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
                        msg_count = excluded.msg_count, from_summary = excluded.from_summary,
-                       last_from_addr = excluded.last_from_addr"
-                ),
+                       last_from_addr = excluded.last_from_addr",
                 params![
                     t.id, t.account_id, t.subject, t.snippet, t.last_msg_at,
                     t.is_read, t.is_inbox, t.is_archived, t.msg_count, t.from_summary,
@@ -447,7 +473,7 @@ impl Store for SqliteStore {
                     |r| {
                         Ok(SearchResult {
                             thread: row_to_thread(r)?,
-                            snippet: r.get(11)?,
+                            snippet: r.get(12)?,
                         })
                     },
                 )?;
@@ -654,6 +680,41 @@ mod tests {
         assert!(after.body_text.is_some(), "body survives metadata re-upsert");
     }
 
+    #[tokio::test]
+    async fn scheduled_at_survives_sync_reupsert() {
+        let store = store();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let id = store.list_threads(None, None, 1).unwrap()[0].id.clone();
+
+        store.set_schedule(&id, Some(1_756_700_000_000)).unwrap();
+        assert_eq!(
+            store.get_thread(&id).unwrap().unwrap().scheduled_at,
+            Some(1_756_700_000_000)
+        );
+
+        // Delta/backfill re-upserts the same thread from provider data
+        // (which never carries a schedule) — must not clobber it.
+        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        assert_eq!(
+            store.get_thread(&id).unwrap().unwrap().scheduled_at,
+            Some(1_756_700_000_000),
+            "schedule survives provider re-upsert"
+        );
+
+        // Listing exposes it too (drives the calendar view).
+        let listed = store.list_threads(None, None, 10).unwrap();
+        assert_eq!(
+            listed.iter().find(|t| t.id == id).unwrap().scheduled_at,
+            Some(1_756_700_000_000)
+        );
+
+        // Clearing works and unknown threads error.
+        store.set_schedule(&id, None).unwrap();
+        assert_eq!(store.get_thread(&id).unwrap().unwrap().scheduled_at, None);
+        assert!(store.set_schedule(&"nope".to_string(), Some(1)).is_err());
+    }
+
     // ---------------------------------------------------------------- search
 
     fn seed_thread(
@@ -677,6 +738,7 @@ mod tests {
             msg_count: 1,
             from_summary: from.to_string(),
             last_from_addr: from.to_string(),
+            scheduled_at: None,
         })
         .unwrap();
         s.upsert_message(&Message {

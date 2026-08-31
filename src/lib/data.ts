@@ -46,6 +46,8 @@ export interface Email {
   fromAddr?: string;
   /** Epoch ms of the newest message (live mode) — date grouping. */
   lastMsgAt?: number;
+  /** Local-only "remind me" schedule (epoch ms). Never synced to Gmail. */
+  scheduledAt?: number;
   subject: string;
   snippet: string;
   time: string;
@@ -193,6 +195,14 @@ a{color:#111318}
 </div>
 </body></html>`;
 
+/** Mock schedule times so the calendar view is demoable in browser mode. */
+function mockSchedule(dayOffset: number, hour: number): number {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(hour, 0, 0, 0);
+  return d.getTime();
+}
+
 export const EMAILS_SEED: Email[] = [
   {
     id: "1",
@@ -203,6 +213,7 @@ export const EMAILS_SEED: Email[] = [
     snippet: "Could you take a look before Thursday standup...",
     time: "9:14 AM",
     unread: true,
+    scheduledAt: mockSchedule(0, 18),
     thread: [
       {
         id: "t1",
@@ -290,6 +301,7 @@ export const EMAILS_SEED: Email[] = [
     accountId: "a2",
     folder: "inbox",
     pinned: true,
+    scheduledAt: mockSchedule(1, 9),
     from: "Ana Torres",
     subject: "Invoice #4021",
     snippet:
@@ -308,6 +320,7 @@ export const EMAILS_SEED: Email[] = [
     folder: "inbox",
     pinned: true,
     done: true,
+    scheduledAt: mockSchedule(8, 9),
     from: "Marcus Webb",
     subject: "Contract renewal - sign by Friday",
     snippet:

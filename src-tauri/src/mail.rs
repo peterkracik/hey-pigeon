@@ -167,6 +167,22 @@ pub async fn sync_now(
     Ok(n)
 }
 
+/// Set or clear a thread's "remind me" schedule (epoch ms). Local-only
+/// metadata — never synced to Gmail (no outbox, no provider call).
+#[tauri::command]
+pub async fn set_schedule(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    account_id: AccountId,
+    thread_id: ThreadId,
+    scheduled_at: Option<i64>,
+) -> Result<(), String> {
+    let _ = account_id; // command shape mirrors mutate; schedule is per-thread
+    state.store.set_schedule(&thread_id, scheduled_at).map_err(estr)?;
+    let _ = app.emit(THREADS_UPDATED, ());
+    Ok(())
+}
+
 /// Update per-account settings: display name, color (predefined palette),
 /// signature. Omitted fields stay unchanged.
 #[tauri::command]

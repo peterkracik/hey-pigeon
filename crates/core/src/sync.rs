@@ -255,6 +255,7 @@ mod tests {
             msg_count: 1,
             from_summary: "Newcomer".to_string(),
             last_from_addr: "new@example.com".to_string(),
+            scheduled_at: None,
         };
         let message = crate::domain::Message {
             id: format!("{tid}:m0"),

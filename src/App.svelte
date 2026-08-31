@@ -15,6 +15,7 @@
   import * as ipc from "./lib/ipc";
 
   let sidebarOpen = $state(false);
+  let view: "mail" | "calendar" = $state("mail");
   let unified = $state(true);
   let activeAccountId = $state("a1");
   let folder = $state("inbox");
@@ -72,14 +73,21 @@
 
   const accounts = $derived(ipc.isTauri && liveAccounts.length ? liveAccounts : ACCOUNTS);
 
-  const emails = $derived(
-    emailsData
-      .filter((e) => (folder === "all" ? true : e.folder === folder))
+  const emails = $derived.by(() => {
+    // Calendar view: only scheduled mail, ascending by schedule (matches the
+    // grouped render order so j/k navigation follows the visual order).
+    const base =
+      view === "calendar"
+        ? emailsData
+            .filter((e) => e.scheduledAt !== undefined)
+            .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
+        : emailsData.filter((e) => (folder === "all" ? true : e.folder === folder));
+    return base
       .filter((e) => unified || e.accountId === activeAccountId)
       .map((e) =>
         unified ? { ...e, accountTag: accounts.find((a) => a.id === e.accountId)?.tag } : e,
-      ),
-  );
+      );
+  });
   const email = $derived(
     emails.find((e) => e.id === selectedId) ?? emailsData.find((e) => e.id === selectedId),
   );
@@ -88,7 +96,13 @@
       (e) => e.folder === "inbox" && e.unread && (unified || e.accountId === activeAccountId),
     ).length,
   });
-  const title = $derived(unified && folder === "inbox" ? "All inboxes" : FOLDER_TITLES[folder]);
+  const title = $derived.by(() =>
+    view === "calendar"
+      ? "Scheduled"
+      : unified && folder === "inbox"
+        ? "All inboxes"
+        : FOLDER_TITLES[folder],
+  );
   // Compose defaults to the viewed account filter; unified view falls back to the first account.
   const composeFromId = $derived(unified ? accounts[0]?.id : activeAccountId);
   const signatureFor = (accountId: string) => accounts.find((a) => a.id === accountId)?.signature;
@@ -112,6 +126,41 @@
     if (action === "pin") emailsData = emailsData.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e));
     else if (action === "done") emailsData = emailsData.map((e) => (e.id === id ? { ...e, done: !e.done } : e));
     else console.log(id, action);
+  }
+
+  // Local-only "remind me" schedule (never synced to Gmail). Optimistic; the
+  // backend confirms via threads_updated → refreshLive.
+  function setSchedule(id: string, scheduledAt: number | null) {
+    const em = emailsData.find((e) => e.id === id);
+    if (!em) return;
+    const previous = em.scheduledAt;
+    emailsData = emailsData.map((e) =>
+      e.id === id ? { ...e, scheduledAt: scheduledAt ?? undefined } : e,
+    );
+    const confirm = () =>
+      scheduledAt !== null
+        ? toast("success", `Scheduled for ${ipc.fmtFull(scheduledAt)}`, em.subject)
+        : toast("success", "Schedule removed", em.subject);
+    if (!ipc.isTauri) {
+      confirm();
+      return;
+    }
+    ipc
+      .setSchedule(em.accountId, id, scheduledAt)
+      .then(confirm)
+      .catch((e) => {
+        console.error("set_schedule failed", e);
+        toast("danger", "Could not schedule", String(e));
+        emailsData = emailsData.map((x) => (x.id === id ? { ...x, scheduledAt: previous } : x));
+      });
+  }
+
+  function switchView(v: "mail" | "calendar") {
+    if (view === v) return;
+    view = v;
+    selectedId = null;
+    threadOpen = false;
+    fullscreen = false;
   }
 
   function sendCompose(data: { accountId: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string }) {
@@ -234,6 +283,7 @@
 
   function selectFolder(f: string) {
     folder = f;
+    view = "mail";
     selectedId = null;
     threadOpen = false;
   }
@@ -295,7 +345,7 @@
       }
       return;
     }
-    if (threadOpen || folder === "settings") return;
+    if (threadOpen || (view === "mail" && folder === "settings")) return;
     if (ev.key === "e" && selectedId !== null) {
       ev.preventDefault();
       onEmailAction(selectedId, "done");
@@ -340,13 +390,36 @@
     {counts}
     labels={LABELS}
   />
-  {#if !sidebarOpen}
-    <div class="burger">
-      <button class="burger-btn" title="Toggle sidebar" onclick={() => (sidebarOpen = true)}>
-        <Icon d="M4 7h16M4 12h16M4 17h16" size={17} />
+  <div class="rail">
+    <button class="rail-btn" title="Toggle sidebar" onclick={() => (sidebarOpen = !sidebarOpen)}>
+      <Icon d="M4 7h16M4 12h16M4 17h16" size={17} />
+    </button>
+    <div class="rail-views">
+      <button
+        class="rail-btn"
+        class:active={view === "mail"}
+        title="Inbox"
+        onclick={() => switchView("mail")}
+      >
+        <Icon
+          d="M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"
+          size={17}
+          fill={view === "mail" ? "currentColor" : "none"}
+        />
+      </button>
+      <button
+        class="rail-btn"
+        class:active={view === "calendar"}
+        title="Scheduled"
+        onclick={() => switchView("calendar")}
+      >
+        <Icon
+          d="M8 3v3M16 3v3M4 9h17M6 5h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2z"
+          size={17}
+        />
       </button>
     </div>
-  {/if}
+  </div>
 
   <div class="main">
     <div class="scroll">
@@ -379,12 +452,12 @@
               }}
             >
               {title}
-              {#if !threadOpen && folder !== "settings"}
+              {#if !threadOpen && (view === "calendar" || folder !== "settings")}
                 <span class="count">{emails.length}</span>
               {/if}
             </span>
             <div class="spacer"></div>
-            {#if !threadOpen && folder !== "settings"}
+            {#if !threadOpen && (view === "calendar" || folder !== "settings")}
               <div class="topbar-actions">
                 <button class="cmdk" title="Command palette (Cmd+K)" onclick={() => (paletteOpen = true)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -433,7 +506,7 @@
             {/if}
           </div>
         {/if}
-        {#if folder === "settings"}
+        {#if view === "mail" && folder === "settings"}
           <Settings
             {accounts}
             {hoverActions}
@@ -461,9 +534,11 @@
           <InboxList
             {emails}
             {selectedId}
+            mode={view === "calendar" ? "scheduled" : "inbox"}
             onSelect={selectEmail}
             onOpen={openThread}
             onAction={onEmailAction}
+            onSchedule={setSchedule}
             onSendReply={(em, body) => {
               const target = em.thread?.[em.thread.length - 1];
               if (target) sendReply(em, target, body);
@@ -473,7 +548,7 @@
             {pinListEnabled}
           />
           {#if emails.length === 0}
-            <div class="empty">Nothing here yet</div>
+            <div class="empty">{view === "calendar" ? "Nothing scheduled" : "Nothing here yet"}</div>
           {/if}
         {/if}
       </div>
@@ -553,22 +628,41 @@
     font-family: var(--font-body);
     background: var(--bg-page);
   }
-  .burger {
-    position: fixed;
-    top: 18px;
-    left: 20px;
+  .rail {
+    width: 52px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 14px;
+    gap: 4px;
     z-index: 40;
   }
-  .burger-btn {
+  .rail-btn {
     border: none;
     background: none;
     cursor: pointer;
     color: var(--text-tertiary);
     display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-md);
     padding: 0;
   }
-  .burger-btn:hover {
+  .rail-btn:hover {
     color: var(--text-primary);
+  }
+  .rail-btn.active {
+    color: var(--text-primary);
+    background: var(--accent-soft);
+  }
+  .rail-views {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
   }
   .main {
     flex: 1;

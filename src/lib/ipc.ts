@@ -25,6 +25,8 @@ export interface BackendThread {
   msg_count: number;
   from_summary: string;
   last_from_addr: string;
+  /** Local-only "remind me" schedule (epoch ms). Never synced to Gmail. */
+  scheduled_at: number | null;
 }
 
 export interface BackendMessage {
@@ -90,6 +92,12 @@ export const getThread = (threadId: string) =>
   );
 export const mutate = (accountId: string, mutation: BackendMutation) =>
   invoke<void>("mutate", { accountId, mutation });
+/** Set/clear the local "remind me" schedule (epoch ms; null clears). */
+export const setSchedule = (
+  accountId: string,
+  threadId: string,
+  scheduledAt: number | null,
+) => invoke<void>("set_schedule", { accountId, threadId, scheduledAt });
 export const syncNow = (accountId: string) =>
   invoke<number>("sync_now", { accountId });
 /** Runs the browser consent flow; resolves with the connected email address. */
@@ -143,7 +151,7 @@ function fmtTime(epochMs: number): string {
 }
 
 /** HH:MM DD/MMM/YYYY, e.g. "19:45 31/Aug/2026". */
-function fmtFull(epochMs: number): string {
+export function fmtFull(epochMs: number): string {
   const d = new Date(epochMs);
   const pad = (n: number) => String(n).padStart(2, "0");
   const mon = d.toLocaleDateString("en", { month: "short" });
@@ -163,6 +171,7 @@ export function threadToEmail(t: BackendThread): Email {
     unread: !t.is_read,
     fromAddr: t.last_from_addr || undefined,
     lastMsgAt: t.last_msg_at,
+    scheduledAt: t.scheduled_at ?? undefined,
   };
 }
 

@@ -42,6 +42,10 @@ pub struct Thread {
     /// Bare address of the latest sender — avatar lookups in the list.
     #[serde(default)]
     pub last_from_addr: String,
+    /// Local-only "remind me" schedule (epoch ms). Never synced to Gmail —
+    /// stores must preserve it across provider re-upserts.
+    #[serde(default)]
+    pub scheduled_at: Option<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

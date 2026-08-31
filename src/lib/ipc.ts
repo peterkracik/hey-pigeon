@@ -84,12 +84,17 @@ export const startGmailOauth = () => invoke<string>("start_gmail_oauth");
 
 const avatarCache = new Map<string, Promise<string | null>>();
 /** Sender contact photo (People API), cached per session. */
-export function lookupAvatar(accountId: string, email: string): Promise<string | null> {
+export function lookupAvatar(
+  accountId: string,
+  email: string,
+): Promise<string | null> {
   if (!isTauri) return Promise.resolve(null);
   const key = `${accountId}:${email.toLowerCase()}`;
   let p = avatarCache.get(key);
   if (!p) {
-    p = invoke<string | null>("lookup_avatar", { accountId, email }).catch(() => null);
+    p = invoke<string | null>("lookup_avatar", { accountId, email }).catch(
+      () => null,
+    );
     avatarCache.set(key, p);
   }
   return p;

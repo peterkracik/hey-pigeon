@@ -182,15 +182,23 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
     let avatar_url = provider.fetch_profile_photo(&email).await;
 
     let existing = state.store.list_accounts().map_err(estr)?;
-    let color = ACCOUNT_COLORS[existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count()
-        % ACCOUNT_COLORS.len()];
+    // Re-connecting an existing account must keep its color stable.
+    let color = existing
+        .iter()
+        .find(|a| a.id == email)
+        .map(|a| a.color.clone())
+        .unwrap_or_else(|| {
+            ACCOUNT_COLORS[existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count()
+                % ACCOUNT_COLORS.len()]
+                .to_string()
+        });
     state
         .store
         .upsert_account(&Account {
             id: email.clone(),
             email: email.clone(),
             display_name: email.split('@').next().unwrap_or(&email).to_string(),
-            color: color.to_string(),
+            color,
             history_id: None,
             avatar_url,
         })

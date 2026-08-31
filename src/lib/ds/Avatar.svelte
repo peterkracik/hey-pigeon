@@ -1,9 +1,10 @@
 <script lang="ts">
   // Image avatar with a fallback chain: explicit photo → Google contact photo
-  // (People API, people you've corresponded with) → gravatar → sender-domain
-  // favicon (brand logos) → initials.
-  // ponytail: leaks sender-address hash to gravatar.com and sender domain to
-  // duckduckgo.com per row; gate behind the remote-image privacy setting in M3.
+  // (People API, people you've corresponded with) → gravatar → initials.
+  // Domain favicons were tried and rejected: placeholder icons masquerade as
+  // 200s, and a wrong icon is worse than initials.
+  // ponytail: leaks sender-address hash to gravatar.com per row; gate behind
+  // the remote-image privacy setting in M3.
   import { lookupAvatar } from "../ipc";
 
   let {
@@ -28,13 +29,6 @@
     fontWeight?: number;
   } = $props();
 
-  // Domains where a favicon would be meaningless (personal mail providers).
-  const FREEMAIL = new Set([
-    "gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com",
-    "live.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
-    "gmx.net", "gmx.de", "web.de", "aol.com", "example.com", "heypigeon.app",
-  ]);
-
   let sources: string[] = $state([]);
   let phase = $state(0);
 
@@ -52,15 +46,9 @@
   let contactUrl: string | null = $state(null);
   let gravatarUrl: string | null = $state(null);
 
-  const slots = $derived.by(() => {
-    const addr = email?.trim().toLowerCase();
-    const domain = addr?.split("@")[1];
-    const favicon =
-      domain && !FREEMAIL.has(domain)
-        ? `https://icons.duckduckgo.com/ip3/${domain}.ico`
-        : null;
-    return [src ?? null, contactUrl, gravatarUrl, favicon].filter((s): s is string => Boolean(s));
-  });
+  const slots = $derived.by(() =>
+    [src ?? null, contactUrl, gravatarUrl].filter((s): s is string => Boolean(s)),
+  );
 
   $effect(() => {
     phase = 0;

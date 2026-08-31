@@ -114,7 +114,8 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(11, 13, 18, 0.5);
+    background: rgba(17, 19, 24, 0.32);
+    backdrop-filter: blur(6px);
     z-index: 90;
     display: flex;
     justify-content: center;

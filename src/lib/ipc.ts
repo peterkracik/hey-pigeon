@@ -82,6 +82,8 @@ export const listThreads = (
   before?: number,
   limit?: number,
 ) => invoke<BackendThread[]>("list_threads", { accountId, before, limit });
+/** Calendar feed: every scheduled thread, even archived / out of the inbox window. */
+export const listScheduled = () => invoke<BackendThread[]>("list_scheduled");
 /** Local FTS5 search (operators + bare text); ranked, with snippet. */
 export const searchThreads = (query: string, limit?: number) =>
   invoke<BackendSearchResult[]>("search_threads", { query, limit });

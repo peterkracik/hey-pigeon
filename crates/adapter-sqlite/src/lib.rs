@@ -191,6 +191,21 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Every scheduled thread, regardless of inbox/archive state — the
+    /// calendar view must keep showing reminders after the thread is
+    /// archived out of the inbox window (and past the inbox page limit).
+    pub fn list_scheduled(&self) -> Result<Vec<Thread>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE scheduled_at IS NOT NULL
+                 ORDER BY scheduled_at ASC"
+            ))?;
+            let rows = stmt.query_map([], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
     /// Remove an account and everything belonging to it (used when the dev
     /// fake account is replaced by a real one).
     pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
@@ -713,6 +728,32 @@ mod tests {
         store.set_schedule(&id, None).unwrap();
         assert_eq!(store.get_thread(&id).unwrap().unwrap().scheduled_at, None);
         assert!(store.set_schedule(&"nope".to_string(), Some(1)).is_err());
+    }
+
+    #[tokio::test]
+    async fn list_scheduled_includes_archived_threads() {
+        let store = store();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let id = store.list_threads(None, None, 1).unwrap()[0].id.clone();
+        store.set_schedule(&id, Some(42)).unwrap();
+
+        // "Remind later" flow: schedule, then archive to clear the inbox.
+        outbox::enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() })
+            .unwrap();
+        assert!(
+            !store.list_threads(None, None, 10).unwrap().iter().any(|t| t.id == id),
+            "archived thread leaves the inbox list"
+        );
+
+        // ...but the calendar feed still shows it.
+        let scheduled = store.list_scheduled().unwrap();
+        assert_eq!(scheduled.iter().filter(|t| t.id == id).count(), 1);
+        assert_eq!(scheduled.iter().find(|t| t.id == id).unwrap().scheduled_at, Some(42));
+
+        // Clearing the schedule removes it from the feed.
+        store.set_schedule(&id, None).unwrap();
+        assert!(!store.list_scheduled().unwrap().iter().any(|t| t.id == id));
     }
 
     // ---------------------------------------------------------------- search

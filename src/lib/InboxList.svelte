@@ -112,12 +112,15 @@
     };
   }
 
-  /** Short schedule stamp: "18:00" today, "Sat 9:00 AM" this week, "Mar 2" later. */
+  /** Short schedule stamp: "18:00" today, "Sat 9:00 AM" within a week, "Mar 2"
+   * for anything further out — or overdue (a weekday-only stamp on a past
+   * timestamp would read as upcoming). */
   function fmtSched(ts: number): string {
     const d = new Date(ts);
     const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     if (d.toDateString() === new Date().toDateString()) return time;
-    if (ts - Date.now() < 7 * DAY_MS)
+    const delta = ts - Date.now();
+    if (delta > 0 && delta < 7 * DAY_MS)
       return `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
   }
@@ -391,7 +394,7 @@
       <div class="remind-pick">
         <input class="pick-input" type="date" bind:value={pickDate} aria-label="Date" />
         <div class="pick-row">
-          <input class="pick-input time" type="time" bind:value={pickTime} aria-label="Time" />
+          <input class="pick-input pick-time" type="time" bind:value={pickTime} aria-label="Time" />
           <button
             class="pick-confirm"
             disabled={pickInvalid}
@@ -683,7 +686,10 @@
     width: 100%;
     min-width: 0;
   }
-  .pick-input.time {
+  /* Not `.time` — that class is the absolutely-positioned row timestamp
+     below, and matching it here tears the input out of .pick-row and
+     stretches it over the whole popover. */
+  .pick-input.pick-time {
     flex: 1;
   }
   .pick-confirm {

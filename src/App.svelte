@@ -33,7 +33,11 @@
 
   // Live mode: inside Tauri the mock seed is replaced by real store data.
   async function refreshLive() {
-    const [accounts, threads] = await Promise.all([ipc.listAccounts(), ipc.listThreads()]);
+    const [accounts, threads, scheduled] = await Promise.all([
+      ipc.listAccounts(),
+      ipc.listThreads(),
+      ipc.listScheduled(),
+    ]);
     liveAccounts = accounts.map((a) => ({
       id: a.id,
       email: a.email,
@@ -44,8 +48,15 @@
     }));
     // Preserve already-loaded bodies + local flags across refreshes.
     const prev = new Map(emailsData.map((e) => [e.id, e]));
-    emailsData = threads.map((t) => {
+    // Scheduled threads that left the inbox window (archived, or beyond the
+    // list_threads page limit) must still feed the calendar view.
+    const inboxIds = new Set(threads.map((t) => t.id));
+    const extras = scheduled.filter((t) => !inboxIds.has(t.id));
+    emailsData = [...threads, ...extras].map((t) => {
       const mapped = ipc.threadToEmail(t);
+      // Merged extras that are no longer in the inbox must not leak into the
+      // inbox folder view.
+      if (!inboxIds.has(t.id) && (!t.is_inbox || t.is_archived)) mapped.folder = "archive";
       const old = prev.get(t.id);
       return old?.thread ? { ...mapped, thread: old.thread } : mapped;
     });

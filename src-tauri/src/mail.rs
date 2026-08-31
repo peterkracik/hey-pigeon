@@ -97,6 +97,13 @@ pub fn list_threads(
         .map_err(estr)
 }
 
+/// Calendar feed: every scheduled thread, regardless of inbox/archive state
+/// or the inbox page window — a schedule must stay visible after archiving.
+#[tauri::command]
+pub fn list_scheduled(state: State<'_, MailState>) -> Result<Vec<Thread>, String> {
+    state.store.list_scheduled().map_err(estr)
+}
+
 /// Local FTS5 search: Gmail-style operators + bare text → ranked threads
 /// with a snippet preview (same thread shape as `list_threads`).
 /// Async so the FTS scan runs off the main thread — search-as-you-type

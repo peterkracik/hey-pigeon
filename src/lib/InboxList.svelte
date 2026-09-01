@@ -472,6 +472,7 @@
   .selected-card .row {
     margin: 0;
     border-radius: 0;
+    border-bottom: 1px solid var(--border-subtle);
   }
   /* Superhuman-style hover/focus: solid fill, no shadow, strong left bar. */
   .row:hover,

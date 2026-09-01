@@ -61,6 +61,7 @@
         <ThreadMessage
           msg={m}
           accountId={em.accountId}
+          accountTag={em.accountTag}
           expanded={expandedId === m.id}
           onToggle={() => (expandedId = expandedId === m.id ? null : m.id)}
           showActions={replyTargetId !== m.id}

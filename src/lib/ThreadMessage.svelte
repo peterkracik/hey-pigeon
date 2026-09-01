@@ -9,6 +9,7 @@
   let {
     msg,
     accountId,
+    accountTag,
     expanded,
     onToggle,
     showActions,
@@ -18,6 +19,7 @@
   }: {
     msg: ThreadMsg;
     accountId?: string;
+    accountTag?: string;
     expanded: boolean;
     onToggle: () => void;
     showActions: boolean;
@@ -75,7 +77,15 @@
     <div class="card-head" onclick={onToggle} role="button" tabindex="0" onkeydown={(e) => e.key === "Enter" && onToggle()}>
       <span class="head-left">
         {@render avatar(30)}
-        <span class="head-name">{name}</span>
+        <span class="head-text">
+          <span class="head-name">{name}</span>
+          {#if accountId?.includes("@")}
+            <span class="head-to">
+              {#if accountTag}<span class="head-to-dot" style:background="var(--tag-{accountTag}-fg)"></span>{/if}
+              to {accountId}
+            </span>
+          {/if}
+        </span>
       </span>
       <span class="head-date">{msg.fullDate ?? msg.date}</span>
     </div>
@@ -202,11 +212,30 @@
     align-items: center;
     gap: 10px;
   }
+  .head-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
   .head-name {
     font-family: var(--font-body);
     font-size: 14.5px;
     font-weight: 700;
     color: var(--text-primary);
+  }
+  .head-to {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .head-to-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
   .head-date {
     font-family: var(--font-mono);

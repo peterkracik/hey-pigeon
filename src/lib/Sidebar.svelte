@@ -123,11 +123,14 @@
     cursor: pointer;
     text-align: left;
     background: none;
-    border-radius: var(--radius-md);
+    border-radius: 0;
     color: var(--text-secondary);
   }
+  /* Same treatment as list-row hover: solid fill, honey left bar, square. */
+  .nav-item:hover,
   .nav-item.active {
-    background: var(--surface-sunken);
+    background: var(--navy-50);
+    box-shadow: inset 3px 0 0 var(--accent-highlight);
     color: var(--text-primary);
   }
   .nav-label {

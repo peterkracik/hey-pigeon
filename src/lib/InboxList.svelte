@@ -10,6 +10,7 @@
   let {
     emails,
     selectedId,
+    cursorId = null,
     onSelect,
     onOpen,
     onAction,
@@ -22,6 +23,7 @@
   }: {
     emails: Email[];
     selectedId: string | null;
+    cursorId?: string | null;
     onSelect: (id: string | null) => void;
     onOpen: (id: string) => void;
     onAction: (id: string, action: string) => void;
@@ -147,6 +149,12 @@
     replyingId = null;
   });
 
+  // Keep the keyboard cursor row in view while navigating.
+  $effect(() => {
+    if (!cursorId) return;
+    document.querySelector(`[data-eid="${CSS.escape(cursorId)}"]`)?.scrollIntoView({ block: "nearest" });
+  });
+
   const pinned = $derived(pinListEnabled && mode === "inbox" ? emails.filter((e) => e.pinned) : []);
   const rest = $derived(pinned.length ? emails.filter((e) => !e.pinned) : emails);
   // Real date buckets when timestamps exist (live mode); the mock seed keeps
@@ -235,7 +243,9 @@
           <div
             class="row"
             class:is-selected={selectedId === e.id}
+            class:cursor={cursorId === e.id}
             class:completing={completing.has(e.id)}
+            data-eid={e.id}
             onclick={() => onSelect(selectedId === e.id ? null : e.id)}
           >
             <Tooltip label={e.done ? "Mark not done" : "Mark done"} side="bottom">
@@ -465,7 +475,8 @@
   }
   /* Superhuman-style hover/focus: solid fill, no shadow, strong left bar. */
   .row:hover,
-  .row:focus-visible {
+  .row:focus-visible,
+  .row.cursor {
     background: var(--navy-50);
     box-shadow: inset 3px 0 0 var(--accent-interactive);
     border-color: transparent;

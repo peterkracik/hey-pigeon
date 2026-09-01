@@ -21,7 +21,11 @@
   let activeAccountId = $state("a1");
   let folder = $state("inbox");
   let selectedId: string | null = $state(null);
+  // Keyboard cursor: arrows/j/k move this highlight without opening the
+  // preview card; Enter opens the thread.
+  let cursorId: string | null = $state(null);
   let threadOpen = $state(false);
+  let scrollEl: HTMLDivElement | undefined = $state();
   let composeOpen = $state(false);
   // Restored draft after a send-undo; non-null reopens the composer prefilled.
   let composeDraft: ComposeData | null = $state(null);
@@ -480,6 +484,8 @@
     selectedId = id;
     threadOpen = true;
     loadBodies(id);
+    // Fresh read starts at the top, not wherever the list was scrolled.
+    requestAnimationFrame(() => scrollEl?.scrollTo({ top: 0 }));
   }
 
   function selectFolder(f: string) {
@@ -553,38 +559,45 @@
         fullscreen = false;
       } else if (selectedId !== null) {
         selectedId = null;
+      } else if (cursorId !== null) {
+        cursorId = null;
       }
       return;
     }
     if (threadOpen || (view === "mail" && folder === "settings")) return;
-    if (ev.key === "e" && selectedId !== null) {
+    const actId = cursorId ?? selectedId;
+    if (ev.key === "e" && actId !== null) {
       ev.preventDefault();
-      onEmailAction(selectedId, "done");
+      if (cursorId === actId) cursorId = null;
+      onEmailAction(actId, "done");
       return;
     }
-    if (ev.key === "#" && selectedId !== null) {
+    if (ev.key === "#" && actId !== null) {
       ev.preventDefault();
-      onEmailAction(selectedId, "delete");
+      if (cursorId === actId) cursorId = null;
+      onEmailAction(actId, "delete");
       return;
     }
-    if (ev.key === "u" && selectedId !== null) {
+    if (ev.key === "u" && actId !== null) {
       ev.preventDefault();
-      onEmailAction(selectedId, "unread");
+      onEmailAction(actId, "unread");
       return;
     }
     if (ev.key === "j" || ev.key === "ArrowDown") {
       ev.preventDefault();
-      const i = emails.findIndex((e) => e.id === selectedId);
+      const i = emails.findIndex((e) => e.id === (cursorId ?? selectedId));
       const next = emails[Math.min(i + 1, emails.length - 1)];
-      if (next) selectedId = next.id;
+      selectedId = null; // cursor-only: no preview card while navigating
+      if (next) cursorId = next.id;
     } else if (ev.key === "k" || ev.key === "ArrowUp") {
       ev.preventDefault();
-      const i = emails.findIndex((e) => e.id === selectedId);
+      const i = emails.findIndex((e) => e.id === (cursorId ?? selectedId));
       const prev = emails[Math.max(i - 1, 0)];
-      if (prev) selectedId = prev.id;
-    } else if (ev.key === "Enter" && selectedId !== null) {
+      selectedId = null;
+      if (prev) cursorId = prev.id;
+    } else if (ev.key === "Enter" && (cursorId !== null || selectedId !== null)) {
       ev.preventDefault();
-      threadOpen = true;
+      openThread((cursorId ?? selectedId)!);
     }
   }
 </script>
@@ -638,7 +651,7 @@
   </div>
 
   <div class="main">
-    <div class="scroll">
+    <div class="scroll" bind:this={scrollEl}>
       <div class="column">
         {#if !fullscreen}
           <div class="topbar">
@@ -750,6 +763,7 @@
           <InboxList
             {emails}
             {selectedId}
+            {cursorId}
             mode={view === "calendar" ? "scheduled" : "inbox"}
             onSelect={selectEmail}
             onOpen={openThread}

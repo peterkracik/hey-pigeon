@@ -16,6 +16,11 @@
   import * as ipc from "./lib/ipc";
 
   let sidebarOpen = $state(false);
+  let sidebarWidth = $state(Number(localStorage.getItem("sidebarWidth")) || 248);
+  function resizeSidebar(w: number) {
+    sidebarWidth = w;
+    localStorage.setItem("sidebarWidth", String(w));
+  }
   let view: "mail" | "calendar" = $state("mail");
   let unified = $state(true);
   let activeAccountId = $state("a1");
@@ -607,6 +612,8 @@
 <div class="app">
   <Sidebar
     open={sidebarOpen}
+    width={sidebarWidth}
+    onResize={resizeSidebar}
     active={folder}
     onSelect={selectFolder}
     {accounts}
@@ -875,6 +882,7 @@
     display: flex;
     font-family: var(--font-body);
     background: var(--bg-page);
+    overflow-x: hidden;
   }
   .rail {
     width: 52px;
@@ -923,6 +931,7 @@
   .scroll {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     min-width: 0;
   }
   .column {

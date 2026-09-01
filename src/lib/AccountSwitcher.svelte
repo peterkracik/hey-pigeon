@@ -126,15 +126,18 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    width: 100%;
+    /* Bleed to the sidebar edges — same full-width highlight as nav items. */
+    width: calc(100% + 28px);
+    margin: 0 -14px;
     border: none;
     background: none;
     cursor: pointer;
-    padding: 6px 4px;
-    border-radius: var(--radius-md);
+    padding: 6px 18px;
+    border-radius: 0;
   }
   .trigger:hover {
-    background: var(--surface-sunken);
+    background: var(--navy-50);
+    box-shadow: inset 3px 0 0 var(--accent-highlight);
   }
   .trigger-label {
     flex: 1;

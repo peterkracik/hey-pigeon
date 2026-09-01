@@ -15,6 +15,8 @@
     onAddAccount,
     counts,
     labels,
+    width = 248,
+    onResize,
   }: {
     open: boolean;
     active: string;
@@ -27,7 +29,28 @@
     onAddAccount?: () => void;
     counts: Record<string, number>;
     labels: LabelDef[];
+    width?: number;
+    onResize?: (w: number) => void;
   } = $props();
+
+  let resizing = $state(false);
+
+  function startResize(ev: MouseEvent) {
+    ev.preventDefault();
+    resizing = true;
+    const startX = ev.clientX;
+    const startW = width;
+    const move = (e: MouseEvent) => {
+      onResize?.(Math.min(420, Math.max(200, startW + e.clientX - startX)));
+    };
+    const up = () => {
+      resizing = false;
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  }
 
   const items = [
     { key: "all", label: "All emails", d: "M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zM3 7l9 6 9-6" },
@@ -45,8 +68,10 @@
     "M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0A1.65 1.65 0 0010 3.09V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0c.27.6.85 1 1.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z";
 </script>
 
-<div class="sidebar" class:open>
-  <div class="inner">
+<div class="sidebar" class:open class:resizing style:width={open ? `${width}px` : "0"}>
+  <div class="inner" style:width="{width}px">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="resize-handle" onmousedown={startResize}></div>
     <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} {onAddAccount} />
     <div class="nav">
       {#each items as it (it.key)}
@@ -91,7 +116,6 @@
       opacity var(--duration-base) var(--ease-standard);
   }
   .sidebar.open {
-    width: 248px;
     opacity: 1;
     border-right: 1px solid var(--navy-50);
     /* let the account-switcher dropdown (and its shadow) escape the sidebar;
@@ -99,7 +123,7 @@
     overflow: visible;
   }
   .inner {
-    width: 248px;
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -113,12 +137,32 @@
     gap: 1px;
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
+    /* Bleed to the sidebar edges so item highlights run full width. */
+    margin: 0 -14px;
+  }
+  .sidebar.resizing {
+    transition: none;
+  }
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+  }
+  .resize-handle:hover {
+    background: var(--border-default);
   }
   .nav-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 8px;
+    /* 22px = 14px inner padding + 8px — content stays put while the
+       highlight spans the full bled .nav width. */
+    padding: 8px 22px;
     border: none;
     cursor: pointer;
     text-align: left;
@@ -138,6 +182,9 @@
     font-family: var(--font-body);
     font-size: 14px;
     font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .nav-label.bold {
     font-weight: 600;
@@ -166,7 +213,7 @@
     padding: 4px 8px 6px;
   }
   .label-item {
-    padding: 7px 8px;
+    padding: 7px 22px;
   }
   .label-dot {
     width: 8px;
@@ -177,6 +224,10 @@
   .label-name {
     font-family: var(--font-body);
     font-size: 13.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
   .settings {
     flex-shrink: 0;

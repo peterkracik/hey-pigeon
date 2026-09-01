@@ -34,6 +34,8 @@ export interface ThreadMsg {
   snippet: string;
   body: string;
   html?: boolean;
+  /** text/plain alternative when body is HTML (live mode) — forwarding. */
+  bodyText?: string;
   attachments?: Attachment[];
 }
 

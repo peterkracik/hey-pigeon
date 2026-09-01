@@ -120,7 +120,10 @@
   // Imperative hook into InboxList's remind popover (palette / 'h').
   let remindRequestId: string | null = $state(null);
   // ThreadView starts with the inline reply open (palette Reply / 'r').
-  let threadReplyStart = $state(false);
+  // Monotonic request counter, not a boolean: each bump is consumed once by
+  // ThreadView, so repeat Reply on the open thread works and sync refreshes
+  // can't resurrect a cancelled reply box.
+  let threadReplyStart = $state(0);
   let fullscreen = $state(false);
   let composeFullscreen = $state(false);
   let emailsData: Email[] = $state(EMAILS_SEED);
@@ -414,10 +417,11 @@
     const em = emailsData.find((e) => e.id === id);
     if (!em) return;
     const last = em.thread?.[em.thread.length - 1];
-    // Plaintext only — HTML bodies fall back to the snippet preview.
+    // Plaintext only — HTML messages use their text/plain alternative when
+    // present, else fall back to the (truncated) snippet preview.
     const plain = last
       ? last.html
-        ? last.snippet
+        ? (last.bodyText ?? last.snippet)
         : last.body
       : em.html
         ? em.snippet
@@ -639,7 +643,8 @@
   }
 
   function openThread(id: string, reply = false) {
-    threadReplyStart = reply;
+    if (reply) threadReplyStart++;
+    else if (selectedId !== id || !threadOpen) threadReplyStart = 0;
     selectedId = id;
     threadOpen = true;
     loadBodies(id);
@@ -675,7 +680,7 @@
 
   // Stale reply-start must not leak into the next thread open.
   $effect(() => {
-    if (!threadOpen) threadReplyStart = false;
+    if (!threadOpen) threadReplyStart = 0;
   });
 
   function closePalette() {
@@ -736,7 +741,7 @@
     const add = key.startsWith("add:");
     const labelId = key.slice(add ? 4 : 7);
     const name =
-      liveLabels.find((l) => l.id === labelId)?.name ??
+      liveLabels.find((l) => l.account_id === em.accountId && l.id === labelId)?.name ??
       LABELS.find((l) => l.key === labelId)?.label ??
       labelId;
     // Optimistic label flip; the backend confirms via threads_updated.
@@ -754,6 +759,12 @@
     if (ctx.mode === "move") {
       // Classic Gmail move: apply the label AND archive (remove INBOX). The
       // archive rides the usual deferred-undo path and shows its own toast.
+      // In Trash/Spam the archive half is a guarded no-op (see onEmailAction)
+      // — the label still applies, so say that instead of silently not moving.
+      if (folder === "trash" || folder === "spam") {
+        toast("info", "Labeled, not moved", `${name} added — mail stays in ${folder === "trash" ? "Trash" : "Spam"}`);
+        return;
+      }
       if (threadOpen) {
         threadOpen = false;
         fullscreen = false;
@@ -867,14 +878,19 @@
       return;
     }
     if (threadOpen || (view === "mail" && folder === "settings")) return;
+    // OS chords (Cmd+C copy, Cmd+F find, Cmd+R reload…) must never trigger
+    // the single-letter shortcuts below.
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     // 'g' prefix chords (g-i inbox, g-u unified) with a ~1s window.
     if (ev.key === "g") {
       pendingG = Date.now();
       return;
     }
-    if (Date.now() - pendingG < 1000 && (ev.key === "i" || ev.key === "u")) {
+    // Any other key consumes the chord — g,e,u must mark-unread, not navigate.
+    const gArmed = Date.now() - pendingG < 1000;
+    pendingG = 0;
+    if (gArmed && (ev.key === "i" || ev.key === "u")) {
       ev.preventDefault();
-      pendingG = 0;
       if (ev.key === "i") selectFolder("inbox");
       else unified = true;
       return;

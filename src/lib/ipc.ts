@@ -231,6 +231,7 @@ export function messagesToThreadMsgs(
     snippet: m.snippet,
     body: m.body_html ?? m.body_text ?? m.snippet,
     html: Boolean(m.body_html),
+    bodyText: m.body_text ?? undefined,
   }));
 }
 

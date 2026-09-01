@@ -15,7 +15,7 @@
     onToggleDone,
     onForward,
     replySignature,
-    initialReplyOpen = false,
+    initialReplyOpen = 0,
   }: {
     email: Email | undefined;
     onClose: () => void;
@@ -26,9 +26,10 @@
     onToggleDone: () => void;
     /** Forward the open thread's latest message (palette / message action). */
     onForward?: () => void;
-    /** Start with the inline reply open on the last message (palette Reply /
-     *  'r' shortcut). "last" resolves lazily because bodies load async. */
-    initialReplyOpen?: boolean;
+    /** One-shot request counter: each bump opens the inline reply on the
+     *  last message (palette Reply / 'r' shortcut). "last" resolves lazily
+     *  because bodies load async. 0 = no request. */
+    initialReplyOpen?: number;
   } = $props();
 
   // "last" = reply to the newest message once messages resolve (bodies are
@@ -58,13 +59,25 @@
     replyTargetId === "last" ? (messages[messages.length - 1]?.id ?? null) : replyTargetId,
   );
 
-  // Reset per-thread UI state when the email changes (mirrors prototype
-  // effect on email.id). Also reacts to initialReplyOpen flipping true while
-  // the same thread stays open (palette Reply on the open thread).
+  // Reset per-thread UI state only when the thread actually changes — the
+  // email prop gets a new identity on every sync refresh, which must not
+  // yank an open reply box (or resurrect a cancelled one). A false→true edge
+  // on initialReplyOpen while the same thread stays open (palette Reply on
+  // the open thread) opens the reply on the last message once.
+  let lastEmailId: string | null = null;
+  let lastReplyReq = 0;
   $effect(() => {
-    void email?.id;
-    replyTargetId = initialReplyOpen ? "last" : null;
-    expandedId = messages.length ? messages[messages.length - 1].id : null;
+    const id = email?.id ?? null;
+    const idChanged = id !== lastEmailId;
+    const replyEdge = initialReplyOpen > 0 && initialReplyOpen !== lastReplyReq;
+    lastEmailId = id;
+    lastReplyReq = initialReplyOpen;
+    if (idChanged) {
+      replyTargetId = initialReplyOpen > 0 ? "last" : null;
+      expandedId = messages.length ? messages[messages.length - 1].id : null;
+    } else if (replyEdge) {
+      replyTargetId = "last";
+    }
   });
 </script>
 

@@ -134,8 +134,6 @@
     { key: "trash", label: "Trash", d: "M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-9 0l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" },
   ];
 
-  const SETTINGS_D =
-    "M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0A1.65 1.65 0 0010 3.09V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0c.27.6.85 1 1.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z";
 </script>
 
 <svelte:document
@@ -200,14 +198,6 @@
         {showingAll ? "Showing all" : "Show all"}
       </button>
     {/if}
-    <div class="divider footer-divider"></div>
-    <button class="nav-item settings" class:active={active === "settings"} onclick={() => onSelect("settings")}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.6" />
-        <path d={SETTINGS_D} stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-      <span class="nav-label" class:bold={active === "settings"}>Settings</span>
-    </button>
   </div>
 </div>
 
@@ -308,7 +298,8 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 18px 14px;
+    /* Extra top room: the overlay titlebar's traffic lights float here. */
+    padding: 46px 14px 18px;
     box-sizing: border-box;
   }
 
@@ -382,9 +373,7 @@
     margin: 10px 6px;
     flex-shrink: 0;
   }
-  .footer-divider {
-    margin: 6px 6px;
-  }
+
   .section-title {
     font-family: var(--font-body);
     font-size: 12px;
@@ -411,18 +400,7 @@
     white-space: nowrap;
     min-width: 0;
   }
-  .settings {
-    flex-shrink: 0;
-  }
-  /* Settings stays plain — no fill, no accent bar. */
-  .settings:hover,
-  .settings.active {
-    background: none;
-    box-shadow: none;
-  }
-  .settings:hover {
-    color: var(--text-primary);
-  }
+
   .nav-item.dimmed {
     opacity: 0.45;
   }

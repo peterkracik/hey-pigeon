@@ -746,6 +746,20 @@
         />
       </button>
     </div>
+    <button
+      class="rail-btn rail-settings"
+      class:active={view === "mail" && folder === "settings"}
+      title="Settings"
+      onclick={() => {
+        if (view !== "mail") switchView("mail");
+        selectFolder("settings");
+      }}
+    >
+      <Icon
+        d="M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0A1.65 1.65 0 0010 3.09V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0c.27.6.85 1 1.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"
+        size={16}
+      />
+    </button>
   </div>
 
   <div class="main">
@@ -977,9 +991,10 @@
     /* One shade darker than the sidebar panel (navy-50) so the two surfaces
        read as separate layers. */
     background: var(--navy-100);
-    /* Center of the 34px toggle at 38px — same axis as the sidebar account
-       row (18px pad + 40px row) and the topbar title. */
-    padding-top: 21px;
+    /* Center of the 34px toggle at 66px — same axis as the sidebar account
+       row (46px pad + 40px row) and the topbar title; the extra 28px keeps
+       everything clear of the overlay-titlebar traffic lights. */
+    padding-top: 49px;
     gap: 4px;
     z-index: 40;
   }
@@ -1004,6 +1019,10 @@
     background: var(--surface-card);
     border: 1px solid var(--border-subtle);
     box-shadow: var(--shadow-xs);
+  }
+  .rail-settings {
+    margin-top: auto;
+    margin-bottom: 14px;
   }
   .rail-views {
     display: flex;
@@ -1036,7 +1055,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 23px 0 20px;
+    padding: 51px 0 20px;
     position: relative;
   }
   .back {

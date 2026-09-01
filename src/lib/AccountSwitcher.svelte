@@ -136,7 +136,7 @@
     border-radius: 0;
   }
   .trigger:hover {
-    background: var(--navy-50);
+    background: var(--surface-card);
     box-shadow: inset 3px 0 0 var(--accent-highlight);
   }
   .trigger-label {

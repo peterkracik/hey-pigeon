@@ -283,16 +283,26 @@ pub async fn update_label(
         return Err("label name cannot be empty".into());
     }
     let backend = state.backend.read().await;
+    // Continue past per-account failures (e.g. one expired token) so owners
+    // don't diverge silently; report which accounts failed.
+    let mut failed: Vec<String> = Vec::new();
     for account_id in label_owners(&state, &label_id)? {
-        with_provider!(&*backend, p => p.update_label(&account_id, &label_id, &new_name).await)
-            .map_err(estr)?;
-        state.store.rename_label(&account_id, &label_id, &new_name).map_err(estr)?;
-        let labels =
-            with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
-        state.store.set_labels(&account_id, &labels).map_err(estr)?;
+        let r: Result<(), String> = async {
+            with_provider!(&*backend, p => p.update_label(&account_id, &label_id, &new_name).await)
+                .map_err(estr)?;
+            state.store.rename_label(&account_id, &label_id, &new_name).map_err(estr)?;
+            let labels =
+                with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
+            state.store.set_labels(&account_id, &labels).map_err(estr)?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = r {
+            failed.push(format!("{account_id}: {e}"));
+        }
     }
     let _ = app.emit(THREADS_UPDATED, ());
-    Ok(())
+    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
 }
 
 /// Delete a user label remotely (every owning account — see `label_owners`),
@@ -304,16 +314,25 @@ pub async fn delete_label(
     label_id: String,
 ) -> Result<(), String> {
     let backend = state.backend.read().await;
+    // Continue past per-account failures; retry heals remaining owners.
+    let mut failed: Vec<String> = Vec::new();
     for account_id in label_owners(&state, &label_id)? {
-        with_provider!(&*backend, p => p.delete_label(&account_id, &label_id).await)
-            .map_err(estr)?;
-        state.store.delete_label(&account_id, &label_id).map_err(estr)?;
-        let labels =
-            with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
-        state.store.set_labels(&account_id, &labels).map_err(estr)?;
+        let r: Result<(), String> = async {
+            with_provider!(&*backend, p => p.delete_label(&account_id, &label_id).await)
+                .map_err(estr)?;
+            state.store.delete_label(&account_id, &label_id).map_err(estr)?;
+            let labels =
+                with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
+            state.store.set_labels(&account_id, &labels).map_err(estr)?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = r {
+            failed.push(format!("{account_id}: {e}"));
+        }
     }
     let _ = app.emit(THREADS_UPDATED, ());
-    Ok(())
+    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
 }
 
 /// Disconnect an account: local data + stored refresh token.

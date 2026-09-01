@@ -57,7 +57,7 @@
       .catch(() => {});
   }
   function renameLabel(key: string, newName: string) {
-    if (!ipc.isTauri) {
+    if (!ipc.isTauri || !liveAccounts.length) {
       toast("info", "Connect Gmail to manage labels");
       return;
     }
@@ -76,7 +76,7 @@
       });
   }
   function deleteLabel(key: string) {
-    if (!ipc.isTauri) {
+    if (!ipc.isTauri || !liveAccounts.length) {
       toast("info", "Connect Gmail to manage labels");
       return;
     }
@@ -974,6 +974,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    background: var(--navy-50);
     /* Center of the 34px toggle at 38px — same axis as the sidebar account
        row (18px pad + 40px row) and the topbar title. */
     padding-top: 21px;
@@ -998,7 +999,9 @@
   }
   .rail-btn.active {
     color: var(--text-primary);
-    background: var(--accent-soft);
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-xs);
   }
   .rail-views {
     display: flex;

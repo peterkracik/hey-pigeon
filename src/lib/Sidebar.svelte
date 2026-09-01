@@ -142,6 +142,10 @@
   onmousedown={(ev) => {
     if (ctxMenu && ctxEl && !ctxEl.contains(ev.target as Node)) ctxMenu = null;
   }}
+  onscrollcapture={() => {
+    // The fixed-position menu detaches from its anchor when the nav scrolls.
+    if (ctxMenu) ctxMenu = null;
+  }}
 />
 <svelte:window
   onkeydowncapture={(ev) => {
@@ -287,7 +291,7 @@
     overflow: hidden;
     flex-shrink: 0;
     border-right: none;
-    background: var(--surface-card);
+    background: var(--navy-50);
     transition:
       width var(--duration-base) var(--ease-standard),
       opacity var(--duration-base) var(--ease-standard);
@@ -347,10 +351,11 @@
     border-radius: 0;
     color: var(--text-secondary);
   }
-  /* Same treatment as list-row hover: solid fill, honey left bar, square. */
+  /* Same treatment as list-row hover — inverted for the gray panel: white
+     fill, honey left bar, square. */
   .nav-item:hover,
   .nav-item.active {
-    background: var(--navy-50);
+    background: var(--surface-card);
     box-shadow: inset 3px 0 0 var(--accent-highlight);
     color: var(--text-primary);
   }

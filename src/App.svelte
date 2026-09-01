@@ -218,6 +218,11 @@
 
   // Initial load + per-folder refetch: folder views come from the backend
   // (list_threads filter), not from client-side filtering of the inbox page.
+  // Opening search starts at the top of the view.
+  $effect(() => {
+    if (searchOpen) requestAnimationFrame(() => scrollEl?.scrollTo({ top: 0 }));
+  });
+
   $effect(() => {
     if (!ipc.isTauri) return;
     void folder;

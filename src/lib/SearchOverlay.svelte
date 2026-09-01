@@ -91,6 +91,7 @@
 </script>
 
 {#if open}
+  <div class="search-top">
   <div class="search-title-row">
     <span class="view-title">Search</span>
   </div>
@@ -107,6 +108,7 @@
         <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
       </svg>
     </button>
+  </div>
   </div>
 
   {#if ipc.isTauri}
@@ -152,6 +154,13 @@
 {/if}
 
 <style>
+  /* Title + input stay pinned while results scroll. */
+  .search-top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface-card);
+  }
   /* Same title treatment as the folder views ("All inboxes"). */
   .search-title-row {
     display: flex;

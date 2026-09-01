@@ -689,13 +689,7 @@
 
 <div class="frame">
   <header class="apphead" data-tauri-drag-region>
-    <span class="apphead-brand" data-tauri-drag-region>Hey Pigeon</span>
-    <span class="apphead-title" data-tauri-drag-region>
-      {title}
-      {#if !threadOpen && (view === "calendar" || folder !== "settings")}
-        <span class="apphead-count">{emails.length}</span>
-      {/if}
-    </span>
+    <span class="apphead-title" data-tauri-drag-region>Hey Pigeon</span>
   </header>
   <div class="app">
   <Sidebar
@@ -792,6 +786,21 @@
                 </Tooltip>
               </div>
             {/if}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <span
+              class="title"
+              class:static={threadOpen}
+              onclick={() => {
+                if (threadOpen) return;
+                folder = "inbox";
+                unified = true;
+              }}
+            >
+              {title}
+              {#if !threadOpen && (view === "calendar" || folder !== "settings")}
+                <span class="count">{emails.length}</span>
+              {/if}
+            </span>
             <div class="spacer"></div>
             {#if !threadOpen && (view === "calendar" || folder !== "settings")}
               <div class="topbar-actions">
@@ -1074,22 +1083,24 @@
     align-items: center;
     justify-content: center;
   }
-  .apphead-brand {
-    position: absolute;
-    left: 84px;
-    font-family: var(--font-display);
-    font-weight: 800;
-    font-size: 13px;
-    color: var(--text-tertiary);
-  }
   .apphead-title {
     font-family: var(--font-display);
     font-weight: 700;
-    font-size: 15px;
+    font-size: 14px;
     color: var(--text-primary);
   }
-  .apphead-count {
-    font-size: 13px;
+  .title {
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--text-primary);
+  }
+  .title.static {
+    cursor: default;
+  }
+  .count {
+    font-size: 14px;
     color: var(--text-tertiary);
     font-weight: 400;
   }

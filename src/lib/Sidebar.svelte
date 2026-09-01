@@ -123,7 +123,7 @@
   const items = [
     { key: "all", label: "All emails", d: "M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zM3 7l9 6 9-6" },
     { key: "inbox", label: "Inbox", d: "M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z" },
-    { key: "starred", label: "Starred", d: "M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.1-5.4 3.1 1.3-6-4.6-4.1 6.1-.6z" },
+    { key: "starred", label: "Starred", d: "M12 17v5M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16a1 1 0 001 1h12a1 1 0 001-1v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1z" },
     { key: "sent", label: "Sent", d: "M4 20l16-8L4 4l2 8-2 8z" },
     { key: "drafts", label: "Drafts", d: "M4 20l1-4L17 4l3 3L8 19l-4 1z" },
     // Checkbox, not a box: archive is "done" in this app's concept (the

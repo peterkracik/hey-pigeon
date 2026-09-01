@@ -689,6 +689,7 @@
 
 <div class="frame">
   <header class="apphead" data-tauri-drag-region>
+    <span class="apphead-brand" data-tauri-drag-region>Hey Pigeon</span>
     <span class="apphead-title" data-tauri-drag-region>
       {title}
       {#if !threadOpen && (view === "calendar" || folder !== "settings")}
@@ -1063,13 +1064,23 @@
     flex-direction: column;
   }
   .apphead {
-    height: 48px;
+    /* Title centers on the traffic-light axis — equal space above/below. */
+    height: 38px;
     flex-shrink: 0;
+    position: relative;
     background: var(--surface-card);
     border-bottom: 1px solid var(--border-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+  .apphead-brand {
+    position: absolute;
+    left: 84px;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--text-tertiary);
   }
   .apphead-title {
     font-family: var(--font-display);

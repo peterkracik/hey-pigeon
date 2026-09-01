@@ -50,7 +50,6 @@
 <div class="sidebar" class:open>
   <div class="inner">
     <div class="header">
-      <span class="brand">Hey Pigeon</span>
       <button class="close" title="Close sidebar" onclick={onClose}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <path
@@ -125,15 +124,9 @@
   .header {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 8px;
     padding: 0 4px 16px;
-  }
-  .brand {
-    flex: 1;
-    font-family: var(--font-display);
-    font-weight: 800;
-    font-size: 16px;
-    color: var(--text-primary);
   }
   .close {
     border: none;

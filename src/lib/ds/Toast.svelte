@@ -72,8 +72,8 @@
     min-width: 0;
   }
   .title {
-    font-size: var(--text-body);
-    font-weight: 600;
+    font-size: var(--text-small);
+    font-weight: 700;
     color: var(--text-inverse);
   }
   .desc {

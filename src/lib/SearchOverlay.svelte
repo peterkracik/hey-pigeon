@@ -165,6 +165,9 @@
   .search-title-row {
     display: flex;
     align-items: center;
+    /* min-height matches the topbar's icon-button row so the title sits at
+       exactly the same height as on the folder views. */
+    min-height: 30px;
     padding: 12px 0 16px;
   }
   .view-title {

@@ -80,7 +80,10 @@
       <span class="head-date">{msg.fullDate ?? msg.date}</span>
     </div>
     {#if msg.html}
-      <HtmlEmailFrame html={msg.body} />
+      <!-- HTML mail renders edge-to-edge; the card padding stays for text. -->
+      <div class="html-bleed">
+        <HtmlEmailFrame html={msg.body} />
+      </div>
     {:else if split}
       <div class="body">{split.main}</div>
       <button
@@ -190,6 +193,9 @@
     align-items: center;
     margin-bottom: 12px;
     cursor: pointer;
+  }
+  .html-bleed {
+    margin: 0 -16px -12px;
   }
   .head-left {
     display: flex;

@@ -469,6 +469,7 @@
     background: var(--navy-50);
     box-shadow: inset 3px 0 0 var(--accent-interactive);
     border-color: transparent;
+    border-radius: 0;
   }
   .row.is-selected {
     background: transparent !important;

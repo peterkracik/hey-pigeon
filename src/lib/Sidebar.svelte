@@ -409,6 +409,15 @@
   .settings {
     flex-shrink: 0;
   }
+  /* Settings stays plain — no fill, no accent bar. */
+  .settings:hover,
+  .settings.active {
+    background: none;
+    box-shadow: none;
+  }
+  .settings:hover {
+    color: var(--text-primary);
+  }
   .nav-item.dimmed {
     opacity: 0.45;
   }

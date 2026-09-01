@@ -443,7 +443,7 @@
     padding: 18px 0 8px;
     font-family: var(--font-mono);
     font-size: 10px;
-    color: var(--text-tertiary);
+    color: var(--accent-highlight);
     font-weight: 400;
   }
   .selected-card {

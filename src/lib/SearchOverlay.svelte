@@ -91,6 +91,9 @@
 </script>
 
 {#if open}
+  <div class="search-title-row">
+    <span class="view-title">Search</span>
+  </div>
   <div class="search-head">
     <svg class="lens" width="18" height="18" viewBox="0 0 24 24" fill="none">
       <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
@@ -149,11 +152,23 @@
 {/if}
 
 <style>
+  /* Same title treatment as the folder views ("All inboxes"). */
+  .search-title-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 0 16px;
+  }
+  .view-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--text-primary);
+  }
   .search-head {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 0 16px;
+    padding: 0 0 14px;
     border-bottom: 1px solid var(--border-subtle);
     margin-bottom: 8px;
   }
@@ -166,14 +181,12 @@
     border: none;
     outline: none;
     background: none;
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: 20px;
+    font-family: var(--font-body);
+    font-size: 14px;
     color: var(--text-primary);
   }
   input::placeholder {
     color: var(--text-tertiary);
-    font-weight: 400;
   }
   .hint {
     font-family: var(--font-mono);

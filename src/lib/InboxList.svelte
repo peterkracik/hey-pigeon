@@ -463,10 +463,12 @@
     margin: 0;
     border-radius: 0;
   }
-  .row:hover {
-    background: var(--surface-card);
-    box-shadow: var(--shadow-sm);
-    border-color: var(--border-subtle);
+  /* Superhuman-style hover/focus: solid fill, no shadow, strong left bar. */
+  .row:hover,
+  .row:focus-visible {
+    background: var(--navy-50);
+    box-shadow: inset 3px 0 0 var(--accent-interactive);
+    border-color: transparent;
   }
   .row.is-selected {
     background: transparent !important;

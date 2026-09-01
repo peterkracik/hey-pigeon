@@ -57,6 +57,8 @@ export interface Email {
   html?: boolean;
   done?: boolean;
   pinned?: boolean;
+  /** Gmail label-id union over the thread (live mode) — palette label ops. */
+  labels?: string[];
   labelTag?: string;
   attachment?: boolean;
   attachments?: Attachment[];

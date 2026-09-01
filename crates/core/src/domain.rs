@@ -134,6 +134,19 @@ pub enum Mutation {
     Trash {
         thread_id: ThreadId,
     },
+    /// Gmail star (the app's "pin"). Sugar over a STARRED label flip —
+    /// adapters route it through the same machinery as `ModifyLabel`.
+    Star {
+        thread_id: ThreadId,
+        starred: bool,
+    },
+    /// Add/remove one label on a thread. Flags (is_inbox/is_archived) stay
+    /// untouched — Archive/Trash own folder moves.
+    ModifyLabel {
+        thread_id: ThreadId,
+        label_id: String,
+        add: bool,
+    },
     /// Outgoing mail. Rides the same outbox: optimistic, retried with backoff.
     Send {
         to: Vec<String>,
@@ -165,6 +178,18 @@ impl std::fmt::Debug for Mutation {
             Mutation::Trash { thread_id } => f
                 .debug_struct("Trash")
                 .field("thread_id", thread_id)
+                .finish(),
+            Mutation::Star { thread_id, starred } => f
+                .debug_struct("Star")
+                .field("thread_id", thread_id)
+                .field("starred", starred)
+                .finish(),
+            // Label ids are opaque (Label_36 / system names) — safe to log.
+            Mutation::ModifyLabel { thread_id, label_id, add } => f
+                .debug_struct("ModifyLabel")
+                .field("thread_id", thread_id)
+                .field("label_id", label_id)
+                .field("add", add)
                 .finish(),
             Mutation::Send {
                 to,

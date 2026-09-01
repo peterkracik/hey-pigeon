@@ -112,6 +112,15 @@
   let composeDraft: ComposeData | null = $state(null);
   let searchOpen = $state(false);
   let paletteOpen = $state(false);
+  // Two-stage palette (label / move pickers): stage 2 rows + the pending
+  // target/mode. Esc or the back button returns to stage 1.
+  type PaletteStage = { title: string; items: { key: string; label: string; d: string }[] };
+  let paletteStage: PaletteStage | null = $state(null);
+  let paletteStageCtx: { mode: "label" | "move"; targetId: string } | null = $state(null);
+  // Imperative hook into InboxList's remind popover (palette / 'h').
+  let remindRequestId: string | null = $state(null);
+  // ThreadView starts with the inline reply open (palette Reply / 'r').
+  let threadReplyStart = $state(false);
   let fullscreen = $state(false);
   let composeFullscreen = $state(false);
   let emailsData: Email[] = $state(EMAILS_SEED);
@@ -366,8 +375,68 @@
       }
       return;
     }
-    if (action === "pin") emailsData = emailsData.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e));
-    else console.log(id, action);
+    if (em && action === "pin") {
+      // Pin == Gmail star. Optimistic flip stays; the star mutation makes it
+      // survive refresh and sync to Gmail's Starred (both directions — delta
+      // sync refreshes the label union).
+      const starred = !em.pinned;
+      const flip = (ls: string[] | undefined) => {
+        const rest = (ls ?? []).filter((l) => l !== "STARRED");
+        return starred ? [...rest, "STARRED"] : rest;
+      };
+      emailsData = emailsData.map((e) =>
+        e.id === id ? { ...e, pinned: starred, labels: flip(e.labels) } : e,
+      );
+      if (ipc.isTauri) {
+        ipc.mutate(em.accountId, { kind: "star", thread_id: id, starred }).catch((e) => {
+          console.error("mutate failed", e);
+          toast("danger", starred ? "Could not pin" : "Could not unpin", String(e));
+        });
+      }
+      return;
+    }
+    if (em && action === "reply") {
+      openThread(id, true);
+      return;
+    }
+    if (em && action === "forward") {
+      forwardEmail(id);
+      return;
+    }
+    console.log(id, action);
+  }
+
+  // Minimal forwarding: composer prefilled with "Fwd: <subject>" and a
+  // plaintext copy of the latest message under the classic forwarded-message
+  // header. Recipients start empty; reuses the send-undo composer plumbing.
+  async function forwardEmail(id: string) {
+    await loadBodies(id).catch(() => {});
+    const em = emailsData.find((e) => e.id === id);
+    if (!em) return;
+    const last = em.thread?.[em.thread.length - 1];
+    // Plaintext only — HTML bodies fall back to the snippet preview.
+    const plain = last
+      ? last.html
+        ? last.snippet
+        : last.body
+      : em.html
+        ? em.snippet
+        : (em.body ?? em.snippet);
+    const header = [
+      "---------- Forwarded message ----------",
+      `From: ${last?.from ?? em.from}${last?.fromAddr ? ` <${last.fromAddr}>` : ""}`,
+      `Date: ${last?.fullDate ?? em.fullDate ?? em.time}`,
+      `Subject: ${em.subject}`,
+    ].join("\n");
+    composeDraft = {
+      accountId: em.accountId,
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: /^fwd:/i.test(em.subject) ? em.subject : `Fwd: ${em.subject}`,
+      body: `\n\n${header}\n\n${plain}`,
+    };
+    composeOpen = true;
   }
 
   // Local-only "remind me" schedule (never synced to Gmail). Optimistic; the
@@ -569,7 +638,8 @@
     if (id) loadBodies(id);
   }
 
-  function openThread(id: string) {
+  function openThread(id: string, reply = false) {
+    threadReplyStart = reply;
     selectedId = id;
     threadOpen = true;
     loadBodies(id);
@@ -603,10 +673,150 @@
     openThread(t.id);
   }
 
+  // Stale reply-start must not leak into the next thread open.
+  $effect(() => {
+    if (!threadOpen) threadReplyStart = false;
+  });
+
+  function closePalette() {
+    paletteOpen = false;
+    paletteStage = null;
+    paletteStageCtx = null;
+  }
+
+  const LABEL_D =
+    "M20.6 12.3l-8-8A2 2 0 0011.2 3.7L4 4v7.2a2 2 0 00.6 1.4l8 8a2 2 0 002.8 0l5.2-5.2a2 2 0 000-2.8zM8 8h.01";
+
+  // Palette/shortcut target: the open thread wins, else the keyboard cursor,
+  // else the selected row.
+  function actionTarget(): Email | null {
+    const id = threadOpen ? selectedId : (cursorId ?? selectedId);
+    return emailsData.find((e) => e.id === id) ?? null;
+  }
+
+  function openLabelStage(mode: "label" | "move", em: Email) {
+    const account = liveLabels.filter(
+      (l) => l.account_id === em.accountId && !l.id.startsWith("CATEGORY_"),
+    );
+    // Browser demo: fall back to the mock label defs so the flow is visible.
+    const all = account.length
+      ? account.map((l) => ({ id: l.id, name: l.name }))
+      : LABELS.map((l) => ({ id: l.key, name: l.label }));
+    const has = new Set(em.labels ?? []);
+    const items =
+      mode === "move"
+        ? all.map((l) => ({ key: `add:${l.id}`, label: l.name, d: LABEL_D }))
+        : [
+            ...all
+              .filter((l) => !has.has(l.id))
+              .map((l) => ({ key: `add:${l.id}`, label: l.name, d: LABEL_D })),
+            ...all
+              .filter((l) => has.has(l.id))
+              .map((l) => ({ key: `remove:${l.id}`, label: `Remove ${l.name}`, d: LABEL_D })),
+          ];
+    if (!items.length) {
+      closePalette();
+      toast("info", "No labels", "This account has no labels yet");
+      return;
+    }
+    paletteStageCtx = { mode, targetId: em.id };
+    paletteStage = {
+      title: mode === "move" ? "Move to" : "Label",
+      items,
+    };
+    paletteOpen = true;
+  }
+
+  function applyStageAction(key: string) {
+    const ctx = paletteStageCtx;
+    closePalette();
+    if (!ctx) return;
+    const em = emailsData.find((e) => e.id === ctx.targetId);
+    if (!em) return;
+    const add = key.startsWith("add:");
+    const labelId = key.slice(add ? 4 : 7);
+    const name =
+      liveLabels.find((l) => l.id === labelId)?.name ??
+      LABELS.find((l) => l.key === labelId)?.label ??
+      labelId;
+    // Optimistic label flip; the backend confirms via threads_updated.
+    const rest = (em.labels ?? []).filter((l) => l !== labelId);
+    const next = add ? [...rest, labelId] : rest;
+    emailsData = emailsData.map((e) => (e.id === em.id ? { ...e, labels: next } : e));
+    if (ipc.isTauri) {
+      ipc
+        .mutate(em.accountId, { kind: "modify_label", thread_id: em.id, label_id: labelId, add })
+        .catch((e) => {
+          console.error("mutate failed", e);
+          toast("danger", "Could not update label", String(e));
+        });
+    }
+    if (ctx.mode === "move") {
+      // Classic Gmail move: apply the label AND archive (remove INBOX). The
+      // archive rides the usual deferred-undo path and shows its own toast.
+      if (threadOpen) {
+        threadOpen = false;
+        fullscreen = false;
+      }
+      onEmailAction(em.id, "done");
+    } else {
+      toast("success", add ? "Label added" : "Label removed", name);
+    }
+  }
+
   function onPaletteAction(key: string) {
-    if (key === "compose") composeOpen = true;
-    else if (key === "inbox") folder = "inbox";
-    else if (key === "unified") unified = true;
+    if (paletteStage) {
+      applyStageAction(key);
+      return;
+    }
+    if (key === "compose") {
+      closePalette();
+      composeOpen = true;
+      return;
+    }
+    if (key === "inbox") {
+      closePalette();
+      selectFolder("inbox");
+      return;
+    }
+    if (key === "unified") {
+      closePalette();
+      unified = true;
+      return;
+    }
+    const em = actionTarget();
+    if (!em) {
+      closePalette();
+      toast("info", "Select an email first");
+      return;
+    }
+    if (key === "label" || key === "move") {
+      // Keeps the palette open — swaps in the stage-2 label list.
+      openLabelStage(key, em);
+      return;
+    }
+    closePalette();
+    if (key === "done" || key === "delete") {
+      if (threadOpen) {
+        threadOpen = false;
+        fullscreen = false;
+      }
+      onEmailAction(em.id, key);
+    } else if (key === "star") {
+      onEmailAction(em.id, "pin");
+    } else if (key === "remind") {
+      // The popover lives in InboxList — close the thread first so the list
+      // (and the anchor row) is mounted before the request lands.
+      if (threadOpen) {
+        threadOpen = false;
+        fullscreen = false;
+      }
+      remindRequestId = em.id;
+    } else if (key === "reply") {
+      openThread(em.id, true);
+    } else if (key === "forward") {
+      forwardEmail(em.id);
+    }
   }
 
   function closeCompose() {
@@ -619,6 +829,9 @@
     const el = t as HTMLElement | null;
     return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
   }
+
+  // Timestamp of the last bare 'g' keypress (g-i / g-u chords).
+  let pendingG = 0;
 
   function onKey(ev: KeyboardEvent) {
     if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
@@ -654,6 +867,23 @@
       return;
     }
     if (threadOpen || (view === "mail" && folder === "settings")) return;
+    // 'g' prefix chords (g-i inbox, g-u unified) with a ~1s window.
+    if (ev.key === "g") {
+      pendingG = Date.now();
+      return;
+    }
+    if (Date.now() - pendingG < 1000 && (ev.key === "i" || ev.key === "u")) {
+      ev.preventDefault();
+      pendingG = 0;
+      if (ev.key === "i") selectFolder("inbox");
+      else unified = true;
+      return;
+    }
+    if (ev.key === "c") {
+      ev.preventDefault();
+      composeOpen = true;
+      return;
+    }
     const actId = cursorId ?? selectedId;
     if (ev.key === "e" && actId !== null) {
       ev.preventDefault();
@@ -670,6 +900,34 @@
     if (ev.key === "u" && actId !== null) {
       ev.preventDefault();
       onEmailAction(actId, "unread");
+      return;
+    }
+    if (ev.key === "s" && actId !== null) {
+      ev.preventDefault();
+      onEmailAction(actId, "pin");
+      return;
+    }
+    if (ev.key === "r" && actId !== null) {
+      ev.preventDefault();
+      openThread(actId, true);
+      return;
+    }
+    if (ev.key === "f" && actId !== null) {
+      ev.preventDefault();
+      forwardEmail(actId);
+      return;
+    }
+    if (ev.key === "h" && actId !== null) {
+      // Remind popover — same path as the palette's "Remind me".
+      ev.preventDefault();
+      remindRequestId = actId;
+      return;
+    }
+    if ((ev.key === "l" || ev.key === "v") && actId !== null) {
+      // Pre-staged palette: jump straight to the label / move picker.
+      ev.preventDefault();
+      const em = emailsData.find((e) => e.id === actId);
+      if (em) openLabelStage(ev.key === "l" ? "label" : "move", em);
       return;
     }
     if (ev.key === "j" || ev.key === "ArrowDown") {
@@ -899,6 +1157,8 @@
             {fullscreen}
             onToggleFullscreen={(v) => (fullscreen = v)}
             onToggleDone={() => email && onEmailAction(email.id, "done")}
+            onForward={() => email && forwardEmail(email.id)}
+            initialReplyOpen={threadReplyStart}
           />
         {:else}
           <InboxList
@@ -917,6 +1177,8 @@
             signatureFor={(em) => signatureFor(em.accountId)}
             {hoverActions}
             {pinListEnabled}
+            {remindRequestId}
+            onRemindHandled={() => (remindRequestId = null)}
           />
           {#if emails.length === 0}
             <div class="empty">{view === "calendar" ? "Nothing scheduled" : "Nothing here yet"}</div>
@@ -927,7 +1189,16 @@
     </div>
   </div>
 
-  <CommandPalette open={paletteOpen} onClose={() => (paletteOpen = false)} onAction={onPaletteAction} />
+  <CommandPalette
+    open={paletteOpen}
+    stage={paletteStage}
+    onClose={closePalette}
+    onBack={() => {
+      paletteStage = null;
+      paletteStageCtx = null;
+    }}
+    onAction={onPaletteAction}
+  />
 
   {#if composeOpen}
     {#if composeFullscreen}

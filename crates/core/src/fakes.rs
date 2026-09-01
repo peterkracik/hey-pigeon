@@ -195,11 +195,27 @@ impl Store for MemStore {
                     t.labels.push("TRASH".to_string());
                 }
             }
+            // Star/ModifyLabel: pure label flips, flags untouched (matches
+            // SqliteStore::flip_label).
+            Mutation::Star { starred, .. } => {
+                t.labels.retain(|l| l != "STARRED");
+                if *starred {
+                    t.labels.push("STARRED".to_string());
+                }
+            }
+            Mutation::ModifyLabel { label_id, add, .. } => {
+                t.labels.retain(|l| l != label_id);
+                if *add {
+                    t.labels.push(label_id.clone());
+                }
+            }
             Mutation::Send { .. } => {}
         };
         let id = match mutation {
             Mutation::Archive { thread_id }
             | Mutation::MarkRead { thread_id, .. }
+            | Mutation::Star { thread_id, .. }
+            | Mutation::ModifyLabel { thread_id, .. }
             | Mutation::Trash { thread_id } => thread_id,
             // Nothing changes locally for outgoing mail (no Sent view in M1).
             Mutation::Send { .. } => return Ok(()),
@@ -413,5 +429,61 @@ impl MailProvider for FakeProvider {
             .unwrap()
             .push((account_id.clone(), mutation.clone()));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread(id: &str, labels: &[&str]) -> Thread {
+        Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: String::new(),
+            snippet: String::new(),
+            last_msg_at: 1000,
+            is_read: true,
+            is_inbox: true,
+            is_archived: false,
+            msg_count: 1,
+            from_summary: String::new(),
+            last_from_addr: String::new(),
+            scheduled_at: None,
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // Mirrors the SQLite adapter's star/modify-label tests — keep in lockstep.
+    #[test]
+    fn memstore_star_and_modify_label_flip_labels_only() {
+        let s = MemStore::default();
+        s.upsert_thread(&thread("t1", &["INBOX"])).unwrap();
+        let star = |on: bool| Mutation::Star { thread_id: "t1".to_string(), starred: on };
+        s.apply_local(&star(true)).unwrap();
+        let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t.labels, ["INBOX", "STARRED"]);
+        assert!(t.is_inbox && !t.is_archived, "star must not move the thread");
+        assert_eq!(s.list_threads(None, &ThreadFilter::Starred, None, 10).unwrap().len(), 1);
+        s.apply_local(&star(true)).unwrap(); // idempotent — no duplicate label
+        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX", "STARRED"]);
+        s.apply_local(&star(false)).unwrap();
+        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX"]);
+        let flip = |add: bool| Mutation::ModifyLabel {
+            thread_id: "t1".to_string(),
+            label_id: "Label_7".to_string(),
+            add,
+        };
+        s.apply_local(&flip(true)).unwrap();
+        assert_eq!(
+            s.list_threads(None, &ThreadFilter::Label("Label_7".to_string()), None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        s.apply_local(&flip(false)).unwrap();
+        let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t.labels, ["INBOX"]);
+        assert!(t.is_inbox && !t.is_archived);
     }
 }

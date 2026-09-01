@@ -77,6 +77,8 @@ export type BackendMutation =
   | { kind: "archive"; thread_id: string }
   | { kind: "mark_read"; thread_id: string; read: boolean }
   | { kind: "trash"; thread_id: string }
+  | { kind: "star"; thread_id: string; starred: boolean }
+  | { kind: "modify_label"; thread_id: string; label_id: string; add: boolean }
   | {
       kind: "send";
       to: string[];
@@ -205,6 +207,10 @@ export function threadToEmail(t: BackendThread): Email {
     unread: !t.is_read,
     // Archive is "done" — archived rows render with the checkbox checked.
     done: t.is_archived,
+    // Pin == Gmail star: derived from the thread's label union so it
+    // survives refresh and syncs both directions via delta sync.
+    pinned: t.labels.includes("STARRED"),
+    labels: t.labels,
     fromAddr: t.last_from_addr || undefined,
     lastMsgAt: t.last_msg_at,
     scheduledAt: t.scheduled_at ?? undefined,

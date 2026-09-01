@@ -801,28 +801,44 @@ impl MailProvider for GmailProvider {
                 .post_json(account_id, &format!("{API}/messages/send"), &payload)
                 .await;
         }
-        let (thread_id, body) = match mutation {
-            Mutation::Archive { thread_id } => {
-                (thread_id, serde_json::json!({ "removeLabelIds": ["INBOX"] }))
-            }
-            Mutation::MarkRead { thread_id, read } => {
-                let key = if *read { "removeLabelIds" } else { "addLabelIds" };
-                (thread_id, serde_json::json!({ key: ["UNREAD"] }))
-            }
-            Mutation::Trash { thread_id } => {
-                return self
-                    .post_json(
-                        account_id,
-                        &format!("{API}/threads/{thread_id}/trash"),
-                        &serde_json::json!({}),
-                    )
-                    .await;
-            }
-            Mutation::Send { .. } => unreachable!("handled above"),
-        };
+        if let Mutation::Trash { thread_id } = mutation {
+            return self
+                .post_json(
+                    account_id,
+                    &format!("{API}/threads/{thread_id}/trash"),
+                    &serde_json::json!({}),
+                )
+                .await;
+        }
+        let (thread_id, body) =
+            modify_body(mutation).expect("Send/Trash handled above; rest are label flips");
         self.post_json(account_id, &format!("{API}/threads/{thread_id}/modify"), &body)
             .await
     }
+}
+
+/// `threads.modify` request body for the label-flip mutations. `None` for
+/// Send/Trash, which use dedicated endpoints.
+fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
+    Some(match mutation {
+        Mutation::Archive { thread_id } => {
+            (thread_id, serde_json::json!({ "removeLabelIds": ["INBOX"] }))
+        }
+        Mutation::MarkRead { thread_id, read } => {
+            let key = if *read { "removeLabelIds" } else { "addLabelIds" };
+            (thread_id, serde_json::json!({ key: ["UNREAD"] }))
+        }
+        // Star is sugar over a STARRED label flip (mirrors MarkRead).
+        Mutation::Star { thread_id, starred } => {
+            let key = if *starred { "addLabelIds" } else { "removeLabelIds" };
+            (thread_id, serde_json::json!({ key: ["STARRED"] }))
+        }
+        Mutation::ModifyLabel { thread_id, label_id, add } => {
+            let key = if *add { "addLabelIds" } else { "removeLabelIds" };
+            (thread_id, serde_json::json!({ key: [label_id] }))
+        }
+        Mutation::Trash { .. } | Mutation::Send { .. } => return None,
+    })
 }
 
 #[cfg(test)]
@@ -847,6 +863,34 @@ mod tests {
         let b64 = mime.rsplit("\r\n\r\n").next().unwrap().trim();
         let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
         assert_eq!(String::from_utf8(decoded).unwrap(), "body text");
+    }
+
+    #[test]
+    fn star_and_modify_label_wire_bodies() {
+        let star = |on: bool| Mutation::Star { thread_id: "t1".to_string(), starred: on };
+        let starred = star(true);
+        let (tid, body) = modify_body(&starred).unwrap();
+        assert_eq!(tid, "t1");
+        assert_eq!(body, serde_json::json!({ "addLabelIds": ["STARRED"] }));
+        assert_eq!(
+            modify_body(&star(false)).unwrap().1,
+            serde_json::json!({ "removeLabelIds": ["STARRED"] })
+        );
+        let flip = |add: bool| Mutation::ModifyLabel {
+            thread_id: "t1".to_string(),
+            label_id: "Label_7".to_string(),
+            add,
+        };
+        assert_eq!(
+            modify_body(&flip(true)).unwrap().1,
+            serde_json::json!({ "addLabelIds": ["Label_7"] })
+        );
+        assert_eq!(
+            modify_body(&flip(false)).unwrap().1,
+            serde_json::json!({ "removeLabelIds": ["Label_7"] })
+        );
+        // Trash/Send use dedicated endpoints, never threads.modify
+        assert!(modify_body(&Mutation::Trash { thread_id: "t1".to_string() }).is_none());
     }
 
     #[test]

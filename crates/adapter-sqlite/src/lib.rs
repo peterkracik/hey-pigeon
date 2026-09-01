@@ -213,6 +213,24 @@ impl SqliteStore {
         f(&conn).map_err(err)
     }
 
+    /// Add/remove one label in the thread's labels JSON union. is_inbox /
+    /// is_archived stay untouched — label flips never move mail between the
+    /// flag-driven folders (Archive/Trash own those).
+    fn flip_label(&self, thread_id: &ThreadId, label_id: &str, add: bool) -> Result<(), StoreError> {
+        let Some(mut t) = self.get_thread(thread_id)? else {
+            return Err(StoreError(format!("unknown thread {thread_id}")));
+        };
+        t.labels.retain(|l| l != label_id);
+        if add {
+            t.labels.push(label_id.to_string());
+        }
+        let labels = serde_json::to_string(&t.labels).map_err(err)?;
+        self.with(|c| {
+            c.execute("UPDATE threads SET labels = ?2 WHERE id = ?1", params![thread_id, labels])
+        })?;
+        Ok(())
+    }
+
     /// Set or clear a thread's local "remind me" schedule (epoch ms).
     /// Local-only metadata — never synced to Gmail.
     pub fn set_schedule(
@@ -701,6 +719,13 @@ impl Store for SqliteStore {
             // Nothing changes locally for outgoing mail (no local Sent write
             // — the sent thread lands via the next delta sync).
             Mutation::Send { .. } => return Ok(()),
+            // Star is sugar over a STARRED label flip; both leave flags alone.
+            Mutation::Star { thread_id, starred } => {
+                return self.flip_label(thread_id, "STARRED", *starred);
+            }
+            Mutation::ModifyLabel { thread_id, label_id, add } => {
+                return self.flip_label(thread_id, label_id, *add);
+            }
             Mutation::Archive { thread_id } => (thread_id, (true, false)),
             Mutation::Trash { thread_id } => (thread_id, (false, false)),
         };
@@ -1020,6 +1045,39 @@ mod tests {
         let t2 = s.get_thread(&"t2".to_string()).unwrap().unwrap();
         assert!(t2.is_archived && !t2.is_inbox);
         assert_eq!(t2.labels, vec!["STARRED".to_string()]);
+    }
+
+    #[test]
+    fn star_and_modify_label_apply_local_flip_labels_only() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        let star = |on: bool| Mutation::Star { thread_id: "t1".to_string(), starred: on };
+        s.apply_local(&star(true)).unwrap();
+        let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t.labels, ["INBOX", "STARRED"]);
+        assert!(t.is_inbox && !t.is_archived, "star must not move the thread");
+        assert_eq!(ids(&s, &ThreadFilter::Starred), ["t1"]);
+        // idempotent: starring again doesn't duplicate the label
+        s.apply_local(&star(true)).unwrap();
+        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX", "STARRED"]);
+        s.apply_local(&star(false)).unwrap();
+        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX"]);
+        assert_eq!(ids(&s, &ThreadFilter::Starred), Vec::<String>::new());
+        // generic label flip: same machinery, same guarantees
+        let flip = |add: bool| Mutation::ModifyLabel {
+            thread_id: "t1".to_string(),
+            label_id: "Label_7".to_string(),
+            add,
+        };
+        s.apply_local(&flip(true)).unwrap();
+        assert_eq!(ids(&s, &ThreadFilter::Label("Label_7".to_string())), ["t1"]);
+        s.apply_local(&flip(false)).unwrap();
+        let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t.labels, ["INBOX"]);
+        assert!(t.is_inbox && !t.is_archived);
+        // unknown thread errors like the other mutations
+        let missing = Mutation::Star { thread_id: "nope".to_string(), starred: true };
+        assert!(s.apply_local(&missing).is_err());
     }
 
     #[test]

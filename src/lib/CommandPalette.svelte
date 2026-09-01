@@ -1,18 +1,35 @@
 <script lang="ts">
+  import { EMAIL_ACTIONS } from "./data";
+
+  interface PaletteStage {
+    title: string;
+    items: { key: string; label: string; d: string }[];
+  }
+
   let {
     open,
     onClose,
     onAction,
+    stage = null,
+    onBack,
   }: {
     open: boolean;
     onClose: () => void;
+    /** Fires the chosen key. The palette does NOT close itself — the owner
+     *  decides (two-stage flows keep it open and swap in `stage`). */
     onAction: (key: string) => void;
+    /** Second-stage list (label/move pickers). Esc/back returns to stage 1. */
+    stage?: PaletteStage | null;
+    onBack?: () => void;
   } = $props();
+
+  // Pin == Gmail star — same pushpin icon as the row hover action.
+  const PIN_D = EMAIL_ACTIONS.find((a) => a.key === "pin")!.d;
 
   const COMMANDS = [
     { key: "done", label: "Mark done", shortcut: "E", d: "M20 6L9 17l-5-5" },
     { key: "remind", label: "Remind me", shortcut: "H", d: "M12 7v5l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" },
-    { key: "star", label: "Star", shortcut: "S", d: "M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.1-5.4 3.1 1.3-6-4.6-4.1 6.1-.6z" },
+    { key: "star", label: "Pin", shortcut: "S", d: PIN_D },
     { key: "move", label: "Move to folder", shortcut: "V", d: "M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z" },
     { key: "label", label: "Add label", shortcut: "L", d: "M20.6 12.3l-8-8A2 2 0 0011.2 3.7L4 4v7.2a2 2 0 00.6 1.4l8 8a2 2 0 002.8 0l5.2-5.2a2 2 0 000-2.8zM8 8h.01" },
     { key: "reply", label: "Reply", shortcut: "R", d: "M9 17l-5-5 5-5M4 12h11a5 5 0 010 10h-1" },
@@ -27,9 +44,14 @@
   let index = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
 
-  const filtered = $derived(COMMANDS.filter((c) => c.label.toLowerCase().includes(query.toLowerCase())));
+  const rows = $derived(
+    stage ? stage.items.map((i) => ({ ...i, shortcut: "" })) : COMMANDS,
+  );
+  const filtered = $derived(rows.filter((c) => c.label.toLowerCase().includes(query.toLowerCase())));
 
+  // Reset on open AND on stage swap (stage 2 starts with a fresh query).
   $effect(() => {
+    void stage;
     if (open) {
       query = "";
       index = 0;
@@ -45,7 +67,9 @@
   function onKey(ev: KeyboardEvent) {
     if (!open) return;
     if (ev.key === "Escape") {
-      onClose();
+      // Two-stage back affordance: Esc in stage 2 returns to stage 1.
+      if (stage) onBack?.();
+      else onClose();
       return;
     }
     if (ev.key === "ArrowDown") {
@@ -59,10 +83,7 @@
     if (ev.key === "Enter") {
       ev.preventDefault();
       const c = filtered[index];
-      if (c) {
-        onAction(c.key);
-        onClose();
-      }
+      if (c) onAction(c.key);
     }
   }
 </script>
@@ -74,16 +95,25 @@
   <div class="backdrop" onclick={onClose}>
     <div class="panel" onclick={(ev) => ev.stopPropagation()}>
       <div class="search-row">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="search-icon">
-          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
-          <path d="M20 20l-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-        </svg>
-        <input bind:this={inputEl} bind:value={query} placeholder="Type a command or search…" />
+        {#if stage}
+          <button class="back-btn" title="Back (Esc)" onclick={() => onBack?.()}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="stage-title">{stage.title}</span>
+        {:else}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="search-icon">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+            <path d="M20 20l-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        {/if}
+        <input bind:this={inputEl} bind:value={query} placeholder={stage ? "Search labels…" : "Type a command or search…"} />
         <span class="esc">ESC</span>
       </div>
       <div class="list">
         {#if filtered.length === 0}
-          <div class="empty">No matching commands</div>
+          <div class="empty">{stage ? "No matching labels" : "No matching commands"}</div>
         {/if}
         {#each filtered as c, i (c.key)}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -91,16 +121,13 @@
             class="cmd"
             class:hl={i === index}
             onmouseenter={() => (index = i)}
-            onclick={() => {
-              onAction(c.key);
-              onClose();
-            }}
+            onclick={() => onAction(c.key)}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="cmd-icon">
               <path d={c.d} stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span class="cmd-label">{c.label}</span>
-            {#each c.shortcut.split(" ") as k, ki (ki)}
+            {#each c.shortcut ? c.shortcut.split(" ") : [] as k, ki (ki)}
               <span class="key">{k}</span>
             {/each}
           </div>
@@ -140,6 +167,29 @@
   .search-icon {
     color: rgba(255, 255, 255, 0.5);
     flex-shrink: 0;
+  }
+  .back-btn {
+    border: none;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    flex-shrink: 0;
+  }
+  .back-btn:hover {
+    color: var(--text-inverse);
+  }
+  .stage-title {
+    flex-shrink: 0;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
   }
   input {
     flex: 1;

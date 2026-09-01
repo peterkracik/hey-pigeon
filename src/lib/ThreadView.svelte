@@ -13,7 +13,9 @@
     fullscreen,
     onToggleFullscreen,
     onToggleDone,
+    onForward,
     replySignature,
+    initialReplyOpen = false,
   }: {
     email: Email | undefined;
     onClose: () => void;
@@ -22,9 +24,16 @@
     fullscreen: boolean;
     onToggleFullscreen: (v: boolean) => void;
     onToggleDone: () => void;
+    /** Forward the open thread's latest message (palette / message action). */
+    onForward?: () => void;
+    /** Start with the inline reply open on the last message (palette Reply /
+     *  'r' shortcut). "last" resolves lazily because bodies load async. */
+    initialReplyOpen?: boolean;
   } = $props();
 
-  let replyTargetId: string | null = $state(null);
+  // "last" = reply to the newest message once messages resolve (bodies are
+  // fetched async — a concrete id picked too early would be the stub row's).
+  let replyTargetId: string | null | "last" = $state(null);
   let expandedId: string | null = $state(null);
 
   const messages: ThreadMsg[] = $derived(
@@ -45,10 +54,16 @@
       : [],
   );
 
-  // Reset per-thread UI state when the email changes (mirrors prototype effect on email.id).
+  const activeReplyId = $derived(
+    replyTargetId === "last" ? (messages[messages.length - 1]?.id ?? null) : replyTargetId,
+  );
+
+  // Reset per-thread UI state when the email changes (mirrors prototype
+  // effect on email.id). Also reacts to initialReplyOpen flipping true while
+  // the same thread stays open (palette Reply on the open thread).
   $effect(() => {
     void email?.id;
-    replyTargetId = null;
+    replyTargetId = initialReplyOpen ? "last" : null;
     expandedId = messages.length ? messages[messages.length - 1].id : null;
   });
 </script>
@@ -64,12 +79,12 @@
           accountTag={em.accountTag}
           expanded={expandedId === m.id}
           onToggle={() => (expandedId = expandedId === m.id ? null : m.id)}
-          showActions={replyTargetId !== m.id}
+          showActions={activeReplyId !== m.id}
           onReply={() => (replyTargetId = m.id)}
           onReplyAll={() => (replyTargetId = m.id)}
-          onForward={() => {}}
+          onForward={() => onForward?.()}
         />
-        {#if replyTargetId === m.id}
+        {#if activeReplyId === m.id}
           <div class="reply-card">
             <InlineReply
               toName={m.isMe ? em.from : m.from}

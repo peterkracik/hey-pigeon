@@ -20,6 +20,8 @@
     pinListEnabled,
     signatureFor,
     mode = "inbox",
+    remindRequestId = null,
+    onRemindHandled,
   }: {
     emails: Email[];
     selectedId: string | null;
@@ -35,6 +37,10 @@
     pinListEnabled: boolean;
     /** 'scheduled' = calendar view: group by scheduledAt instead of date. */
     mode?: "inbox" | "scheduled";
+    /** Imperative hook: set to a row id to open the remind popover anchored
+     *  to that row (command palette / 'h' shortcut). Cleared via callback. */
+    remindRequestId?: string | null;
+    onRemindHandled?: () => void;
   } = $props();
 
   const DONE_D = "M20 6L9 17l-5-5";
@@ -147,6 +153,16 @@
   $effect(() => {
     void selectedId;
     replyingId = null;
+  });
+
+  // External remind request (palette / shortcut): open the popover anchored
+  // to the target row once it exists in the DOM (works in calendar mode too).
+  $effect(() => {
+    if (!remindRequestId) return;
+    const em = emails.find((e) => e.id === remindRequestId);
+    const el = document.querySelector(`[data-eid="${CSS.escape(remindRequestId)}"]`);
+    if (em && el) openRemind(em, el as HTMLElement);
+    onRemindHandled?.();
   });
 
   // Keep the keyboard cursor row in view while navigating.
@@ -318,10 +334,7 @@
           {#if selectedId === e.id}
             <div class="preview">
               {#if previewContent(e).html}
-                <!-- HTML mail bleeds to the card edges, like in the thread view. -->
-                <div class="html-bleed">
-                  <HtmlEmailFrame html={previewContent(e).body} />
-                </div>
+                <HtmlEmailFrame html={previewContent(e).body} />
               {:else}
                 <p class="preview-body">{previewContent(e).body}</p>
               {/if}
@@ -352,7 +365,14 @@
                     </IconButton>
                   </Tooltip>
                   <Tooltip label="Forward" side="top">
-                    <IconButton size="sm" label="Forward">
+                    <IconButton
+                      size="sm"
+                      label="Forward"
+                      onclick={(ev) => {
+                        ev.stopPropagation();
+                        onAction(e.id, "forward");
+                      }}
+                    >
                       <Icon d="M15 17l5-5-5-5M20 12H9a5 5 0 000 10h1" size={15} />
                     </IconButton>
                   </Tooltip>
@@ -497,7 +517,7 @@
     height: 16px;
     flex-shrink: 0;
     border: 1.5px solid var(--border-default);
-    border-radius: 4px;
+    border-radius: 50%;
     background: none;
     padding: 0;
     cursor: pointer;
@@ -789,9 +809,6 @@
   }
   .preview {
     padding: 20px 16px 12px;
-  }
-  .html-bleed {
-    margin: 0 -16px;
   }
   .preview-body {
     margin: 0;

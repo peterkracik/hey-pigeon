@@ -41,16 +41,20 @@ struct MemStoreInner {
 /// Same folder semantics as the SQLite adapter's SQL (keep in lockstep).
 fn matches_filter(t: &Thread, filter: &ThreadFilter) -> bool {
     let has = |l: &str| t.labels.iter().any(|x| x == l);
+    // Junk only when trashed/spam AND out of the inbox — a partially-trashed
+    // thread keeps INBOX and stays in All/Starred/Sent/label views.
+    let junk = (has("TRASH") || has("SPAM")) && !has("INBOX");
     match filter {
         ThreadFilter::Inbox => t.is_inbox && !t.is_archived,
-        ThreadFilter::All => !has("TRASH") && !has("SPAM"),
-        ThreadFilter::Starred => has("STARRED") && !has("TRASH") && !has("SPAM"),
-        ThreadFilter::Sent => has("SENT") && !has("TRASH") && !has("SPAM"),
-        ThreadFilter::Drafts => has("DRAFT"),
+        ThreadFilter::All => !junk,
+        ThreadFilter::Starred => has("STARRED") && !junk,
+        ThreadFilter::Sent => has("SENT") && !junk,
+        // A trashed draft belongs to Trash only (Gmail hides it from Drafts).
+        ThreadFilter::Drafts => has("DRAFT") && !has("TRASH"),
         ThreadFilter::Archive => t.is_archived,
         ThreadFilter::Spam => has("SPAM"),
         ThreadFilter::Trash => has("TRASH"),
-        ThreadFilter::Label(id) => has(id) && !has("TRASH") && !has("SPAM"),
+        ThreadFilter::Label(id) => has(id) && !junk,
     }
 }
 

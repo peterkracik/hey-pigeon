@@ -138,7 +138,35 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, id)
     );
     ",
+    // v8 — one-time heal for the v7 upgrade: pre-existing threads sit at
+    // labels='[]' and the labels table is empty until a backfill re-upserts
+    // them, but delta_sync only backfills when the checkpoint is missing or
+    // expired — a valid checkpoint would leave the label folders empty for
+    // weeks. Clearing the checkpoint forces the sanctioned recovery path
+    // (full backfill, idempotent upserts) on next startup.
+    "UPDATE accounts SET history_id = NULL;",
 ];
+
+/// SQL predicate: the JSON label array in `col` contains `label`. Only
+/// compile-time system-label constants may be interpolated — user label ids
+/// must bind as parameters.
+fn has_label_sql(col: &str, label: &str) -> String {
+    format!("EXISTS (SELECT 1 FROM json_each({col}) WHERE json_each.value = '{label}')")
+}
+
+/// Junk exclusion for the non-Trash/Spam views: a thread is junk only when
+/// it carries TRASH/SPAM *and* is out of the inbox. A partially-trashed
+/// thread (one message trashed from another client) keeps INBOX and must not
+/// vanish from All/Starred/Sent/label views while Inbox still shows it.
+/// Keep in lockstep with fakes::matches_filter.
+fn not_junk_sql(col: &str) -> String {
+    format!(
+        "NOT (({} OR {}) AND NOT {})",
+        has_label_sql(col, "TRASH"),
+        has_label_sql(col, "SPAM"),
+        has_label_sql(col, "INBOX")
+    )
+}
 
 pub struct SqliteStore {
     conn: Mutex<Connection>,
@@ -223,11 +251,16 @@ impl SqliteStore {
     /// fake account is replaced by a real one).
     pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
         self.with(|c| {
-            c.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
-            c.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
-            c.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
-            c.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
-            Ok(())
+            // One transaction: every child table (incl. labels, which
+            // REFERENCES accounts under foreign_keys=ON) must go before the
+            // account row, and a failure must not leave a half-wiped cache.
+            let tx = c.unchecked_transaction()?;
+            tx.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
+            tx.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
+            tx.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
+            tx.execute("DELETE FROM labels WHERE account_id = ?1", params![account_id])?;
+            tx.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
+            tx.commit()
         })
     }
 }
@@ -389,10 +422,8 @@ impl Store for SqliteStore {
         // json_each over the (small) thread label array — only fixed system
         // label ids are interpolated; user label ids bind as ?4.
         // Keep the folder semantics in lockstep with fakes::matches_filter.
-        fn has(label: &str) -> String {
-            format!("EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE json_each.value = '{label}')")
-        }
-        let not_junk = format!("NOT {} AND NOT {}", has("TRASH"), has("SPAM"));
+        let has = |label: &str| has_label_sql("threads.labels", label);
+        let not_junk = not_junk_sql("threads.labels");
         let (cond, label_param): (String, Option<&str>) = match filter {
             // Flag-based, not label-based: the optimistic local apply flips
             // the flags instantly, before any provider round-trip.
@@ -403,7 +434,8 @@ impl Store for SqliteStore {
             ThreadFilter::All => (not_junk.clone(), None),
             ThreadFilter::Starred => (format!("{} AND {not_junk}", has("STARRED")), None),
             ThreadFilter::Sent => (format!("{} AND {not_junk}", has("SENT")), None),
-            ThreadFilter::Drafts => (has("DRAFT"), None),
+            // A trashed draft belongs to Trash only (Gmail hides it from Drafts).
+            ThreadFilter::Drafts => (format!("{} AND NOT {}", has("DRAFT"), has("TRASH")), None),
             ThreadFilter::Spam => (has("SPAM"), None),
             ThreadFilter::Trash => (has("TRASH"), None),
             ThreadFilter::Label(id) => (
@@ -509,6 +541,9 @@ impl Store for SqliteStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
+        // Backfill deliberately ingests the whole spam/trash corpus (the
+        // Trash/Spam folders list locally) — but search must not surface it.
+        let not_junk = not_junk_sql("t.labels");
         self.with(|c| {
             if let Some(fts) = &q.fts_match {
                 // bm25()/snippet() must run in a direct full-text query, so
@@ -542,6 +577,7 @@ impl Store for SqliteStore {
                        AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
                        AND (?7 = 0 OR t.is_read = 0)
                        AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
+                       AND {not_junk}
                      GROUP BY t.id
                      ORDER BY rank
                      LIMIT ?9",
@@ -580,6 +616,7 @@ impl Store for SqliteStore {
                        AND (?4 IS NULL OR EXISTS (
                              SELECT 1 FROM messages m WHERE m.thread_id = t.id
                                AND instr(lower(m.to_addrs), ?4) > 0))
+                       AND {not_junk}
                      ORDER BY t.last_msg_at DESC
                      LIMIT ?5",
                     thread_cols("t.")
@@ -893,13 +930,21 @@ mod tests {
         seed_labelled(&s, "arch", &["Label_9"], false, true, 2000);
         // trashed starred/labelled mail must not leak into Starred/label views
         seed_labelled(&s, "trash-star", &["STARRED", "TRASH", "Label_9"], false, false, 1000);
+        // partially-trashed thread (one message trashed elsewhere) keeps
+        // INBOX — still lives in Inbox AND All, plus Trash
+        seed_labelled(&s, "part-trash", &["INBOX", "TRASH"], true, false, 900);
+        // a trashed draft belongs to Trash only, not Drafts
+        seed_labelled(&s, "trash-draft", &["DRAFT", "TRASH"], false, false, 800);
 
-        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["in", "star"]);
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["in", "part-trash", "star"]);
         assert_eq!(ids(&s, &ThreadFilter::Starred), ["star"]);
         assert_eq!(ids(&s, &ThreadFilter::Sent), ["sent"]);
-        assert_eq!(ids(&s, &ThreadFilter::Drafts), ["draft"]);
+        assert_eq!(ids(&s, &ThreadFilter::Drafts), ["draft"], "trashed draft hidden from Drafts");
         assert_eq!(ids(&s, &ThreadFilter::Spam), ["spam"]);
-        assert_eq!(ids(&s, &ThreadFilter::Trash), ["trash", "trash-star"]);
+        assert_eq!(
+            ids(&s, &ThreadFilter::Trash),
+            ["part-trash", "trash", "trash-draft", "trash-star"]
+        );
         assert_eq!(ids(&s, &ThreadFilter::Archive), ["arch"]);
         assert_eq!(
             ids(&s, &ThreadFilter::Label("Label_9".to_string())),
@@ -908,8 +953,8 @@ mod tests {
         );
         assert_eq!(
             ids(&s, &ThreadFilter::All),
-            ["arch", "draft", "in", "sent", "star"],
-            "All hides trash + spam"
+            ["arch", "draft", "in", "part-trash", "sent", "star"],
+            "All hides trash + spam but keeps the partially-trashed inbox thread"
         );
 
         // keyset pagination works under a filter too
@@ -973,8 +1018,8 @@ mod tests {
             // Raw v6-shape rows — upsert_thread would already write `labels`.
             let conn = Connection::open(&path).unwrap();
             conn.execute(
-                "INSERT INTO accounts (id, email, display_name, color)
-                 VALUES ('a1', 'a1@example.com', 'A1', 'sky')",
+                "INSERT INTO accounts (id, email, display_name, color, history_id)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky', 'hist-42')",
                 [],
             )
             .unwrap();
@@ -986,12 +1031,35 @@ mod tests {
             )
             .unwrap();
         }
-        let s = SqliteStore::open(&path).unwrap(); // runs v7
+        let s = SqliteStore::open(&path).unwrap(); // runs v7 + v8
         let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
         assert!(t.labels.is_empty(), "pre-v7 rows default to '[]', healed by backfill");
         assert_eq!(ids(&s, &ThreadFilter::Inbox), ["t1"]);
         assert!(s.list_labels().unwrap().is_empty());
+        // v8 clears the checkpoint so the next delta_sync actually runs the
+        // healing backfill — a valid checkpoint would otherwise leave the
+        // label folders empty until history expiry.
+        assert!(
+            s.list_accounts().unwrap()[0].history_id.is_none(),
+            "v8 forces a one-time backfill after the labels upgrade"
+        );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn delete_account_removes_labels_and_children() {
+        let store = store();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        assert!(!store.list_labels().unwrap().is_empty(), "backfill stored labels");
+
+        // Must not hit "FOREIGN KEY constraint failed" from the labels table.
+        store.delete_account("a1").unwrap();
+
+        assert!(store.list_accounts().unwrap().is_empty());
+        assert!(store.list_labels().unwrap().is_empty());
+        assert!(store.list_threads(None, &ThreadFilter::All, None, 10).unwrap().is_empty());
+        assert!(store.outbox_list(10).unwrap().is_empty());
     }
 
     // ---------------------------------------------------------------- search
@@ -1096,6 +1164,38 @@ mod tests {
         let hits = search(&s, "from:PRIYA");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].thread.id, "t1");
+    }
+
+    #[test]
+    fn search_excludes_spam_and_trash() {
+        let s = store();
+        seed_thread(&s, "keep", "Invoice due", "a@x.com", "pay the invoice", 3000, false);
+        seed_thread(&s, "junk-spam", "Invoice prize", "b@x.com", "win an invoice", 2000, false);
+        seed_thread(&s, "junk-trash", "Invoice old", "c@x.com", "stale invoice", 1000, false);
+        for (id, label) in [("junk-spam", "SPAM"), ("junk-trash", "TRASH")] {
+            let mut t = s.get_thread(&id.to_string()).unwrap().unwrap();
+            t.labels = vec![label.to_string()];
+            t.is_inbox = false;
+            s.upsert_thread(&t).unwrap();
+        }
+
+        // FTS branch
+        let hits = search(&s, "invoice");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread.id, "keep");
+        // operators-only branch
+        let hits = search(&s, "from:x.com");
+        assert_eq!(
+            hits.iter().map(|h| h.thread.id.as_str()).collect::<Vec<_>>(),
+            ["keep"]
+        );
+
+        // A partially-trashed thread still in the inbox stays searchable.
+        let mut t = s.get_thread(&"junk-trash".to_string()).unwrap().unwrap();
+        t.labels = vec!["INBOX".to_string(), "TRASH".to_string()];
+        t.is_inbox = true;
+        s.upsert_thread(&t).unwrap();
+        assert_eq!(search(&s, "invoice").len(), 2);
     }
 
     #[test]

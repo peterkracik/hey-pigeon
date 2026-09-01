@@ -55,6 +55,13 @@
   // the refetch runs.
   const folderCache = new Map<string, Email[]>();
 
+  // Ids of threads currently in the inbox (from the dedicated inbox fetch).
+  // `push` collapses multi-folder membership into one display key (a starred
+  // inbox thread renders under "starred" while that view is open), so the
+  // sidebar inbox badge must track membership separately or it drops to 0
+  // whenever another folder view is active.
+  let inboxIds = $state<Set<string>>(new Set());
+
   // Live mode: inside Tauri the mock seed is replaced by real store data.
   async function refreshLive() {
     const f = folder;
@@ -76,6 +83,7 @@
       signature: a.signature,
     }));
     liveLabels = labels;
+    inboxIds = new Set(threads.map((t) => t.id));
     // Preserve already-loaded bodies + local flags across refreshes.
     const prev = new Map(emailsData.map((e) => [e.id, e]));
     const seen = new Set<string>();
@@ -167,7 +175,10 @@
   );
   const counts = $derived({
     inbox: emailsData.filter(
-      (e) => e.folder === "inbox" && e.unread && (unified || e.accountId === activeAccountId),
+      (e) =>
+        (e.folder === "inbox" || inboxIds.has(e.id)) &&
+        e.unread &&
+        (unified || e.accountId === activeAccountId),
     ).length,
   });
   const title = $derived.by(() =>

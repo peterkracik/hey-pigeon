@@ -2,7 +2,7 @@
   import IconButton from "./ds/IconButton.svelte";
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
-  import HtmlEmailFrame from "./HtmlEmailFrame.svelte";
+  import EmailBody from "./EmailBody.svelte";
   import Avatar from "./ds/Avatar.svelte";
   import type { ThreadMsg } from "./data";
 
@@ -30,35 +30,7 @@
 
   const name = $derived(msg.isMe ? "Me" : msg.from);
 
-  // Split a plaintext body into main content and a trailing quoted block:
-  // a trailing run of '> ' lines (blank lines allowed inside), optionally
-  // preceded by an 'On <...> wrote:' intro line. Returns null when there is
-  // no trailing quote or no non-quoted content before it — never hide
-  // non-quoted content.
-  function splitQuoted(body: string): { main: string; quoted: string } | null {
-    const lines = body.split("\n");
-    let i = lines.length;
-    let hasQuote = false;
-    while (i > 0) {
-      const l = lines[i - 1];
-      if (/^\s*>/.test(l)) {
-        hasQuote = true;
-        i--;
-      } else if (l.trim() === "") {
-        i--;
-      } else {
-        break;
-      }
-    }
-    if (!hasQuote || i === lines.length) return null;
-    if (i > 0 && /^On\s.+wrote:\s*$/.test(lines[i - 1])) i--;
-    const main = lines.slice(0, i).join("\n").replace(/\s+$/, "");
-    if (!main.trim()) return null;
-    return { main, quoted: lines.slice(i).join("\n").trim() };
-  }
 
-  const split = $derived(msg.html ? null : splitQuoted(msg.body));
-  let quoteOpen = $state(false);
 </script>
 
 {#snippet avatar(size: number)}
@@ -89,26 +61,7 @@
       </span>
       <span class="head-date">{msg.fullDate ?? msg.date}</span>
     </div>
-    {#if msg.html}
-      <!-- HTML mail renders edge-to-edge; the card padding stays for text. -->
-      <div class="html-bleed">
-        <HtmlEmailFrame html={msg.body} />
-      </div>
-    {:else if split}
-      <div class="body">{split.main}</div>
-      <button
-        class="quote-pill"
-        type="button"
-        class:open={quoteOpen}
-        aria-label={quoteOpen ? "Hide quoted text" : "Show quoted text"}
-        onclick={() => (quoteOpen = !quoteOpen)}>···</button
-      >
-      {#if quoteOpen}
-        <div class="body quoted">{split.quoted}</div>
-      {/if}
-    {:else}
-      <div class="body">{msg.body}</div>
-    {/if}
+    <EmailBody html={Boolean(msg.html)} body={msg.body} />
     {#if msg.attachments && msg.attachments.length > 0}
       <div class="attachments">
         {#each msg.attachments as a (a.name)}
@@ -204,9 +157,6 @@
     margin-bottom: 12px;
     cursor: pointer;
   }
-  .html-bleed {
-    margin: 0 -16px -12px;
-  }
   .head-left {
     display: flex;
     align-items: center;
@@ -241,34 +191,6 @@
     font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--text-tertiary);
-  }
-  .body {
-    font-family: var(--font-body);
-    font-size: 15px;
-    line-height: 1.6;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-  }
-  .body.quoted {
-    color: var(--text-tertiary);
-    margin-top: 8px;
-  }
-  .quote-pill {
-    display: inline-block;
-    margin-top: 10px;
-    padding: 0 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
-    background: var(--surface-sunken, #ececec);
-    color: var(--text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 18px;
-    letter-spacing: 1px;
-    cursor: pointer;
-  }
-  .quote-pill.open {
-    background: var(--border-subtle);
   }
   .attachments {
     display: flex;

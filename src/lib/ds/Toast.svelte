@@ -31,10 +31,10 @@
     {#if description}
       <div class="desc">{description}</div>
     {/if}
+    {#if actionLabel && onAction}
+      <button class="action" onclick={onAction}>{actionLabel}</button>
+    {/if}
   </div>
-  {#if actionLabel && onAction}
-    <button class="action" onclick={onAction}>{actionLabel}</button>
-  {/if}
   {#if onClose}
     <button class="close" aria-label="Dismiss" onclick={onClose}>
       <svg width="12" height="12" viewBox="0 0 10 10">
@@ -83,20 +83,20 @@
     overflow-wrap: break-word;
   }
   .action {
-    border: 1px solid var(--navy-500);
+    border: none;
     background: transparent;
     cursor: pointer;
     color: var(--text-inverse);
     font-family: var(--font-body);
     font-size: var(--text-small);
     font-weight: 600;
-    padding: 3px 10px;
-    border-radius: var(--radius-sm);
-    flex-shrink: 0;
-    align-self: center;
+    padding: 0;
+    margin-top: 6px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .action:hover {
-    border-color: var(--navy-300);
+    color: var(--navy-300);
   }
   .close {
     border: none;

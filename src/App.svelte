@@ -1086,8 +1086,8 @@
   .apphead-title {
     font-family: var(--font-display);
     font-weight: 700;
-    font-size: 14px;
-    color: var(--text-primary);
+    font-size: 12px;
+    color: var(--text-secondary);
   }
   .title {
     cursor: pointer;

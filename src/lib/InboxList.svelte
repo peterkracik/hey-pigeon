@@ -625,11 +625,19 @@
     gap: 4px;
     padding: 2px 8px;
     border-radius: var(--radius-pill);
-    background: var(--surface-sunken);
-    color: var(--text-secondary);
+    background: var(--accent-highlight-bg);
+    border: 1px solid transparent;
+    color: var(--accent-highlight);
     font-family: var(--font-mono);
     font-size: 10.5px;
     white-space: nowrap;
+    transition:
+      background 100ms,
+      border-color 100ms;
+  }
+  .sched-badge:hover {
+    background: var(--surface-card);
+    border-color: var(--accent-highlight);
   }
   .sched-badge.overdue {
     color: var(--tag-coral-fg);

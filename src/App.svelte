@@ -1074,7 +1074,7 @@
   }
   .apphead {
     /* Title centers on the traffic-light axis — equal space above/below. */
-    height: 38px;
+    height: 28px;
     flex-shrink: 0;
     position: relative;
     background: var(--surface-card);
@@ -1086,7 +1086,7 @@
   .apphead-title {
     font-family: var(--font-display);
     font-weight: 700;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary);
   }
   .title {

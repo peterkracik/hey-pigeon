@@ -90,6 +90,29 @@ pub trait MailProvider {
         async { Ok(Vec::new()) }
     }
 
+    /// Rename a user label (Gmail `users.labels.patch`). Default errors so
+    /// providers without label management stay honest (no silent success).
+    fn update_label(
+        &self,
+        account_id: &AccountId,
+        label_id: &str,
+        new_name: &str,
+    ) -> impl std::future::Future<Output = Result<(), MailError>> + Send {
+        let _ = (account_id, label_id, new_name);
+        async { Err(MailError::Provider("label management not supported".into())) }
+    }
+
+    /// Delete a user label (Gmail `users.labels.delete`). Default errors —
+    /// see `update_label`.
+    fn delete_label(
+        &self,
+        account_id: &AccountId,
+        label_id: &str,
+    ) -> impl std::future::Future<Output = Result<(), MailError>> + Send {
+        let _ = (account_id, label_id);
+        async { Err(MailError::Provider("label management not supported".into())) }
+    }
+
     /// Changes since `start_history_id` (Gmail `users.history.list`).
     /// Must return `MailError::HistoryExpired` when the checkpoint is too
     /// old for the provider (Gmail 404) — the caller re-runs backfill.

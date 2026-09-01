@@ -263,6 +263,47 @@ impl SqliteStore {
             tx.commit()
         })
     }
+
+    /// Rename a stored label (optimistic local half of `users.labels.patch`;
+    /// the next `set_labels` refresh confirms). Unknown ids are a no-op.
+    pub fn rename_label(
+        &self,
+        account_id: &str,
+        label_id: &str,
+        new_name: &str,
+    ) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE labels SET name = ?3 WHERE account_id = ?1 AND id = ?2",
+                params![account_id, label_id, new_name],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Remove a label locally: drop the labels-table row AND strip the id
+    /// from every thread's `labels` JSON array for that account — otherwise
+    /// the deleted label's threads keep matching `ThreadFilter::Label`.
+    pub fn delete_label(&self, account_id: &str, label_id: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            tx.execute(
+                "DELETE FROM labels WHERE account_id = ?1 AND id = ?2",
+                params![account_id, label_id],
+            )?;
+            // json_group_array over zero rows yields '[]', matching the
+            // column default.
+            tx.execute(
+                "UPDATE threads SET labels =
+                    (SELECT json_group_array(value) FROM json_each(threads.labels)
+                     WHERE value <> ?2)
+                 WHERE account_id = ?1
+                   AND EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE value = ?2)",
+                params![account_id, label_id],
+            )?;
+            tx.commit()
+        })
+    }
 }
 
 fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
@@ -1002,6 +1043,35 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "L2");
         assert_eq!(listed[0].name, "Alpha renamed");
+    }
+
+    #[test]
+    fn rename_and_delete_label_update_rows_and_strip_threads() {
+        let s = store();
+        let l = |id: &str, name: &str| Label {
+            account_id: "a1".to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
+        };
+        s.set_labels(&"a1".to_string(), &[l("L1", "Old"), l("L2", "Keep")]).unwrap();
+        seed_labelled(&s, "t1", &["INBOX", "L1"], true, false, 2000);
+        seed_labelled(&s, "t2", &["L1", "L2"], false, true, 1000);
+
+        s.rename_label("a1", "L1", "New").unwrap();
+        let names: Vec<String> =
+            s.list_labels().unwrap().into_iter().map(|x| x.name).collect();
+        assert_eq!(names, ["Keep", "New"]);
+
+        s.delete_label("a1", "L1").unwrap();
+        let listed = s.list_labels().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "L2");
+        // threads no longer carry the deleted id…
+        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX"]);
+        assert_eq!(s.get_thread(&"t2".to_string()).unwrap().unwrap().labels, ["L2"]);
+        // …so the label view is empty while other labels keep working.
+        assert_eq!(ids(&s, &ThreadFilter::Label("L1".to_string())), Vec::<String>::new());
+        assert_eq!(ids(&s, &ThreadFilter::Label("L2".to_string())), ["t2"]);
     }
 
     #[test]

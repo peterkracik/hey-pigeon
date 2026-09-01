@@ -136,6 +136,13 @@ export const updateAccount = (
 ) => invoke<void>("update_account", { accountId, ...fields });
 export const removeAccount = (accountId: string) =>
   invoke<void>("remove_account", { accountId });
+/** Rename a Gmail label. Applies to every connected account owning the id
+ *  (the sidebar dedupes by id). */
+export const updateLabel = (labelId: string, newName: string) =>
+  invoke<void>("update_label", { labelId, newName });
+/** Delete a Gmail label from every connected account owning the id. */
+export const deleteLabel = (labelId: string) =>
+  invoke<void>("delete_label", { labelId });
 
 const avatarCache = new Map<string, Promise<string | null>>();
 /** Sender contact photo (People API), cached per session. */
@@ -196,6 +203,8 @@ export function threadToEmail(t: BackendThread): Email {
     time: fmtTime(t.last_msg_at),
     fullDate: fmtFull(t.last_msg_at),
     unread: !t.is_read,
+    // Archive is "done" — archived rows render with the checkbox checked.
+    done: t.is_archived,
     fromAddr: t.last_from_addr || undefined,
     lastMsgAt: t.last_msg_at,
     scheduledAt: t.scheduled_at ?? undefined,

@@ -250,6 +250,72 @@ pub async fn update_account(
     Ok(())
 }
 
+/// Accounts owning `label_id`. Label ids are per-account, but the sidebar
+/// dedupes by id (the same Gmail id can exist in several connected accounts)
+/// — so label ops apply to EVERY owning account: that is the chosen semantic
+/// for the single deduped sidebar row.
+fn label_owners(state: &MailState, label_id: &str) -> Result<Vec<AccountId>, String> {
+    let owners: Vec<AccountId> = state
+        .store
+        .list_labels()
+        .map_err(estr)?
+        .into_iter()
+        .filter(|l| l.id == label_id)
+        .map(|l| l.account_id)
+        .collect();
+    if owners.is_empty() {
+        return Err(format!("unknown label {label_id}"));
+    }
+    Ok(owners)
+}
+
+/// Rename a user label remotely (every owning account), then refresh the
+/// stored label list from the provider so the sidebar reconciles.
+#[tauri::command]
+pub async fn update_label(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    label_id: String,
+    new_name: String,
+) -> Result<(), String> {
+    let new_name = new_name.trim().to_string();
+    if new_name.is_empty() {
+        return Err("label name cannot be empty".into());
+    }
+    let backend = state.backend.read().await;
+    for account_id in label_owners(&state, &label_id)? {
+        with_provider!(&*backend, p => p.update_label(&account_id, &label_id, &new_name).await)
+            .map_err(estr)?;
+        state.store.rename_label(&account_id, &label_id, &new_name).map_err(estr)?;
+        let labels =
+            with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
+        state.store.set_labels(&account_id, &labels).map_err(estr)?;
+    }
+    let _ = app.emit(THREADS_UPDATED, ());
+    Ok(())
+}
+
+/// Delete a user label remotely (every owning account — see `label_owners`),
+/// strip it from stored threads, then refresh the stored label list.
+#[tauri::command]
+pub async fn delete_label(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    label_id: String,
+) -> Result<(), String> {
+    let backend = state.backend.read().await;
+    for account_id in label_owners(&state, &label_id)? {
+        with_provider!(&*backend, p => p.delete_label(&account_id, &label_id).await)
+            .map_err(estr)?;
+        state.store.delete_label(&account_id, &label_id).map_err(estr)?;
+        let labels =
+            with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
+        state.store.set_labels(&account_id, &labels).map_err(estr)?;
+    }
+    let _ = app.emit(THREADS_UPDATED, ());
+    Ok(())
+}
+
 /// Disconnect an account: local data + stored refresh token.
 #[tauri::command]
 pub async fn remove_account(

@@ -36,6 +36,8 @@ pub fn run() {
       mail::lookup_avatar,
       mail::update_account,
       mail::remove_account,
+      mail::update_label,
+      mail::delete_label,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

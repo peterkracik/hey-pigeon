@@ -195,6 +195,36 @@ impl GmailProvider {
         Self::check(resp).await.map(|_| ())
     }
 
+    async fn patch_json(
+        &self,
+        account_id: &AccountId,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<(), MailError> {
+        let token = self.access_token(account_id).await?;
+        let resp = self
+            .http
+            .patch(url)
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| MailError::Network(e.to_string()))?;
+        Self::check(resp).await.map(|_| ())
+    }
+
+    async fn delete(&self, account_id: &AccountId, url: &str) -> Result<(), MailError> {
+        let token = self.access_token(account_id).await?;
+        let resp = self
+            .http
+            .delete(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| MailError::Network(e.to_string()))?;
+        Self::check(resp).await.map(|_| ())
+    }
+
     async fn check(resp: reqwest::Response) -> Result<reqwest::Response, MailError> {
         let status = resp.status();
         if status.is_success() {
@@ -547,6 +577,12 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
     (thread, messages)
 }
 
+/// Request body for `users.labels.patch` — rename only, visibility fields
+/// stay untouched (PATCH semantics: omitted fields are left as-is).
+fn label_patch_body(new_name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": new_name })
+}
+
 /// RFC 2047 encoded-word for header values; plain ASCII passes through.
 fn encode_header(value: &str) -> String {
     if value.is_ascii() {
@@ -640,6 +676,24 @@ impl MailProvider for GmailProvider {
             .filter(|l| l.label_type == "user")
             .map(|l| Label { account_id: account_id.clone(), id: l.id, name: l.name })
             .collect())
+    }
+
+    async fn update_label(
+        &self,
+        account_id: &AccountId,
+        label_id: &str,
+        new_name: &str,
+    ) -> Result<(), MailError> {
+        self.patch_json(
+            account_id,
+            &format!("{API}/labels/{label_id}"),
+            &label_patch_body(new_name),
+        )
+        .await
+    }
+
+    async fn delete_label(&self, account_id: &AccountId, label_id: &str) -> Result<(), MailError> {
+        self.delete(account_id, &format!("{API}/labels/{label_id}")).await
     }
 
     async fn list_history(
@@ -934,6 +988,28 @@ mod tests {
         .unwrap();
         let (t, _) = to_thread(&"acc".to_string(), &wire);
         assert!(!t.is_inbox && !t.is_archived);
+    }
+
+    #[test]
+    fn label_patch_body_renames_only() {
+        let body = label_patch_body("Recéipts");
+        assert_eq!(body, serde_json::json!({ "name": "Recéipts" }));
+        // PATCH must not touch visibility/color — only `name` is sent.
+        assert_eq!(body.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn wire_label_parses_patch_response() {
+        // labels.patch echoes the updated label; the same WireLabel shape
+        // (used by labels.list) must parse it.
+        let json = serde_json::json!({
+            "id": "Label_7", "name": "Renamed", "type": "user",
+            "messageListVisibility": "show", "labelListVisibility": "labelShow"
+        });
+        let l: WireLabel = serde_json::from_value(json).unwrap();
+        assert_eq!(l.id, "Label_7");
+        assert_eq!(l.name, "Renamed");
+        assert_eq!(l.label_type, "user");
     }
 
     #[test]

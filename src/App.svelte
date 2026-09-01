@@ -21,6 +21,81 @@
     sidebarWidth = w;
     localStorage.setItem("sidebarWidth", String(w));
   }
+  // Frontend-only sidebar prefs (persisted like sidebarWidth): hidden
+  // folder/label keys + per-label color overrides.
+  function readJson<T>(key: string, fallback: T): T {
+    try {
+      return JSON.parse(localStorage.getItem(key) ?? "") as T;
+    } catch {
+      return fallback;
+    }
+  }
+  let hiddenSidebar: string[] = $state(readJson("sidebarHidden", []));
+  let labelColors: Record<string, string> = $state(readJson("sidebarLabelColors", {}));
+  function hideSidebarItem(key: string) {
+    if (!hiddenSidebar.includes(key)) {
+      hiddenSidebar = [...hiddenSidebar, key];
+      localStorage.setItem("sidebarHidden", JSON.stringify(hiddenSidebar));
+    }
+    // Hiding the active view must not leave it open behind a hidden entry.
+    if (folder === key) selectFolder("inbox");
+  }
+  function unhideSidebarItem(key: string) {
+    hiddenSidebar = hiddenSidebar.filter((k) => k !== key);
+    localStorage.setItem("sidebarHidden", JSON.stringify(hiddenSidebar));
+  }
+  function setLabelColor(key: string, tag: string) {
+    labelColors = { ...labelColors, [key]: tag };
+    localStorage.setItem("sidebarLabelColors", JSON.stringify(labelColors));
+  }
+  // Gmail label management (context menu). Optimistic sidebar update, then
+  // reconcile from listLabels once the backend confirms (or on failure).
+  function reconcileLabels() {
+    ipc
+      .listLabels()
+      .then((ls) => (liveLabels = ls))
+      .catch(() => {});
+  }
+  function renameLabel(key: string, newName: string) {
+    if (!ipc.isTauri) {
+      toast("info", "Connect Gmail to manage labels");
+      return;
+    }
+    const id = key.replace(/^label:/, "");
+    liveLabels = liveLabels.map((l) => (l.id === id ? { ...l, name: newName } : l));
+    ipc
+      .updateLabel(id, newName)
+      .then(() => {
+        reconcileLabels();
+        toast("success", "Label renamed", newName);
+      })
+      .catch((e) => {
+        console.error("rename label failed", e);
+        toast("danger", "Could not rename label", String(e));
+        reconcileLabels();
+      });
+  }
+  function deleteLabel(key: string) {
+    if (!ipc.isTauri) {
+      toast("info", "Connect Gmail to manage labels");
+      return;
+    }
+    const id = key.replace(/^label:/, "");
+    const name = liveLabels.find((l) => l.id === id)?.name;
+    liveLabels = liveLabels.filter((l) => l.id !== id);
+    if (folder === key) selectFolder("inbox");
+    ipc
+      .deleteLabel(id)
+      .then(() => {
+        reconcileLabels();
+        toast("success", "Label deleted", name);
+      })
+      .catch((e) => {
+        console.error("delete label failed", e);
+        toast("danger", "Could not delete label", String(e));
+        reconcileLabels();
+      });
+  }
   let view: "mail" | "calendar" = $state("mail");
   let unified = $state(true);
   let activeAccountId = $state("a1");
@@ -161,7 +236,10 @@
   // (the adapter stores user-type labels only) but guard anyway.
   const LABEL_TAGS = ["amber", "coral", "mint", "sky", "lavender"];
   const sidebarLabels = $derived.by((): LabelDef[] => {
-    if (!ipc.isTauri || !liveAccounts.length) return LABELS;
+    // Color overrides (context menu pref) beat the cyclic palette — in both
+    // mock and live mode, everywhere sidebarLabels feeds.
+    if (!ipc.isTauri || !liveAccounts.length)
+      return LABELS.map((l) => ({ ...l, tag: labelColors[l.key] ?? l.tag }));
     // Dedupe by label id: the same Gmail label id can exist in BOTH accounts
     // (e.g. Label_36), and duplicate {#each} keys crash the whole render
     // (each_key_duplicate — this froze the app on mock data once).
@@ -172,7 +250,7 @@
     return [...byId.values()].map((l, i) => ({
       key: `label:${l.id}`,
       label: l.name,
-      tag: LABEL_TAGS[i % LABEL_TAGS.length],
+      tag: labelColors[`label:${l.id}`] ?? LABEL_TAGS[i % LABEL_TAGS.length],
     }));
   });
 
@@ -624,6 +702,12 @@
     onAddAccount={addAccount}
     {counts}
     labels={sidebarLabels}
+    hidden={hiddenSidebar}
+    onHide={hideSidebarItem}
+    onUnhide={unhideSidebarItem}
+    onSetColor={setLabelColor}
+    onRenameLabel={renameLabel}
+    onDeleteLabel={deleteLabel}
   />
   <div class="rail">
     <button

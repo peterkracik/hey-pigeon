@@ -17,6 +17,12 @@
     labels,
     width = 248,
     onResize,
+    hidden = [],
+    onHide,
+    onUnhide,
+    onSetColor,
+    onRenameLabel,
+    onDeleteLabel,
   }: {
     open: boolean;
     active: string;
@@ -31,7 +37,69 @@
     labels: LabelDef[];
     width?: number;
     onResize?: (w: number) => void;
+    /** Hidden folder keys / `label:<id>` keys (localStorage pref). */
+    hidden?: string[];
+    onHide?: (key: string) => void;
+    onUnhide?: (key: string) => void;
+    onSetColor?: (key: string, tag: string) => void;
+    onRenameLabel?: (key: string, newName: string) => void;
+    onDeleteLabel?: (key: string) => void;
   } = $props();
+
+  // ------------------------------------------------- right-click context menu
+
+  const PALETTE = ["sky", "lavender", "mint", "amber", "coral"];
+
+  let ctxMenu: {
+    key: string;
+    kind: "folder" | "label";
+    name: string;
+    tag?: string;
+    x: number;
+    y: number;
+    hidden: boolean;
+  } | null = $state(null);
+  let ctxEl: HTMLDivElement | undefined = $state();
+  let renaming = $state(false);
+  let renameValue = $state("");
+  let confirmDelete = $state(false);
+  // Reveal mode: hidden items render dimmed, offering Unhide.
+  let showingAll = $state(false);
+
+  const hiddenSet = $derived(new Set(hidden));
+
+  function openCtx(ev: MouseEvent, kind: "folder" | "label", key: string, name: string, tag?: string) {
+    ev.preventDefault();
+    renaming = false;
+    confirmDelete = false;
+    ctxMenu = {
+      key,
+      kind,
+      name,
+      tag,
+      x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 208)),
+      y: Math.min(ev.clientY + 2, window.innerHeight - 200),
+      hidden: hiddenSet.has(key),
+    };
+  }
+
+  function hideItem(key: string) {
+    onHide?.(key);
+    ctxMenu = null;
+  }
+
+  function commitRename() {
+    // Guard: Esc closes the menu first; the input's removal must not commit.
+    if (!ctxMenu || !renaming) return;
+    const v = renameValue.trim();
+    if (v && v !== ctxMenu.name) onRenameLabel?.(ctxMenu.key, v);
+    ctxMenu = null;
+  }
+
+  function autofocus(el: HTMLInputElement) {
+    el.focus();
+    el.select();
+  }
 
   let resizing = $state(false);
 
@@ -58,7 +126,9 @@
     { key: "starred", label: "Starred", d: "M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.1-5.4 3.1 1.3-6-4.6-4.1 6.1-.6z" },
     { key: "sent", label: "Sent", d: "M4 20l16-8L4 4l2 8-2 8z" },
     { key: "drafts", label: "Drafts", d: "M4 20l1-4L17 4l3 3L8 19l-4 1z" },
-    { key: "archive", label: "Archive", d: "M3 7h18M5 7v12a1 1 0 001 1h12a1 1 0 001-1V7M9 11h6" },
+    // Checkbox, not a box: archive is "done" in this app's concept (the
+    // list rows use the same todo-checkbox for done/archive).
+    { key: "archive", label: "Archive", d: "M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6z M8.5 12.5l2.5 2.5 5-5.5" },
     { key: "scheduled", label: "Scheduled", d: "M12 8v4l3 3M12 21a9 9 0 100-18 9 9 0 000 18z" },
     { key: "spam", label: "Spam", d: "M12 9v4m0 4h.01M10.3 3.9L2.9 17a1.8 1.8 0 001.5 2.7h15.2a1.8 1.8 0 001.5-2.7L13.7 3.9a1.8 1.8 0 00-3.4 0z" },
     { key: "trash", label: "Trash", d: "M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-9 0l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" },
@@ -68,14 +138,37 @@
     "M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0A1.65 1.65 0 0010 3.09V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0c.27.6.85 1 1.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z";
 </script>
 
+<svelte:document
+  onmousedown={(ev) => {
+    if (ctxMenu && ctxEl && !ctxEl.contains(ev.target as Node)) ctxMenu = null;
+  }}
+/>
+<svelte:window
+  onkeydowncapture={(ev) => {
+    // Close on Escape without letting the app-level Escape handling also
+    // collapse the selection/thread (same pattern as the remind popover).
+    if (ctxMenu && ev.key === "Escape") {
+      ev.stopPropagation();
+      renaming = false;
+      ctxMenu = null;
+    }
+  }}
+/>
+
 <div class="sidebar" class:open class:resizing style:width={open ? `${width}px` : "0"}>
   <div class="inner" style:width="{width}px">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="resize-handle" onmousedown={startResize}></div>
     <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} {onAddAccount} />
     <div class="nav">
-      {#each items as it (it.key)}
-        <button class="nav-item" class:active={active === it.key} onclick={() => onSelect(it.key)}>
+      {#each items.filter((it) => showingAll || !hiddenSet.has(it.key)) as it (it.key)}
+        <button
+          class="nav-item"
+          class:active={active === it.key}
+          class:dimmed={hiddenSet.has(it.key)}
+          onclick={() => onSelect(it.key)}
+          oncontextmenu={(ev) => openCtx(ev, "folder", it.key, it.label)}
+        >
           <Icon d={it.d} size={16} />
           <span class="nav-label" class:bold={active === it.key}>{it.label}</span>
           {#if counts[it.key] > 0}
@@ -85,13 +178,24 @@
       {/each}
       <div class="divider"></div>
       <div class="section-title">Labels</div>
-      {#each labels as l (l.key)}
-        <button class="nav-item label-item" class:active={active === l.key} onclick={() => onSelect(l.key)}>
+      {#each labels.filter((l) => showingAll || !hiddenSet.has(l.key)) as l (l.key)}
+        <button
+          class="nav-item label-item"
+          class:active={active === l.key}
+          class:dimmed={hiddenSet.has(l.key)}
+          onclick={() => onSelect(l.key)}
+          oncontextmenu={(ev) => openCtx(ev, "label", l.key, l.label, l.tag)}
+        >
           <span class="label-dot" style:background="var(--tag-{l.tag}-fg)"></span>
           <span class="label-name">{l.label}</span>
         </button>
       {/each}
     </div>
+    {#if hidden.length > 0}
+      <button class="show-all" onclick={() => (showingAll = !showingAll)}>
+        {showingAll ? "Showing all" : "Show all"}
+      </button>
+    {/if}
     <div class="divider footer-divider"></div>
     <button class="nav-item settings" class:active={active === "settings"} onclick={() => onSelect("settings")}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -102,6 +206,79 @@
     </button>
   </div>
 </div>
+
+{#if ctxMenu}
+  {@const menu = ctxMenu}
+  <div bind:this={ctxEl} class="ctx-menu" style:left="{menu.x}px" style:top="{menu.y}px">
+    {#if menu.hidden}
+      <button
+        class="ctx-item"
+        onclick={() => {
+          onUnhide?.(menu.key);
+          ctxMenu = null;
+        }}
+      >
+        Unhide
+      </button>
+    {:else}
+      <button class="ctx-item" onclick={() => hideItem(menu.key)}>Hide from sidebar</button>
+    {/if}
+    {#if menu.kind === "label"}
+      {#if renaming}
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="ctx-rename"
+          use:autofocus
+          bind:value={renameValue}
+          aria-label="Label name"
+          onblur={commitRename}
+          onkeydown={(ev) => {
+            if (ev.key === "Enter") commitRename();
+          }}
+        />
+      {:else}
+        <button
+          class="ctx-item"
+          onclick={() => {
+            renameValue = menu.name;
+            renaming = true;
+          }}
+        >
+          Rename…
+        </button>
+      {/if}
+      <div class="ctx-colors">
+        <span class="ctx-colors-label">Color</span>
+        {#each PALETTE as tag (tag)}
+          <button
+            class="ctx-dot"
+            class:sel={menu.tag === tag}
+            style:background="var(--tag-{tag}-fg)"
+            aria-label="Color {tag}"
+            onclick={() => {
+              onSetColor?.(menu.key, tag);
+              ctxMenu = null;
+            }}
+          ></button>
+        {/each}
+      </div>
+      <div class="ctx-divider"></div>
+      <button
+        class="ctx-item danger"
+        onclick={() => {
+          if (!confirmDelete) {
+            confirmDelete = true;
+            return;
+          }
+          onDeleteLabel?.(menu.key);
+          ctxMenu = null;
+        }}
+      >
+        {confirmDelete ? "Really delete?" : "Delete label…"}
+      </button>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .sidebar {
@@ -231,5 +408,98 @@
   }
   .settings {
     flex-shrink: 0;
+  }
+  .nav-item.dimmed {
+    opacity: 0.45;
+  }
+  .show-all {
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+    padding: 6px 8px 2px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .show-all:hover {
+    color: var(--text-primary);
+  }
+  .ctx-menu {
+    position: fixed;
+    z-index: 90;
+    width: 200px;
+    background: var(--surface-card);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 6px;
+    box-sizing: border-box;
+  }
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: var(--radius-md);
+    text-align: left;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  .ctx-item:hover {
+    background: var(--surface-sunken);
+  }
+  .ctx-item.danger {
+    color: var(--tag-coral-fg);
+  }
+  .ctx-divider {
+    height: 1px;
+    background: var(--navy-50);
+    margin: 6px 4px;
+  }
+  .ctx-colors {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+  }
+  .ctx-colors-label {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-right: auto;
+  }
+  .ctx-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .ctx-dot.sel {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+  .ctx-rename {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 7px 8px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--surface-sunken);
+    outline: none;
+  }
+  .ctx-rename:focus {
+    border-color: var(--accent-highlight);
   }
 </style>

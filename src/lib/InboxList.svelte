@@ -555,7 +555,8 @@
     border: 1.5px solid var(--surface-card);
   }
   .from {
-    width: 120px;
+    width: 200px;
+    margin-right: 12px;
     flex-shrink: 0;
     font-family: var(--font-body);
     font-size: 12.5px;
@@ -571,7 +572,7 @@
     gap: 6px;
     flex: 0 1 auto;
     min-width: 60px;
-    max-width: 270px;
+    max-width: 340px;
   }
   .label-dot {
     width: 6px;

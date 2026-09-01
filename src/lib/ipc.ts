@@ -103,7 +103,8 @@ export const listThreads = (
   accountId?: string,
   before?: number,
   limit?: number,
-) => invoke<BackendThread[]>("list_threads", { filter, accountId, before, limit });
+) =>
+  invoke<BackendThread[]>("list_threads", { filter, accountId, before, limit });
 /** Stored user labels across all accounts, name-sorted (sidebar). */
 export const listLabels = () => invoke<BackendLabel[]>("list_labels");
 /** Calendar feed: every scheduled thread, even archived / out of the inbox window. */

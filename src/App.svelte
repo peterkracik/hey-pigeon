@@ -903,7 +903,7 @@
     min-width: 0;
   }
   .column {
-    max-width: 1180px;
+    max-width: 1420px;
     margin: 0 auto;
     width: 100%;
     box-sizing: border-box;
@@ -981,7 +981,7 @@
     flex-direction: column;
   }
   .compose-fs-head {
-    max-width: 1180px;
+    max-width: 1420px;
     margin: 0 auto;
     width: 100%;
     box-sizing: border-box;
@@ -1004,7 +1004,7 @@
     padding: 0 0 40px;
   }
   .compose-fs-column {
-    max-width: 1180px;
+    max-width: 1420px;
     margin: 0 auto;
     width: 100%;
     box-sizing: border-box;

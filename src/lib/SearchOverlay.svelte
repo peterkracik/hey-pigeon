@@ -101,7 +101,16 @@
       <path d="M20 20l-4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
     </svg>
     <!-- svelte-ignore a11y_autofocus -->
-    <input autofocus placeholder="Search mail" bind:value={query} onkeydown={onKeydown} />
+    <input
+      autofocus
+      placeholder="Search mail"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      bind:value={query}
+      onkeydown={onKeydown}
+    />
     <span class="hint">esc</span>
     <button class="close" aria-label="Close search" onclick={onClose}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none">

@@ -478,7 +478,7 @@
   .row:focus-visible,
   .row.cursor {
     background: var(--navy-50);
-    box-shadow: inset 3px 0 0 var(--accent-interactive);
+    box-shadow: inset 3px 0 0 var(--accent-highlight);
     border-color: transparent;
     border-radius: 0;
   }

@@ -3,7 +3,7 @@
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
   import ThreadMessage from "./ThreadMessage.svelte";
-  import InlineReply from "./InlineReply.svelte";
+  import InlineReply, { type ReplySendData } from "./InlineReply.svelte";
   import type { Email, ThreadMsg } from "./data";
 
   let {
@@ -19,7 +19,7 @@
   }: {
     email: Email | undefined;
     onClose: () => void;
-    onSendReply: (msg: ThreadMsg, body: string) => void;
+    onSendReply: (msg: ThreadMsg, data: ReplySendData) => void;
     replySignature?: string;
     fullscreen: boolean;
     onToggleFullscreen: (v: boolean) => void;
@@ -102,8 +102,9 @@
             <InlineReply
               toName={m.isMe ? em.from : m.from}
               signature={replySignature}
+              history={messages}
               onCancel={() => (replyTargetId = null)}
-              onSend={(body) => onSendReply(m, body)}
+              onSend={(data) => onSendReply(m, data)}
             />
           </div>
         {/if}

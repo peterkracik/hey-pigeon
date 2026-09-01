@@ -37,7 +37,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-sm);
+    border-radius: 50%;
     background: transparent;
     border: 1px solid transparent;
     color: var(--text-tertiary);

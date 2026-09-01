@@ -29,6 +29,8 @@ export interface ThreadMsg {
   /** Bare email address for replies (live mode). */
   fromAddr?: string;
   isMe: boolean;
+  /** Display-ready recipient list ("me" for the own address, live mode). */
+  to?: string[];
   date: string;
   fullDate?: string;
   snippet: string;
@@ -64,6 +66,8 @@ export interface Email {
   labelTag?: string;
   attachment?: boolean;
   attachments?: Attachment[];
+  /** Messages in the thread (live mode) — >1 marks a conversation. */
+  msgCount?: number;
   thread?: ThreadMsg[];
   accountTag?: string;
 }
@@ -228,6 +232,7 @@ export const EMAILS_SEED: Email[] = [
         id: "t1",
         from: "Priya Nair",
         isMe: false,
+        to: ["me", "sam@heypigeon.app", "ana@heypigeon.app"],
         date: "Mon",
         fullDate: "Mon, Aug 24, 2026, 2:08 PM",
         snippet:
@@ -248,6 +253,7 @@ export const EMAILS_SEED: Email[] = [
         id: "t3",
         from: "Priya Nair",
         isMe: false,
+        to: ["me", "sam@heypigeon.app", "ana@heypigeon.app"],
         date: "Wed",
         fullDate: "Wed, Aug 26, 2026, 4:51 PM",
         snippet:
@@ -258,6 +264,7 @@ export const EMAILS_SEED: Email[] = [
         id: "t4",
         from: "Priya Nair",
         isMe: false,
+        to: ["me", "sam@heypigeon.app"],
         date: "9:14 AM",
         fullDate: "Mon, Aug 31, 2026, 9:14 AM",
         snippet: "Could you take a look before Thursday's standup...",

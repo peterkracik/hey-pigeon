@@ -168,6 +168,38 @@ fn not_junk_sql(col: &str) -> String {
     )
 }
 
+/// WHERE-clause fragment for one `ThreadFilter` against the `threads`
+/// table, plus the bound label id (when the filter needs one). `label_bind`
+/// is the SQL parameter placeholder to interpolate for `ThreadFilter::Label`
+/// (callers differ on which positional slot is free). Keep in lockstep with
+/// fakes::matches_filter.
+fn thread_filter_sql<'a>(filter: &'a ThreadFilter, label_bind: &str) -> (String, Option<&'a str>) {
+    let has = |label: &str| has_label_sql("threads.labels", label);
+    let not_junk = not_junk_sql("threads.labels");
+    match filter {
+        // Flag-based, not label-based: the optimistic local apply flips
+        // the flags instantly, before any provider round-trip.
+        ThreadFilter::Inbox => ("is_inbox = 1 AND is_archived = 0".to_string(), None),
+        // Archive semantics: see sync::derive_is_archived — no INBOX/
+        // TRASH/SPAM/DRAFT and at least one received (non-SENT) message.
+        ThreadFilter::Archive => ("is_archived = 1".to_string(), None),
+        ThreadFilter::All => (not_junk.clone(), None),
+        ThreadFilter::Starred => (format!("{} AND {not_junk}", has("STARRED")), None),
+        ThreadFilter::Sent => (format!("{} AND {not_junk}", has("SENT")), None),
+        // A trashed draft belongs to Trash only (Gmail hides it from Drafts).
+        ThreadFilter::Drafts => (format!("{} AND NOT {}", has("DRAFT"), has("TRASH")), None),
+        ThreadFilter::Spam => (has("SPAM"), None),
+        ThreadFilter::Trash => (has("TRASH"), None),
+        ThreadFilter::Label(id) => (
+            format!(
+                "EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE json_each.value = {label_bind})
+                 AND {not_junk}"
+            ),
+            Some(id.as_str()),
+        ),
+    }
+}
+
 pub struct SqliteStore {
     conn: Mutex<Connection>,
 }
@@ -480,31 +512,7 @@ impl Store for SqliteStore {
     ) -> Result<Vec<Thread>, StoreError> {
         // json_each over the (small) thread label array — only fixed system
         // label ids are interpolated; user label ids bind as ?4.
-        // Keep the folder semantics in lockstep with fakes::matches_filter.
-        let has = |label: &str| has_label_sql("threads.labels", label);
-        let not_junk = not_junk_sql("threads.labels");
-        let (cond, label_param): (String, Option<&str>) = match filter {
-            // Flag-based, not label-based: the optimistic local apply flips
-            // the flags instantly, before any provider round-trip.
-            ThreadFilter::Inbox => ("is_inbox = 1 AND is_archived = 0".to_string(), None),
-            // Archive semantics: see sync::derive_is_archived — no INBOX/
-            // TRASH/SPAM/DRAFT and at least one received (non-SENT) message.
-            ThreadFilter::Archive => ("is_archived = 1".to_string(), None),
-            ThreadFilter::All => (not_junk.clone(), None),
-            ThreadFilter::Starred => (format!("{} AND {not_junk}", has("STARRED")), None),
-            ThreadFilter::Sent => (format!("{} AND {not_junk}", has("SENT")), None),
-            // A trashed draft belongs to Trash only (Gmail hides it from Drafts).
-            ThreadFilter::Drafts => (format!("{} AND NOT {}", has("DRAFT"), has("TRASH")), None),
-            ThreadFilter::Spam => (has("SPAM"), None),
-            ThreadFilter::Trash => (has("TRASH"), None),
-            ThreadFilter::Label(id) => (
-                format!(
-                    "EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE json_each.value = ?4)
-                     AND {not_junk}"
-                ),
-                Some(id.as_str()),
-            ),
-        };
+        let (cond, label_param) = thread_filter_sql(filter, "?4");
         self.with(|c| {
             // Keyset pagination — never OFFSET (DESIGN.md).
             let mut stmt = c.prepare(&format!(
@@ -520,6 +528,28 @@ impl Store for SqliteStore {
                 None => stmt.query_map(params![account_id, before, limit], row_to_thread)?,
             };
             rows.collect()
+        })
+    }
+
+    /// Unread thread count for one folder/label filter (sidebar badges) —
+    /// a plain COUNT(*), no row hydration.
+    fn count_unread(
+        &self,
+        account_id: Option<&AccountId>,
+        filter: &ThreadFilter,
+    ) -> Result<i64, StoreError> {
+        let (cond, label_param) = thread_filter_sql(filter, "?2");
+        self.with(|c| {
+            let sql = format!(
+                "SELECT COUNT(*) FROM threads
+                 WHERE ({cond}) AND is_read = 0
+                   AND (?1 IS NULL OR account_id = ?1)"
+            );
+            let mut stmt = c.prepare(&sql)?;
+            match label_param {
+                Some(id) => stmt.query_row(params![account_id, id], |r| r.get(0)),
+                None => stmt.query_row(params![account_id], |r| r.get(0)),
+            }
         })
     }
 
@@ -1030,6 +1060,50 @@ mod tests {
             .list_threads(None, &ThreadFilter::Trash, Some(page1[0].last_msg_at), 1)
             .unwrap();
         assert_eq!(page2[0].id, "trash-star");
+    }
+
+    #[test]
+    fn count_unread_matches_filter_account_and_read_state() {
+        let s = store();
+        s.upsert_account(&sample_account("a2")).unwrap();
+        let mk = |id: &str, account: &str, labels: &[&str], is_inbox: bool, is_read: bool| Thread {
+            id: id.to_string(),
+            account_id: account.to_string(),
+            subject: String::new(),
+            snippet: String::new(),
+            last_msg_at: 1,
+            is_read,
+            is_inbox,
+            is_archived: false,
+            msg_count: 1,
+            from_summary: "Someone".to_string(),
+            last_from_addr: "someone@example.com".to_string(),
+            scheduled_at: None,
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+        };
+        s.upsert_thread(&mk("a-unread", "a1", &["INBOX"], true, false)).unwrap();
+        s.upsert_thread(&mk("a-read", "a1", &["INBOX"], true, true)).unwrap();
+        s.upsert_thread(&mk("b-unread", "a2", &["INBOX"], true, false)).unwrap();
+        // not in the inbox — must not count toward Inbox, only its own label
+        s.upsert_thread(&mk("a-label-unread", "a1", &["Label_1"], false, false)).unwrap();
+
+        assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 2, "both accounts");
+        assert_eq!(
+            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Inbox).unwrap(),
+            1,
+            "account-scoped"
+        );
+        assert_eq!(
+            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Label("Label_1".to_string()))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Label("Label_2".to_string()))
+                .unwrap(),
+            0,
+            "non-matching label"
+        );
     }
 
     #[test]

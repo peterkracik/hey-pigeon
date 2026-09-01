@@ -2,6 +2,7 @@
 //! The whitelist lives in DESIGN.md — nothing else earns a trait.
 
 use crate::domain::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MailError {
@@ -139,6 +140,88 @@ pub trait MailProvider {
     ) -> impl std::future::Future<Output = Result<(), MailError>> + Send;
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum AiError {
+    #[error("invalid or revoked API key")]
+    AuthInvalid,
+    #[error("rate limited, retry after {retry_after_secs:?}s")]
+    RateLimited { retry_after_secs: Option<u64> },
+    #[error("network: {0}")]
+    Network(String),
+    #[error("provider: {0}")]
+    Provider(String),
+}
+
+/// One selectable model. `models()` is a static/local list — never a
+/// network call (that's what `verify()` is for).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    System,
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub content: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletionRequest {
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+}
+
+/// AI backend (BYO API key, provider-pluggable — DESIGN.md "AI features").
+/// Everything feature code calls goes through this trait, never a concrete
+/// provider, so a second provider is one new adapter crate, zero feature
+/// code changes.
+pub trait AiProvider {
+    /// Stable id, e.g. "openai".
+    fn id(&self) -> &str;
+    /// Selectable models; callers treat the first as the recommended default.
+    fn models(&self) -> Vec<ModelInfo>;
+
+    /// Run one completion request.
+    /// ponytail: returns the whole response at once rather than a token
+    /// stream — no caller needs incremental rendering yet (summarize/draft
+    /// reply are a later milestone). Widen this to a
+    /// `Stream<Item = Token>` when one lands; this is the one call site
+    /// that changes.
+    fn complete(
+        &self,
+        req: CompletionRequest,
+    ) -> impl std::future::Future<Output = Result<String, AiError>> + Send;
+
+    /// Confirm the configured credentials actually work — the
+    /// "authenticate" step run once before a freshly pasted key is
+    /// persisted (mirrors `MailProvider::profile` in the Gmail OAuth flow).
+    /// Default: a minimal `complete()` call (costs a few tokens); adapters
+    /// override with a free provider-native check when one exists.
+    fn verify(&self) -> impl std::future::Future<Output = Result<(), AiError>> + Send
+    where
+        Self: Sync,
+    {
+        async move {
+            let model = self.models().into_iter().next().map(|m| m.id).unwrap_or_default();
+            self.complete(CompletionRequest {
+                model,
+                messages: vec![ChatMessage { role: ChatRole::User, content: "ping".to_string() }],
+            })
+            .await
+            .map(|_| ())
+        }
+    }
+}
+
 /// Local persistence (SQLite in v1). Sync trait: rusqlite is synchronous and
 /// call sites wrap access in a single writer.
 /// All writes are idempotent upserts keyed on provider-native ids.
@@ -165,6 +248,22 @@ pub trait Store {
     ) -> Result<Vec<Thread>, StoreError>;
     fn get_thread(&self, thread_id: &ThreadId) -> Result<Option<Thread>, StoreError>;
     fn list_messages(&self, thread_id: &ThreadId) -> Result<Vec<Message>, StoreError>;
+
+    /// Unread thread count for one folder/label filter (sidebar badges).
+    /// Default: filters `list_threads` (correct but unindexed) so existing
+    /// adapters keep compiling; the SQLite adapter overrides with a real
+    /// COUNT query.
+    fn count_unread(
+        &self,
+        account_id: Option<&AccountId>,
+        filter: &ThreadFilter,
+    ) -> Result<i64, StoreError> {
+        Ok(self
+            .list_threads(account_id, filter, None, u32::MAX)?
+            .iter()
+            .filter(|t| !t.is_read)
+            .count() as i64)
+    }
 
     /// Local full-text search: ranked threads + snippet preview (FTS5 in the
     /// SQLite adapter). Default impl returns nothing so existing adapters

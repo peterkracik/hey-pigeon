@@ -31,7 +31,7 @@
     font-family: var(--font-body);
     font-weight: 600;
     line-height: 1;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
     border: none;
     cursor: pointer;
     transition:

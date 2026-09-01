@@ -21,6 +21,7 @@ tauri-build = { version = "2.6.3", features = [] }
 heypigeon-core = { path = "../crates/core" }
 heypigeon-adapter-gmail = { path = "../crates/adapter-gmail" }
 heypigeon-adapter-sqlite = { path = "../crates/adapter-sqlite" }
+heypigeon-adapter-openai = { path = "../crates/adapter-openai" }
 tokio = { version = "1", features = ["sync", "time"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -28,3 +29,4 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+tauri-plugin-notification = "2.4.0"

@@ -3,6 +3,7 @@
   import Button from "./ds/Button.svelte";
   import Avatar from "./ds/Avatar.svelte";
   import { ACCOUNT_COLOR_TAGS, EMAIL_ACTIONS, type Account } from "./data";
+  import * as ipc from "./ipc";
 
   let {
     accounts,
@@ -28,6 +29,79 @@
   let confirmingRemoveId: string | null = $state(null);
 
   let dragKey: string | null = $state(null);
+
+  // ------------------------------------------------------------ AI provider
+  // Self-contained (like SearchOverlay): nothing outside Settings needs AI
+  // status yet, so it talks to ipc directly instead of round-tripping
+  // through App.svelte props. Only "openai" exists today.
+  const AI_PROVIDER = "openai";
+
+  let aiStatus = $state<ipc.AiStatus | null>(null);
+  let aiModelOptions: ipc.AiModel[] = $state([]);
+  let aiKeyInput = $state("");
+  let aiSaving = $state(false);
+  let aiError: string | null = $state(null);
+  let confirmingRemoveAi = $state(false);
+
+  // Runs once when Settings mounts (the modal creates/destroys this
+  // component per open, so this is effectively "fetch on open").
+  if (ipc.isTauri) {
+    ipc
+      .aiModels(AI_PROVIDER)
+      .then((m) => (aiModelOptions = m))
+      .catch(() => {});
+    ipc
+      .aiStatus()
+      .then((s) => (aiStatus = s))
+      .catch(() => {});
+  }
+
+  const aiConnected = $derived(aiStatus?.configured ?? false);
+  const aiModelLabel = $derived(
+    aiModelOptions.find((m) => m.id === aiStatus?.model)?.label ?? aiStatus?.model ?? "—",
+  );
+
+  async function connectAi() {
+    const key = aiKeyInput.trim();
+    if (!ipc.isTauri || !key) return;
+    aiSaving = true;
+    aiError = null;
+    try {
+      await ipc.setAiKey(AI_PROVIDER, key);
+      // Default to the first (cheapest) model on first connect.
+      const defaultModel = aiModelOptions[0]?.id;
+      if (defaultModel) await ipc.setAiModel(AI_PROVIDER, defaultModel);
+      aiStatus = await ipc.aiStatus();
+      aiKeyInput = "";
+    } catch (e) {
+      aiError = String(e);
+    } finally {
+      aiSaving = false;
+    }
+  }
+
+  async function disconnectAi() {
+    if (!ipc.isTauri) return;
+    confirmingRemoveAi = false;
+    try {
+      await ipc.removeAiKey(AI_PROVIDER);
+      aiStatus = await ipc.aiStatus();
+    } catch (e) {
+      aiError = String(e);
+    }
+  }
+
+  async function selectAiModel(model: string) {
+    if (!ipc.isTauri || !aiStatus) return;
+    const prev = aiStatus.model;
+    aiStatus = { ...aiStatus, model }; // optimistic — it's a plain local pref
+    try {
+      await ipc.setAiModel(AI_PROVIDER, model);
+    } catch (e) {
+      aiError = String(e);
+      aiStatus = { ...aiStatus, model: prev };
+    }
+  }
 
   function reorderOrAdd(targetIndex: number) {
     if (!dragKey) return;
@@ -120,6 +194,66 @@
       {/each}
       <div class="add-account">
         <Button variant="secondary" size="sm" onclick={() => onAddAccount?.()}>Add account</Button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="group-head">
+      <h2>AI</h2>
+      <p>Bring your own API key. Email content is sent to the provider only when you press an AI action — never in the background.</p>
+    </div>
+    <div class="group-body">
+      <div class="account-block">
+        <div class="account-row">
+          <div class="ai-mark">AI</div>
+          <div class="account-text">
+            <div class="setting-title">ChatGPT (OpenAI)</div>
+            <div class="account-email">{aiConnected ? `Connected · ${aiModelLabel}` : "Not connected"}</div>
+          </div>
+          {#if aiConnected}
+            {#if confirmingRemoveAi}
+              <Button variant="danger" size="sm" onclick={disconnectAi}>Really remove?</Button>
+            {:else}
+              <Button variant="ghost" size="sm" onclick={() => (confirmingRemoveAi = true)}>Remove</Button>
+            {/if}
+          {/if}
+        </div>
+        {#if aiConnected}
+          <div class="account-subsettings">
+            <div class="sub-row">
+              <span class="sub-label">Model</span>
+              <select
+                class="sub-input"
+                value={aiStatus?.model ?? aiModelOptions[0]?.id}
+                onchange={(ev) => selectAiModel(ev.currentTarget.value)}
+              >
+                {#each aiModelOptions as m (m.id)}
+                  <option value={m.id}>{m.label}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+        {:else}
+          <div class="ai-connect-row">
+            <input
+              class="sub-input ai-key-input"
+              type="password"
+              autocomplete="off"
+              placeholder="sk-…"
+              bind:value={aiKeyInput}
+              onkeydown={(ev) => {
+                if (ev.key === "Enter") connectAi();
+              }}
+            />
+            <Button variant="secondary" size="sm" disabled={!aiKeyInput.trim() || aiSaving} onclick={connectAi}>
+              {aiSaving ? "Verifying…" : "Connect"}
+            </Button>
+          </div>
+          {#if aiError}
+            <div class="ai-error">{aiError}</div>
+          {/if}
+        {/if}
       </div>
     </div>
   </section>
@@ -220,20 +354,21 @@
 <style>
   .settings {
     width: 100%;
-    padding-bottom: 60px;
+    padding: 8px 0 40px;
   }
   section {
-    margin-bottom: 40px;
+    margin-bottom: 36px;
   }
   .group-head {
     margin-bottom: 4px;
   }
   .group-head h2 {
     margin: 0;
-    font-family: var(--font-mono);
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--accent-highlight);
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    font-size: 16px;
+    color: var(--text-primary);
   }
   .group-head p {
     margin: 4px 0 0;
@@ -309,6 +444,37 @@
     font-size: 13px;
     color: var(--text-tertiary);
   }
+  .ai-mark {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-inverse);
+    color: var(--text-inverse);
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+  .ai-connect-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0 0 44px;
+  }
+  .ai-key-input {
+    flex: 0 1 320px;
+    font-family: var(--font-mono);
+  }
+  .ai-error {
+    padding: 6px 0 0 44px;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    color: var(--tag-coral-fg);
+  }
   .add-account {
     padding-top: 14px;
   }
@@ -331,7 +497,8 @@
     align-items: center;
     padding: 8px;
     border: 1px dashed var(--border-default);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
+    background: var(--bg-canvas);
   }
   .available-zone {
     display: flex;
@@ -355,18 +522,22 @@
   }
   .action-chip.selected {
     padding: 6px 6px 6px 12px;
-    background: var(--surface-sunken);
+    background: var(--surface-inverse);
     border: none;
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text-inverse);
   }
   .chip-x {
     border: none;
     background: none;
     cursor: pointer;
-    color: var(--text-tertiary);
+    color: inherit;
+    opacity: 0.6;
     display: flex;
     padding: 4px;
+  }
+  .chip-x:hover {
+    opacity: 1;
   }
   .drop-hint {
     font-family: var(--font-body);
@@ -400,30 +571,35 @@
   }
   .sub-input {
     flex: 0 1 260px;
-    border: none;
-    border-bottom: 1px solid var(--border-default);
-    background: none;
+    border: 1px solid transparent;
+    background: var(--bg-canvas);
+    border-radius: var(--radius-md);
     outline: none;
     font-family: var(--font-body);
     font-size: 13.5px;
     color: var(--text-primary);
-    padding: 4px 2px;
+    padding: 7px 10px;
   }
   .sub-input:focus {
-    border-bottom-color: var(--text-primary);
+    border-color: var(--text-primary);
+    background: var(--surface-card);
   }
   .sub-signature {
     flex: 0 1 420px;
     box-sizing: border-box;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
     padding: 10px 12px;
     resize: vertical;
     font-family: var(--font-body);
     font-size: 13px;
     color: var(--text-primary);
     outline: none;
-    background: none;
+    background: var(--bg-canvas);
+  }
+  .sub-signature:focus {
+    border-color: var(--text-primary);
+    background: var(--surface-card);
   }
   .copyright {
     text-align: center;

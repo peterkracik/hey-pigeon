@@ -86,8 +86,18 @@ export type BackendMutation =
       bcc: string[];
       subject: string;
       body_text: string;
+      /** Rich compose: HTML alternative part. Null sends plain text only. */
+      body_html: string | null;
+      attachments: OutAttachment[];
       reply_to_thread: string | null;
     };
+
+/** One outgoing attachment (standard base64 content). */
+export interface OutAttachment {
+  filename: string;
+  mime_type: string;
+  data_b64: string;
+}
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -109,6 +119,9 @@ export const listThreads = (
   invoke<BackendThread[]>("list_threads", { filter, accountId, before, limit });
 /** Stored user labels across all accounts, name-sorted (sidebar). */
 export const listLabels = () => invoke<BackendLabel[]>("list_labels");
+/** Unread thread count per sidebar key (folders + `label:<id>`). */
+export const unreadCounts = (accountId?: string) =>
+  invoke<Record<string, number>>("unread_counts", { accountId });
 /** Calendar feed: every scheduled thread, even archived / out of the inbox window. */
 export const listScheduled = () => invoke<BackendThread[]>("list_scheduled");
 /** Local FTS5 search (operators + bare text); ranked, with snippet. */
@@ -145,6 +158,46 @@ export const updateLabel = (labelId: string, newName: string) =>
 /** Delete a Gmail label from every connected account owning the id. */
 export const deleteLabel = (labelId: string) =>
   invoke<void>("delete_label", { labelId });
+
+// ------------------------------------------------------------ AI providers
+
+export interface AiStatus {
+  configured: boolean;
+  provider_id: string | null;
+  model: string | null;
+}
+
+export interface AiModel {
+  id: string;
+  label: string;
+}
+
+/** Whether an AI provider is configured, and which model is selected —
+ *  the stored key is never sent back to the frontend. */
+export const aiStatus = () => invoke<AiStatus>("ai_status");
+/** Selectable models for one provider (static list, no key required). */
+export const aiModels = (providerId: string) =>
+  invoke<AiModel[]>("ai_models", { providerId });
+/** Validate the key against the provider before it's persisted — rejects
+ *  on an invalid/revoked key or a network failure. */
+export const setAiKey = (providerId: string, apiKey: string) =>
+  invoke<void>("set_ai_key", { providerId, apiKey });
+export const removeAiKey = (providerId: string) =>
+  invoke<void>("remove_ai_key", { providerId });
+export const setAiModel = (providerId: string, model: string) =>
+  invoke<void>("set_ai_model", { providerId, model });
+/** Run one freeform or preset instruction against a piece of text (the
+ *  whole compose body, or just the current selection) — returns the
+ *  revised text. `history`, when replying inside a thread, is a plain-text
+ *  transcript so the model can answer a question raised earlier instead of
+ *  only reshaping `text`. Rejects with a friendly message when no key is
+ *  configured. */
+export const aiEditText = (
+  providerId: string,
+  instruction: string,
+  text: string,
+  history?: string,
+) => invoke<string>("ai_edit_text", { providerId, instruction, text, history });
 
 const avatarCache = new Map<string, Promise<string | null>>();
 /** Sender contact photo (People API), cached per session. */
@@ -212,6 +265,7 @@ export function threadToEmail(t: BackendThread): Email {
     pinned: t.labels.includes("STARRED"),
     labels: t.labels,
     fromAddr: t.last_from_addr || undefined,
+    msgCount: t.msg_count,
     lastMsgAt: t.last_msg_at,
     scheduledAt: t.scheduled_at ?? undefined,
   };
@@ -226,6 +280,12 @@ export function messagesToThreadMsgs(
     from: m.from_addr.replace(/<.*>/, "").trim() || m.from_addr,
     fromAddr: m.from_addr.match(/<([^>]+)>/)?.[1] ?? m.from_addr,
     isMe: m.from_addr.includes(myEmail),
+    to: m.to_addrs.map((a) => {
+      const addr = a.match(/<([^>]+)>/)?.[1] ?? a;
+      return myEmail && addr.toLowerCase() === myEmail.toLowerCase()
+        ? "me"
+        : addr;
+    }),
     date: fmtTime(m.date),
     fullDate: fmtFull(m.date),
     snippet: m.snippet,

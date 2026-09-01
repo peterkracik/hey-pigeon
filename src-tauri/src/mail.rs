@@ -117,6 +117,38 @@ pub fn list_labels(state: State<'_, MailState>) -> Result<Vec<Label>, String> {
     state.store.list_labels().map_err(estr)
 }
 
+/// Unread thread counts per sidebar key — every system folder plus every
+/// stored label, e.g. `{"inbox": 3, "starred": 1, "label:Label_5": 2}`.
+/// One round-trip instead of one query per sidebar row.
+#[tauri::command]
+pub fn unread_counts(
+    state: State<'_, MailState>,
+    account_id: Option<AccountId>,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let mut out = std::collections::HashMap::new();
+    for (key, filter) in [
+        ("inbox", ThreadFilter::Inbox),
+        ("all", ThreadFilter::All),
+        ("starred", ThreadFilter::Starred),
+        ("sent", ThreadFilter::Sent),
+        ("drafts", ThreadFilter::Drafts),
+        ("archive", ThreadFilter::Archive),
+        ("spam", ThreadFilter::Spam),
+        ("trash", ThreadFilter::Trash),
+    ] {
+        let n = state.store.count_unread(account_id.as_ref(), &filter).map_err(estr)?;
+        out.insert(key.to_string(), n);
+    }
+    for label in state.store.list_labels().map_err(estr)? {
+        let n = state
+            .store
+            .count_unread(account_id.as_ref(), &ThreadFilter::Label(label.id.clone()))
+            .map_err(estr)?;
+        out.insert(format!("label:{}", label.id), n);
+    }
+    Ok(out)
+}
+
 /// Calendar feed: every scheduled thread, regardless of inbox/archive state
 /// or the inbox page window — a schedule must stay visible after archiving.
 #[tauri::command]
@@ -510,12 +542,14 @@ fn spawn_startup_sync(handle: AppHandle, account_id: AccountId) {
 
 /// Open the DB, pick the backend (Gmail when a refresh token exists, else the
 /// fake provider seeded with sample data), and kick off the startup sync.
-pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+// `secrets` is shared with `ai::init` (one FileSecretStore in-memory cache
+// in debug builds) — two independent instances over the same JSON file
+// would each persist() a whole-file rewrite from its own stale cache and
+// could silently clobber the other's writes (Gmail tokens vs. AI keys).
+pub fn init(app: &tauri::App, secrets: Arc<dyn SecretStore + Send + Sync>) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     let store = SqliteStore::open(&data_dir.join("heypigeon.db"))?;
-    let secrets: Arc<dyn SecretStore + Send + Sync> =
-        Arc::from(crate::secrets::default_secret_store(&data_dir)?);
 
     // Gmail mode when config + stored refresh tokens for known accounts exist.
     let gmail_accounts = load_oauth_config().ok().and_then(|config| {

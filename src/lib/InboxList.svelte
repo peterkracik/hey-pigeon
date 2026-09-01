@@ -2,8 +2,8 @@
   import IconButton from "./ds/IconButton.svelte";
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
-  import InlineReply from "./InlineReply.svelte";
-  import HtmlEmailFrame from "./HtmlEmailFrame.svelte";
+  import InlineReply, { type ReplySendData } from "./InlineReply.svelte";
+  import EmailBody from "./EmailBody.svelte";
   import Avatar from "./ds/Avatar.svelte";
   import { EMAIL_ACTIONS, type Email } from "./data";
 
@@ -11,9 +11,11 @@
     emails,
     selectedId,
     cursorId = null,
+    selectedIds,
     onSelect,
     onOpen,
     onAction,
+    onToggleSelect,
     onSendReply,
     onSchedule,
     hoverActions,
@@ -26,10 +28,13 @@
     emails: Email[];
     selectedId: string | null;
     cursorId?: string | null;
+    /** Multi-select checkbox state (Gmail-style bulk actions). */
+    selectedIds: Set<string>;
     onSelect: (id: string | null) => void;
     onOpen: (id: string) => void;
     onAction: (id: string, action: string) => void;
-    onSendReply?: (email: Email, body: string) => void;
+    onToggleSelect: (id: string) => void;
+    onSendReply?: (email: Email, data: ReplySendData) => void;
     /** Set/clear the "remind me" schedule (epoch ms; null clears). */
     onSchedule?: (id: string, scheduledAt: number | null) => void;
     signatureFor?: (email: Email) => string | undefined;
@@ -44,6 +49,10 @@
   } = $props();
 
   const DONE_D = "M20 6L9 17l-5-5";
+
+  // Checkbox row shows for every row once anything is selected, otherwise
+  // only on hover (CSS) — same reveal pattern as .actions.
+  const anySelected = $derived(selectedIds.size > 0);
 
   let replyingId: string | null = $state(null);
 
@@ -261,6 +270,7 @@
             class:is-selected={selectedId === e.id}
             class:cursor={cursorId === e.id}
             class:completing={completing.has(e.id)}
+            class:done-strike={mode === "scheduled" && e.done && !completing.has(e.id)}
             data-eid={e.id}
             onclick={() => onSelect(selectedId === e.id ? null : e.id)}
           >
@@ -274,23 +284,64 @@
                 <Icon d={DONE_D} size={11} strokeWidth={2.6} />
               </button>
             </Tooltip>
-            <span class="avatar-wrap">
+            <span
+              class="avatar-wrap"
+              class:ringed={!!e.accountTag}
+              class:show-check={anySelected}
+              title={e.accountTag ? "account" : undefined}
+              style:--ring={e.accountTag ? `var(--tag-${e.accountTag}-fg)` : undefined}
+            >
               <Avatar email={e.fromAddr} accountId={e.accountId} name={e.from} size={26} />
-              {#if e.accountTag}
-                <span class="account-dot" title="account" style:background="var(--tag-{e.accountTag}-fg)"></span>
+              {#if e.unread}
+                <span class="unread-dot" title="Unread"></span>
               {/if}
+              <button
+                type="button"
+                class="select-check"
+                class:checked={selectedIds.has(e.id)}
+                title={selectedIds.has(e.id) ? "Deselect" : "Select"}
+                onclick={(ev) => {
+                  ev.stopPropagation();
+                  onToggleSelect(e.id);
+                }}
+              >
+                {#if selectedIds.has(e.id)}
+                  <Icon d={DONE_D} size={11} strokeWidth={2.6} />
+                {/if}
+              </button>
             </span>
             <span class="from" class:unread={e.unread}>{e.from}</span>
+            <!-- Fixed-width slot (empty for single emails) so subjects align. -->
+            <span
+              class="conv"
+              title={(e.msgCount ?? e.thread?.length ?? 1) > 1
+                ? `${e.msgCount ?? e.thread?.length} messages in this conversation`
+                : undefined}
+            >
+              {#if (e.msgCount ?? e.thread?.length ?? 1) > 1}
+                <Icon d="M21 12a2 2 0 01-2 2H8l-4 4V6a2 2 0 012-2h13a2 2 0 012 2z" size={12} />
+                {e.msgCount ?? e.thread?.length}
+              {/if}
+            </span>
             <span class="subject-wrap">
               <span class="label-dot" style:background={e.labelTag ? `var(--tag-${e.labelTag}-fg)` : "transparent"}></span>
               <span class="subject" class:unread={e.unread}>{e.subject}</span>
             </span>
             <span class="snippet">{e.snippet}</span>
             {#if e.scheduledAt !== undefined}
-              <span class="sched-badge" class:overdue={e.scheduledAt < Date.now()} title="Scheduled">
+              <button
+                type="button"
+                class="sched-badge"
+                class:overdue={e.scheduledAt < Date.now()}
+                title="Reschedule"
+                onclick={(ev) => {
+                  ev.stopPropagation();
+                  if (onSchedule) openRemind(e, ev.currentTarget as HTMLElement);
+                }}
+              >
                 <Icon d={CLOCK_D} size={11} />
                 {fmtSched(e.scheduledAt)}
-              </span>
+              </button>
             {/if}
             {#if e.attachment}
               <span class="clip" title="Has attachment">
@@ -332,12 +383,13 @@
             </span>
           </div>
           {#if selectedId === e.id}
+            {@const pc = previewContent(e)}
+            {@const lastTo = e.thread?.[e.thread.length - 1]?.to}
             <div class="preview">
-              {#if previewContent(e).html}
-                <HtmlEmailFrame html={previewContent(e).body} />
-              {:else}
-                <p class="preview-body">{previewContent(e).body}</p>
+              {#if lastTo?.length}
+                <div class="preview-to" title="to {lastTo.join(', ')}">to {lastTo.join(", ")}</div>
               {/if}
+              <EmailBody html={pc.html} body={pc.body} />
               <div class="preview-actions">
                 <div class="reply-btns">
                   <Tooltip label="Reply" side="top">
@@ -392,7 +444,13 @@
               {#if replyingId === e.id}
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
                 <div onclick={(ev) => ev.stopPropagation()}>
-                  <InlineReply toName={e.from} signature={signatureFor?.(e)} onCancel={() => (replyingId = null)} onSend={(body) => onSendReply?.(e, body)} />
+                  <InlineReply
+                    toName={e.from}
+                    signature={signatureFor?.(e)}
+                    history={e.thread}
+                    onCancel={() => (replyingId = null)}
+                    onSend={(data) => onSendReply?.(e, data)}
+                  />
                 </div>
               {/if}
             </div>
@@ -464,10 +522,12 @@
   }
   .group-label {
     padding: 18px 0 8px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--accent-highlight);
-    font-weight: 400;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
   }
   .selected-card {
     margin: 0 -16px 8px;
@@ -497,14 +557,12 @@
     border-radius: 0;
     border-bottom: 1px solid var(--border-subtle);
   }
-  /* Superhuman-style hover/focus: solid fill, no shadow, strong left bar. */
+  /* Pill language: hover/cursor rows lift as pills with a hint of accent. */
   .row:hover,
   .row:focus-visible,
   .row.cursor {
-    background: var(--navy-50);
-    box-shadow: inset 3px 0 0 var(--accent-highlight);
+    background: var(--surface-hover);
     border-color: transparent;
-    border-radius: 0;
   }
   .row.is-selected {
     background: transparent !important;
@@ -565,6 +623,32 @@
     color: var(--text-tertiary);
     transition: color 300ms;
   }
+  /* Schedule view: an already-done item stays visible but reads as
+     finished — a real typographic strikethrough on the subject (the
+     todo-list "title"), everything else just dims. A single line drawn
+     across the row cut through the avatar/icons and never sat on a text
+     baseline, so it read as a stray rule rather than a strikethrough. No
+     animation/fade here (that's .completing, for the transition only). */
+  .row.done-strike .subject {
+    color: var(--text-tertiary);
+    text-decoration: line-through;
+    text-decoration-color: var(--border-default);
+    text-decoration-thickness: 1.3px;
+  }
+  .row.done-strike .from,
+  .row.done-strike .snippet {
+    color: var(--text-tertiary);
+  }
+  .row.done-strike .avatar-wrap,
+  .row.done-strike .conv,
+  .row.done-strike .label-dot,
+  .row.done-strike .clip {
+    opacity: 0.5;
+  }
+  .row.done-strike .sched-badge {
+    color: var(--text-tertiary);
+    background: var(--surface-sunken);
+  }
   @keyframes strike {
     to {
       transform: scaleX(1);
@@ -579,15 +663,43 @@
   .avatar-wrap {
     position: relative;
     flex-shrink: 0;
-  }
-  .account-dot {
-    position: absolute;
-    bottom: -2px;
-    right: -2px;
-    width: 9px;
-    height: 9px;
+    display: flex;
     border-radius: 50%;
-    border: 1.5px solid var(--surface-card);
+  }
+  /* Account marker: colored ring around the avatar (gap, then ring). */
+  .avatar-wrap.ringed {
+    box-shadow:
+      0 0 0 1.5px var(--surface-card),
+      0 0 0 3px var(--ring);
+  }
+  /* Gmail-style overlay: the checkbox covers the avatar on hover, or on
+     every row once any row is checked — no layout shift, no avatar swap. */
+  .select-check {
+    position: absolute;
+    inset: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    background: var(--surface-card);
+    box-shadow: 0 0 0 1.5px var(--border-default);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: transparent;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 100ms;
+  }
+  .row:hover .select-check,
+  .avatar-wrap.show-check .select-check {
+    opacity: 1;
+  }
+  .select-check.checked {
+    background: var(--surface-inverse);
+    box-shadow: none;
+    color: var(--text-inverse);
   }
   .from {
     width: 200px;
@@ -600,6 +712,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Conversation marker — absence means a single email. */
+  .conv {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    width: 34px;
+    margin-left: -6px;
+    color: var(--text-tertiary);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
   }
   .subject-wrap {
     display: flex;
@@ -625,7 +750,18 @@
     white-space: nowrap;
   }
   .unread {
-    font-weight: 600;
+    font-weight: 700;
+  }
+  /* Pink signal dot — the one color in the monochrome list. */
+  .unread-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-highlight);
+    border: 1.5px solid var(--surface-card);
   }
   .snippet {
     flex: 1 1 100px;
@@ -655,6 +791,7 @@
     font-family: var(--font-mono);
     font-size: 10.5px;
     white-space: nowrap;
+    cursor: pointer;
     transition:
       background 100ms,
       border-color 100ms;
@@ -689,7 +826,7 @@
     text-align: left;
   }
   .remind-item:hover {
-    background: var(--surface-sunken);
+    background: var(--surface-hover);
   }
   .remind-label {
     flex: 1;
@@ -810,13 +947,14 @@
   .preview {
     padding: 20px 16px 12px;
   }
-  .preview-body {
-    margin: 0;
+  .preview-to {
     font-family: var(--font-body);
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin: -8px 0 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .preview-actions {
     display: flex;

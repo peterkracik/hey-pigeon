@@ -51,7 +51,12 @@
         {@render avatar(30)}
         <span class="head-text">
           <span class="head-name">{name}</span>
-          {#if accountId?.includes("@")}
+          {#if msg.to?.length}
+            <span class="head-to" title="to {msg.to.join(', ')}">
+              {#if accountTag}<span class="head-to-dot" style:background="var(--tag-{accountTag}-fg)"></span>{/if}
+              to {msg.to.join(", ")}
+            </span>
+          {:else if accountId?.includes("@")}
             <span class="head-to">
               {#if accountTag}<span class="head-to-dot" style:background="var(--tag-{accountTag}-fg)"></span>{/if}
               to {accountId}
@@ -180,6 +185,10 @@
     font-family: var(--font-body);
     font-size: 12px;
     color: var(--text-tertiary);
+    max-width: 480px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .head-to-dot {
     width: 6px;

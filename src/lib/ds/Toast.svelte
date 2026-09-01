@@ -17,10 +17,10 @@
 
   const ICONS = { success: "✓", warning: "!", danger: "✕", info: "i" } as const;
   const TONES = {
-    success: "var(--state-success)",
-    warning: "var(--state-warning)",
-    danger: "var(--state-danger)",
-    info: "var(--accent-interactive)",
+    success: "var(--tag-mint-fg)",
+    warning: "var(--tag-amber-fg)",
+    danger: "var(--tag-coral-fg)",
+    info: "var(--pink)",
   } as const;
 </script>
 
@@ -49,10 +49,11 @@
     display: flex;
     align-items: flex-start;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 13px 16px;
     width: 320px;
     box-sizing: border-box;
     background: var(--surface-inverse);
+    border-radius: var(--radius-xl);
     font-family: var(--font-body);
     box-shadow: var(--shadow-lg);
   }
@@ -84,19 +85,18 @@
   }
   .action {
     border: none;
-    background: transparent;
+    background: var(--surface-card);
     cursor: pointer;
-    color: var(--text-inverse);
+    color: var(--text-primary);
     font-family: var(--font-body);
-    font-size: var(--text-small);
-    font-weight: 600;
-    padding: 0;
-    margin-top: 6px;
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 5px 12px;
+    margin-top: 8px;
+    border-radius: var(--radius-pill);
   }
   .action:hover {
-    color: var(--navy-300);
+    background: var(--navy-200);
   }
   .close {
     border: none;

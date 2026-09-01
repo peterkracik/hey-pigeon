@@ -1,16 +1,19 @@
 <script lang="ts">
   import Avatar from "./ds/Avatar.svelte";
   import * as ipc from "./ipc";
+  import type { Account } from "./data";
 
   let {
     open,
     onClose,
     onOpen,
+    accounts = [],
   }: {
     open: boolean;
     onClose: () => void;
     /** Open a search hit (Tauri mode only). */
     onOpen?: (thread: ipc.BackendThread) => void;
+    accounts?: Account[];
   } = $props();
 
   // Browser mock keeps a static contact list; the real search needs Tauri.
@@ -23,6 +26,35 @@
   let query = $state("");
   let results: ipc.BackendSearchResult[] = $state([]);
   let sel = $state(0);
+  let inputEl: HTMLInputElement | undefined = $state();
+
+  // Filter chips write operators INTO the query string — it stays the single
+  // source of truth, so typed operators light the same chips up.
+  const unreadOn = $derived(/(^|\s)is:unread(\s|$)/i.test(query));
+  const activeAccount = $derived(query.match(/(^|\s)account:(\S+)/i)?.[2] ?? null);
+
+  function focusInput() {
+    requestAnimationFrame(() => inputEl?.focus());
+  }
+  function toggleUnread() {
+    query = unreadOn
+      ? query.replace(/(^|\s)is:unread(?=\s|$)/gi, " ").replace(/\s{2,}/g, " ").trim()
+      : query ? `${query.trim()} is:unread` : "is:unread";
+    focusInput();
+  }
+  function toggleAccount(email: string) {
+    const had = activeAccount === email;
+    query = query.replace(/(^|\s)account:\S+/gi, " ").replace(/\s{2,}/g, " ").trim();
+    if (!had) query = query ? `${query} account:${email}` : `account:${email}`;
+    focusInput();
+  }
+  /** Append `from:` / `to:` and put the caret right after it. */
+  function insertOp(op: string) {
+    if (!new RegExp(`(^|\\s)${op}\\S*`, "i").test(query)) {
+      query = query ? `${query.replace(/\s+$/, "")} ${op}` : op;
+    }
+    focusInput();
+  }
   // Monotonic token: a slow earlier query must not clobber a newer one.
   let seq = 0;
 
@@ -103,7 +135,8 @@
     <!-- svelte-ignore a11y_autofocus -->
     <input
       autofocus
-      placeholder="Search mail"
+      bind:this={inputEl}
+      placeholder="Search mail — try from:, to:, is:unread"
       autocomplete="off"
       autocorrect="off"
       autocapitalize="off"
@@ -117,6 +150,27 @@
         <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
       </svg>
     </button>
+  </div>
+  <div class="filters">
+    <button class="filter-chip" class:on={unreadOn} onclick={toggleUnread}>
+      <span class="chip-dot"></span>
+      Unread
+    </button>
+    {#if accounts.length > 1}
+      {#each accounts as a (a.id)}
+        <button
+          class="filter-chip"
+          class:on={activeAccount === a.email}
+          onclick={() => toggleAccount(a.email)}
+        >
+          <span class="chip-dot acct" style:background="var(--tag-{a.tag}-fg)"></span>
+          {a.label}
+        </button>
+      {/each}
+    {/if}
+    <span class="filter-sep"></span>
+    <button class="filter-op" onclick={() => insertOp("from:")}>from:</button>
+    <button class="filter-op" onclick={() => insertOp("to:")}>to:</button>
   </div>
   </div>
 
@@ -132,11 +186,12 @@
         onmouseenter={() => (sel = i)}
         onclick={() => openResult(i)}
       >
-        <span class="avatar-wrap">
+        <span
+          class="avatar-wrap"
+          class:ringed={!!e.accountTag}
+          style:--ring={e.accountTag ? `var(--tag-${e.accountTag}-fg)` : undefined}
+        >
           <Avatar email={e.fromAddr} accountId={e.accountId} name={e.from} size={26} />
-          {#if e.accountTag}
-            <span class="account-dot" style:background="var(--tag-{e.accountTag}-fg)"></span>
-          {/if}
         </span>
         <span class="from">{e.from}</span>
         <span class="subject">{e.subject}</span>
@@ -190,8 +245,68 @@
     align-items: center;
     gap: 12px;
     padding: 0 0 14px;
+  }
+  .filters {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 0 14px;
     border-bottom: 1px solid var(--border-subtle);
     margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border-default);
+    background: var(--surface-card);
+    cursor: pointer;
+    padding: 5px 12px;
+    border-radius: var(--radius-pill);
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition:
+      background var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+  .filter-chip:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+  .filter-chip.on {
+    background: var(--surface-inverse);
+    border-color: var(--surface-inverse);
+    color: var(--text-inverse);
+  }
+  .chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-highlight);
+    flex-shrink: 0;
+  }
+  .filter-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border-default);
+    margin: 0 2px;
+  }
+  .filter-op {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+    padding: 5px 6px;
+    border-radius: var(--radius-sm);
+  }
+  .filter-op:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
   }
   .lens {
     color: var(--text-tertiary);
@@ -230,10 +345,12 @@
   }
   .group-label {
     padding: 18px 0 8px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--accent-highlight);
-    font-weight: 400;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
   }
   .row {
     display: flex;
@@ -245,21 +362,19 @@
     font-family: var(--font-body);
   }
   .row.selected {
-    background: var(--navy-50);
-    box-shadow: inset 3px 0 0 var(--accent-highlight);
+    background: var(--surface-hover);
+    border-radius: var(--radius-md);
   }
   .avatar-wrap {
     position: relative;
     flex-shrink: 0;
-  }
-  .account-dot {
-    position: absolute;
-    bottom: -2px;
-    right: -2px;
-    width: 9px;
-    height: 9px;
+    display: flex;
     border-radius: 50%;
-    border: 1.5px solid var(--surface-card);
+  }
+  .avatar-wrap.ringed {
+    box-shadow:
+      0 0 0 1.5px var(--surface-card),
+      0 0 0 3px var(--ring);
   }
   .from {
     width: 200px;

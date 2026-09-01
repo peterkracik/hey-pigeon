@@ -10,11 +10,14 @@
   import Tooltip from "./lib/ds/Tooltip.svelte";
   import Icon from "./lib/ds/Icon.svelte";
   import Toast from "./lib/ds/Toast.svelte";
+  import SegmentedControl from "./lib/ds/SegmentedControl.svelte";
   import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type LabelDef, type ThreadMsg } from "./lib/data";
   import type { ComposeData } from "./lib/Composer.svelte";
+  import type { ReplySendData } from "./lib/InlineReply.svelte";
   import { toasts, toast, dismissToast } from "./lib/toast.svelte";
   import * as ipc from "./lib/ipc";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
   let sidebarOpen = $state(false);
   let sidebarWidth = $state(Number(localStorage.getItem("sidebarWidth")) || 248);
@@ -48,6 +51,20 @@
   function setLabelColor(key: string, tag: string) {
     labelColors = { ...labelColors, [key]: tag };
     localStorage.setItem("sidebarLabelColors", JSON.stringify(labelColors));
+  }
+  // Schedule view filter: everything, or hide completed reminders (the
+  // still-outstanding ones are what matter — isolating only-done made no
+  // sense as the switcher's second option).
+  let schedFilter: "all" | "active" = $state(readJson("schedFilter", "all"));
+  function setSchedFilter(v: string) {
+    schedFilter = v as "all" | "active";
+    localStorage.setItem("schedFilter", JSON.stringify(schedFilter));
+  }
+  // Inbox/folder view filter: everything, or only unread.
+  let inboxFilter: "all" | "unread" = $state(readJson("inboxFilter", "all"));
+  function setInboxFilter(v: string) {
+    inboxFilter = v as "all" | "unread";
+    localStorage.setItem("inboxFilter", JSON.stringify(inboxFilter));
   }
   // Gmail label management (context menu). Optimistic sidebar update, then
   // reconcile from listLabels once the backend confirms (or on failure).
@@ -97,7 +114,30 @@
         reconcileLabels();
       });
   }
-  let view: "mail" | "calendar" = $state("mail");
+  let view: "mail" | "calendar" | "search" = $state("mail");
+  // Search is a real view, not an overlay bolted on top — it fully replaces
+  // the mail/calendar content (no risk of it silently sitting on top of a
+  // folder switch that happened underneath). Remember which one to return to.
+  let searchReturn: "mail" | "calendar" = "mail";
+  function openSearch() {
+    if (view !== "search") searchReturn = view;
+    view = "search";
+  }
+  function closeSearch() {
+    if (view === "search") view = searchReturn;
+  }
+  // Quick filter: fuzzy-narrows the CURRENTLY LOADED rows in place (client
+  // side, no backend round trip) — distinct from the rail's Search view,
+  // which queries every message. '/' triggers this, not global search.
+  let quickFilterOpen = $state(false);
+  let quickFilter = $state("");
+  function openQuickFilter() {
+    quickFilterOpen = true;
+  }
+  function closeQuickFilter() {
+    quickFilterOpen = false;
+    quickFilter = "";
+  }
   let unified = $state(true);
   let activeAccountId = $state("a1");
   let folder = $state("inbox");
@@ -105,12 +145,15 @@
   // Keyboard cursor: arrows/j/k move this highlight without opening the
   // preview card; Enter opens the thread.
   let cursorId: string | null = $state(null);
+  // Multi-select checkboxes (Gmail-style bulk actions) — disjoint from the
+  // single-row preview/cursor above.
+  let selectedIds: Set<string> = $state(new Set());
   let threadOpen = $state(false);
   let scrollEl: HTMLDivElement | undefined = $state();
   let composeOpen = $state(false);
+  let settingsOpen = $state(false);
   // Restored draft after a send-undo; non-null reopens the composer prefilled.
   let composeDraft: ComposeData | null = $state(null);
-  let searchOpen = $state(false);
   let paletteOpen = $state(false);
   // Two-stage palette (label / move pickers): stage 2 rows + the pending
   // target/mode. Esc or the back button returns to stage 1.
@@ -130,6 +173,24 @@
   let hoverActions: string[] = $state(["delete", "pin", "remind"]);
   let pinListEnabled = $state(true);
   let liveAccounts: Account[] = $state([]);
+  // Lazy loading: rows come in pages of 50; scrolling near the bottom raises
+  // the limit and refetches (keyset-paginated locally — milliseconds).
+  const PAGE = 50;
+  let listLimit = $state(PAGE);
+  let hasMoreRows = $state(true);
+  let loadingMore = false;
+
+  function maybeLoadMore() {
+    if (!ipc.isTauri || threadOpen || view !== "mail" || folder === "settings") return;
+    if (!hasMoreRows || loadingMore) return;
+    const el = scrollEl;
+    if (!el || el.scrollTop + el.clientHeight < el.scrollHeight - 600) return;
+    loadingMore = true;
+    listLimit += PAGE;
+    refreshLive()
+      .catch((e) => console.error("load more failed", e))
+      .finally(() => (loadingMore = false));
+  }
   let liveLabels: ipc.BackendLabel[] = $state([]);
 
   // Folder key → backend list_threads filter. `label:<id>` passes through;
@@ -152,25 +213,55 @@
   // the refetch runs.
   const folderCache = new Map<string, Email[]>();
 
-  // Ids of threads currently in the inbox (from the dedicated inbox fetch).
-  // `push` collapses multi-folder membership into one display key (a starred
-  // inbox thread renders under "starred" while that view is open), so the
-  // sidebar inbox badge must track membership separately or it drops to 0
-  // whenever another folder view is active.
-  let inboxIds = $state<Set<string>>(new Set());
+  // New-mail desktop notifications: thread id -> last_msg_at we've already
+  // notified about. Keyed by thread (not "unread"), so a reply on an
+  // existing thread (same id, later last_msg_at) still counts as new mail,
+  // while a local mark-unread on an already-seen thread does not.
+  const notifiedThreads = new Map<string, number>();
+  let notifyBaseline = false;
+  async function notifyNewMail(threads: ipc.BackendThread[]) {
+    if (!notifyBaseline) {
+      // First load: seed the baseline silently, don't notify for mail that
+      // was already sitting in the inbox before the app opened.
+      for (const t of threads) notifiedThreads.set(t.id, t.last_msg_at);
+      notifyBaseline = true;
+      return;
+    }
+    const arrivals = threads.filter((t) => {
+      const prev = notifiedThreads.get(t.id);
+      return !t.is_read && (prev === undefined || t.last_msg_at > prev);
+    });
+    for (const t of threads) notifiedThreads.set(t.id, t.last_msg_at);
+    if (!arrivals.length || (await getCurrentWindow().isFocused())) return;
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === "granted";
+    if (!granted) return;
+    for (const t of arrivals.slice(0, 5)) {
+      sendNotification({ title: t.from_summary || "New mail", body: t.subject || "(no subject)" });
+    }
+  }
+
+  // Live-mode sidebar badge counts (folders + labels), one backend
+  // round-trip per refresh — see counts below.
+  let liveCounts: Record<string, number> = $state({});
 
   // Live mode: inside Tauri the mock seed is replaced by real store data.
   async function refreshLive() {
     const f = folder;
     const filter = filterFor(f);
     const wantFolder = filter !== null && filter !== "inbox";
-    const [accounts, threads, folderThreads, scheduled, labels] = await Promise.all([
+    const [accounts, threads, folderThreads, scheduled, labels, unreadCounts] = await Promise.all([
       ipc.listAccounts(),
-      ipc.listThreads(),
-      wantFolder ? ipc.listThreads(filter!) : Promise.resolve([] as ipc.BackendThread[]),
+      ipc.listThreads(undefined, undefined, undefined, listLimit),
+      wantFolder
+        ? ipc.listThreads(filter!, undefined, undefined, listLimit)
+        : Promise.resolve([] as ipc.BackendThread[]),
       ipc.listScheduled(),
       ipc.listLabels(),
+      ipc.unreadCounts(unified ? undefined : activeAccountId),
     ]);
+    liveCounts = unreadCounts;
+    notifyNewMail(threads);
     liveAccounts = accounts.map((a) => ({
       id: a.id,
       email: a.email,
@@ -180,7 +271,8 @@
       signature: a.signature,
     }));
     liveLabels = labels;
-    inboxIds = new Set(threads.map((t) => t.id));
+    // A short page means the folder is exhausted — stop raising the limit.
+    hasMoreRows = (wantFolder ? folderThreads : threads).length >= listLimit;
     // Preserve already-loaded bodies + local flags across refreshes.
     const prev = new Map(emailsData.map((e) => [e.id, e]));
     const seen = new Set<string>();
@@ -233,7 +325,7 @@
   // (list_threads filter), not from client-side filtering of the inbox page.
   // Opening search starts at the top of the view.
   $effect(() => {
-    if (searchOpen) requestAnimationFrame(() => scrollEl?.scrollTo({ top: 0 }));
+    if (view === "search") requestAnimationFrame(() => scrollEl?.scrollTo({ top: 0 }));
   });
 
   $effect(() => {
@@ -272,6 +364,24 @@
     }));
   });
 
+  /** Subsequence fuzzy match (VS Code palette / fzf-lite style): every query
+   *  char must appear in order; contiguous runs score higher. null = no match. */
+  function fuzzyScore(query: string, target: string): number | null {
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+    let qi = 0;
+    let score = 0;
+    let lastMatch = -1;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+      if (t[ti] === q[qi]) {
+        score += lastMatch === ti - 1 ? 3 : 1;
+        lastMatch = ti;
+        qi++;
+      }
+    }
+    return qi === q.length ? score : null;
+  }
+
   const emails = $derived.by(() => {
     // Calendar view: only scheduled mail, ascending by schedule (matches the
     // grouped render order so j/k navigation follows the visual order).
@@ -279,25 +389,46 @@
       view === "calendar"
         ? emailsData
             .filter((e) => e.scheduledAt !== undefined)
+            .filter((e) => schedFilter === "all" || !e.done)
             .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
-        : emailsData.filter((e) => (folder === "all" ? true : e.folder === folder));
-    return base
+        : emailsData
+            .filter((e) => (folder === "all" ? true : e.folder === folder))
+            .filter((e) => inboxFilter === "all" || e.unread);
+    const mapped = base
       .filter((e) => unified || e.accountId === activeAccountId)
       .map((e) =>
         unified ? { ...e, accountTag: accounts.find((a) => a.id === e.accountId)?.tag } : e,
       );
+    const q = quickFilterOpen ? quickFilter.trim() : "";
+    if (!q) return mapped;
+    // Fuzzy filter over what's already loaded — client-side, no backend call.
+    // Subsequence fuzzy on from/subject (short fields, typo-tolerant reads
+    // well); the body snippet is prose — a 4-char subsequence matches almost
+    // any paragraph, so it's a plain substring check instead, and ranked
+    // below a real subject/sender match rather than fuzzy-scored itself.
+    const ql = q.toLowerCase();
+    return mapped
+      .map((e) => {
+        const subj = fuzzyScore(q, e.subject);
+        const from = fuzzyScore(q, e.from);
+        const score = subj !== null ? subj + 20 : from !== null ? from + 10 : e.snippet.toLowerCase().includes(ql) ? 0 : null;
+        return score === null ? null : { e, score };
+      })
+      .filter((x): x is { e: Email; score: number } => x !== null)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.e);
   });
   const email = $derived(
     emails.find((e) => e.id === selectedId) ?? emailsData.find((e) => e.id === selectedId),
   );
-  const counts = $derived({
-    inbox: emailsData.filter(
-      (e) =>
-        (e.folder === "inbox" || inboxIds.has(e.id)) &&
-        e.unread &&
-        (unified || e.accountId === activeAccountId),
-    ).length,
-  });
+  // Backend-computed unread counts in live mode (every folder + label,
+  // account-scoped like the rest of the view); a small inbox-only mock in
+  // browser dev mode.
+  const counts = $derived(
+    ipc.isTauri && liveAccounts.length
+      ? liveCounts
+      : { inbox: EMAILS_SEED.filter((e) => e.folder === "inbox" && e.unread).length },
+  );
   const title = $derived.by(() =>
     view === "calendar"
       ? "Scheduled"
@@ -476,6 +607,7 @@
     selectedId = null;
     threadOpen = false;
     fullscreen = false;
+    closeQuickFilter();
   }
 
   function sendCompose(data: ComposeData) {
@@ -504,6 +636,12 @@
           bcc: data.bcc,
           subject: data.subject,
           body_text: data.body,
+          body_html: data.bodyHtml ?? null,
+          attachments: (data.attachments ?? []).map(({ filename, mime_type, data_b64 }) => ({
+            filename,
+            mime_type,
+            data_b64,
+          })),
           reply_to_thread: null,
         })
         .then(() => toast("success", "Message sent", desc))
@@ -526,7 +664,7 @@
     });
   }
 
-  function sendReply(em: Email, msg: ThreadMsg, body: string) {
+  function sendReply(em: Email, msg: ThreadMsg, data: ReplySendData) {
     // Pre-send validation runs BEFORE the undo deferral. Reply goes to the
     // sender of the replied-to message; replying to your own message targets
     // the other participant.
@@ -553,7 +691,13 @@
           cc: [],
           bcc: [],
           subject,
-          body_text: body,
+          body_text: data.body,
+          body_html: data.bodyHtml ?? null,
+          attachments: (data.attachments ?? []).map(({ filename, mime_type, data_b64 }) => ({
+            filename,
+            mime_type,
+            data_b64,
+          })),
           reply_to_thread: em.id,
         })
         .then(() => toast("success", "Reply sent", `To ${to}`))
@@ -577,7 +721,7 @@
           toast("danger", "Reply cancelled", "Could not copy your reply text to the clipboard");
         if (navigator.clipboard) {
           navigator.clipboard
-            .writeText(body)
+            .writeText(data.body)
             .then(() => toast("info", "Reply cancelled", "Your reply text was copied to the clipboard"))
             .catch(copyFailed);
         } else {
@@ -642,17 +786,56 @@
     if (id) loadBodies(id);
   }
 
+  function toggleSelect(id: string) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedIds = next;
+  }
+
+  function toggleSelectAll() {
+    selectedIds = selectedIds.size === emails.length ? new Set() : new Set(emails.map((e) => e.id));
+  }
+
+  function clearSelection() {
+    selectedIds = new Set();
+  }
+
+  // Loops the existing single-row action (own toast + optimistic update +
+  // deferred undo-able mutate) over the checked set — reuses all of that
+  // machinery instead of a parallel batched-mutation path.
+  // ponytail: one toast per row (no combined "N archived" summary/undo) —
+  // upgrade to a batched toast if selecting dozens at once proves noisy.
+  function bulkAction(action: string) {
+    for (const id of selectedIds) onEmailAction(id, action);
+    clearSelection();
+  }
+
+  // A folder/account/view switch — or opening a thread — invalidates any
+  // checked rows from the previous list; never let a stale selection drive
+  // a bulk action against rows that are no longer shown.
+  $effect(() => {
+    void folder;
+    void unified;
+    void activeAccountId;
+    void view;
+    void threadOpen;
+    selectedIds = new Set();
+  });
+
   function openThread(id: string, reply = false) {
     if (reply) threadReplyStart++;
     else if (selectedId !== id || !threadOpen) threadReplyStart = 0;
     selectedId = id;
     threadOpen = true;
     loadBodies(id);
+    closeQuickFilter();
     // Fresh read starts at the top, not wherever the list was scrolled.
     requestAnimationFrame(() => scrollEl?.scrollTo({ top: 0 }));
   }
 
   function selectFolder(f: string) {
+    closeQuickFilter();
     // Instant switch: surface the last fetched rows for this folder now; the
     // folder-tracking $effect refetches right after.
     if (ipc.isTauri && f !== folder) {
@@ -661,6 +844,10 @@
         const ids = new Set(cached.map((e) => e.id));
         emailsData = [...cached, ...emailsData.filter((e) => !ids.has(e.id))];
       }
+    }
+    if (f !== folder) {
+      listLimit = PAGE;
+      hasMoreRows = true;
     }
     folder = f;
     view = "mail";
@@ -671,7 +858,7 @@
   // Search hits can be threads outside the inbox list (archived etc.) —
   // merge them in so ThreadView can find the email until the next refresh.
   function openSearchResult(t: ipc.BackendThread) {
-    searchOpen = false;
+    closeSearch();
     if (!emailsData.some((e) => e.id === t.id)) {
       emailsData = [...emailsData, ipc.threadToEmail(t)];
     }
@@ -852,22 +1039,32 @@
     }
     // The search overlay owns the keyboard, but Escape must close it even
     // when focus has left its input (e.g. after clicking overlay whitespace).
-    if (searchOpen) {
+    if (view === "search") {
       if (ev.key === "Escape") {
         ev.preventDefault();
-        searchOpen = false;
+        closeSearch();
       }
+      return;
+    }
+    // Settings modal: Escape closes; everything else is inert.
+    if (settingsOpen) {
+      if (ev.key === "Escape") settingsOpen = false;
       return;
     }
     // List navigation — never while typing or while an overlay owns the keyboard.
     if (isEditable(ev.target) || paletteOpen || composeOpen) return;
     if (ev.key === "/") {
       ev.preventDefault();
-      searchOpen = true;
+      // A thread hides the list — quick-filtering it would have no visible
+      // target, so '/' falls back to full search in that context.
+      if (threadOpen) openSearch();
+      else openQuickFilter();
       return;
     }
     if (ev.key === "Escape") {
-      if (threadOpen) {
+      if (selectedIds.size > 0) {
+        clearSelection();
+      } else if (threadOpen) {
         threadOpen = false;
         fullscreen = false;
       } else if (selectedId !== null) {
@@ -877,7 +1074,7 @@
       }
       return;
     }
-    if (threadOpen || (view === "mail" && folder === "settings")) return;
+    if (threadOpen) return;
     // OS chords (Cmd+C copy, Cmd+F find, Cmd+R reload…) must never trigger
     // the single-letter shortcuts below.
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
@@ -901,6 +1098,12 @@
       return;
     }
     const actId = cursorId ?? selectedId;
+    if (ev.key === "x" && actId !== null) {
+      // Gmail-style: check/uncheck the cursor row without opening it.
+      ev.preventDefault();
+      toggleSelect(actId);
+      return;
+    }
     if (ev.key === "e" && actId !== null) {
       ev.preventDefault();
       if (cursorId === actId) cursorId = null;
@@ -1023,9 +1226,7 @@
         class:active={view === "mail"}
         title="Inbox"
         onclick={() => {
-          // Always a way home: from settings (or anywhere) back to the inbox.
           if (view !== "mail") switchView("mail");
-          else if (folder === "settings") selectFolder("inbox");
         }}
       >
         <Icon
@@ -1045,15 +1246,18 @@
           size={17}
         />
       </button>
+      <button class="rail-btn" class:active={view === "search"} title="Search" onclick={openSearch}>
+        <Icon d="M11 4a7 7 0 105.6 11.2l4.2 4.2" size={17} />
+      </button>
     </div>
+    <button class="rail-btn rail-cmdk" title="Command palette (Cmd+K)" onclick={() => (paletteOpen = true)}>
+      <Icon d="M18 3a3 3 0 0 0-3 3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 1 0-3-3z" size={16} />
+    </button>
     <button
       class="rail-btn rail-settings"
-      class:active={view === "mail" && folder === "settings"}
+      class:active={settingsOpen}
       title="Settings"
-      onclick={() => {
-        if (view !== "mail") switchView("mail");
-        selectFolder("settings");
-      }}
+      onclick={() => (settingsOpen = true)}
     >
       <Icon
         d="M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0A1.65 1.65 0 0010 3.09V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0c.27.6.85 1 1.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"
@@ -1063,13 +1267,57 @@
   </div>
 
   <div class="main">
-    <div class="scroll" bind:this={scrollEl}>
+    <div class="scroll" bind:this={scrollEl} onscroll={maybeLoadMore}>
       <div class="column">
-        {#if searchOpen}
-          <SearchOverlay open onClose={() => (searchOpen = false)} onOpen={openSearchResult} />
+        {#if view === "search"}
+          <SearchOverlay open {accounts} onClose={closeSearch} onOpen={openSearchResult} />
         {:else}
         {#if !fullscreen}
           <div class="topbar">
+            {#if selectedIds.size > 0 && !threadOpen}
+              <div class="bulk-bar">
+                <Tooltip label={selectedIds.size === emails.length ? "Deselect all" : "Select all"} side="bottom">
+                  <button class="master-check" class:all={selectedIds.size === emails.length} onclick={toggleSelectAll}>
+                    {#if selectedIds.size === emails.length}
+                      <Icon d="M20 6L9 17l-5-5" size={11} strokeWidth={2.6} />
+                    {/if}
+                  </button>
+                </Tooltip>
+                <span class="bulk-count">{selectedIds.size} selected</span>
+                <div class="spacer"></div>
+                <Tooltip label="Mark done" side="bottom">
+                  <IconButton label="Mark done" onclick={() => bulkAction("done")}>
+                    <Icon d="M20 6L9 17l-5-5" size={15} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip label="Mark unread" side="bottom">
+                  <IconButton label="Mark unread" onclick={() => bulkAction("unread")}>
+                    <Icon d="M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z" size={15} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip label="Pin" side="bottom">
+                  <IconButton
+                    label="Pin"
+                    onclick={() => bulkAction("pin")}
+                  >
+                    <Icon
+                      d="M12 17v5M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16a1 1 0 001 1h12a1 1 0 001-1v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1z"
+                      size={15}
+                    />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip label="Delete" side="bottom">
+                  <IconButton label="Delete" onclick={() => bulkAction("delete")}>
+                    <Icon d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-9 0l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" size={15} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip label="Clear selection" side="bottom">
+                  <IconButton label="Clear selection" onclick={clearSelection}>
+                    <Icon d="M6 6l12 12M18 6L6 18" size={14} />
+                  </IconButton>
+                </Tooltip>
+              </div>
+            {:else}
             {#if threadOpen}
               <div class="back">
                 <Tooltip label="Back" side="bottom">
@@ -1096,33 +1344,50 @@
               }}
             >
               {title}
-              {#if !threadOpen && (view === "calendar" || folder !== "settings")}
+              {#if !threadOpen}
                 <span class="count">{emails.length}</span>
               {/if}
             </span>
             <div class="spacer"></div>
-            {#if !threadOpen && (view === "calendar" || folder !== "settings")}
+            {#if !threadOpen}
               <div class="topbar-actions">
-                <button class="cmdk" title="Command palette (Cmd+K)" onclick={() => (paletteOpen = true)}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                    <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
-                    <path d="M20 20l-4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                  </svg>
-                  Cmd+K
-                </button>
-                <Tooltip label="Compose" side="bottom">
-                  <IconButton label="Compose" onclick={() => (composeOpen = true)}>
-                    <Icon d="M4 20l1-4L17 4l3 3L8 19l-4 1z" size={15} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip label="Search" side="bottom">
-                  <IconButton label="Search" onclick={() => (searchOpen = true)}>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                      <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
-                      <path d="M20 20l-4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                    </svg>
-                  </IconButton>
-                </Tooltip>
+                {#if emails.length > 0}
+                  <Tooltip label="Select all" side="bottom">
+                    <IconButton label="Select all" onclick={toggleSelectAll}>
+                      <Icon d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" size={15} />
+                    </IconButton>
+                  </Tooltip>
+                {/if}
+                {#if view === "calendar"}
+                  <span class="topbar-filter">
+                    <SegmentedControl
+                      size="sm"
+                      options={[
+                        { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
+                        { value: "active", d: "M12 5a7 7 0 100 14 7 7 0 000-14z", title: "Hide done" },
+                      ]}
+                      value={schedFilter}
+                      onchange={setSchedFilter}
+                    />
+                  </span>
+                {:else if view === "mail"}
+                  <span class="topbar-filter">
+                    <SegmentedControl
+                      size="sm"
+                      options={[
+                        { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
+                        {
+                          value: "unread",
+                          d: "M12 12m-5 0a5 5 0 1010 0 5 5 0 10-10 0",
+                          filled: true,
+                          title: "Unread only",
+                        },
+                      ]}
+                      value={inboxFilter}
+                      onchange={setInboxFilter}
+                    />
+                  </span>
+                {/if}
               </div>
             {/if}
             {#if threadOpen && email}
@@ -1148,27 +1413,50 @@
                 </Tooltip>
               </div>
             {/if}
+            {/if}
           </div>
+          {#if quickFilterOpen}
+            <div class="quick-filter-bar">
+              <Icon d="M11 4a7 7 0 105.6 11.2l4.2 4.2" size={15} />
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                autofocus
+                class="quick-filter-input"
+                placeholder="Filter this view…"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                bind:value={quickFilter}
+                onkeydown={(ev) => {
+                  if (ev.key === "Escape") {
+                    ev.preventDefault();
+                    closeQuickFilter();
+                  } else if (ev.key === "ArrowDown" && emails.length) {
+                    // Hand off to the list: focus the first (filtered) row so
+                    // j/k/ArrowDown/Enter continue navigating it from there.
+                    ev.preventDefault();
+                    selectedId = null;
+                    cursorId = emails[0].id;
+                    (ev.currentTarget as HTMLInputElement).blur();
+                  }
+                }}
+              />
+              {#if quickFilter.trim()}<span class="quick-filter-count">{emails.length}</span>{/if}
+              <button class="quick-filter-close" aria-label="Close filter" onclick={closeQuickFilter}>
+                <Icon d="M6 6l12 12M18 6L6 18" size={14} />
+              </button>
+            </div>
+          {/if}
         {/if}
-        {#if view === "mail" && folder === "settings"}
-          <Settings
-            {accounts}
-            {hoverActions}
-            onHoverActionsChange={(next) => (hoverActions = next)}
-            {pinListEnabled}
-            onPinListChange={(v) => (pinListEnabled = v)}
-            onAddAccount={addAccount}
-            onRemoveAccount={removeAccount}
-            onUpdateAccount={updateAccount}
-          />
-        {:else if threadOpen}
+        {#if threadOpen}
           <ThreadView
             {email}
             onClose={() => {
               threadOpen = false;
               fullscreen = false;
             }}
-            onSendReply={(msg, body) => email && sendReply(email, msg, body)}
+            onSendReply={(msg, data) => email && sendReply(email, msg, data)}
             replySignature={email ? signatureFor(email.accountId) : undefined}
             {fullscreen}
             onToggleFullscreen={(v) => (fullscreen = v)}
@@ -1181,14 +1469,16 @@
             {emails}
             {selectedId}
             {cursorId}
+            {selectedIds}
             mode={view === "calendar" ? "scheduled" : "inbox"}
             onSelect={selectEmail}
             onOpen={openThread}
             onAction={onEmailAction}
+            onToggleSelect={toggleSelect}
             onSchedule={setSchedule}
-            onSendReply={(em, body) => {
+            onSendReply={(em, data) => {
               const target = em.thread?.[em.thread.length - 1];
-              if (target) sendReply(em, target, body);
+              if (target) sendReply(em, target, data);
             }}
             signatureFor={(em) => signatureFor(em.accountId)}
             {hoverActions}
@@ -1274,6 +1564,45 @@
     {/if}
   {/if}
 
+  {#if view !== "search"}
+    <button class="fab" title="Compose (c)" onclick={() => (composeOpen = true)}>
+      <Icon d="M4 20l1-4L17 4l3 3L8 19l-4 1z" size={20} />
+    </button>
+  {/if}
+
+  {#if settingsOpen}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="compose-backdrop"
+      onmousedown={(ev) => {
+        if (ev.target === ev.currentTarget) settingsOpen = false;
+      }}
+    >
+      <div class="compose-modal settings-modal">
+        <div class="compose-head">
+          <span class="compose-title">Settings</span>
+          <Tooltip label="Close" side="bottom">
+            <IconButton size="sm" label="Close" onclick={() => (settingsOpen = false)}>
+              <Icon d="M6 6l12 12M18 6L6 18" size={15} />
+            </IconButton>
+          </Tooltip>
+        </div>
+        <div class="compose-body">
+          <Settings
+            {accounts}
+            {hoverActions}
+            onHoverActionsChange={(next) => (hoverActions = next)}
+            {pinListEnabled}
+            onPinListChange={(v) => (pinListEnabled = v)}
+            onAddAccount={addAccount}
+            onRemoveAccount={removeAccount}
+            onUpdateAccount={updateAccount}
+          />
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if toasts.length}
     <div class="toast-stack">
       {#each toasts as t (t.id)}
@@ -1301,42 +1630,44 @@
     overflow-x: hidden;
   }
   .rail {
-    width: 52px;
+    width: 56px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    /* One shade darker than the sidebar panel (navy-50) so the two surfaces
-       read as separate layers. */
-    background: var(--navy-100);
+    /* Sits directly on the gray canvas — no separate surface. */
+    background: transparent;
     padding-top: 14px;
-    gap: 4px;
+    gap: 6px;
     z-index: 40;
   }
   .rail-btn {
     border: none;
     background: none;
     cursor: pointer;
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: var(--radius-md);
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
     padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard);
   }
   .rail-btn:hover {
     color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.6);
   }
   .rail-btn.active {
     color: var(--text-primary);
     background: var(--surface-card);
-    border: 1px solid var(--border-subtle);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-sm);
+  }
+  .rail-cmdk {
+    margin-top: auto;
   }
   .rail-settings {
-    margin-top: auto;
     margin-bottom: 14px;
   }
   .rail-views {
@@ -1350,6 +1681,12 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+    /* Floating white card on the gray canvas. */
+    background: var(--surface-card);
+    margin: 0 10px 10px 0;
+    border-radius: var(--radius-2xl);
+    box-shadow: var(--shadow-xs);
+    overflow: hidden;
   }
   .scroll {
     flex: 1;
@@ -1392,22 +1729,23 @@
     height: 28px;
     flex-shrink: 0;
     position: relative;
-    background: var(--surface-card);
-    border-bottom: 1px solid var(--border-subtle);
+    background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
   }
   .apphead-title {
     font-family: var(--font-display);
-    font-weight: 700;
+    font-weight: 800;
     font-size: 11px;
+    letter-spacing: 0.02em;
     color: var(--text-secondary);
   }
   .title {
     cursor: pointer;
     font-family: var(--font-display);
-    font-weight: 700;
+    font-weight: 800;
+    letter-spacing: -0.01em;
     font-size: 20px;
     color: var(--text-primary);
   }
@@ -1419,6 +1757,48 @@
     color: var(--text-tertiary);
     font-weight: 400;
   }
+  /* A normal-sized search row below the title — not squeezed into the
+     20px title row alongside the segmented control / Cmd+K button. */
+  .quick-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 0 14px;
+    margin-top: -4px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 8px;
+    color: var(--text-tertiary);
+  }
+  .quick-filter-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: none;
+    font-family: var(--font-body);
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+  .quick-filter-input::placeholder {
+    color: var(--text-tertiary);
+  }
+  .quick-filter-count {
+    font-size: 14px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+  .quick-filter-close {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    display: flex;
+    padding: 4px;
+    flex-shrink: 0;
+  }
+  .quick-filter-close:hover {
+    color: var(--text-primary);
+  }
   .spacer {
     flex: 1;
   }
@@ -1428,21 +1808,43 @@
     gap: 2px;
     margin-right: -6px;
   }
-  .cmdk {
-    border: 1px solid var(--border-default);
-    background: none;
-    cursor: pointer;
-    color: var(--text-tertiary);
-    border-radius: var(--radius-pill);
-    padding: 5px 10px;
+  .topbar-filter {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    margin-right: 6px;
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+    margin-right: 10px;
   }
-  .cmdk:hover {
+  /* Replaces the title/filter row while any row is checked. */
+  .bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+  .master-check {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border: 1.5px solid var(--border-default);
+    border-radius: 3px;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    color: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .master-check.all {
+    background: var(--surface-inverse);
+    border-color: var(--surface-inverse);
+    color: var(--text-inverse);
+  }
+  .bulk-count {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text-primary);
   }
   .empty {
@@ -1506,7 +1908,7 @@
   }
   .compose-modal {
     background: var(--surface-card);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-2xl);
     box-shadow: var(--shadow-lg);
     width: 720px;
     max-width: 100%;
@@ -1514,6 +1916,10 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+  .settings-modal {
+    width: 640px;
+    height: min(720px, 88vh);
   }
   .compose-head {
     display: flex;
@@ -1525,8 +1931,9 @@
   .compose-title {
     flex: 1;
     font-family: var(--font-display);
-    font-weight: 700;
-    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    font-size: 17px;
     color: var(--text-primary);
   }
   .compose-body {
@@ -1543,10 +1950,33 @@
     flex: 1;
     min-height: 100%;
   }
+  .fab {
+    position: fixed;
+    right: 30px;
+    bottom: 28px;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: none;
+    background: var(--surface-inverse);
+    color: var(--text-inverse);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: var(--shadow-lg);
+    z-index: 60;
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+  .fab:hover {
+    transform: scale(1.07);
+  }
   .toast-stack {
     position: fixed;
-    right: 20px;
-    bottom: 20px;
+    /* Beside the compose FAB, bottom-aligned with it. */
+    right: 96px;
+    bottom: 28px;
+    align-items: flex-end;
     display: flex;
     flex-direction: column;
     gap: 10px;

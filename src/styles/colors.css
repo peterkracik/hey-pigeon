@@ -1,22 +1,25 @@
 :root{
 --navy-950:#0B0D12;--navy-900:#111318;--navy-800:#1D2027;--navy-700:#33363E;--navy-600:#53565E;--navy-500:#75787F;--navy-400:#9A9CA2;--navy-300:#C2C4C8;--navy-200:#DEDFE2;--navy-100:#EEEEF0;--navy-50:#F7F7F8;
 --white:#FFFFFF;
---bg-page:var(--white);
---bg-canvas:var(--navy-50);
+/* Gray canvas — panels and white pill cards float on top of it. */
+--bg-page:#E9E9EC;
+--bg-canvas:#F0F0F2;
 --surface-card:var(--white);
 --surface-glass:rgba(255,255,255,0.7);
 --surface-sunken:var(--navy-100);
---surface-inverse:var(--navy-900);
+--surface-inverse:#141417;
 --border-subtle:var(--navy-100);--border-default:var(--navy-200);--border-strong:var(--navy-500);
---text-primary:var(--navy-900);
---text-secondary:var(--navy-600);
---text-tertiary:var(--navy-400);
+--text-primary:#0D0D10;
+--text-secondary:#4E5057;
+--text-tertiary:#8E9096;
 --text-inverse:var(--white);
---text-link:var(--navy-900);
---accent-primary:var(--navy-900);
---honey:#e8a33d;--honey-foreground:#18181b;--honey-deep:#b4761f;--honey-ink:#8a5a13;--honey-soft:#fbf3e2;--honey-faint:#fdf9f0;
---accent-highlight:var(--honey);--accent-highlight-bg:rgba(232,163,61,0.12);
---accent-interactive:var(--navy-900);
+--text-link:var(--text-primary);
+--accent-primary:#141417;
+--pink:#EE4D9B;--pink-soft:rgba(238,77,155,0.13);
+--accent-highlight:var(--pink);--accent-highlight-bg:var(--pink-soft);
+/* Hover fill with a whisper of the accent hue instead of plain gray. */
+--surface-hover:rgba(238,77,155,0.07);
+--accent-interactive:var(--text-primary);
 --accent-interactive-hover:var(--navy-700);
 --accent-soft:var(--navy-100);
 --state-success:var(--navy-700);

@@ -126,18 +126,18 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    /* Bleed to the sidebar edges — same full-width highlight as nav items. */
-    width: calc(100% + 28px);
-    margin: 0 -14px;
+    /* Align the pill with nav items (10px from the sidebar edge). */
+    width: calc(100% + 8px);
+    margin: 0 -4px;
     border: none;
     background: none;
     cursor: pointer;
-    padding: 6px 18px;
-    border-radius: 0;
+    padding: 6px 12px;
+    border-radius: var(--radius-pill);
   }
   .trigger:hover {
     background: var(--surface-card);
-    box-shadow: inset 3px 0 0 var(--accent-highlight);
+    box-shadow: var(--shadow-xs);
   }
   .trigger-label {
     flex: 1;
@@ -184,7 +184,7 @@
     text-align: left;
   }
   .item.selected {
-    background: var(--surface-sunken);
+    background: var(--surface-hover);
   }
   .item-body {
     flex: 1;

@@ -120,6 +120,10 @@
     document.addEventListener("mouseup", up);
   }
 
+  // Archive/spam/trash counts are total-item counts, not actionable
+  // unread counts — badge them would just be visual noise.
+  const NO_BADGE = new Set(["archive", "spam", "trash"]);
+
   const items = [
     { key: "all", label: "All emails", d: "M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zM3 7l9 6 9-6" },
     { key: "inbox", label: "Inbox", d: "M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z" },
@@ -173,7 +177,7 @@
         >
           <Icon d={it.d} size={16} />
           <span class="nav-label" class:bold={active === it.key}>{it.label}</span>
-          {#if counts[it.key] > 0}
+          {#if counts[it.key] > 0 && !NO_BADGE.has(it.key)}
             <span class="count">{counts[it.key]}</span>
           {/if}
         </button>
@@ -190,6 +194,9 @@
         >
           <span class="label-dot" style:background="var(--tag-{l.tag}-fg)"></span>
           <span class="label-name">{l.label}</span>
+          {#if counts[l.key] > 0}
+            <span class="count">{counts[l.key]}</span>
+          {/if}
         </button>
       {/each}
     </div>
@@ -281,14 +288,13 @@
     overflow: hidden;
     flex-shrink: 0;
     border-right: none;
-    background: var(--navy-50);
+    background: transparent;
     transition:
       width var(--duration-base) var(--ease-standard),
       opacity var(--duration-base) var(--ease-standard);
   }
   .sidebar.open {
     opacity: 1;
-    border-right: 1px solid var(--navy-50);
     /* let the account-switcher dropdown (and its shadow) escape the sidebar;
        hidden is only needed for the width-collapse animation when closing */
     overflow: visible;
@@ -298,8 +304,9 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    /* Extra top room: the overlay titlebar's traffic lights float here. */
-    padding: 46px 14px 18px;
+    /* Traffic lights live in the apphead row above — align the account
+       trigger with the rail's X button and the main title row. */
+    padding: 13px 14px 18px;
     box-sizing: border-box;
   }
 
@@ -332,29 +339,37 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    /* 22px = 14px inner padding + 8px — content stays put while the
-       highlight spans the full bled .nav width. */
-    padding: 8px 22px;
+    padding: 8px 12px;
+    margin: 0 10px;
     border: none;
     cursor: pointer;
     text-align: left;
     background: none;
-    border-radius: 0;
+    border-radius: var(--radius-pill);
     color: var(--text-secondary);
+    transition:
+      background var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
   }
-  /* Same treatment as list-row hover — inverted for the gray panel: white
-     fill, honey left bar, square. */
-  .nav-item:hover,
-  .nav-item.active {
+  /* Pill language: hover = white pill, active = solid black pill. */
+  .nav-item:hover {
     background: var(--surface-card);
-    box-shadow: inset 3px 0 0 var(--accent-highlight);
+    box-shadow: var(--shadow-xs);
     color: var(--text-primary);
+  }
+  .nav-item.active {
+    background: var(--surface-inverse);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-inverse);
+  }
+  .nav-item.active :global(svg) {
+    color: var(--text-inverse);
   }
   .nav-label {
     flex: 1;
     font-family: var(--font-body);
     font-size: 14px;
-    font-weight: 400;
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -363,9 +378,23 @@
     font-weight: 600;
   }
   .count {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-tertiary);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-inverse);
+    background: var(--surface-inverse);
+    border-radius: var(--radius-pill);
+    min-width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 5px;
+    box-sizing: border-box;
+  }
+  .nav-item.active .count {
+    background: var(--surface-card);
+    color: var(--text-primary);
   }
   .divider {
     height: 1px;
@@ -384,7 +413,7 @@
     padding: 4px 8px 6px;
   }
   .label-item {
-    padding: 7px 22px;
+    padding: 7px 12px;
   }
   .label-dot {
     width: 8px;
@@ -393,6 +422,7 @@
     flex-shrink: 0;
   }
   .label-name {
+    flex: 1;
     font-family: var(--font-body);
     font-size: 13.5px;
     overflow: hidden;
@@ -444,7 +474,7 @@
     color: var(--text-primary);
   }
   .ctx-item:hover {
-    background: var(--surface-sunken);
+    background: var(--surface-hover);
   }
   .ctx-item.danger {
     color: var(--tag-coral-fg);

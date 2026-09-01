@@ -156,10 +156,36 @@ pub enum Mutation {
         bcc: Vec<String>,
         subject: String,
         body_text: String,
+        /// Rich compose: HTML alternative part. None sends plain text only.
+        #[serde(default)]
+        body_html: Option<String>,
+        /// Outgoing attachments (base64 content, ready for MIME).
+        #[serde(default)]
+        attachments: Vec<OutAttachment>,
         /// Reply threading: provider-side thread to attach the message to.
         #[serde(default)]
         reply_to_thread: Option<ThreadId>,
     },
+}
+
+/// One attachment on an outgoing Send mutation.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct OutAttachment {
+    pub filename: String,
+    pub mime_type: String,
+    /// Standard base64 of the file content.
+    pub data_b64: String,
+}
+
+// Log hygiene: never dump attachment bytes into logs.
+impl std::fmt::Debug for OutAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutAttachment")
+            .field("filename", &self.filename)
+            .field("mime_type", &self.mime_type)
+            .field("b64_len", &self.data_b64.len())
+            .finish()
+    }
 }
 
 // Log hygiene: Send carries addresses/subject/body — redact them in Debug.
@@ -185,7 +211,11 @@ impl std::fmt::Debug for Mutation {
                 .field("starred", starred)
                 .finish(),
             // Label ids are opaque (Label_36 / system names) — safe to log.
-            Mutation::ModifyLabel { thread_id, label_id, add } => f
+            Mutation::ModifyLabel {
+                thread_id,
+                label_id,
+                add,
+            } => f
                 .debug_struct("ModifyLabel")
                 .field("thread_id", thread_id)
                 .field("label_id", label_id)

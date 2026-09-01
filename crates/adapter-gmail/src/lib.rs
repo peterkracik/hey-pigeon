@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 use oauth::{ClientConfig, TokenSet};
 
 const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
+const UPLOAD_API: &str = "https://gmail.googleapis.com/upload/gmail/v1/users/me";
 /// threads.get concurrency during backfill (quota-friendly, still fast).
 const FETCH_CONCURRENCY: usize = 10;
 
@@ -189,6 +190,34 @@ impl GmailProvider {
             .post(url)
             .bearer_auth(token)
             .json(body)
+            .send()
+            .await
+            .map_err(|e| MailError::Network(e.to_string()))?;
+        Self::check(resp).await.map(|_| ())
+    }
+
+    /// Media upload: multipart/related with JSON metadata + a raw rfc822
+    /// message. Required for sends with attachments (35 MB cap; the plain
+    /// JSON endpoint only takes small payloads).
+    async fn post_upload_rfc822(
+        &self,
+        account_id: &AccountId,
+        metadata: &serde_json::Value,
+        rfc822: &str,
+    ) -> Result<(), MailError> {
+        // '-' is not in the base64 alphabet and the inner MIME uses distinct
+        // boundary strings, so this outer boundary cannot be forged.
+        const B: &str = "hp_rel_7MA4YWxkTrZu0gW";
+        let token = self.access_token(account_id).await?;
+        let body = format!(
+            "--{B}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n--{B}\r\nContent-Type: message/rfc822\r\n\r\n{rfc822}\r\n--{B}--\r\n"
+        );
+        let resp = self
+            .http
+            .post(format!("{UPLOAD_API}/messages/send?uploadType=multipart"))
+            .bearer_auth(token)
+            .header("Content-Type", format!("multipart/related; boundary=\"{B}\""))
+            .body(body)
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
@@ -592,8 +621,18 @@ fn encode_header(value: &str) -> String {
     }
 }
 
-/// Minimal RFC 2822 text/plain message. Gmail fills in From/Date/Message-ID.
-fn build_mime(to: &[String], cc: &[String], bcc: &[String], subject: &str, body: &str) -> String {
+/// Minimal RFC 2822 message. Gmail fills in From/Date/Message-ID. With an
+/// HTML body: multipart/alternative (plain part first, html preferred).
+/// With attachments: multipart/mixed wrapping the body plus one part each.
+fn build_mime(
+    to: &[String],
+    cc: &[String],
+    bcc: &[String],
+    subject: &str,
+    body: &str,
+    body_html: Option<&str>,
+    attachments: &[OutAttachment],
+) -> String {
     let mut mime = String::new();
     mime.push_str(&format!("To: {}\r\n", to.join(", ")));
     if !cc.is_empty() {
@@ -604,11 +643,48 @@ fn build_mime(to: &[String], cc: &[String], bcc: &[String], subject: &str, body:
     }
     mime.push_str(&format!("Subject: {}\r\n", encode_header(subject)));
     mime.push_str("MIME-Version: 1.0\r\n");
-    mime.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
-    mime.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
-    // base64 body sidesteps line-length and bare-CRLF pitfalls entirely.
-    mime.push_str(&base64::engine::general_purpose::STANDARD.encode(body));
-    mime.push_str("\r\n");
+    // base64 bodies sidestep line-length and bare-CRLF pitfalls entirely
+    // (and '-' is outside the base64 alphabet, so a part can never fake a
+    // boundary line).
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    // Body block: headers + content, without the top-level message headers.
+    let body_block = match body_html {
+        None => format!(
+            "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+            b64(body)
+        ),
+        Some(html) => {
+            const ALT: &str = "hp.alt.7MA4YWxkTrZu0gW";
+            let mut s = format!("Content-Type: multipart/alternative; boundary=\"{ALT}\"\r\n\r\n");
+            for (ctype, part) in [("text/plain", body), ("text/html", html)] {
+                s.push_str(&format!("--{ALT}\r\nContent-Type: {ctype}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", b64(part)));
+            }
+            s.push_str(&format!("--{ALT}--\r\n"));
+            s
+        }
+    };
+    if attachments.is_empty() {
+        mime.push_str(&body_block);
+        return mime;
+    }
+    const MIX: &str = "hp.mix.7MA4YWxkTrZu0gW";
+    mime.push_str(&format!("Content-Type: multipart/mixed; boundary=\"{MIX}\"\r\n\r\n"));
+    mime.push_str(&format!("--{MIX}\r\n"));
+    mime.push_str(&body_block);
+    for a in attachments {
+        // ponytail: quoted UTF-8 filename, no RFC 2231 encoding — modern
+        // clients tolerate it; add encoding if a client mangles names.
+        let name: String =
+            a.filename.chars().filter(|c| !matches!(c, '"' | '\r' | '\n')).collect();
+        let ctype = if a.mime_type.is_empty() { "application/octet-stream" } else { &a.mime_type };
+        mime.push_str(&format!("--{MIX}\r\n"));
+        mime.push_str(&format!("Content-Type: {ctype}; name=\"{name}\"\r\n"));
+        mime.push_str(&format!("Content-Disposition: attachment; filename=\"{name}\"\r\n"));
+        mime.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
+        mime.push_str(&a.data_b64);
+        mime.push_str("\r\n");
+    }
+    mime.push_str(&format!("--{MIX}--\r\n"));
     mime
 }
 
@@ -763,10 +839,8 @@ impl MailProvider for GmailProvider {
                     }
                 })
                 .collect();
-            for fetched in futures::future::try_join_all(futs).await? {
-                if let Some((thread, messages)) = fetched {
-                    changes.push(HistoryChange::MessageAdded { thread, messages });
-                }
+            for (thread, messages) in futures::future::try_join_all(futs).await?.into_iter().flatten() {
+                changes.push(HistoryChange::MessageAdded { thread, messages });
             }
         }
 
@@ -790,16 +864,37 @@ impl MailProvider for GmailProvider {
     }
 
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
-        if let Mutation::Send { to, cc, bcc, subject, body_text, reply_to_thread } = mutation {
-            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .encode(build_mime(to, cc, bcc, subject, body_text));
-            let mut payload = serde_json::json!({ "raw": raw });
-            if let Some(tid) = reply_to_thread {
-                payload["threadId"] = serde_json::json!(tid);
+        if let Mutation::Send {
+            to,
+            cc,
+            bcc,
+            subject,
+            body_text,
+            body_html,
+            attachments,
+            reply_to_thread,
+        } = mutation
+        {
+            let mime =
+                build_mime(to, cc, bcc, subject, body_text, body_html.as_deref(), attachments);
+            if attachments.is_empty() {
+                let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime);
+                let mut payload = serde_json::json!({ "raw": raw });
+                if let Some(tid) = reply_to_thread {
+                    payload["threadId"] = serde_json::json!(tid);
+                }
+                return self
+                    .post_json(account_id, &format!("{API}/messages/send"), &payload)
+                    .await;
             }
-            return self
-                .post_json(account_id, &format!("{API}/messages/send"), &payload)
-                .await;
+            // With attachments the message can be many MB — the plain JSON
+            // endpoint is for small payloads; use the media upload endpoint
+            // (multipart/related: JSON metadata + raw rfc822, 35 MB cap).
+            let mut meta = serde_json::json!({});
+            if let Some(tid) = reply_to_thread {
+                meta["threadId"] = serde_json::json!(tid);
+            }
+            return self.post_upload_rfc822(account_id, &meta, &mime).await;
         }
         if let Mutation::Trash { thread_id } = mutation {
             return self
@@ -853,6 +948,8 @@ mod tests {
             &[],
             "Héllo",
             "body text",
+            None,
+            &[],
         );
         assert!(mime.starts_with("To: a@x.com\r\n"));
         assert!(mime.contains("Cc: c@x.com\r\n"));
@@ -863,6 +960,61 @@ mod tests {
         let b64 = mime.rsplit("\r\n\r\n").next().unwrap().trim();
         let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
         assert_eq!(String::from_utf8(decoded).unwrap(), "body text");
+    }
+
+    #[test]
+    fn mime_multipart_alternative_with_html() {
+        let mime = build_mime(
+            &["a@x.com".to_string()],
+            &[],
+            &[],
+            "Hi",
+            "plain body",
+            Some("<b>rich</b> body"),
+            &[],
+        );
+        assert!(mime.contains("Content-Type: multipart/alternative; boundary="));
+        assert!(mime.contains("Content-Type: text/plain; charset=UTF-8\r\n"));
+        assert!(mime.contains("Content-Type: text/html; charset=UTF-8\r\n"));
+        // both parts decode back
+        let dec = |needle: &str| {
+            let start = mime.find(needle).unwrap();
+            let b64 = mime[start..].split("\r\n\r\n").nth(1).unwrap().split("\r\n").next().unwrap();
+            String::from_utf8(base64::engine::general_purpose::STANDARD.decode(b64).unwrap())
+                .unwrap()
+        };
+        assert_eq!(dec("text/plain"), "plain body");
+        assert_eq!(dec("text/html"), "<b>rich</b> body");
+        assert!(mime.trim_end().ends_with("--"));
+    }
+
+    #[test]
+    fn mime_multipart_mixed_with_attachment() {
+        let att = OutAttachment {
+            filename: "re\"port.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            data_b64: base64::engine::general_purpose::STANDARD.encode("PDFBYTES"),
+        };
+        let mime = build_mime(
+            &["a@x.com".to_string()],
+            &[],
+            &[],
+            "Hi",
+            "plain body",
+            Some("<b>rich</b>"),
+            std::slice::from_ref(&att),
+        );
+        // mixed wraps alternative; attachment part carries sanitized name.
+        assert!(mime.contains("Content-Type: multipart/mixed; boundary="));
+        assert!(mime.contains("Content-Type: multipart/alternative; boundary="));
+        assert!(mime.contains("Content-Disposition: attachment; filename=\"report.pdf\""));
+        assert!(mime.contains(&att.data_b64));
+        assert!(mime.trim_end().ends_with("--"));
+
+        // No html, no attachments → still a bare text/plain message.
+        let plain = build_mime(&["a@x.com".to_string()], &[], &[], "Hi", "b", None, &[]);
+        assert!(plain.contains("Content-Type: text/plain"));
+        assert!(!plain.contains("multipart"));
     }
 
     #[test]
@@ -895,7 +1047,7 @@ mod tests {
 
     #[test]
     fn ascii_subject_not_encoded() {
-        let mime = build_mime(&["a@x.com".to_string()], &[], &[], "Plain subject", "b");
+        let mime = build_mime(&["a@x.com".to_string()], &[], &[], "Plain subject", "b", None, &[]);
         assert!(mime.contains("Subject: Plain subject\r\n"));
     }
 

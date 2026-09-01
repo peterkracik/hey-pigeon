@@ -14,6 +14,7 @@
   import type { ComposeData } from "./lib/Composer.svelte";
   import { toasts, toast, dismissToast } from "./lib/toast.svelte";
   import * as ipc from "./lib/ipc";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let sidebarOpen = $state(false);
   let sidebarWidth = $state(Number(localStorage.getItem("sidebarWidth")) || 248);
@@ -693,8 +694,20 @@
 <svelte:document onkeydown={onKey} />
 
 <div class="frame">
-  <header class="apphead" data-tauri-drag-region>
-    <span class="apphead-title" data-tauri-drag-region>Hey Pigeon</span>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <header
+    class="apphead"
+    onmousedown={(ev) => {
+      // Explicit drag: the data-tauri-drag-region attribute proved unreliable.
+      if (!ipc.isTauri || ev.button !== 0) return;
+      if (ev.detail === 2) {
+        getCurrentWindow().toggleMaximize();
+      } else {
+        getCurrentWindow().startDragging();
+      }
+    }}
+  >
+    <span class="apphead-title">Hey Pigeon</span>
   </header>
   <div class="app">
   <Sidebar

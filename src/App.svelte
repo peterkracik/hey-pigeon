@@ -170,8 +170,16 @@
   let fullscreen = $state(false);
   let composeFullscreen = $state(false);
   let emailsData: Email[] = $state(EMAILS_SEED);
-  let hoverActions: string[] = $state(["delete", "pin", "remind"]);
-  let pinListEnabled = $state(true);
+  let hoverActions: string[] = $state(readJson("hoverActions", ["delete", "pin", "remind"]));
+  function setHoverActions(next: string[]) {
+    hoverActions = next;
+    localStorage.setItem("hoverActions", JSON.stringify(hoverActions));
+  }
+  let pinListEnabled = $state(readJson("pinListEnabled", true));
+  function setPinListEnabled(v: boolean) {
+    pinListEnabled = v;
+    localStorage.setItem("pinListEnabled", JSON.stringify(pinListEnabled));
+  }
   let liveAccounts: Account[] = $state([]);
   // Lazy loading: rows come in pages of 50; scrolling near the bottom raises
   // the limit and refetches (keyset-paginated locally — milliseconds).
@@ -1351,13 +1359,6 @@
             <div class="spacer"></div>
             {#if !threadOpen}
               <div class="topbar-actions">
-                {#if emails.length > 0}
-                  <Tooltip label="Select all" side="bottom">
-                    <IconButton label="Select all" onclick={toggleSelectAll}>
-                      <Icon d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" size={15} />
-                    </IconButton>
-                  </Tooltip>
-                {/if}
                 {#if view === "calendar"}
                   <span class="topbar-filter">
                     <SegmentedControl
@@ -1591,9 +1592,9 @@
           <Settings
             {accounts}
             {hoverActions}
-            onHoverActionsChange={(next) => (hoverActions = next)}
+            onHoverActionsChange={setHoverActions}
             {pinListEnabled}
-            onPinListChange={(v) => (pinListEnabled = v)}
+            onPinListChange={setPinListEnabled}
             onAddAccount={addAccount}
             onRemoveAccount={removeAccount}
             onUpdateAccount={updateAccount}
@@ -1702,6 +1703,11 @@
     padding: 0 32px 40px 96px;
     display: flex;
     flex-direction: column;
+  }
+  @media (max-width: 900px) {
+    .column {
+      padding-left: 32px;
+    }
   }
   .topbar {
     display: flex;
@@ -1813,6 +1819,8 @@
     align-items: center;
     font-size: 12.5px;
     color: var(--text-tertiary);
+  }
+  .topbar-filter:not(:last-child) {
     margin-right: 10px;
   }
   /* Replaces the title/filter row while any row is checked. */

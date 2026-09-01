@@ -50,6 +50,10 @@ pub struct Thread {
     /// STARRED, user Label_* ids…). Drives the folder/label queries.
     #[serde(default)]
     pub labels: Vec<String>,
+    /// True if any message in the thread carries a MIME part with a
+    /// filename (i.e. an attachment). Drives the list-row paperclip icon.
+    #[serde(default)]
+    pub has_attachment: bool,
 }
 
 /// One Gmail label (user-created only — system labels map to folders).

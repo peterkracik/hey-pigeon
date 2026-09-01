@@ -24,6 +24,27 @@ pub fn run() {
       Ok(())
     })
     .plugin(tauri_plugin_notification::init())
+    // Mail bodies render in an iframe (untrusted HTML), so link clicks and
+    // target=_blank popups still navigate through this webview — cancel any
+    // navigation that isn't the app's own origin and hand it to the OS
+    // browser instead, same `open` pattern as the OAuth flow (mail.rs).
+    .plugin(
+      tauri::plugin::Builder::<tauri::Wry>::new("external-links")
+        .on_navigation(|_webview, url| {
+          // Only external http(s) links are ever meant to be redirected —
+          // the mail iframe's own `about:srcdoc` load, and any tauri://
+          // / dev-server navigation, must pass through untouched.
+          let is_external_link = matches!(url.scheme(), "http" | "https")
+            && url.scheme() != "tauri"
+            && !(cfg!(debug_assertions) && url.host_str() == Some("localhost"));
+          if !is_external_link {
+            return true;
+          }
+          let _ = std::process::Command::new("open").arg(url.as_str()).spawn();
+          false
+        })
+        .build(),
+    )
     // Refocusing the app is the strongest "is there new mail?" signal.
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::Focused(true) = event {

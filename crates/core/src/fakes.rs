@@ -298,6 +298,9 @@ impl FakeProvider {
                     last_from_addr: format!("sender{i}@example.com"),
                     scheduled_at: None,
                     labels: vec!["INBOX".to_string()],
+                    // Every 5th sample thread carries an attachment — just
+                    // enough variety to eyeball the icon in Fake-backend dev mode.
+                    has_attachment: i % 5 == 0,
                 };
                 let message = Message {
                     id: format!("{tid}:m0"),
@@ -451,6 +454,7 @@ mod tests {
             last_from_addr: String::new(),
             scheduled_at: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
+            has_attachment: false,
         }
     }
 

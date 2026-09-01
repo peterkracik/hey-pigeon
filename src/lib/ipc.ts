@@ -29,6 +29,8 @@ export interface BackendThread {
   scheduled_at: number | null;
   /** Union of Gmail label ids over the thread's messages. */
   labels: string[];
+  /** True if any message in the thread has an attachment. */
+  has_attachment: boolean;
 }
 
 /** One user-created Gmail label (system labels map to folders). */
@@ -268,6 +270,7 @@ export function threadToEmail(t: BackendThread): Email {
     msgCount: t.msg_count,
     lastMsgAt: t.last_msg_at,
     scheduledAt: t.scheduled_at ?? undefined,
+    attachment: t.has_attachment,
   };
 }
 

@@ -13,6 +13,7 @@ use heypigeon_core::ports::{MailProvider, SecretStore, Store};
 use heypigeon_core::{outbox, sync};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::RwLock;
 
 const FAKE_ACCOUNT_ID: &str = "fake";
@@ -48,6 +49,10 @@ pub struct MailState {
     last_focus_sync: std::sync::Mutex<std::time::Instant>,
     /// Accounts with a delta sync in flight (focus + interval can overlap).
     syncing: std::sync::Mutex<std::collections::HashSet<AccountId>>,
+    /// thread_id -> scheduled_at already notified, so a due "remind me"
+    /// fires once per poll cadence, not on every tick until dismissed.
+    /// Re-notifies on reschedule (a changed scheduled_at won't match).
+    notified_reminders: std::sync::Mutex<std::collections::HashMap<ThreadId, i64>>,
 }
 
 #[derive(Serialize)]
@@ -508,8 +513,48 @@ pub fn spawn_delta_loop(handle: AppHandle) {
         loop {
             interval.tick().await;
             delta_sync_all(&handle).await;
+            notify_due_reminders(&handle);
         }
     });
+}
+
+/// Desktop notification for every "remind me" schedule that has come due
+/// since the last check. Piggybacks on the delta-sync poll cadence
+/// (DESIGN.md ~30s) instead of a second timer.
+fn notify_due_reminders(handle: &AppHandle) {
+    let state = handle.state::<MailState>();
+    let scheduled = match state.store.list_scheduled() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("reminder check: list_scheduled failed: {e}");
+            return;
+        }
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let mut notified = state.notified_reminders.lock().unwrap();
+    // Drop bookkeeping for threads no longer scheduled (cleared reminder).
+    let still_scheduled: std::collections::HashSet<&ThreadId> =
+        scheduled.iter().map(|t| &t.id).collect();
+    notified.retain(|id, _| still_scheduled.contains(id));
+    for thread in &scheduled {
+        let Some(due_at) = thread.scheduled_at else { continue };
+        if due_at > now_ms {
+            continue;
+        }
+        if notified.get(&thread.id) == Some(&due_at) {
+            continue; // already notified for this exact schedule
+        }
+        let _ = handle
+            .notification()
+            .builder()
+            .title(format!("Reminder: {}", thread.subject))
+            .body(&thread.from_summary)
+            .show();
+        notified.insert(thread.id.clone(), due_at);
+    }
 }
 
 /// Window focus → immediate delta sync, rate-limited to one per
@@ -597,6 +642,7 @@ pub fn init(app: &tauri::App, secrets: Arc<dyn SecretStore + Send + Sync>) -> Re
         backend: RwLock::new(backend),
         last_focus_sync: std::sync::Mutex::new(std::time::Instant::now()),
         syncing: std::sync::Mutex::new(std::collections::HashSet::new()),
+        notified_reminders: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
     // Every account syncs independently — one failing must not block another.
     for account_id in sync_accounts {

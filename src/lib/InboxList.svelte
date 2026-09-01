@@ -311,21 +311,26 @@
               </button>
             </span>
             <span class="from" class:unread={e.unread}>{e.from}</span>
-            <!-- Fixed-width slot (empty for single emails) so subjects align. -->
-            <span
-              class="conv"
-              title={(e.msgCount ?? e.thread?.length ?? 1) > 1
-                ? `${e.msgCount ?? e.thread?.length} messages in this conversation`
-                : undefined}
-            >
-              {#if (e.msgCount ?? e.thread?.length ?? 1) > 1}
-                <Icon d="M21 12a2 2 0 01-2 2H8l-4 4V6a2 2 0 012-2h13a2 2 0 012 2z" size={12} />
-                {e.msgCount ?? e.thread?.length}
-              {/if}
-            </span>
-            <span class="subject-wrap">
-              <span class="label-dot" style:background={e.labelTag ? `var(--tag-${e.labelTag}-fg)` : "transparent"}></span>
-              <span class="subject" class:unread={e.unread}>{e.subject}</span>
+            <!-- Wrapper stays `display:contents` at wide widths (conv/subject-wrap
+                 sit in their normal flex position, unwrapped); narrow widths turn
+                 it into the real line-2 box — see the media query below. -->
+            <span class="row-bottom">
+              <!-- Fixed-width slot (empty for single emails) so subjects align. -->
+              <span
+                class="conv"
+                title={(e.msgCount ?? e.thread?.length ?? 1) > 1
+                  ? `${e.msgCount ?? e.thread?.length} messages in this conversation`
+                  : undefined}
+              >
+                {#if (e.msgCount ?? e.thread?.length ?? 1) > 1}
+                  <Icon d="M21 12a2 2 0 01-2 2H8l-4 4V6a2 2 0 012-2h13a2 2 0 012 2z" size={12} />
+                  {e.msgCount ?? e.thread?.length}
+                {/if}
+              </span>
+              <span class="subject-wrap">
+                <span class="label-dot" style:background={e.labelTag ? `var(--tag-${e.labelTag}-fg)` : "transparent"}></span>
+                <span class="subject" class:unread={e.unread}>{e.subject}</span>
+              </span>
             </span>
             <span class="snippet">{e.snippet}</span>
             {#if e.scheduledAt !== undefined}
@@ -345,7 +350,7 @@
             {/if}
             {#if e.attachment}
               <span class="clip" title="Has attachment">
-                <Icon d="M21 12.5l-8.4 8.4a5 5 0 01-7-7l8.4-8.4a3.5 3.5 0 015 5l-7.9 7.9" size={14} />
+                <Icon d="M21 12.5l-8.4 8.4a5 5 0 01-7-7l8.4-8.4a3.5 3.5 0 015 5l-7.9 7.9" size={12} />
               </span>
             {/if}
             <span class="right" style:width={selectedId === e.id ? "190px" : "118px"}>
@@ -772,6 +777,58 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  @media (max-width: 900px) {
+    .snippet {
+      display: none;
+    }
+    /* Row wraps to 2 lines: from + time stay on line 1, conv + subject
+       move to line 2. .row::after is a zero-size flex item with
+       flex-basis:100% — the standard force-a-line-break trick. It must be
+       the break itself (not .conv), because a flex item with basis:100%
+       claims the whole line for wrap-assignment purposes even once it
+       shrinks back down, so the sibling right after it would wrap again
+       onto a 3rd line instead of sharing line 2. */
+    .row {
+      flex-wrap: wrap;
+      row-gap: 4px;
+    }
+    .row::after {
+      content: "";
+      order: 2;
+      flex-basis: 100%;
+      width: 0;
+    }
+    .from {
+      flex-shrink: 1;
+      min-width: 60px;
+    }
+    .sched-badge,
+    .clip,
+    .right {
+      order: 1;
+    }
+    /* Nothing on line 1 grows anymore (snippet, the old flexible spacer,
+       is hidden), so without this the trailing group just left-packs
+       after "from" and leaves the rest of the row blank. margin-left:auto
+       eats the leftover space in front of .right, pinning time/actions to
+       the true right edge again. */
+    .right {
+      margin-left: auto;
+    }
+    /* subject-wrap goes first on line 2 (indented to sit under "from"),
+       conv (the reply-count bubble) trails after it — putting the fixed
+       34px conv slot first pushed the subject text ~35px further right
+       than "from" above it, so the two lines didn't line up. */
+    .subject-wrap {
+      order: 3;
+      max-width: none;
+      margin-left: 70px;
+    }
+    .conv {
+      order: 4;
+      margin-left: 0;
+    }
   }
   .clip {
     flex-shrink: 0;

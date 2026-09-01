@@ -145,6 +145,10 @@ const MIGRATIONS: &[&str] = &[
     // weeks. Clearing the checkpoint forces the sanctioned recovery path
     // (full backfill, idempotent upserts) on next startup.
     "UPDATE accounts SET history_id = NULL;",
+    // v9 — attachment indicator (list-row paperclip icon). Pre-existing
+    // threads default to 0/false and heal on the next backfill re-upsert,
+    // same pattern as v2's last_from_addr.
+    "ALTER TABLE threads ADD COLUMN has_attachment INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -371,11 +375,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         last_from_addr: r.get(10)?,
         scheduled_at: r.get(11)?,
         labels: serde_json::from_str(&r.get::<_, String>(12)?).unwrap_or_default(),
+        has_attachment: r.get(13)?,
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -446,18 +451,19 @@ impl Store for SqliteStore {
             c.execute(
                 "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
                                       is_inbox, is_archived, msg_count, from_summary, last_from_addr,
-                                      labels)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                                      labels, has_attachment)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                      ON CONFLICT(id) DO UPDATE SET
                        subject = excluded.subject, snippet = excluded.snippet,
                        last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
                        is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
                        msg_count = excluded.msg_count, from_summary = excluded.from_summary,
-                       last_from_addr = excluded.last_from_addr, labels = excluded.labels",
+                       last_from_addr = excluded.last_from_addr, labels = excluded.labels,
+                       has_attachment = excluded.has_attachment",
                 params![
                     t.id, t.account_id, t.subject, t.snippet, t.last_msg_at,
                     t.is_read, t.is_inbox, t.is_archived, t.msg_count, t.from_summary,
-                    t.last_from_addr, labels
+                    t.last_from_addr, labels, t.has_attachment
                 ],
             )
             .map(|_| ())
@@ -689,7 +695,9 @@ impl Store for SqliteStore {
                     |r| {
                         Ok(SearchResult {
                             thread: row_to_thread(r)?,
-                            snippet: r.get(13)?,
+                            // THREAD_COLS width, not a magic number — `snip` is
+                            // selected right after all thread_cols().
+                            snippet: r.get(THREAD_COLS.split(", ").count())?,
                         })
                     },
                 )?;
@@ -1003,6 +1011,7 @@ mod tests {
             last_from_addr: "someone@example.com".to_string(),
             scheduled_at: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
+            has_attachment: false,
         })
         .unwrap();
     }
@@ -1080,6 +1089,7 @@ mod tests {
             last_from_addr: "someone@example.com".to_string(),
             scheduled_at: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
+            has_attachment: false,
         };
         s.upsert_thread(&mk("a-unread", "a1", &["INBOX"], true, false)).unwrap();
         s.upsert_thread(&mk("a-read", "a1", &["INBOX"], true, true)).unwrap();
@@ -1289,6 +1299,7 @@ mod tests {
             last_from_addr: from.to_string(),
             scheduled_at: None,
             labels: vec!["INBOX".to_string()],
+            has_attachment: false,
         })
         .unwrap();
         s.upsert_message(&Message {

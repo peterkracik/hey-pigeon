@@ -431,6 +431,10 @@ struct WirePart {
     body: Option<WireBody>,
     #[serde(default)]
     parts: Vec<WirePart>,
+    /// Non-empty on an attachment part (Gmail sets it on the part carrying
+    /// the file, empty on inline text/html body parts).
+    #[serde(default)]
+    filename: String,
 }
 
 #[derive(Deserialize)]
@@ -532,6 +536,11 @@ fn find_part<'a>(part: &'a WirePart, mime: &str) -> Option<&'a WirePart> {
     part.parts.iter().find_map(|p| find_part(p, mime))
 }
 
+/// True if this part or any descendant is an attachment (non-empty filename).
+fn part_has_attachment(part: &WirePart) -> bool {
+    !part.filename.is_empty() || part.parts.iter().any(part_has_attachment)
+}
+
 fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Message {
     let payload = w.payload.as_ref();
     let from_addr = payload.and_then(|p| header(p, "From")).unwrap_or("").to_string();
@@ -602,6 +611,10 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         // Local-only metadata — the wire never carries a schedule.
         scheduled_at: None,
         labels,
+        has_attachment: wire
+            .messages
+            .iter()
+            .any(|m| m.payload.as_ref().is_some_and(part_has_attachment)),
     };
     (thread, messages)
 }

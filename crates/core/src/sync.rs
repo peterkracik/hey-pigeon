@@ -293,6 +293,7 @@ mod tests {
             last_from_addr: "new@example.com".to_string(),
             scheduled_at: None,
             labels: vec!["INBOX".to_string(), "UNREAD".to_string()],
+            has_attachment: false,
         };
         let message = crate::domain::Message {
             id: format!("{tid}:m0"),

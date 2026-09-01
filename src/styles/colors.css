@@ -14,7 +14,8 @@
 --text-inverse:var(--white);
 --text-link:var(--navy-900);
 --accent-primary:var(--navy-900);
---accent-highlight:rgb(232,163,61);--accent-highlight-bg:rgba(232,163,61,0.12);
+--honey:#e8a33d;--honey-foreground:#18181b;--honey-deep:#b4761f;--honey-ink:#8a5a13;--honey-soft:#fbf3e2;--honey-faint:#fdf9f0;
+--accent-highlight:var(--honey);--accent-highlight-bg:rgba(232,163,61,0.12);
 --accent-interactive:var(--navy-900);
 --accent-interactive-hover:var(--navy-700);
 --accent-soft:var(--navy-100);

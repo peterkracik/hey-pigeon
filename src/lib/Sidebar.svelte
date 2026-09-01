@@ -378,7 +378,7 @@
   }
   .divider {
     height: 1px;
-    background: var(--navy-50);
+    background: var(--border-default);
     margin: 10px 6px;
     flex-shrink: 0;
   }

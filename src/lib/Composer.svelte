@@ -2,7 +2,6 @@
   import { onDestroy } from "svelte";
   import IconButton from "./ds/IconButton.svelte";
   import Icon from "./ds/Icon.svelte";
-  import Select from "./ds/Select.svelte";
   import RecipientField from "./RecipientField.svelte";
   import { toast } from "./toast.svelte";
   import type { Account } from "./data";
@@ -77,6 +76,8 @@
     fromId = id;
   }
   let attachments: string[] = $state([]);
+  let fromOpen = $state(false);
+  let fromRoot: HTMLDivElement | undefined = $state();
   let showFormat = $state(false);
   let selPos: { top: number; left: number } | null = $state(null);
   let aaRoot: HTMLDivElement | undefined = $state();
@@ -96,6 +97,7 @@
     const t = ev.target as Node;
     if (showFormat && aaRoot && !aaRoot.contains(t)) showFormat = false;
     if (selPos && selRoot && !selRoot.contains(t) && t !== bodyEl) selPos = null;
+    if (fromOpen && fromRoot && !fromRoot.contains(t)) fromOpen = false;
   }
 
   function onBodySelect() {
@@ -146,16 +148,41 @@
   {#if accounts.length > 1}
     <div class="field-row">
       <span class="field-label">From</span>
-      <div class="from-picker">
-        {#if fromAccount}
-          <span class="from-dot" style:background="var(--tag-{fromAccount.tag}-fg)"></span>
+      <div class="from-picker" bind:this={fromRoot}>
+        <button class="from-chip" class:open={fromOpen} onclick={() => (fromOpen = !fromOpen)}>
+          {#if fromAccount}
+            <span class="from-dot" style:background="var(--tag-{fromAccount.tag}-fg)"></span>
+          {/if}
+          <span class="from-email">{fromAccount?.email ?? fromId}</span>
+          <svg class="from-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none">
+            <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        {#if fromOpen}
+          <div class="from-menu">
+            {#each accounts as a (a.id)}
+              <button
+                class="from-option"
+                class:selected={a.id === fromId}
+                onclick={() => {
+                  switchFrom(a.id);
+                  fromOpen = false;
+                }}
+              >
+                <span class="from-dot" style:background="var(--tag-{a.tag}-fg)"></span>
+                <span class="from-opt-body">
+                  <span class="from-opt-name">{a.label}</span>
+                  <span class="from-opt-email">{a.email}</span>
+                </span>
+                {#if a.id === fromId}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+                  </svg>
+                {/if}
+              </button>
+            {/each}
+          </div>
         {/if}
-        <Select
-          size="sm"
-          value={fromId}
-          options={accounts.map((a) => ({ value: a.id, label: a.email }))}
-          onchange={switchFrom}
-        />
       </div>
     </div>
   {/if}
@@ -253,9 +280,81 @@
     color: var(--text-tertiary);
   }
   .from-picker {
+    position: relative;
     display: flex;
     align-items: center;
+  }
+  .from-chip {
+    display: inline-flex;
+    align-items: center;
     gap: 8px;
+    border: 1px solid transparent;
+    background: none;
+    cursor: pointer;
+    padding: 4px 10px;
+    margin-left: -10px;
+    border-radius: var(--radius-pill);
+    font-family: var(--font-body);
+    font-size: 14px;
+    color: var(--text-primary);
+    transition:
+      background 100ms,
+      border-color 100ms;
+  }
+  .from-chip:hover,
+  .from-chip.open {
+    background: var(--surface-sunken);
+    border-color: var(--border-subtle);
+  }
+  .from-chevron {
+    color: var(--text-tertiary);
+  }
+  .from-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: -10px;
+    z-index: 40;
+    min-width: 260px;
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 4px;
+  }
+  .from-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    text-align: left;
+    color: var(--text-primary);
+  }
+  .from-option:hover {
+    background: var(--surface-sunken);
+  }
+  .from-opt-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .from-opt-name {
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .from-opt-email {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .from-dot {
     width: 8px;

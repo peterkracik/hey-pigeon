@@ -50,7 +50,7 @@
 <div class="sidebar" class:open>
   <div class="inner">
     <div class="header">
-      <button class="close" title="Close sidebar" onclick={onClose}>
+      <button class="close floating" title="Close sidebar" onclick={onClose}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <path
             d="M9 4H5a1 1 0 00-1 1v14a1 1 0 001 1h4M15 4h4a1 1 0 011 1v14a1 1 0 01-1 1h-4M9 4v16"
@@ -121,12 +121,16 @@
     padding: 18px 14px;
     box-sizing: border-box;
   }
+  /* Brand row removed — the close button floats so content starts at the top. */
   .header {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 0 4px 16px;
+    position: relative;
+    height: 0;
+  }
+  .close.floating {
+    position: absolute;
+    top: -6px;
+    right: 0;
+    z-index: 5;
   }
   .close {
     border: none;

@@ -1071,6 +1071,9 @@
     align-items: center;
     gap: 8px;
     padding: 12px 0 16px;
+    /* Constant row height whether or not 36px icon buttons are present
+       (settings/thread views hide them) — titles never shift. */
+    min-height: 36px;
     position: relative;
   }
   .back {

@@ -882,7 +882,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding-top: 14px;
+    /* Center of the 34px toggle at 38px — same axis as the sidebar account
+       row (18px pad + 40px row) and the topbar title. */
+    padding-top: 21px;
     gap: 4px;
     z-index: 40;
   }
@@ -936,7 +938,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 18px 0 20px;
+    padding: 23px 0 20px;
     position: relative;
   }
   .back {

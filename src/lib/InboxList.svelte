@@ -318,7 +318,10 @@
           {#if selectedId === e.id}
             <div class="preview">
               {#if previewContent(e).html}
-                <HtmlEmailFrame html={previewContent(e).body} />
+                <!-- HTML mail bleeds to the card edges, like in the thread view. -->
+                <div class="html-bleed">
+                  <HtmlEmailFrame html={previewContent(e).body} />
+                </div>
               {:else}
                 <p class="preview-body">{previewContent(e).body}</p>
               {/if}
@@ -786,6 +789,9 @@
   }
   .preview {
     padding: 20px 16px 12px;
+  }
+  .html-bleed {
+    margin: 0 -16px;
   }
   .preview-body {
     margin: 0;

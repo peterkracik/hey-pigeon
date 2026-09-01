@@ -974,7 +974,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    background: var(--navy-50);
+    /* One shade darker than the sidebar panel (navy-50) so the two surfaces
+       read as separate layers. */
+    background: var(--navy-100);
     /* Center of the 34px toggle at 38px — same axis as the sidebar account
        row (18px pad + 40px row) and the topbar title. */
     padding-top: 21px;

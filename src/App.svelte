@@ -607,7 +607,6 @@
 <div class="app">
   <Sidebar
     open={sidebarOpen}
-    onClose={() => (sidebarOpen = false)}
     active={folder}
     onSelect={selectFolder}
     {accounts}
@@ -620,8 +619,16 @@
     labels={sidebarLabels}
   />
   <div class="rail">
-    <button class="rail-btn" title="Toggle sidebar" onclick={() => (sidebarOpen = !sidebarOpen)}>
-      <Icon d="M4 7h16M4 12h16M4 17h16" size={17} />
+    <button
+      class="rail-btn"
+      title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+      onclick={() => (sidebarOpen = !sidebarOpen)}
+    >
+      {#if sidebarOpen}
+        <Icon d="M6 6l12 12M18 6L6 18" size={17} />
+      {:else}
+        <Icon d="M4 7h16M4 12h16M4 17h16" size={17} />
+      {/if}
     </button>
     <div class="rail-views">
       <button

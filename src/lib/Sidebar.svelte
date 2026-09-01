@@ -5,7 +5,6 @@
 
   let {
     open,
-    onClose,
     active,
     onSelect,
     accounts,
@@ -18,7 +17,6 @@
     labels,
   }: {
     open: boolean;
-    onClose: () => void;
     active: string;
     onSelect: (key: string) => void;
     accounts: Account[];
@@ -49,19 +47,6 @@
 
 <div class="sidebar" class:open>
   <div class="inner">
-    <div class="header">
-      <button class="close floating" title="Close sidebar" onclick={onClose}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path
-            d="M9 4H5a1 1 0 00-1 1v14a1 1 0 001 1h4M15 4h4a1 1 0 011 1v14a1 1 0 01-1 1h-4M9 4v16"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </button>
-    </div>
     <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} {onAddAccount} />
     <div class="nav">
       {#each items as it (it.key)}
@@ -121,28 +106,7 @@
     padding: 18px 14px;
     box-sizing: border-box;
   }
-  /* Brand row removed — the close button floats so content starts at the top. */
-  .header {
-    position: relative;
-    height: 0;
-  }
-  .close.floating {
-    position: absolute;
-    top: -6px;
-    right: 0;
-    z-index: 5;
-  }
-  .close {
-    border: none;
-    background: none;
-    cursor: pointer;
-    color: var(--text-tertiary);
-    display: flex;
-    padding: 4px;
-  }
-  .close:hover {
-    color: var(--text-primary);
-  }
+
   .nav {
     display: flex;
     flex-direction: column;

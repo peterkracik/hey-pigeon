@@ -81,6 +81,13 @@ fn load_oauth_config() -> Result<oauth::ClientConfig, String> {
 
 // ------------------------------------------------------------------ commands
 
+/// Webview-side logging into the app log — WKWebView has no visible console,
+/// so the frontend pipes runtime errors here (see src/main.ts).
+#[tauri::command]
+pub fn weblog(msg: String) {
+    log::info!("web: {msg}");
+}
+
 #[tauri::command]
 pub fn list_accounts(state: State<'_, MailState>) -> Result<Vec<Account>, String> {
     state.store.list_accounts().map_err(estr)

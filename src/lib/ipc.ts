@@ -217,3 +217,9 @@ export function messagesToThreadMsgs(
     html: Boolean(m.body_html),
   }));
 }
+
+/** TEMP diagnostic: log a message into the Rust app log. */
+export const weblog = (msg: string) => {
+  if (!isTauri) return;
+  invoke<void>("weblog", { msg }).catch(() => {});
+};

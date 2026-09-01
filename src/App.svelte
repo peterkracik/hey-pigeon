@@ -124,7 +124,10 @@
     if (!ipc.isTauri) return;
     let unsub: (() => void) | undefined;
     ipc.onThreadsUpdated(() => {
-      refreshLive().catch((e) => console.error("ipc refresh failed", e));
+      refreshLive().catch((e) => {
+        console.error("ipc refresh failed", e);
+        toast("danger", "Refresh failed", String(e));
+      });
     }).then((u) => (unsub = u));
     return () => unsub?.();
   });
@@ -134,26 +137,35 @@
   $effect(() => {
     if (!ipc.isTauri) return;
     void folder;
-    refreshLive().catch((e) => console.error("ipc refresh failed", e));
+    refreshLive().catch((e) => {
+      console.error("ipc refresh failed", e);
+      toast("danger", "Refresh failed", String(e));
+    });
   });
 
   const accounts = $derived(ipc.isTauri && liveAccounts.length ? liveAccounts : ACCOUNTS);
+
+
 
   // Real user labels in live mode (name-sorted by the backend; tag palette
   // cycles); design mocks in browser mode. CATEGORY_* never reaches here
   // (the adapter stores user-type labels only) but guard anyway.
   const LABEL_TAGS = ["amber", "coral", "mint", "sky", "lavender"];
-  const sidebarLabels = $derived.by((): LabelDef[] =>
-    ipc.isTauri && liveAccounts.length
-      ? liveLabels
-          .filter((l) => !l.id.startsWith("CATEGORY_"))
-          .map((l, i) => ({
-            key: `label:${l.id}`,
-            label: l.name,
-            tag: LABEL_TAGS[i % LABEL_TAGS.length],
-          }))
-      : LABELS,
-  );
+  const sidebarLabels = $derived.by((): LabelDef[] => {
+    if (!ipc.isTauri || !liveAccounts.length) return LABELS;
+    // Dedupe by label id: the same Gmail label id can exist in BOTH accounts
+    // (e.g. Label_36), and duplicate {#each} keys crash the whole render
+    // (each_key_duplicate — this froze the app on mock data once).
+    const byId = new Map<string, ipc.BackendLabel>();
+    for (const l of liveLabels) {
+      if (!l.id.startsWith("CATEGORY_") && !byId.has(l.id)) byId.set(l.id, l);
+    }
+    return [...byId.values()].map((l, i) => ({
+      key: `label:${l.id}`,
+      label: l.name,
+      tag: LABEL_TAGS[i % LABEL_TAGS.length],
+    }));
+  });
 
   const emails = $derived.by(() => {
     // Calendar view: only scheduled mail, ascending by schedule (matches the

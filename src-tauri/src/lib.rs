@@ -22,6 +22,7 @@ pub fn run() {
       }
     })
     .invoke_handler(tauri::generate_handler![
+      mail::weblog,
       mail::list_accounts,
       mail::list_threads,
       mail::list_labels,

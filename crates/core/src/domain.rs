@@ -46,6 +46,50 @@ pub struct Thread {
     /// stores must preserve it across provider re-upserts.
     #[serde(default)]
     pub scheduled_at: Option<i64>,
+    /// Union of Gmail label ids over the thread's messages (INBOX, SENT,
+    /// STARRED, user Label_* ids…). Drives the folder/label queries.
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+/// One Gmail label (user-created only — system labels map to folders).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Label {
+    pub account_id: AccountId,
+    pub id: String,
+    pub name: String,
+}
+
+/// Folder/label filter for thread list queries. String form (IPC):
+/// `inbox|starred|sent|drafts|archive|spam|trash|all|label:<id>`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ThreadFilter {
+    #[default]
+    Inbox,
+    Starred,
+    Sent,
+    Drafts,
+    Archive,
+    Spam,
+    Trash,
+    All,
+    Label(String),
+}
+
+impl ThreadFilter {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "inbox" => Self::Inbox,
+            "starred" => Self::Starred,
+            "sent" => Self::Sent,
+            "drafts" => Self::Drafts,
+            "archive" => Self::Archive,
+            "spam" => Self::Spam,
+            "trash" => Self::Trash,
+            "all" => Self::All,
+            _ => Self::Label(s.strip_prefix("label:")?.to_string()),
+        })
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

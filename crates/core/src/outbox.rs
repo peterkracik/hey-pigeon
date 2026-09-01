@@ -61,6 +61,7 @@ pub async fn drain<M: MailProvider, S: Store>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ThreadFilter;
     use crate::fakes::{FakeProvider, MemStore};
 
     fn seeded_store() -> MemStore {
@@ -76,7 +77,7 @@ mod tests {
         crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let t = &store.list_threads(None, None, 10).unwrap()[0];
+        let t = &store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap()[0];
 
         enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: t.id.clone() }).unwrap();
 
@@ -94,7 +95,7 @@ mod tests {
         crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let id = store.list_threads(None, None, 10).unwrap()[0].id.clone();
+        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap()[0].id.clone();
         enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() }).unwrap();
 
         let (applied, failed) = drain(&provider, &store, 10).await.unwrap();
@@ -113,7 +114,7 @@ mod tests {
         crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let id = store.list_threads(None, None, 10).unwrap()[0].id.clone();
+        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap()[0].id.clone();
         enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id }).unwrap();
         provider.fail_applies(true);
 

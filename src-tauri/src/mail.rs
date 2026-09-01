@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use heypigeon_adapter_gmail::{oauth, GmailProvider};
 use heypigeon_adapter_sqlite::SqliteStore;
-use heypigeon_core::domain::{Account, AccountId, Message, Mutation, SearchResult, Thread, ThreadId};
+use heypigeon_core::domain::{
+    Account, AccountId, Label, Message, Mutation, SearchResult, Thread, ThreadFilter, ThreadId,
+};
 use heypigeon_core::fakes::FakeProvider;
 use heypigeon_core::ports::{MailProvider, SecretStore, Store};
 use heypigeon_core::{outbox, sync};
@@ -88,13 +90,24 @@ pub fn list_accounts(state: State<'_, MailState>) -> Result<Vec<Account>, String
 pub fn list_threads(
     state: State<'_, MailState>,
     account_id: Option<AccountId>,
+    filter: Option<String>,
     before: Option<i64>,
     limit: Option<u32>,
 ) -> Result<Vec<Thread>, String> {
+    let filter = match filter.as_deref() {
+        None => ThreadFilter::Inbox,
+        Some(s) => ThreadFilter::parse(s).ok_or_else(|| format!("unknown filter {s}"))?,
+    };
     state
         .store
-        .list_threads(account_id.as_ref(), before, limit.unwrap_or(200))
+        .list_threads(account_id.as_ref(), &filter, before, limit.unwrap_or(200))
         .map_err(estr)
+}
+
+/// The stored user labels across all accounts (sidebar), name-sorted.
+#[tauri::command]
+pub fn list_labels(state: State<'_, MailState>) -> Result<Vec<Label>, String> {
+    state.store.list_labels().map_err(estr)
 }
 
 /// Calendar feed: every scheduled thread, regardless of inbox/archive state

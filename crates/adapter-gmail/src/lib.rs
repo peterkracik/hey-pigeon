@@ -265,6 +265,20 @@ struct WirePhoto {
 }
 
 #[derive(Deserialize)]
+struct WireLabelsList {
+    #[serde(default)]
+    labels: Vec<WireLabel>,
+}
+
+#[derive(Deserialize)]
+struct WireLabel {
+    id: String,
+    name: String,
+    #[serde(rename = "type", default)]
+    label_type: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireProfile {
     email_address: String,
@@ -388,7 +402,10 @@ fn decode_entities(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let Some(end) = rest[..rest.len().min(10)].find(';') else {
+        // Byte-wise scan: ';' is ASCII, so the position is a char boundary
+        // even when multibyte text sits inside the 10-byte lookahead window
+        // (slicing at byte 10 panicked mid-char on snippets like "&… vý…").
+        let Some(end) = rest.bytes().take(10).position(|b| b == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -508,6 +525,7 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         .and_then(|p| header(p, "Subject"))
         .unwrap_or("(no subject)")
         .to_string();
+    let labels = heypigeon_core::sync::thread_labels_union(&messages);
     let thread = Thread {
         id: wire.id.clone(),
         account_id: account_id.clone(),
@@ -515,13 +533,16 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         snippet: last.map(|m| m.snippet.clone()).unwrap_or_default(),
         last_msg_at: messages.iter().map(|m| m.date).max().unwrap_or(0),
         is_read: messages.iter().all(|m| m.is_read),
-        is_inbox: messages.iter().any(|m| m.label_ids.iter().any(|l| l == "INBOX")),
-        is_archived: false,
+        is_inbox: labels.iter().any(|l| l == "INBOX"),
+        // Archive semantics live in core (sync::derive_is_archived): not in
+        // the inbox, not trash/spam/draft, and not sent-only.
+        is_archived: heypigeon_core::sync::derive_is_archived(&labels, &messages),
         msg_count: messages.len() as i64,
         from_summary: last.map(|m| display_name(&m.from_addr)).unwrap_or_default(),
         last_from_addr: last.map(|m| bare_addr(&m.from_addr)).unwrap_or_default(),
         // Local-only metadata — the wire never carries a schedule.
         scheduled_at: None,
+        labels,
     };
     (thread, messages)
 }
@@ -570,9 +591,12 @@ impl MailProvider for GmailProvider {
         page_token: Option<String>,
     ) -> Result<ThreadPage, MailError> {
         let mut url = url::Url::parse(&format!("{API}/threads")).expect("static url");
+        // No labelIds filter: the backfill covers the whole recent corpus
+        // (SENT/DRAFT/STARRED/user labels), and includeSpamTrash pulls the
+        // Spam + Trash folders — threads.list excludes them by default.
         url.query_pairs_mut()
-            .append_pair("labelIds", "INBOX")
             .append_pair("q", &format!("newer_than:{window_days}d"))
+            .append_pair("includeSpamTrash", "true")
             .append_pair("maxResults", "100");
         if let Some(t) = &page_token {
             url.query_pairs_mut().append_pair("pageToken", t);
@@ -604,6 +628,18 @@ impl MailProvider for GmailProvider {
         }
 
         Ok(ThreadPage { threads, next_page_token: list.next_page_token })
+    }
+
+    async fn list_labels(&self, account_id: &AccountId) -> Result<Vec<Label>, MailError> {
+        let list: WireLabelsList = self.get_json(account_id, &format!("{API}/labels")).await?;
+        // User-created labels only — system labels (INBOX, SENT, CATEGORY_*…)
+        // are folders, not sidebar labels.
+        Ok(list
+            .labels
+            .into_iter()
+            .filter(|l| l.label_type == "user")
+            .map(|l| Label { account_id: account_id.clone(), id: l.id, name: l.name })
+            .collect())
     }
 
     async fn list_history(
@@ -771,6 +807,9 @@ mod tests {
         assert_eq!(decode_entities("caf&#xE9; &nbsp;ok"), "café \u{a0}ok");
         assert_eq!(decode_entities("5 & 6 &unknown; &#zz;"), "5 & 6 &unknown; &#zz;");
         assert_eq!(decode_entities("no entities"), "no entities");
+        // multibyte char inside the 10-byte lookahead window must not panic
+        assert_eq!(decode_entities("výhodná & príležitosť"), "výhodná & príležitosť");
+        assert_eq!(decode_entities("&abýcdéf;x"), "&abýcdéf;x");
     }
 
     #[test]
@@ -852,5 +891,62 @@ mod tests {
         assert_eq!(messages[0].body_text.as_deref(), Some("Hello there"));
         assert_eq!(messages[0].body_html.as_deref(), Some("<b>Hi</b>"));
         assert_eq!(messages[0].to_addrs, vec!["me@example.com"]);
+        assert_eq!(thread.labels, vec!["INBOX", "UNREAD"]);
+        assert!(!thread.is_archived, "inbox mail is not archived");
+    }
+
+    #[test]
+    fn wire_thread_derives_folder_state() {
+        let msg = |id: &str, labels: &[&str]| {
+            serde_json::json!({
+                "id": id,
+                "labelIds": labels,
+                "snippet": "s",
+                "internalDate": "1756600000000",
+                "payload": { "mimeType": "text/plain", "headers": [
+                    {"name": "From", "value": "me@example.com"},
+                    {"name": "Subject", "value": "S"}
+                ]}
+            })
+        };
+        // sent-only: belongs to Sent, NOT Archive
+        let wire: WireThread = serde_json::from_value(
+            serde_json::json!({ "id": "t1", "messages": [msg("m1", &["SENT"])] }),
+        )
+        .unwrap();
+        let (t, _) = to_thread(&"acc".to_string(), &wire);
+        assert_eq!(t.labels, vec!["SENT"]);
+        assert!(!t.is_inbox && !t.is_archived);
+
+        // received + archived elsewhere: no INBOX, has a non-SENT message
+        let wire: WireThread = serde_json::from_value(serde_json::json!({
+            "id": "t2", "messages": [msg("m1", &["SENT"]), msg("m2", &["IMPORTANT"])]
+        }))
+        .unwrap();
+        let (t, _) = to_thread(&"acc".to_string(), &wire);
+        assert!(t.is_archived, "archived reply-thread shows in Archive");
+        assert_eq!(t.labels, vec!["SENT", "IMPORTANT"]);
+
+        // trashed: Trash folder, never Archive
+        let wire: WireThread = serde_json::from_value(
+            serde_json::json!({ "id": "t3", "messages": [msg("m1", &["TRASH"])] }),
+        )
+        .unwrap();
+        let (t, _) = to_thread(&"acc".to_string(), &wire);
+        assert!(!t.is_inbox && !t.is_archived);
+    }
+
+    #[test]
+    fn wire_labels_filter_user_type() {
+        let json = serde_json::json!({ "labels": [
+            {"id": "INBOX", "name": "INBOX", "type": "system"},
+            {"id": "CATEGORY_SOCIAL", "name": "CATEGORY_SOCIAL", "type": "system"},
+            {"id": "Label_7", "name": "Receipts", "type": "user"}
+        ]});
+        let list: WireLabelsList = serde_json::from_value(json).unwrap();
+        let user: Vec<_> = list.labels.into_iter().filter(|l| l.label_type == "user").collect();
+        assert_eq!(user.len(), 1);
+        assert_eq!(user[0].id, "Label_7");
+        assert_eq!(user[0].name, "Receipts");
     }
 }

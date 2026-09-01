@@ -78,6 +78,18 @@ pub trait MailProvider {
         page_token: Option<String>,
     ) -> impl std::future::Future<Output = Result<ThreadPage, MailError>> + Send;
 
+    /// The account's labels (Gmail `users.labels.list`), user-created only
+    /// — system labels are folders, not sidebar labels. Default: none, so
+    /// providers without label support keep compiling (DESIGN.md: new
+    /// capability = method with default).
+    fn list_labels(
+        &self,
+        account_id: &AccountId,
+    ) -> impl std::future::Future<Output = Result<Vec<Label>, MailError>> + Send {
+        let _ = account_id;
+        async { Ok(Vec::new()) }
+    }
+
     /// Changes since `start_history_id` (Gmail `users.history.list`).
     /// Must return `MailError::HistoryExpired` when the checkpoint is too
     /// old for the provider (Gmail 404) — the caller re-runs backfill.
@@ -119,10 +131,12 @@ pub trait Store {
     /// Remove a thread and its messages (last message deleted/trashed).
     fn delete_thread(&self, thread_id: &ThreadId) -> Result<(), StoreError>;
 
-    /// Inbox list query: newest first, keyset pagination via `before` (epoch ms).
+    /// Thread list query: newest first, keyset pagination via `before`
+    /// (epoch ms), scoped to one folder/label via `filter`.
     fn list_threads(
         &self,
         account_id: Option<&AccountId>,
+        filter: &ThreadFilter,
         before: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Thread>, StoreError>;
@@ -138,6 +152,19 @@ pub trait Store {
         limit: u32,
     ) -> Result<Vec<SearchResult>, StoreError> {
         let _ = (query, limit);
+        Ok(Vec::new())
+    }
+
+    /// Replace the stored label list for one account (sync refresh —
+    /// deleted labels must disappear). Default no-op keeps existing
+    /// adapters compiling.
+    fn set_labels(&self, account_id: &AccountId, labels: &[Label]) -> Result<(), StoreError> {
+        let _ = (account_id, labels);
+        Ok(())
+    }
+
+    /// All stored labels across accounts (sidebar). Default: none.
+    fn list_labels(&self) -> Result<Vec<Label>, StoreError> {
         Ok(Vec::new())
     }
 

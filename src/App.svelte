@@ -10,7 +10,7 @@
   import Tooltip from "./lib/ds/Tooltip.svelte";
   import Icon from "./lib/ds/Icon.svelte";
   import Toast from "./lib/ds/Toast.svelte";
-  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type ThreadMsg } from "./lib/data";
+  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type LabelDef, type ThreadMsg } from "./lib/data";
   import type { ComposeData } from "./lib/Composer.svelte";
   import { toasts, toast, dismissToast } from "./lib/toast.svelte";
   import * as ipc from "./lib/ipc";
@@ -33,13 +33,39 @@
   let hoverActions: string[] = $state(["delete", "pin", "remind"]);
   let pinListEnabled = $state(true);
   let liveAccounts: Account[] = $state([]);
+  let liveLabels: ipc.BackendLabel[] = $state([]);
+
+  // Folder key → backend list_threads filter. `label:<id>` passes through;
+  // scheduled/settings (and the mock label-* keys) have no backend folder.
+  const FOLDER_FILTERS: Record<string, ipc.ThreadFilter> = {
+    inbox: "inbox",
+    all: "all",
+    starred: "starred",
+    sent: "sent",
+    drafts: "drafts",
+    archive: "archive",
+    spam: "spam",
+    trash: "trash",
+  };
+  function filterFor(f: string): ipc.ThreadFilter | null {
+    if (f.startsWith("label:")) return f as ipc.ThreadFilter;
+    return FOLDER_FILTERS[f] ?? null;
+  }
+  // Last fetched rows per folder — shown instantly on folder switch while
+  // the refetch runs.
+  const folderCache = new Map<string, Email[]>();
 
   // Live mode: inside Tauri the mock seed is replaced by real store data.
   async function refreshLive() {
-    const [accounts, threads, scheduled] = await Promise.all([
+    const f = folder;
+    const filter = filterFor(f);
+    const wantFolder = filter !== null && filter !== "inbox";
+    const [accounts, threads, folderThreads, scheduled, labels] = await Promise.all([
       ipc.listAccounts(),
       ipc.listThreads(),
+      wantFolder ? ipc.listThreads(filter!) : Promise.resolve([] as ipc.BackendThread[]),
       ipc.listScheduled(),
+      ipc.listLabels(),
     ]);
     liveAccounts = accounts.map((a) => ({
       id: a.id,
@@ -49,22 +75,31 @@
       avatarUrl: a.avatar_url ?? undefined,
       signature: a.signature,
     }));
+    liveLabels = labels;
     // Preserve already-loaded bodies + local flags across refreshes.
     const prev = new Map(emailsData.map((e) => [e.id, e]));
+    const seen = new Set<string>();
+    const rows: Email[] = [];
+    const push = (t: ipc.BackendThread, folderKey: string) => {
+      if (seen.has(t.id) || pendingUndo.has(t.id)) return;
+      seen.add(t.id);
+      const mapped = ipc.threadToEmail(t);
+      mapped.folder = folderKey;
+      const old = prev.get(t.id);
+      rows.push(old?.thread ? { ...mapped, thread: old.thread } : mapped);
+    };
+    // Active-folder rows first: a thread living in several folders at once
+    // (inbox + starred, say) must render in the open view.
+    for (const t of folderThreads) push(t, f);
+    for (const t of threads) push(t, "inbox");
     // Scheduled threads that left the inbox window (archived, or beyond the
-    // list_threads page limit) must still feed the calendar view.
-    const inboxIds = new Set(threads.map((t) => t.id));
-    const extras = scheduled.filter((t) => !inboxIds.has(t.id));
-    emailsData = [...threads, ...extras]
-      .filter((t) => !pendingUndo.has(t.id))
-      .map((t) => {
-        const mapped = ipc.threadToEmail(t);
-        // Merged extras that are no longer in the inbox must not leak into the
-        // inbox folder view.
-        if (!inboxIds.has(t.id) && (!t.is_inbox || t.is_archived)) mapped.folder = "archive";
-        const old = prev.get(t.id);
-        return old?.thread ? { ...mapped, thread: old.thread } : mapped;
-      });
+    // list_threads page limit) must still feed the calendar view. Ones no
+    // longer in the inbox must not leak into the inbox folder view.
+    for (const t of scheduled) {
+      if (!seen.has(t.id)) push(t, !t.is_inbox || t.is_archived ? "archive" : "inbox");
+    }
+    emailsData = rows;
+    folderCache.set(f, rows.filter((e) => f === "all" || e.folder === f));
     // Search hits merged from outside the inbox (archived etc.) are not in
     // list_threads; while one is selected/open, dropping it would blank the
     // open ThreadView (mark_read fires threads_updated right after opening).
@@ -79,7 +114,6 @@
 
   $effect(() => {
     if (!ipc.isTauri) return;
-    refreshLive().catch((e) => console.error("ipc refresh failed", e));
     let unsub: (() => void) | undefined;
     ipc.onThreadsUpdated(() => {
       refreshLive().catch((e) => console.error("ipc refresh failed", e));
@@ -87,7 +121,31 @@
     return () => unsub?.();
   });
 
+  // Initial load + per-folder refetch: folder views come from the backend
+  // (list_threads filter), not from client-side filtering of the inbox page.
+  $effect(() => {
+    if (!ipc.isTauri) return;
+    void folder;
+    refreshLive().catch((e) => console.error("ipc refresh failed", e));
+  });
+
   const accounts = $derived(ipc.isTauri && liveAccounts.length ? liveAccounts : ACCOUNTS);
+
+  // Real user labels in live mode (name-sorted by the backend; tag palette
+  // cycles); design mocks in browser mode. CATEGORY_* never reaches here
+  // (the adapter stores user-type labels only) but guard anyway.
+  const LABEL_TAGS = ["amber", "coral", "mint", "sky", "lavender"];
+  const sidebarLabels = $derived.by((): LabelDef[] =>
+    ipc.isTauri && liveAccounts.length
+      ? liveLabels
+          .filter((l) => !l.id.startsWith("CATEGORY_"))
+          .map((l, i) => ({
+            key: `label:${l.id}`,
+            label: l.name,
+            tag: LABEL_TAGS[i % LABEL_TAGS.length],
+          }))
+      : LABELS,
+  );
 
   const emails = $derived.by(() => {
     // Calendar view: only scheduled mail, ascending by schedule (matches the
@@ -117,7 +175,9 @@
       ? "Scheduled"
       : unified && folder === "inbox"
         ? "All inboxes"
-        : FOLDER_TITLES[folder],
+        : (FOLDER_TITLES[folder] ??
+          sidebarLabels.find((l) => l.key === folder)?.label ??
+          folder),
   );
   // Compose defaults to the viewed account filter; unified view falls back to the first account.
   const composeFromId = $derived(unified ? accounts[0]?.id : activeAccountId);
@@ -136,6 +196,10 @@
 
   function onEmailAction(id: string, action: string) {
     const em = emailsData.find((e) => e.id === id);
+    // ponytail: un-trash/un-spam needs new Mutation kinds (add INBOX, remove
+    // TRASH/SPAM); until then archive ('e') is disabled in Trash and Spam —
+    // remove-INBOX would be a nonsensical no-op on already-trashed mail.
+    if (ipc.isTauri && action === "done" && (folder === "trash" || folder === "spam")) return;
     if (em && (action === "done" || action === "delete")) {
       // Optimistic: drop from the local list now; the backend mutation is
       // deferred so Undo can cancel it and reinsert the row in place.
@@ -396,6 +460,15 @@
   }
 
   function selectFolder(f: string) {
+    // Instant switch: surface the last fetched rows for this folder now; the
+    // folder-tracking $effect refetches right after.
+    if (ipc.isTauri && f !== folder) {
+      const cached = folderCache.get(f)?.filter((e) => !pendingUndo.has(e.id));
+      if (cached?.length) {
+        const ids = new Set(cached.map((e) => e.id));
+        emailsData = [...cached, ...emailsData.filter((e) => !ids.has(e.id))];
+      }
+    }
     folder = f;
     view = "mail";
     selectedId = null;
@@ -508,7 +581,7 @@
     onToggleUnified={(v) => (unified = v)}
     onAddAccount={addAccount}
     {counts}
-    labels={LABELS}
+    labels={sidebarLabels}
   />
   <div class="rail">
     <button class="rail-btn" title="Toggle sidebar" onclick={() => (sidebarOpen = !sidebarOpen)}>

@@ -27,7 +27,28 @@ export interface BackendThread {
   last_from_addr: string;
   /** Local-only "remind me" schedule (epoch ms). Never synced to Gmail. */
   scheduled_at: number | null;
+  /** Union of Gmail label ids over the thread's messages. */
+  labels: string[];
 }
+
+/** One user-created Gmail label (system labels map to folders). */
+export interface BackendLabel {
+  account_id: string;
+  id: string;
+  name: string;
+}
+
+/** Folder/label filter for listThreads — mirrors core ThreadFilter. */
+export type ThreadFilter =
+  | "inbox"
+  | "starred"
+  | "sent"
+  | "drafts"
+  | "archive"
+  | "spam"
+  | "trash"
+  | "all"
+  | `label:${string}`;
 
 export interface BackendMessage {
   id: string;
@@ -78,10 +99,13 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 
 export const listAccounts = () => invoke<BackendAccount[]>("list_accounts");
 export const listThreads = (
+  filter?: ThreadFilter,
   accountId?: string,
   before?: number,
   limit?: number,
-) => invoke<BackendThread[]>("list_threads", { accountId, before, limit });
+) => invoke<BackendThread[]>("list_threads", { filter, accountId, before, limit });
+/** Stored user labels across all accounts, name-sorted (sidebar). */
+export const listLabels = () => invoke<BackendLabel[]>("list_labels");
 /** Calendar feed: every scheduled thread, even archived / out of the inbox window. */
 export const listScheduled = () => invoke<BackendThread[]>("list_scheduled");
 /** Local FTS5 search (operators + bare text); ranked, with snippet. */

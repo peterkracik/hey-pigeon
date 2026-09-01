@@ -33,8 +33,25 @@ struct MemStoreInner {
     accounts: HashMap<AccountId, Account>,
     threads: HashMap<ThreadId, Thread>,
     messages: HashMap<MessageId, Message>,
+    labels: HashMap<AccountId, Vec<Label>>,
     outbox: Vec<OutboxItem>,
     next_outbox_id: i64,
+}
+
+/// Same folder semantics as the SQLite adapter's SQL (keep in lockstep).
+fn matches_filter(t: &Thread, filter: &ThreadFilter) -> bool {
+    let has = |l: &str| t.labels.iter().any(|x| x == l);
+    match filter {
+        ThreadFilter::Inbox => t.is_inbox && !t.is_archived,
+        ThreadFilter::All => !has("TRASH") && !has("SPAM"),
+        ThreadFilter::Starred => has("STARRED") && !has("TRASH") && !has("SPAM"),
+        ThreadFilter::Sent => has("SENT") && !has("TRASH") && !has("SPAM"),
+        ThreadFilter::Drafts => has("DRAFT"),
+        ThreadFilter::Archive => t.is_archived,
+        ThreadFilter::Spam => has("SPAM"),
+        ThreadFilter::Trash => has("TRASH"),
+        ThreadFilter::Label(id) => has(id) && !has("TRASH") && !has("SPAM"),
+    }
 }
 
 impl Store for MemStore {
@@ -108,6 +125,7 @@ impl Store for MemStore {
     fn list_threads(
         &self,
         account_id: Option<&AccountId>,
+        filter: &ThreadFilter,
         before: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Thread>, StoreError> {
@@ -115,7 +133,7 @@ impl Store for MemStore {
         let mut v: Vec<_> = g
             .threads
             .values()
-            .filter(|t| t.is_inbox && !t.is_archived)
+            .filter(|t| matches_filter(t, filter))
             .filter(|t| account_id.is_none_or(|a| &t.account_id == a))
             .filter(|t| before.is_none_or(|b| t.last_msg_at < b))
             .cloned()
@@ -141,16 +159,37 @@ impl Store for MemStore {
         Ok(v)
     }
 
+    fn set_labels(&self, account_id: &AccountId, labels: &[Label]) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.labels.insert(account_id.clone(), labels.to_vec());
+        Ok(())
+    }
+
+    fn list_labels(&self) -> Result<Vec<Label>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Label> = g.labels.values().flatten().cloned().collect();
+        v.sort_by(|a, b| (&a.account_id, &a.id).cmp(&(&b.account_id, &b.id)));
+        Ok(v)
+    }
+
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError> {
         let mut g = self.inner.lock().unwrap();
+        // Match SQLite: the optimistic apply also flips the thread-level
+        // labels so folder queries agree before the next delta sync.
         let apply = |t: &mut Thread| match mutation {
             Mutation::Archive { .. } => {
                 t.is_archived = true;
                 t.is_inbox = false;
+                t.labels.retain(|l| l != "INBOX");
             }
             Mutation::MarkRead { read, .. } => t.is_read = *read,
             Mutation::Trash { .. } => {
                 t.is_inbox = false;
+                t.is_archived = false;
+                t.labels.retain(|l| l != "INBOX");
+                if !t.labels.iter().any(|l| l == "TRASH") {
+                    t.labels.push("TRASH".to_string());
+                }
             }
             Mutation::Send { .. } => {}
         };
@@ -238,6 +277,7 @@ impl FakeProvider {
                     from_summary: format!("Sender {i}"),
                     last_from_addr: format!("sender{i}@example.com"),
                     scheduled_at: None,
+                    labels: vec!["INBOX".to_string()],
                 };
                 let message = Message {
                     id: format!("{tid}:m0"),
@@ -293,6 +333,21 @@ impl MailProvider for FakeProvider {
             email: format!("{}@example.com", self.account_id),
             history_id: "hist-1".to_string(),
         })
+    }
+
+    async fn list_labels(&self, account_id: &AccountId) -> Result<Vec<Label>, MailError> {
+        Ok(vec![
+            Label {
+                account_id: account_id.clone(),
+                id: "Label_1".to_string(),
+                name: "Projects".to_string(),
+            },
+            Label {
+                account_id: account_id.clone(),
+                id: "Label_2".to_string(),
+                name: "Invoices".to_string(),
+            },
+        ])
     }
 
     async fn list_recent(

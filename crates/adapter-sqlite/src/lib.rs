@@ -125,6 +125,19 @@ const MIGRATIONS: &[&str] = &[
     // v6 — local-only "remind me" schedule (epoch ms). Never synced to
     // Gmail; sync re-upserts must not clobber it (see upsert_thread).
     "ALTER TABLE threads ADD COLUMN scheduled_at INTEGER;",
+    // v7 — folder/label support. `threads.labels` = JSON array of Gmail
+    // label ids (union over the thread's messages); pre-existing rows start
+    // at '[]' and heal on the next backfill re-upsert. `labels` = the
+    // account's user-created labels (sidebar), refreshed wholesale each sync.
+    "
+    ALTER TABLE threads ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';
+    CREATE TABLE labels (
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        id         TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        PRIMARY KEY (account_id, id)
+    );
+    ",
 ];
 
 pub struct SqliteStore {
@@ -233,11 +246,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         from_summary: r.get(9)?,
         last_from_addr: r.get(10)?,
         scheduled_at: r.get(11)?,
+        labels: serde_json::from_str(&r.get::<_, String>(12)?).unwrap_or_default(),
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -297,25 +311,29 @@ impl Store for SqliteStore {
     }
 
     fn upsert_thread(&self, t: &Thread) -> Result<(), StoreError> {
+        let labels = serde_json::to_string(&t.labels).map_err(err)?;
         self.with(|c| {
             // scheduled_at is deliberately absent from the column list AND
             // the UPDATE set: it is local-only metadata (never synced to
             // Gmail), so a sync re-upsert of provider data must not clobber
             // an existing schedule. Writes go through `set_schedule` only.
+            // labels, by contrast, ARE provider data — re-upserts must write
+            // them so the folder queries stay current.
             c.execute(
                 "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
-                                      is_inbox, is_archived, msg_count, from_summary, last_from_addr)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                                      is_inbox, is_archived, msg_count, from_summary, last_from_addr,
+                                      labels)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                      ON CONFLICT(id) DO UPDATE SET
                        subject = excluded.subject, snippet = excluded.snippet,
                        last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
                        is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
                        msg_count = excluded.msg_count, from_summary = excluded.from_summary,
-                       last_from_addr = excluded.last_from_addr",
+                       last_from_addr = excluded.last_from_addr, labels = excluded.labels",
                 params![
                     t.id, t.account_id, t.subject, t.snippet, t.last_msg_at,
                     t.is_read, t.is_inbox, t.is_archived, t.msg_count, t.from_summary,
-                    t.last_from_addr
+                    t.last_from_addr, labels
                 ],
             )
             .map(|_| ())
@@ -364,20 +382,78 @@ impl Store for SqliteStore {
     fn list_threads(
         &self,
         account_id: Option<&AccountId>,
+        filter: &ThreadFilter,
         before: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Thread>, StoreError> {
+        // json_each over the (small) thread label array — only fixed system
+        // label ids are interpolated; user label ids bind as ?4.
+        // Keep the folder semantics in lockstep with fakes::matches_filter.
+        fn has(label: &str) -> String {
+            format!("EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE json_each.value = '{label}')")
+        }
+        let not_junk = format!("NOT {} AND NOT {}", has("TRASH"), has("SPAM"));
+        let (cond, label_param): (String, Option<&str>) = match filter {
+            // Flag-based, not label-based: the optimistic local apply flips
+            // the flags instantly, before any provider round-trip.
+            ThreadFilter::Inbox => ("is_inbox = 1 AND is_archived = 0".to_string(), None),
+            // Archive semantics: see sync::derive_is_archived — no INBOX/
+            // TRASH/SPAM/DRAFT and at least one received (non-SENT) message.
+            ThreadFilter::Archive => ("is_archived = 1".to_string(), None),
+            ThreadFilter::All => (not_junk.clone(), None),
+            ThreadFilter::Starred => (format!("{} AND {not_junk}", has("STARRED")), None),
+            ThreadFilter::Sent => (format!("{} AND {not_junk}", has("SENT")), None),
+            ThreadFilter::Drafts => (has("DRAFT"), None),
+            ThreadFilter::Spam => (has("SPAM"), None),
+            ThreadFilter::Trash => (has("TRASH"), None),
+            ThreadFilter::Label(id) => (
+                format!(
+                    "EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE json_each.value = ?4)
+                     AND {not_junk}"
+                ),
+                Some(id.as_str()),
+            ),
+        };
         self.with(|c| {
             // Keyset pagination — never OFFSET (DESIGN.md).
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
-                 WHERE is_inbox = 1 AND is_archived = 0
+                 WHERE ({cond})
                    AND (?1 IS NULL OR account_id = ?1)
                    AND (?2 IS NULL OR last_msg_at < ?2)
                  ORDER BY last_msg_at DESC
                  LIMIT ?3"
             ))?;
-            let rows = stmt.query_map(params![account_id, before, limit], row_to_thread)?;
+            let rows = match label_param {
+                Some(id) => stmt.query_map(params![account_id, before, limit, id], row_to_thread)?,
+                None => stmt.query_map(params![account_id, before, limit], row_to_thread)?,
+            };
+            rows.collect()
+        })
+    }
+
+    fn set_labels(&self, account_id: &AccountId, labels: &[Label]) -> Result<(), StoreError> {
+        self.with(|c| {
+            // Wholesale replace: labels deleted upstream must disappear.
+            c.execute("DELETE FROM labels WHERE account_id = ?1", params![account_id])?;
+            let mut stmt =
+                c.prepare("INSERT INTO labels (account_id, id, name) VALUES (?1, ?2, ?3)")?;
+            for l in labels {
+                stmt.execute(params![account_id, l.id, l.name])?;
+            }
+            Ok(())
+        })
+    }
+
+    fn list_labels(&self) -> Result<Vec<Label>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT account_id, id, name FROM labels
+                 ORDER BY name COLLATE NOCASE, account_id",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok(Label { account_id: r.get(0)?, id: r.get(1)?, name: r.get(2)? })
+            })?;
             rows.collect()
         })
     }
@@ -488,7 +564,7 @@ impl Store for SqliteStore {
                     |r| {
                         Ok(SearchResult {
                             thread: row_to_thread(r)?,
-                            snippet: r.get(12)?,
+                            snippet: r.get(13)?,
                         })
                     },
                 )?;
@@ -528,29 +604,43 @@ impl Store for SqliteStore {
     }
 
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError> {
-        let (sql, thread_id) = match mutation {
-            Mutation::Archive { thread_id } => (
-                "UPDATE threads SET is_archived = 1, is_inbox = 0 WHERE id = ?1".to_string(),
-                thread_id,
-            ),
-            Mutation::MarkRead { thread_id, read } => (
-                format!(
-                    "UPDATE threads SET is_read = {} WHERE id = ?1",
-                    if *read { 1 } else { 0 }
-                ),
-                thread_id,
-            ),
-            Mutation::Trash { thread_id } => (
-                "UPDATE threads SET is_inbox = 0 WHERE id = ?1".to_string(),
-                thread_id,
-            ),
-            // Nothing changes locally for outgoing mail (no Sent view in M1).
+        // Archive/Trash also flip the thread-level labels so the folder
+        // queries agree with the optimistic state before the next delta sync
+        // (which recomputes the union from message labels anyway).
+        let (thread_id, flags) = match mutation {
+            Mutation::MarkRead { thread_id, read } => {
+                let n = self.with(|c| {
+                    c.execute(
+                        "UPDATE threads SET is_read = ?2 WHERE id = ?1",
+                        params![thread_id, read],
+                    )
+                })?;
+                if n == 0 {
+                    return Err(StoreError(format!("unknown thread {thread_id}")));
+                }
+                return Ok(());
+            }
+            // Nothing changes locally for outgoing mail (no local Sent write
+            // — the sent thread lands via the next delta sync).
             Mutation::Send { .. } => return Ok(()),
+            Mutation::Archive { thread_id } => (thread_id, (true, false)),
+            Mutation::Trash { thread_id } => (thread_id, (false, false)),
         };
-        let n = self.with(|c| c.execute(&sql, params![thread_id]))?;
-        if n == 0 {
+        let Some(mut t) = self.get_thread(thread_id)? else {
             return Err(StoreError(format!("unknown thread {thread_id}")));
+        };
+        let (is_archived, is_inbox) = flags;
+        t.labels.retain(|l| l != "INBOX");
+        if matches!(mutation, Mutation::Trash { .. }) && !t.labels.iter().any(|l| l == "TRASH") {
+            t.labels.push("TRASH".to_string());
         }
+        let labels = serde_json::to_string(&t.labels).map_err(err)?;
+        self.with(|c| {
+            c.execute(
+                "UPDATE threads SET is_archived = ?2, is_inbox = ?3, labels = ?4 WHERE id = ?1",
+                params![thread_id, is_archived, is_inbox, labels],
+            )
+        })?;
         Ok(())
     }
 
@@ -632,14 +722,14 @@ mod tests {
 
         assert_eq!(n, 25);
         assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-1"));
-        let threads = store.list_threads(None, None, 100).unwrap();
+        let threads = store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap();
         assert_eq!(threads.len(), 25);
         assert!(threads.windows(2).all(|w| w[0].last_msg_at >= w[1].last_msg_at));
 
         // keyset pagination: second page strictly older, no overlap
-        let page1 = store.list_threads(None, None, 10).unwrap();
+        let page1 = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap();
         let page2 = store
-            .list_threads(None, Some(page1.last().unwrap().last_msg_at), 10)
+            .list_threads(None, &ThreadFilter::Inbox, Some(page1.last().unwrap().last_msg_at), 10)
             .unwrap();
         assert_eq!(page2.len(), 10);
         assert!(page2[0].last_msg_at < page1.last().unwrap().last_msg_at);
@@ -651,7 +741,7 @@ mod tests {
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
         sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
 
-        let t = &store.list_threads(None, None, 1).unwrap()[0];
+        let t = &store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0];
         let msgs = store.list_messages(&t.id).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].thread_id, t.id);
@@ -664,13 +754,13 @@ mod tests {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
         sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let id = store.list_threads(None, None, 1).unwrap()[0].id.clone();
+        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].id.clone();
 
         outbox::enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() }).unwrap();
 
         // local view updated instantly; thread gone from inbox list
         assert!(store.get_thread(&id).unwrap().unwrap().is_archived);
-        assert!(!store.list_threads(None, None, 10).unwrap().iter().any(|t| t.id == id));
+        assert!(!store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap().iter().any(|t| t.id == id));
 
         let (applied, failed) = outbox::drain(&provider, &store, 10).await.unwrap();
         assert_eq!((applied, failed), (1, 0));
@@ -682,7 +772,7 @@ mod tests {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 1, 10);
         sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let t = store.list_threads(None, None, 1).unwrap()[0].clone();
+        let t = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].clone();
         let mut m = store.list_messages(&t.id).unwrap()[0].clone();
         assert!(m.body_text.is_some(), "fixture has a body");
 
@@ -700,7 +790,7 @@ mod tests {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
         sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let id = store.list_threads(None, None, 1).unwrap()[0].id.clone();
+        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].id.clone();
 
         store.set_schedule(&id, Some(1_756_700_000_000)).unwrap();
         assert_eq!(
@@ -718,7 +808,7 @@ mod tests {
         );
 
         // Listing exposes it too (drives the calendar view).
-        let listed = store.list_threads(None, None, 10).unwrap();
+        let listed = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap();
         assert_eq!(
             listed.iter().find(|t| t.id == id).unwrap().scheduled_at,
             Some(1_756_700_000_000)
@@ -735,14 +825,14 @@ mod tests {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
         sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let id = store.list_threads(None, None, 1).unwrap()[0].id.clone();
+        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].id.clone();
         store.set_schedule(&id, Some(42)).unwrap();
 
         // "Remind later" flow: schedule, then archive to clear the inbox.
         outbox::enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() })
             .unwrap();
         assert!(
-            !store.list_threads(None, None, 10).unwrap().iter().any(|t| t.id == id),
+            !store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap().iter().any(|t| t.id == id),
             "archived thread leaves the inbox list"
         );
 
@@ -754,6 +844,154 @@ mod tests {
         // Clearing the schedule removes it from the feed.
         store.set_schedule(&id, None).unwrap();
         assert!(!store.list_scheduled().unwrap().iter().any(|t| t.id == id));
+    }
+
+    // ------------------------------------------------------------- folders
+
+    fn seed_labelled(
+        s: &SqliteStore,
+        id: &str,
+        labels: &[&str],
+        is_inbox: bool,
+        is_archived: bool,
+        last_msg_at: i64,
+    ) {
+        s.upsert_thread(&Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: format!("Subject {id}"),
+            snippet: String::new(),
+            last_msg_at,
+            is_read: true,
+            is_inbox,
+            is_archived,
+            msg_count: 1,
+            from_summary: "Someone".to_string(),
+            last_from_addr: "someone@example.com".to_string(),
+            scheduled_at: None,
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+        })
+        .unwrap();
+    }
+
+    fn ids(s: &SqliteStore, f: &ThreadFilter) -> Vec<String> {
+        let mut v: Vec<String> =
+            s.list_threads(None, f, None, 100).unwrap().into_iter().map(|t| t.id).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn folder_filters_query_thread_labels() {
+        let s = store();
+        seed_labelled(&s, "in", &["INBOX"], true, false, 8000);
+        seed_labelled(&s, "star", &["INBOX", "STARRED"], true, false, 7000);
+        seed_labelled(&s, "sent", &["SENT"], false, false, 6000);
+        seed_labelled(&s, "draft", &["DRAFT"], false, false, 5000);
+        seed_labelled(&s, "spam", &["SPAM"], false, false, 4000);
+        seed_labelled(&s, "trash", &["TRASH"], false, false, 3000);
+        seed_labelled(&s, "arch", &["Label_9"], false, true, 2000);
+        // trashed starred/labelled mail must not leak into Starred/label views
+        seed_labelled(&s, "trash-star", &["STARRED", "TRASH", "Label_9"], false, false, 1000);
+
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["in", "star"]);
+        assert_eq!(ids(&s, &ThreadFilter::Starred), ["star"]);
+        assert_eq!(ids(&s, &ThreadFilter::Sent), ["sent"]);
+        assert_eq!(ids(&s, &ThreadFilter::Drafts), ["draft"]);
+        assert_eq!(ids(&s, &ThreadFilter::Spam), ["spam"]);
+        assert_eq!(ids(&s, &ThreadFilter::Trash), ["trash", "trash-star"]);
+        assert_eq!(ids(&s, &ThreadFilter::Archive), ["arch"]);
+        assert_eq!(
+            ids(&s, &ThreadFilter::Label("Label_9".to_string())),
+            ["arch"],
+            "label view hides trashed mail"
+        );
+        assert_eq!(
+            ids(&s, &ThreadFilter::All),
+            ["arch", "draft", "in", "sent", "star"],
+            "All hides trash + spam"
+        );
+
+        // keyset pagination works under a filter too
+        let page1 = s.list_threads(None, &ThreadFilter::Trash, None, 1).unwrap();
+        assert_eq!(page1[0].id, "trash");
+        let page2 = s
+            .list_threads(None, &ThreadFilter::Trash, Some(page1[0].last_msg_at), 1)
+            .unwrap();
+        assert_eq!(page2[0].id, "trash-star");
+    }
+
+    #[test]
+    fn trash_apply_local_moves_thread_into_trash_folder() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        s.apply_local(&Mutation::Trash { thread_id: "t1".to_string() }).unwrap();
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), Vec::<String>::new());
+        assert_eq!(ids(&s, &ThreadFilter::Trash), ["t1"]);
+        // archive: INBOX label drops so the thread leaves the label-derived views
+        seed_labelled(&s, "t2", &["INBOX", "STARRED"], true, false, 1000);
+        s.apply_local(&Mutation::Archive { thread_id: "t2".to_string() }).unwrap();
+        let t2 = s.get_thread(&"t2".to_string()).unwrap().unwrap();
+        assert!(t2.is_archived && !t2.is_inbox);
+        assert_eq!(t2.labels, vec!["STARRED".to_string()]);
+    }
+
+    #[test]
+    fn labels_roundtrip_and_replace() {
+        let s = store();
+        let l = |id: &str, name: &str| Label {
+            account_id: "a1".to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
+        };
+        s.set_labels(&"a1".to_string(), &[l("L1", "zeta"), l("L2", "Alpha")]).unwrap();
+        let listed = s.list_labels().unwrap();
+        assert_eq!(
+            listed.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(),
+            ["Alpha", "zeta"],
+            "name-sorted, case-insensitive"
+        );
+        // wholesale replace: deleted labels disappear
+        s.set_labels(&"a1".to_string(), &[l("L2", "Alpha renamed")]).unwrap();
+        let listed = s.list_labels().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "L2");
+        assert_eq!(listed[0].name, "Alpha renamed");
+    }
+
+    #[test]
+    fn v7_migration_upgrades_existing_data() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v7-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v6.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let _ = SqliteStore::init_to(conn, 6).unwrap();
+        }
+        {
+            // Raw v6-shape rows — upsert_thread would already write `labels`.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (id, email, display_name, color)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                                      is_inbox, is_archived, msg_count, from_summary)
+                 VALUES ('t1', 'a1', 'Old row', 'snip', 1000, 1, 1, 0, 1, 'Someone')",
+                [],
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v7
+        let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert!(t.labels.is_empty(), "pre-v7 rows default to '[]', healed by backfill");
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["t1"]);
+        assert!(s.list_labels().unwrap().is_empty());
+        let _ = std::fs::remove_file(&path);
     }
 
     // ---------------------------------------------------------------- search
@@ -780,6 +1018,7 @@ mod tests {
             from_summary: from.to_string(),
             last_from_addr: from.to_string(),
             scheduled_at: None,
+            labels: vec!["INBOX".to_string()],
         })
         .unwrap();
         s.upsert_message(&Message {
@@ -926,9 +1165,33 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         {
             let conn = Connection::open(&path).unwrap();
-            let s = SqliteStore::init_to(conn, 4).unwrap();
-            s.upsert_account(&sample_account("a1")).unwrap();
-            seed_thread(&s, "t1", "Zanzibar itinerary", "a@x.com", "flights and hotels", 1000, false);
+            let _ = SqliteStore::init_to(conn, 4).unwrap();
+        }
+        {
+            // Raw v4-shape rows — upsert_thread would already write the v7
+            // `labels` column, which doesn't exist yet at v4.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (id, email, display_name, color)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                                      is_inbox, is_archived, msg_count, from_summary)
+                 VALUES ('t1', 'a1', 'Zanzibar itinerary', 'flights and hotels', 1000, 1, 1, 0, 1, 'a@x.com')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, thread_id, account_id, from_addr, to_addrs, date,
+                                       snippet, body_text, label_ids, is_read)
+                 VALUES ('t1-m1', 't1', 'a1', 'a@x.com', '[]', 1000,
+                         'flights and hotels', 'flights and hotels', '[\"INBOX\"]', 1)",
+                [],
+            )
+            .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap(); // runs v5 incl. rebuild
         assert_eq!(search(&s, "zanzibar").len(), 1, "subject indexed by rebuild");

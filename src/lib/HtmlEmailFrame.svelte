@@ -92,6 +92,14 @@
   }
 
   function onload() {
+    // Kill the UA's default 8px body margin so mail renders edge-to-edge;
+    // the email's own spacing is untouched.
+    try {
+      const doc = frame?.contentWindow?.document;
+      if (doc?.body) doc.body.style.margin = "0";
+    } catch {
+      /* cross-origin — leave as is */
+    }
     collapseQuote();
     resize();
   }

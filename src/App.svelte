@@ -687,7 +687,16 @@
 
 <svelte:document onkeydown={onKey} />
 
-<div class="app">
+<div class="frame">
+  <header class="apphead" data-tauri-drag-region>
+    <span class="apphead-title" data-tauri-drag-region>
+      {title}
+      {#if !threadOpen && (view === "calendar" || folder !== "settings")}
+        <span class="apphead-count">{emails.length}</span>
+      {/if}
+    </span>
+  </header>
+  <div class="app">
   <Sidebar
     open={sidebarOpen}
     width={sidebarWidth}
@@ -782,21 +791,6 @@
                 </Tooltip>
               </div>
             {/if}
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <span
-              class="title"
-              class:static={threadOpen}
-              onclick={() => {
-                if (threadOpen) return;
-                folder = "inbox";
-                unified = true;
-              }}
-            >
-              {title}
-              {#if !threadOpen && (view === "calendar" || folder !== "settings")}
-                <span class="count">{emails.length}</span>
-              {/if}
-            </span>
             <div class="spacer"></div>
             {#if !threadOpen && (view === "calendar" || folder !== "settings")}
               <div class="topbar-actions">
@@ -972,11 +966,13 @@
       {/each}
     </div>
   {/if}
+  </div>
 </div>
 
 <style>
   .app {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     display: flex;
     font-family: var(--font-body);
     background: var(--bg-page);
@@ -991,10 +987,7 @@
     /* One shade darker than the sidebar panel (navy-50) so the two surfaces
        read as separate layers. */
     background: var(--navy-100);
-    /* Center of the 34px toggle at 66px — same axis as the sidebar account
-       row (46px pad + 40px row) and the topbar title; the extra 28px keeps
-       everything clear of the overlay-titlebar traffic lights. */
-    padding-top: 49px;
+    padding-top: 14px;
     gap: 4px;
     z-index: 40;
   }
@@ -1055,7 +1048,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 51px 0 20px;
+    padding: 12px 0 16px;
     position: relative;
   }
   .back {
@@ -1064,18 +1057,28 @@
     top: 50%;
     transform: translateY(-50%);
   }
-  .title {
-    cursor: pointer;
+  .frame {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .apphead {
+    height: 48px;
+    flex-shrink: 0;
+    background: var(--surface-card);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .apphead-title {
     font-family: var(--font-display);
     font-weight: 700;
-    font-size: 20px;
+    font-size: 15px;
     color: var(--text-primary);
   }
-  .title.static {
-    cursor: default;
-  }
-  .count {
-    font-size: 14px;
+  .apphead-count {
+    font-size: 13px;
     color: var(--text-tertiary);
     font-weight: 400;
   }

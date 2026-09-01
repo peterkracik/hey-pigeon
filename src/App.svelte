@@ -730,7 +730,11 @@
         class="rail-btn"
         class:active={view === "mail"}
         title="Inbox"
-        onclick={() => switchView("mail")}
+        onclick={() => {
+          // Always a way home: from settings (or anywhere) back to the inbox.
+          if (view !== "mail") switchView("mail");
+          else if (folder === "settings") selectFolder("inbox");
+        }}
       >
         <Icon
           d="M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"
@@ -769,6 +773,9 @@
   <div class="main">
     <div class="scroll" bind:this={scrollEl}>
       <div class="column">
+        {#if searchOpen}
+          <SearchOverlay open onClose={() => (searchOpen = false)} onOpen={openSearchResult} />
+        {:else}
         {#if !fullscreen}
           <div class="topbar">
             {#if threadOpen}
@@ -897,11 +904,11 @@
             <div class="empty">{view === "calendar" ? "Nothing scheduled" : "Nothing here yet"}</div>
           {/if}
         {/if}
+        {/if}
       </div>
     </div>
   </div>
 
-  <SearchOverlay open={searchOpen} onClose={() => (searchOpen = false)} onOpen={openSearchResult} />
   <CommandPalette open={paletteOpen} onClose={() => (paletteOpen = false)} onAction={onPaletteAction} />
 
   {#if composeOpen}

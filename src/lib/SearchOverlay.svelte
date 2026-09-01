@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from "./ds/Avatar.svelte";
   import * as ipc from "./ipc";
 
   let {
@@ -12,7 +13,7 @@
     onOpen?: (thread: ipc.BackendThread) => void;
   } = $props();
 
-  // Browser mock keeps the static contact list; the real search needs Tauri.
+  // Browser mock keeps a static contact list; the real search needs Tauri.
   const contacts = [
     { n: "Priya Nair", e: "priya@heypigeon.app" },
     { n: "Sam Okoye", e: "sam@heypigeon.app" },
@@ -52,6 +53,9 @@
       .catch((e) => console.error("search failed", e));
   });
 
+  // Project hits through the same mapper the list uses — same names/times.
+  const rows = $derived(results.map((r) => ({ email: ipc.threadToEmail(r.thread), raw: r })));
+
   /** Split an FTS5 snippet on the private-use highlight markers. */
   function segments(s: string): { t: string; hl: boolean }[] {
     const out: { t: string; hl: boolean }[] = [];
@@ -87,141 +91,188 @@
 </script>
 
 {#if open}
-  <div class="overlay">
-    <div class="search-row">
-      <!-- svelte-ignore a11y_autofocus -->
-      <input
-        autofocus
-        placeholder="Search"
-        bind:value={query}
-        onkeydown={onKeydown}
-      />
-      <button class="close" aria-label="Close search" onclick={onClose}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-        </svg>
-      </button>
-    </div>
-    {#if ipc.isTauri}
-      {#each results as r, i (r.thread.id)}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div
-          class="result"
-          class:selected={i === sel}
-          onmouseenter={() => (sel = i)}
-          onclick={() => openResult(i)}
-        >
-          <div class="result-top">
-            <span class="name">{r.thread.from_summary}</span>
-            <span class="subject">{r.thread.subject}</span>
-          </div>
-          <div class="snippet">
-            {#each segments(r.snippet) as seg, j (j)}
-              {#if seg.hl}<mark>{seg.t}</mark>{:else}{seg.t}{/if}
-            {/each}
-          </div>
-        </div>
-      {:else}
-        {#if query.trim()}
-          <div class="none">No results</div>
-        {/if}
-      {/each}
-    {:else}
-      {#each contacts as c (c.e)}
-        <div class="contact">
-          <span class="name">{c.n}</span>
-          <span class="email">{c.e}</span>
-        </div>
-      {/each}
-    {/if}
+  <div class="search-head">
+    <svg class="lens" width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+      <path d="M20 20l-4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+    </svg>
+    <!-- svelte-ignore a11y_autofocus -->
+    <input autofocus placeholder="Search mail" bind:value={query} onkeydown={onKeydown} />
+    <span class="hint">esc</span>
+    <button class="close" aria-label="Close search" onclick={onClose}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+    </button>
   </div>
+
+  {#if ipc.isTauri}
+    {#if rows.length}
+      <div class="group-label">Results</div>
+    {/if}
+    {#each rows as { email: e, raw: r }, i (e.id)}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div
+        class="row"
+        class:selected={i === sel}
+        onmouseenter={() => (sel = i)}
+        onclick={() => openResult(i)}
+      >
+        <span class="avatar-wrap">
+          <Avatar email={e.fromAddr} accountId={e.accountId} name={e.from} size={26} />
+          {#if e.accountTag}
+            <span class="account-dot" style:background="var(--tag-{e.accountTag}-fg)"></span>
+          {/if}
+        </span>
+        <span class="from">{e.from}</span>
+        <span class="subject">{e.subject}</span>
+        <span class="snippet">
+          {#each segments(r.snippet) as seg, j (j)}
+            {#if seg.hl}<mark>{seg.t}</mark>{:else}{seg.t}{/if}
+          {/each}
+        </span>
+        <span class="time">{e.time}</span>
+      </div>
+    {:else}
+      {#if query.trim()}
+        <div class="none">No results for “{query}”</div>
+      {/if}
+    {/each}
+  {:else}
+    {#each contacts as c (c.e)}
+      <div class="row">
+        <span class="from">{c.n}</span>
+        <span class="snippet">{c.e}</span>
+      </div>
+    {/each}
+  {/if}
 {/if}
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--surface-card);
-    z-index: 60;
-    padding: 24px 32px;
-    overflow-y: auto;
-  }
-  .search-row {
+  .search-head {
     display: flex;
     align-items: center;
     gap: 12px;
+    padding: 14px 0 16px;
     border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 14px;
-    margin-bottom: 20px;
+    margin-bottom: 8px;
+  }
+  .lens {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
   }
   input {
     flex: 1;
     border: none;
     outline: none;
     background: none;
-    font-family: var(--font-body);
+    font-family: var(--font-display);
+    font-weight: 700;
     font-size: 20px;
     color: var(--text-primary);
+  }
+  input::placeholder {
+    color: var(--text-tertiary);
+    font-weight: 400;
+  }
+  .hint {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 2px 5px;
   }
   .close {
     border: none;
     background: none;
     cursor: pointer;
     color: var(--text-tertiary);
+    display: flex;
+    padding: 4px;
   }
-  .result {
-    padding: 10px 12px;
-    margin: 0 -12px;
-    border-radius: var(--radius-md, 8px);
+  .close:hover {
+    color: var(--text-primary);
+  }
+  .group-label {
+    padding: 18px 0 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent-highlight);
+    font-weight: 400;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 11px 16px;
+    margin: 0 -16px;
     cursor: pointer;
     font-family: var(--font-body);
   }
-  .result.selected {
-    background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+  .row.selected {
+    background: var(--navy-50);
+    box-shadow: inset 3px 0 0 var(--accent-highlight);
   }
-  .result-top {
-    display: flex;
-    gap: 12px;
-    align-items: baseline;
+  .avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .account-dot {
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--surface-card);
+  }
+  .from {
+    width: 200px;
+    margin-right: 12px;
+    flex-shrink: 0;
+    font-size: 12.5px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .subject {
-    color: var(--text-secondary, var(--text-primary));
-    font-size: 14px;
+    flex: 0 1 auto;
+    min-width: 60px;
+    max-width: 340px;
+    font-size: 13px;
+    color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .snippet {
-    color: var(--text-tertiary);
+    flex: 1;
+    min-width: 0;
     font-size: 13px;
-    margin-top: 2px;
+    color: var(--text-tertiary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .snippet mark {
-    background: none;
+    background: var(--accent-highlight-bg);
     color: var(--text-primary);
     font-weight: 600;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .time {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
   }
   .none {
     color: var(--text-tertiary);
     font-family: var(--font-body);
     font-size: 14px;
-    padding: 12px 0;
-  }
-  .contact {
-    display: flex;
-    gap: 16px;
-    padding: 9px 0;
-    font-family: var(--font-body);
-    font-size: 14px;
-  }
-  .name {
-    color: var(--text-primary);
-    font-weight: 500;
-  }
-  .email {
-    color: var(--text-tertiary);
+    padding: 24px 0;
   }
 </style>

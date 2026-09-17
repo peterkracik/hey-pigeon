@@ -56,6 +56,44 @@
       .catch(() => {});
   }
 
+  // ------------------------------------------------------- device sync
+  // Reminders sync between the user's devices through the account's own
+  // hidden Drive folder (DESIGN.md "Cross-device sync"). Read-only here:
+  // the only fix for a failure is re-connecting the account or enabling
+  // the Drive API, both outside this panel.
+  let syncStatus: Record<string, ipc.SyncStatus> = $state({});
+  if (ipc.isTauri) {
+    ipc
+      .syncStatus()
+      .then((s) => (syncStatus = s))
+      .catch(() => {});
+  }
+
+  function syncLine(accountId: string): { text: string; warn: boolean } {
+    const s = syncStatus[accountId];
+    if (!s) return { text: "Waiting for first sync", warn: false };
+    switch (s.state) {
+      case "ok":
+        return { text: `On · synced ${relativeTime(s.last_sync_at)}`, warn: false };
+      case "auth_expired":
+        return { text: "Sign in again to sync reminders", warn: true };
+      case "unavailable":
+      case "error":
+        return { text: s.detail ?? "Sync failed", warn: true };
+    }
+  }
+
+  function relativeTime(ms: number | null): string {
+    if (ms == null) return "never";
+    const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (secs < 60) return "just now";
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours} h ago`;
+    return `${Math.round(hours / 24)} d ago`;
+  }
+
   const aiConnected = $derived(aiStatus?.configured ?? false);
   const aiModelLabel = $derived(
     aiModelOptions.find((m) => m.id === aiStatus?.model)?.label ?? aiStatus?.model ?? "—",
@@ -179,6 +217,13 @@
                 {/each}
               </div>
             </div>
+            {#if ipc.isTauri}
+              {@const sync = syncLine(a.id)}
+              <div class="sub-row">
+                <span class="sub-label">Sync</span>
+                <span class="sub-static" class:warn={sync.warn} title="Reminders sync between your devices via this account's hidden Google Drive app folder.">{sync.text}</span>
+              </div>
+            {/if}
             <div class="sub-row signature-row">
               <span class="sub-label">Signature</span>
               <textarea
@@ -568,6 +613,14 @@
     font-family: var(--font-body);
     font-size: 13px;
     color: var(--text-tertiary);
+  }
+  .sub-static {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .sub-static.warn {
+    color: var(--text-danger, #b3261e);
   }
   .sub-input {
     flex: 0 1 260px;

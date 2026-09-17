@@ -62,6 +62,7 @@ pub fn run() {
       mail::get_thread,
       mail::mutate,
       mail::set_schedule,
+      mail::sync_status,
       mail::sync_now,
       mail::start_gmail_oauth,
       mail::lookup_avatar,

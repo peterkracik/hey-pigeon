@@ -12,7 +12,10 @@ use tokio::net::TcpListener;
 
 const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
-pub const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly";
+// drive.appdata = the hidden per-app Drive folder used for cross-device sync
+// (DESIGN.md). Grants issued before it was added lack it; the Drive adapter
+// reports that as `SyncError::Unavailable` until the account is re-connected.
+pub const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/drive.appdata";
 
 #[derive(Debug, thiserror::Error)]
 pub enum OauthError {

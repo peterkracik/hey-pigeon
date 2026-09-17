@@ -149,6 +149,26 @@ const MIGRATIONS: &[&str] = &[
     // threads default to 0/false and heal on the next backfill re-upsert,
     // same pattern as v2's last_from_addr.
     "ALTER TABLE threads ADD COLUMN has_attachment INTEGER NOT NULL DEFAULT 0;",
+    // v10 — cross-device sync (DESIGN.md "Cross-device sync"). `sync_kv` is
+    // the per-account last-writer-wins map (value = JSON, NULL = tombstone);
+    // `sync_meta` is loop bookkeeping (remote file id, fingerprints) plus,
+    // under account_id '', the install-wide device id.
+    "
+    CREATE TABLE sync_kv (
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        key        TEXT NOT NULL,
+        value      TEXT,
+        ts         INTEGER NOT NULL,
+        device     TEXT NOT NULL,
+        PRIMARY KEY (account_id, key)
+    );
+    CREATE TABLE sync_meta (
+        account_id TEXT NOT NULL,
+        key        TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        PRIMARY KEY (account_id, key)
+    );
+    ",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -267,25 +287,6 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Set or clear a thread's local "remind me" schedule (epoch ms).
-    /// Local-only metadata — never synced to Gmail.
-    pub fn set_schedule(
-        &self,
-        thread_id: &ThreadId,
-        scheduled_at: Option<i64>,
-    ) -> Result<(), StoreError> {
-        let n = self.with(|c| {
-            c.execute(
-                "UPDATE threads SET scheduled_at = ?2 WHERE id = ?1",
-                params![thread_id, scheduled_at],
-            )
-        })?;
-        if n == 0 {
-            return Err(StoreError(format!("unknown thread {thread_id}")));
-        }
-        Ok(())
-    }
-
     /// Every scheduled thread, regardless of inbox/archive state — the
     /// calendar view must keep showing reminders after the thread is
     /// archived out of the inbox window (and past the inbox page limit).
@@ -310,6 +311,8 @@ impl SqliteStore {
             // account row, and a failure must not leave a half-wiped cache.
             let tx = c.unchecked_transaction()?;
             tx.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
+            tx.execute("DELETE FROM sync_kv WHERE account_id = ?1", params![account_id])?;
+            tx.execute("DELETE FROM sync_meta WHERE account_id = ?1", params![account_id])?;
             tx.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
             tx.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
             tx.execute("DELETE FROM labels WHERE account_id = ?1", params![account_id])?;
@@ -840,6 +843,106 @@ impl Store for SqliteStore {
             .map(|_| ())
         })
     }
+
+    /// Never synced to Gmail — `upsert_thread` leaves the column alone.
+    fn set_schedule(&self, thread_id: &ThreadId, scheduled_at: Option<i64>) -> Result<bool, StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET scheduled_at = ?2 WHERE id = ?1",
+                params![thread_id, scheduled_at],
+            )
+        })?;
+        Ok(n > 0)
+    }
+
+    fn sync_device_id(&self) -> Result<String, StoreError> {
+        self.with(|c| {
+            // 64 random bits from SQLite itself — no rand dependency here.
+            c.execute(
+                "INSERT OR IGNORE INTO sync_meta (account_id, key, value)
+                 VALUES ('', 'device_id', lower(hex(randomblob(8))))",
+                [],
+            )?;
+            c.query_row(
+                "SELECT value FROM sync_meta WHERE account_id = '' AND key = 'device_id'",
+                [],
+                |r| r.get(0),
+            )
+        })
+    }
+
+    fn sync_entries(&self, account_id: &AccountId) -> Result<Vec<SyncEntry>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT key, value, ts, device FROM sync_kv WHERE account_id = ?1 ORDER BY key",
+            )?;
+            let rows = stmt.query_map(params![account_id], |r| {
+                let raw: Option<String> = r.get(1)?;
+                let value = match raw {
+                    Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+                    })?),
+                    None => None,
+                };
+                Ok(SyncEntry { key: r.get(0)?, value, ts: r.get(2)?, device: r.get(3)? })
+            })?;
+            rows.collect()
+        })
+    }
+
+    fn sync_merge(&self, account_id: &AccountId, entries: &[SyncEntry]) -> Result<Vec<String>, StoreError> {
+        let mut changed = Vec::new();
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            {
+                // LWW in SQL: the conflict branch only fires when the
+                // incoming (ts, device) is strictly greater — keep in
+                // lockstep with SyncEntry::is_newer_than.
+                let mut stmt = tx.prepare(
+                    "INSERT INTO sync_kv (account_id, key, value, ts, device)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(account_id, key) DO UPDATE SET
+                       value = excluded.value, ts = excluded.ts, device = excluded.device
+                     WHERE excluded.ts > sync_kv.ts
+                        OR (excluded.ts = sync_kv.ts AND excluded.device > sync_kv.device)",
+                )?;
+                for e in entries {
+                    let value = match &e.value {
+                        Some(v) => Some(v.to_string()),
+                        None => None,
+                    };
+                    let n = stmt.execute(params![account_id, e.key, value, e.ts, e.device])?;
+                    if n > 0 {
+                        changed.push(e.key.clone());
+                    }
+                }
+            }
+            tx.commit()
+        })?;
+        Ok(changed)
+    }
+
+    fn sync_meta_get(&self, account_id: &AccountId, key: &str) -> Result<Option<String>, StoreError> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT value FROM sync_meta WHERE account_id = ?1 AND key = ?2",
+                params![account_id, key],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+    }
+
+    fn sync_meta_set(&self, account_id: &AccountId, key: &str, value: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO sync_meta (account_id, key, value) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(account_id, key) DO UPDATE SET value = excluded.value",
+                params![account_id, key, value],
+            )
+            .map(|_| ())
+        })
+    }
 }
 
 #[cfg(test)]
@@ -852,6 +955,56 @@ mod tests {
         let s = SqliteStore::open_in_memory().unwrap();
         s.upsert_account(&sample_account("a1")).unwrap();
         s
+    }
+
+    fn entry(key: &str, value: Option<i64>, ts: i64, device: &str) -> SyncEntry {
+        SyncEntry { key: key.into(), value: value.map(Into::into), ts, device: device.into() }
+    }
+
+    #[test]
+    fn sync_device_id_is_created_once_and_stable() {
+        let s = store();
+        let id = s.sync_device_id().unwrap();
+        assert_eq!(id.len(), 16, "8 random bytes, hex");
+        assert_eq!(s.sync_device_id().unwrap(), id);
+    }
+
+    #[test]
+    fn sync_merge_is_last_writer_wins() {
+        let s = store();
+        let acc = "a1".to_string();
+        assert_eq!(s.sync_merge(&acc, &[entry("k", Some(1), 10, "a")]).unwrap(), vec!["k"]);
+        // Older loses, equal ts + lower device loses, equal ts + higher device wins.
+        assert!(s.sync_merge(&acc, &[entry("k", Some(2), 9, "z")]).unwrap().is_empty());
+        assert!(s.sync_merge(&acc, &[entry("k", Some(3), 10, "0")]).unwrap().is_empty());
+        assert_eq!(s.sync_merge(&acc, &[entry("k", Some(4), 10, "b")]).unwrap(), vec!["k"]);
+        // Newer tombstone wins and reads back as None.
+        assert_eq!(s.sync_merge(&acc, &[entry("k", None, 11, "a")]).unwrap(), vec!["k"]);
+        let all = s.sync_entries(&acc).unwrap();
+        assert_eq!(all, vec![entry("k", None, 11, "a")]);
+        // Sorted by key; JSON values round-trip.
+        s.sync_merge(&acc, &[entry("b", Some(2), 1, "a"), entry("a", Some(1), 1, "a")]).unwrap();
+        let keys: Vec<_> = s.sync_entries(&acc).unwrap().into_iter().map(|e| e.key).collect();
+        assert_eq!(keys, vec!["a", "b", "k"]);
+        assert_eq!(s.sync_entries(&acc).unwrap()[0].value, Some(1.into()));
+        // Unknown account is rejected (FK), not silently accepted.
+        assert!(s.sync_merge(&"nope".to_string(), &[entry("k", None, 1, "a")]).is_err());
+    }
+
+    #[test]
+    fn sync_meta_round_trips_and_dies_with_account() {
+        let s = store();
+        let acc = "a1".to_string();
+        assert_eq!(s.sync_meta_get(&acc, "file_id").unwrap(), None);
+        s.sync_meta_set(&acc, "file_id", "f1").unwrap();
+        s.sync_meta_set(&acc, "file_id", "f2").unwrap();
+        assert_eq!(s.sync_meta_get(&acc, "file_id").unwrap().as_deref(), Some("f2"));
+        s.sync_merge(&acc, &[entry("k", Some(1), 1, "a")]).unwrap();
+        let device = s.sync_device_id().unwrap();
+        s.delete_account("a1").unwrap();
+        assert_eq!(s.sync_meta_get(&acc, "file_id").unwrap(), None);
+        assert!(s.sync_entries(&acc).unwrap().is_empty());
+        assert_eq!(s.sync_device_id().unwrap(), device, "device id is install-wide");
     }
 
     #[tokio::test]
@@ -958,7 +1111,7 @@ mod tests {
         // Clearing works and unknown threads error.
         store.set_schedule(&id, None).unwrap();
         assert_eq!(store.get_thread(&id).unwrap().unwrap().scheduled_at, None);
-        assert!(store.set_schedule(&"nope".to_string(), Some(1)).is_err());
+        assert!(!store.set_schedule(&"nope".to_string(), Some(1)).unwrap(), "unknown thread → false");
     }
 
     #[tokio::test]

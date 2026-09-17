@@ -343,14 +343,20 @@ target.
   (state-based LWW map: idempotent, no journal, no compaction). Tombstones are
   garbage-collected after 30 days. Two devices at human speed never need more
   than LWW; no CRDT library.
-- **Polling** piggybacks the per-account sync loop: `changes.list` with
-  `spaces=appDataFolder` and a stored page token returns empty when idle; only
-  changed files are downloaded (`files.get?alt=media`). Push after local
-  mutations, debounced. Drive quota (325k units/min/user) is irrelevant at this
-  volume.
-- **Architecture**: a `SyncTransport` port in `core` with a Drive adapter; a
-  `sync_state` table holds the page token and device id. Reminder writes stay
-  optimistic (SQLite first, sync later) — same shape as the outbox.
+- **Polling** piggybacks the per-account sync loop: one `files.list` over
+  `spaces=appDataFolder` (a handful of files, `md5Checksum` per file) and only
+  files whose checksum moved are downloaded (`files.get?alt=media`). Same
+  request count as `changes.list` at this size, with no page-token state to
+  lose. Push right after a local mutation (one small upload). Drive quota
+  (325k units/min/user) is irrelevant at this volume.
+- **Architecture**: a `SyncTransport` port in `core` (list / download /
+  upload of small named files), the Drive adapter next to the Gmail one (same
+  OAuth grant and token cache), and `core::devsync` owning the merge. SQLite:
+  `sync_kv` is the per-account LWW map, `sync_meta` holds the device id, the
+  remote file id and fingerprints. Reminder writes stay optimistic (SQLite
+  first, sync later) — same shape as the outbox. Settings → Accounts shows the
+  per-account sync state, since the only fixes (re-connect, enable the API)
+  happen outside the app.
 
 ### Rejected: Gmail as the metadata store
 

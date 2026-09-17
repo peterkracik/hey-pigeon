@@ -9,8 +9,8 @@ use heypigeon_core::domain::{
     Account, AccountId, Label, Message, Mutation, SearchResult, Thread, ThreadFilter, ThreadId,
 };
 use heypigeon_core::fakes::FakeProvider;
-use heypigeon_core::ports::{MailProvider, SecretStore, Store};
-use heypigeon_core::{outbox, sync};
+use heypigeon_core::ports::{MailProvider, SecretStore, Store, SyncError};
+use heypigeon_core::{devsync, outbox, sync};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
@@ -53,6 +53,35 @@ pub struct MailState {
     /// fires once per poll cadence, not on every tick until dismissed.
     /// Re-notifies on reschedule (a changed scheduled_at won't match).
     notified_reminders: std::sync::Mutex<std::collections::HashMap<ThreadId, i64>>,
+    /// Last cross-device sync outcome per account: Settings shows it, and
+    /// a failure is logged once per distinct cause, not every 30s tick.
+    sync_status: std::sync::Mutex<std::collections::HashMap<AccountId, SyncStatus>>,
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncState {
+    Ok,
+    /// Scope missing / Drive API not enabled — needs a re-connect or setup
+    /// step (detail says which), not a retry.
+    Unavailable,
+    AuthExpired,
+    Error,
+}
+
+#[derive(Serialize, Clone, PartialEq, Debug)]
+pub struct SyncStatus {
+    pub state: SyncState,
+    pub detail: Option<String>,
+    /// Epoch ms of the last successful round; kept across failures.
+    pub last_sync_at: Option<i64>,
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[derive(Serialize)]
@@ -231,8 +260,9 @@ pub async fn sync_now(
     Ok(n)
 }
 
-/// Set or clear a thread's "remind me" schedule (epoch ms). Local-only
-/// metadata — never synced to Gmail (no outbox, no provider call).
+/// Set or clear a thread's "remind me" schedule (epoch ms). Never sent to
+/// Gmail (no outbox, no provider call) — it reaches the user's other
+/// devices through the cross-device sync map instead (DESIGN.md).
 #[tauri::command]
 pub async fn set_schedule(
     app: AppHandle,
@@ -241,10 +271,30 @@ pub async fn set_schedule(
     thread_id: ThreadId,
     scheduled_at: Option<i64>,
 ) -> Result<(), String> {
-    let _ = account_id; // command shape mirrors mutate; schedule is per-thread
+    let _ = account_id; // command shape mirrors mutate; the thread knows its account
+    let thread = state
+        .store
+        .get_thread(&thread_id)
+        .map_err(estr)?
+        .ok_or_else(|| format!("unknown thread {thread_id}"))?;
     state.store.set_schedule(&thread_id, scheduled_at).map_err(estr)?;
+    devsync::record_reminder(&state.store, &thread.account_id, &thread_id, scheduled_at).map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
+    // Push straight away — one small upload — so a second device sees the
+    // reminder on its next poll instead of after ours.
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        devsync_account(&handle, &thread.account_id).await;
+    });
     Ok(())
+}
+
+/// Cross-device sync state per account (Settings UI).
+#[tauri::command]
+pub fn sync_status(
+    state: State<'_, MailState>,
+) -> Result<std::collections::HashMap<AccountId, SyncStatus>, String> {
+    Ok(state.sync_status.lock().unwrap().clone())
 }
 
 /// Update per-account settings: display name, color (predefined palette),
@@ -470,14 +520,53 @@ async fn delta_account(handle: AppHandle, account_id: AccountId) -> bool {
         let backend = state.backend.read().await;
         with_provider!(&*backend, p => sync::delta_sync(p, &state.store, &account_id, BACKFILL_DAYS).await)
     };
+    // Cross-device state rides the same cadence (DESIGN.md: the sync loop
+    // is the poll). Runs even after a failed delta — an independent
+    // failure mode, and it is cheap.
+    let synced = devsync_account(&handle, &account_id).await;
     state.syncing.lock().unwrap().remove(&account_id);
-    match result {
+    let changed = match result {
         Ok(changed) => changed,
         Err(e) => {
             log::warn!("delta({account_id}) failed: {e}");
             false
         }
+    };
+    changed || synced
+}
+
+/// One cross-device sync round for one account (Gmail backend only — the
+/// dev fake has no cloud behind it). Records the outcome for Settings and
+/// logs a failure once per distinct cause. Returns whether local rows
+/// changed (a reminder set/cleared on another device).
+async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
+    let state = handle.state::<MailState>();
+    let result = {
+        let backend = state.backend.read().await;
+        let Backend::Gmail(p) = &*backend else { return false };
+        devsync::sync_account(p, &state.store, account_id).await
+    };
+    let mut statuses = state.sync_status.lock().unwrap();
+    let previous = statuses.get(account_id).cloned();
+    let last_sync_at = previous.as_ref().and_then(|p| p.last_sync_at);
+    let status = match &result {
+        Ok(_) => SyncStatus { state: SyncState::Ok, detail: None, last_sync_at: Some(now_ms()) },
+        Err(devsync::DevSyncError::Transport(SyncError::Unavailable(why))) => {
+            SyncStatus { state: SyncState::Unavailable, detail: Some(why.clone()), last_sync_at }
+        }
+        Err(devsync::DevSyncError::Transport(SyncError::AuthExpired)) => {
+            SyncStatus { state: SyncState::AuthExpired, detail: None, last_sync_at }
+        }
+        Err(e) => SyncStatus { state: SyncState::Error, detail: Some(e.to_string()), last_sync_at },
+    };
+    let same_failure = previous
+        .as_ref()
+        .is_some_and(|p| p.state == status.state && p.detail == status.detail);
+    if status.state != SyncState::Ok && !same_failure {
+        log::warn!("devsync({account_id}) failed: {}", status.detail.as_deref().unwrap_or("auth expired"));
     }
+    statuses.insert(account_id.clone(), status);
+    result.unwrap_or(false)
 }
 
 /// Delta-sync every account in parallel; emit `threads_updated` when any
@@ -643,6 +732,7 @@ pub fn init(app: &tauri::App, secrets: Arc<dyn SecretStore + Send + Sync>) -> Re
         last_focus_sync: std::sync::Mutex::new(std::time::Instant::now()),
         syncing: std::sync::Mutex::new(std::collections::HashSet::new()),
         notified_reminders: std::sync::Mutex::new(std::collections::HashMap::new()),
+        sync_status: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
     // Every account syncs independently — one failing must not block another.
     for account_id in sync_accounts {

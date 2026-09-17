@@ -7,15 +7,30 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header class="site">
-  <div class="wrap">
-    <a class="brand" href="/">Hey <span>Pigeon</span></a>
-    <nav class="site">
-      <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
-      <a href="privacy.html">Privacy</a>
-      <a href="terms.html">Terms</a>
-    </nav>
-  </div>
+<header class="site wrap">
+  <a class="brand" href="/">
+    <svg width="28" height="28" viewBox="0 0 1024 1024" style="border-radius:6px;display:block">
+      <defs>
+        <linearGradient id="pg-bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#2E2F38"/>
+          <stop offset="0.55" stop-color="#17181D"/>
+          <stop offset="1" stop-color="#08080A"/>
+        </linearGradient>
+        <linearGradient id="pg-check" x1="292" y1="704" x2="744" y2="352" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#FF83BC"/>
+          <stop offset="1" stop-color="#C43277"/>
+        </linearGradient>
+      </defs>
+      <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#pg-bg)"/>
+      <path d="M 306 522 L 434 650 L 730 322" fill="none" stroke="url(#pg-check)" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span>Hey Pigeon</span>
+  </a>
+  <nav class="site">
+    <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+  </nav>
 </header>
 
 <main class="legal">
@@ -74,13 +89,13 @@
   </div>
 </main>
 
-<footer class="site">
-  <div class="wrap">
+<footer class="site wrap hairline">
+  <span class="note">Hey Pigeon, a personal, open-source project.</span>
+  <nav>
     <a href="privacy.html">Privacy Policy</a>
     <a href="terms.html">Terms of Service</a>
     <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
-    <div class="copyright">Hey Pigeon — a personal, open-source project.</div>
-  </div>
+  </nav>
 </footer>
 </body>
 </html>

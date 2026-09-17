@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Hey Pigeon</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Hey <span>Pigeon</span></a>
+    <nav class="site">
+      <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+    </nav>
+  </div>
+</header>
+
+<main class="legal">
+  <div class="wrap">
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated: 2026-09-17</p>
+
+    <p>Hey Pigeon is a client-only application: it runs entirely on your device and has
+    no backend server. Nobody but you — not even the developer — can see your email,
+    contacts, or account data through Hey Pigeon.</p>
+
+    <h2>What data Hey Pigeon accesses</h2>
+    <p>When you connect a Google Account, Hey Pigeon requests the following scopes,
+    used only to provide the corresponding feature:</p>
+    <ul>
+      <li><code>gmail.modify</code> — read your mail and change labels (archive, mark read/unread, trash).</li>
+      <li><code>gmail.send</code> — send mail on your behalf when you compose or reply.</li>
+      <li><code>userinfo.profile</code> — your name and avatar, shown in the app.</li>
+      <li><code>contacts.readonly</code> / <code>contacts.other.readonly</code> — autocomplete when composing.</li>
+      <li><code>drive.appdata</code> — a hidden, per-app folder in your Drive (invisible in the
+      Drive UI, readable only by Hey Pigeon) used to sync reminders across your own devices.</li>
+    </ul>
+
+    <h2>Where your data lives</h2>
+    <p>All Gmail data Hey Pigeon reads is stored in a local database on your device only.
+    It is never transmitted to any server operated by the developer, because no such
+    server exists. OAuth tokens are stored in your operating system's secure keychain,
+    never in plain text.</p>
+
+    <h2>AI features (optional)</h2>
+    <p>If you enable an AI feature (e.g. summarize, draft), Hey Pigeon sends only the
+    specific content needed for that action directly from your device to the AI
+    provider you configure (OpenAI first), using an API key you provide and control.
+    The developer never sees this traffic or holds your API key. Use of that provider
+    is subject to its own privacy policy and terms.</p>
+
+    <h2>Limited Use disclosure</h2>
+    <p>Hey Pigeon's use and transfer of information received from Google APIs to any
+    other app adheres to the
+    <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+    including the Limited Use requirements.</p>
+
+    <h2>No selling, no ads, no analytics</h2>
+    <p>Hey Pigeon does not sell or share your data, does not show ads, and does not
+    run any tracking or analytics.</p>
+
+    <h2>Revoking access &amp; deleting data</h2>
+    <p>You can disconnect an account at any time in Hey Pigeon's settings, or revoke
+    access directly at
+    <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+    Since all data is local, uninstalling the app or deleting its local data folder
+    removes everything Hey Pigeon has stored.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy: <a href="mailto:support@heypigeon.app">support@heypigeon.app</a>.</p>
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="terms.html">Terms of Service</a>
+    <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+    <div class="copyright">Hey Pigeon — a personal, open-source project.</div>
+  </div>
+</footer>
+</body>
+</html>

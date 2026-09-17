@@ -109,11 +109,27 @@ fn dirs_config() -> std::path::PathBuf {
         })
 }
 
+// Baked in at compile time from CI secrets (see .github/workflows/build-macos.yml) so
+// downloaded builds work without users creating their own Google Cloud project. `oauth.json`
+// still overrides this — self-hosters/local dev builds (no CI secrets set) use their own.
+const BUILTIN_CLIENT_ID: Option<&str> = option_env!("HEYPIGEON_OAUTH_CLIENT_ID");
+const BUILTIN_CLIENT_SECRET: Option<&str> = option_env!("HEYPIGEON_OAUTH_CLIENT_SECRET");
+
 fn load_oauth_config() -> Result<oauth::ClientConfig, String> {
     let path = oauth_config_path();
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|_| format!("missing OAuth config at {} — see docs/google-oauth-setup.md", path.display()))?;
-    serde_json::from_str(&raw).map_err(estr)
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        return serde_json::from_str(&raw).map_err(estr);
+    }
+    if let (Some(id), Some(secret)) = (BUILTIN_CLIENT_ID, BUILTIN_CLIENT_SECRET) {
+        return Ok(oauth::ClientConfig {
+            client_id: id.to_string(),
+            client_secret: secret.to_string(),
+        });
+    }
+    Err(format!(
+        "missing OAuth config at {} — see docs/google-oauth-setup.md",
+        path.display()
+    ))
 }
 
 // ------------------------------------------------------------------ commands

@@ -31,6 +31,8 @@ jobs:
                                   APPLE_ID: ${{ secrets.APPLE_ID }}
                                   APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
                                   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+                                  HEYPIGEON_OAUTH_CLIENT_ID: ${{ secrets.HEYPIGEON_OAUTH_CLIENT_ID }}
+                                  HEYPIGEON_OAUTH_CLIENT_SECRET: ${{ secrets.HEYPIGEON_OAUTH_CLIENT_SECRET }}
                           with:
                                   tagName: ${{ github.ref_name }}
                                   releaseName: "Hey Pigeon v__VERSION__"

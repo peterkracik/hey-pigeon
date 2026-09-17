@@ -56,6 +56,62 @@
       .catch(() => {});
   }
 
+  // ------------------------------------------------------- device sync
+  // Reminders sync between the user's devices through the account's own
+  // hidden Drive folder (DESIGN.md "Cross-device sync"). Read-only here:
+  // the only fix for a failure is re-connecting the account or enabling
+  // the Drive API, both outside this panel.
+  let syncStatus: Record<string, ipc.SyncStatus> = $state({});
+  // `now` ticks with the poll so "3 min ago" stays honest while the panel
+  // is open (the sync loop runs every 30s; re-read on the same cadence).
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!ipc.isTauri) return;
+    const load = () => {
+      now = Date.now();
+      ipc
+        .syncStatus()
+        .then((s) => (syncStatus = s))
+        .catch(() => {});
+    };
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => clearInterval(timer);
+  });
+
+  function syncLine(accountId: string): { text: string; warn: boolean } {
+    const s = syncStatus[accountId];
+    if (!s) return { text: "Waiting for first sync", warn: false };
+    switch (s.state) {
+      case "pending":
+        return { text: "Syncing…", warn: false };
+      case "ok":
+        return { text: "On", warn: false };
+      case "auth_expired":
+        return { text: "Sign in again to sync reminders", warn: true };
+      case "unavailable":
+      case "error":
+        return { text: s.detail ?? "Sync failed", warn: true };
+    }
+  }
+
+  function lastSyncLine(accountId: string): string {
+    const s = syncStatus[accountId];
+    if (!s) return "";
+    return `Last sync: ${relativeTime(s.last_sync_at)}`;
+  }
+
+  function relativeTime(ms: number | null): string {
+    if (ms == null) return "never";
+    const secs = Math.max(0, Math.round((now - ms) / 1000));
+    if (secs < 60) return "just now";
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours} h ago`;
+    return `${Math.round(hours / 24)} d ago`;
+  }
+
   const aiConnected = $derived(aiStatus?.configured ?? false);
   const aiModelLabel = $derived(
     aiModelOptions.find((m) => m.id === aiStatus?.model)?.label ?? aiStatus?.model ?? "—",
@@ -179,6 +235,18 @@
                 {/each}
               </div>
             </div>
+            {#if ipc.isTauri}
+              {@const sync = syncLine(a.id)}
+              <div class="sub-row">
+                <span class="sub-label">Sync</span>
+                <span class="sub-static" title="Reminders sync between your devices via this account's hidden Google Drive app folder.">
+                  <span class:warn={sync.warn}>{sync.text}</span>
+                  {#if lastSyncLine(a.id)}
+                    <span class="sub-muted"> · {lastSyncLine(a.id)}</span>
+                  {/if}
+                </span>
+              </div>
+            {/if}
             <div class="sub-row signature-row">
               <span class="sub-label">Signature</span>
               <textarea
@@ -567,6 +635,17 @@
     flex-shrink: 0;
     font-family: var(--font-body);
     font-size: 13px;
+    color: var(--text-tertiary);
+  }
+  .sub-static {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .sub-static .warn {
+    color: var(--text-danger, #b3261e);
+  }
+  .sub-muted {
     color: var(--text-tertiary);
   }
   .sub-input {

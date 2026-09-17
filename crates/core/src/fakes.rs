@@ -36,6 +36,20 @@ struct MemStoreInner {
     labels: HashMap<AccountId, Vec<Label>>,
     outbox: Vec<OutboxItem>,
     next_outbox_id: i64,
+    device_id: Option<String>,
+    /// account → key → entry (the cross-device LWW map).
+    sync_kv: HashMap<AccountId, HashMap<String, SyncEntry>>,
+    sync_meta: HashMap<(AccountId, String), String>,
+}
+
+impl MemStore {
+    /// A store posing as one specific device — two of these over one
+    /// `MemTransport` simulate two Macs.
+    pub fn with_device_id(device_id: &str) -> Self {
+        let s = Self::default();
+        s.inner.lock().unwrap().device_id = Some(device_id.to_string());
+        s
+    }
 }
 
 /// Same folder semantics as the SQLite adapter's SQL (keep in lockstep).
@@ -267,6 +281,185 @@ impl Store for MemStore {
             item.attempts += 1;
         }
         Ok(())
+    }
+
+    fn set_schedule(&self, thread_id: &ThreadId, scheduled_at: Option<i64>) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.threads.get_mut(thread_id) {
+            Some(t) => {
+                t.scheduled_at = scheduled_at;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    fn sync_device_id(&self) -> Result<String, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        if g.device_id.is_none() {
+            // Deterministic-enough for tests; the SQLite adapter uses randomblob.
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            g.device_id = Some(format!("mem-{n:x}"));
+        }
+        Ok(g.device_id.clone().unwrap())
+    }
+
+    fn sync_entries(&self, account_id: &AccountId) -> Result<Vec<SyncEntry>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<SyncEntry> = g
+            .sync_kv
+            .get(account_id)
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default();
+        v.sort_by(|a, b| a.key.cmp(&b.key));
+        Ok(v)
+    }
+
+    fn sync_merge(&self, account_id: &AccountId, entries: &[SyncEntry]) -> Result<Vec<String>, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        if !g.accounts.contains_key(account_id) {
+            return Err(StoreError(format!("unknown account {account_id}")));
+        }
+        let map = g.sync_kv.entry(account_id.clone()).or_default();
+        let mut changed = Vec::new();
+        for e in entries {
+            let wins = map.get(&e.key).map_or(true, |cur| e.is_newer_than(cur));
+            if wins {
+                map.insert(e.key.clone(), e.clone());
+                changed.push(e.key.clone());
+            }
+        }
+        Ok(changed)
+    }
+
+    fn sync_meta_get(&self, account_id: &AccountId, key: &str) -> Result<Option<String>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.sync_meta.get(&(account_id.clone(), key.to_string())).cloned())
+    }
+
+    fn sync_meta_set(&self, account_id: &AccountId, key: &str, value: &str) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.sync_meta.insert((account_id.clone(), key.to_string()), value.to_string());
+        Ok(())
+    }
+}
+
+// ------------------------------------------------------------ MemTransport
+
+/// In-memory `SyncTransport`: one shared "cloud" that several `MemStore`
+/// devices sync through. Counts calls so tests can assert nothing is
+/// re-downloaded or re-uploaded needlessly.
+#[derive(Default)]
+pub struct MemTransport {
+    inner: Mutex<MemTransportInner>,
+}
+
+#[derive(Default)]
+struct MemTransportInner {
+    /// account → file id → (name, bytes)
+    files: HashMap<AccountId, HashMap<String, (String, Vec<u8>)>>,
+    next_id: u64,
+    uploads: usize,
+    downloads: usize,
+    fail: bool,
+}
+
+impl MemTransport {
+    pub fn uploads(&self) -> usize {
+        self.inner.lock().unwrap().uploads
+    }
+    pub fn downloads(&self) -> usize {
+        self.inner.lock().unwrap().downloads
+    }
+    pub fn file_count(&self, account_id: &AccountId) -> usize {
+        self.inner.lock().unwrap().files.get(account_id).map_or(0, |m| m.len())
+    }
+    /// Simulate the user wiping the app's data folder.
+    pub fn clear(&self, account_id: &AccountId) {
+        self.inner.lock().unwrap().files.remove(account_id);
+    }
+    /// Make every call fail with a network error (or stop doing so).
+    pub fn fail(&self, fail: bool) {
+        self.inner.lock().unwrap().fail = fail;
+    }
+}
+
+fn mem_fingerprint(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+impl SyncTransport for MemTransport {
+    async fn list(&self, account_id: &AccountId) -> Result<Vec<RemoteFile>, SyncError> {
+        let g = self.inner.lock().unwrap();
+        if g.fail {
+            return Err(SyncError::Network("fake outage".into()));
+        }
+        let mut v: Vec<RemoteFile> = g
+            .files
+            .get(account_id)
+            .map(|m| {
+                m.iter()
+                    .map(|(id, (name, bytes))| RemoteFile {
+                        id: id.clone(),
+                        name: name.clone(),
+                        fingerprint: mem_fingerprint(bytes),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(v)
+    }
+
+    async fn download(&self, account_id: &AccountId, file_id: &str) -> Result<Vec<u8>, SyncError> {
+        let mut g = self.inner.lock().unwrap();
+        if g.fail {
+            return Err(SyncError::Network("fake outage".into()));
+        }
+        g.downloads += 1;
+        g.files
+            .get(account_id)
+            .and_then(|m| m.get(file_id))
+            .map(|(_, b)| b.clone())
+            .ok_or(SyncError::NotFound)
+    }
+
+    async fn upload(
+        &self,
+        account_id: &AccountId,
+        file_id: Option<&str>,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<RemoteFile, SyncError> {
+        let mut g = self.inner.lock().unwrap();
+        if g.fail {
+            return Err(SyncError::Network("fake outage".into()));
+        }
+        g.uploads += 1;
+        let id = match file_id {
+            Some(id) => {
+                if !g.files.get(account_id).is_some_and(|m| m.contains_key(id)) {
+                    return Err(SyncError::NotFound);
+                }
+                id.to_string()
+            }
+            None => {
+                g.next_id += 1;
+                format!("f{}", g.next_id)
+            }
+        };
+        let fingerprint = mem_fingerprint(&bytes);
+        g.files
+            .entry(account_id.clone())
+            .or_default()
+            .insert(id.clone(), (name.to_string(), bytes));
+        Ok(RemoteFile { id, name: name.to_string(), fingerprint })
     }
 }
 

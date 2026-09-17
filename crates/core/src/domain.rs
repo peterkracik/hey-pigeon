@@ -272,3 +272,24 @@ pub struct Profile {
     pub email: String,
     pub history_id: String,
 }
+
+/// One key in the cross-device sync map (DESIGN.md "Cross-device sync"):
+/// a last-writer-wins register. `value` None is a tombstone. Newer =
+/// greater `(ts, device)` — the device id breaks exact-timestamp ties so
+/// every replica converges on the same winner.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SyncEntry {
+    pub key: String,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+    /// Epoch milliseconds on the writing device.
+    pub ts: i64,
+    pub device: String,
+}
+
+impl SyncEntry {
+    /// Does `self` beat `other` under last-writer-wins?
+    pub fn is_newer_than(&self, other: &SyncEntry) -> bool {
+        (self.ts, self.device.as_str()) > (other.ts, other.device.as_str())
+    }
+}

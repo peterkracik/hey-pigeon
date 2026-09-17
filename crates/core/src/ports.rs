@@ -301,6 +301,106 @@ pub trait Store {
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError>;
     fn outbox_delete(&self, id: i64) -> Result<(), StoreError>;
     fn outbox_bump_attempts(&self, id: i64) -> Result<(), StoreError>;
+
+    /// Set or clear a thread's "remind me" schedule (epoch ms). Local
+    /// metadata, never sent to the mail provider — it travels between the
+    /// user's devices via `SyncTransport` instead. Ok(false) = unknown
+    /// thread (a reminder can arrive from another device before the
+    /// thread itself is backfilled here; the caller retries later).
+    fn set_schedule(&self, thread_id: &ThreadId, scheduled_at: Option<i64>) -> Result<bool, StoreError>;
+
+    // ---- cross-device sync map (DESIGN.md "Cross-device sync") ----
+    // Default impls keep pre-sync adapters compiling; the SQLite adapter
+    // and MemStore implement all of them.
+
+    /// Stable random id for this install, created on first call. Names this
+    /// device's state file and breaks LWW timestamp ties.
+    fn sync_device_id(&self) -> Result<String, StoreError> {
+        Err(StoreError("sync not supported by this store".into()))
+    }
+
+    /// Every entry for one account, sorted by key (a deterministic order
+    /// makes equal state serialize to equal bytes).
+    fn sync_entries(&self, account_id: &AccountId) -> Result<Vec<SyncEntry>, StoreError> {
+        let _ = account_id;
+        Ok(Vec::new())
+    }
+
+    /// Last-writer-wins upsert: each entry replaces the stored one only if
+    /// `SyncEntry::is_newer_than` it (or none is stored). Returns the keys
+    /// whose stored entry changed.
+    fn sync_merge(&self, account_id: &AccountId, entries: &[SyncEntry]) -> Result<Vec<String>, StoreError> {
+        let _ = (account_id, entries);
+        Err(StoreError("sync not supported by this store".into()))
+    }
+
+    /// Small per-account bookkeeping for the sync loop (remote file id,
+    /// fingerprints of what was last uploaded / downloaded).
+    fn sync_meta_get(&self, account_id: &AccountId, key: &str) -> Result<Option<String>, StoreError> {
+        let _ = (account_id, key);
+        Ok(None)
+    }
+
+    fn sync_meta_set(&self, account_id: &AccountId, key: &str, value: &str) -> Result<(), StoreError> {
+        let _ = (account_id, key, value);
+        Err(StoreError("sync not supported by this store".into()))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SyncError {
+    #[error("authentication expired or revoked")]
+    AuthExpired,
+    /// The account's grant lacks the sync scope, or the backing API is not
+    /// enabled in the user's OAuth project. Needs a re-connect / setup
+    /// step, not a retry — callers log once and stop hammering.
+    #[error("sync unavailable: {0}")]
+    Unavailable(String),
+    /// The addressed remote file no longer exists (deleted out of band).
+    #[error("remote file not found")]
+    NotFound,
+    #[error("network: {0}")]
+    Network(String),
+    #[error("provider: {0}")]
+    Provider(String),
+}
+
+/// One file in the account's hidden sync folder. `fingerprint` changes
+/// whenever the content does (Drive: md5Checksum) so unchanged files are
+/// never re-downloaded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteFile {
+    pub id: String,
+    pub name: String,
+    pub fingerprint: String,
+}
+
+/// Blob store for the per-device sync state files, scoped per account
+/// (Drive `appDataFolder` in v1 — DESIGN.md "Cross-device sync"). The core
+/// only needs list / download / upload of small named files; anything
+/// with those three (iCloud, WebDAV, a directory) can replace it.
+pub trait SyncTransport {
+    fn list(
+        &self,
+        account_id: &AccountId,
+    ) -> impl std::future::Future<Output = Result<Vec<RemoteFile>, SyncError>> + Send;
+
+    fn download(
+        &self,
+        account_id: &AccountId,
+        file_id: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>, SyncError>> + Send;
+
+    /// Create (`file_id` None) or replace (`Some`) one file's content.
+    /// Must return `SyncError::NotFound` when replacing a file that is
+    /// gone, so the caller can fall back to creating it.
+    fn upload(
+        &self,
+        account_id: &AccountId,
+        file_id: Option<&str>,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<RemoteFile, SyncError>> + Send;
 }
 
 /// OS keychain in release, file-backed in dev (macOS keychain re-prompts on

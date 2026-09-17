@@ -8,6 +8,9 @@ shared, nothing runs on a server, and Google never sees a third party.
 1. Go to <https://console.cloud.google.com/> and create a project
    (e.g. `heypigeon`). Any existing personal project works too.
 2. **Enable the Gmail API**: APIs & Services → Library → search "Gmail API" → Enable.
+   Then do the same for the **Google Drive API** — reminders sync between your
+   devices through a hidden per-app folder in each account's Drive
+   (`appDataFolder`; invisible in the Drive UI, only this client can read it).
 3. **Configure the consent screen**: APIs & Services → OAuth consent screen
    - User type: **External** (the only choice without a Workspace org).
    - App name `Hey Pigeon`, your email for the contact fields. Save through the
@@ -50,3 +53,7 @@ Never commit these. The file lives outside the repo on purpose.
 
 - `https://www.googleapis.com/auth/gmail.modify` — read + label changes
   (archive needs it). Compose/send (M3) will add `gmail.send`.
+- `https://www.googleapis.com/auth/drive.appdata` — the hidden app-data
+  folder used for cross-device sync of reminders. Accounts connected before
+  this scope existed show "re-connect the account to enable sync" under
+  Settings → Accounts → Sync; remove and add the account once to fix it.

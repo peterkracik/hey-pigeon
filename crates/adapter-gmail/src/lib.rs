@@ -1,6 +1,7 @@
 //! Gmail REST adapter: implements `MailProvider` over the Gmail v1 API.
 //! Only this crate speaks Gmail's wire format — the core sees domain types.
 
+pub mod drive;
 pub mod oauth;
 
 use std::collections::HashMap;
@@ -281,7 +282,7 @@ fn is_not_found(e: &MailError) -> bool {
     matches!(e, MailError::Provider(s) if s.starts_with("404"))
 }
 
-fn urlencode(s: &str) -> String {
+pub(crate) fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 

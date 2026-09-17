@@ -39,6 +39,7 @@ full design and current milestone.
 ## Running it
 
 ```sh
+cd desktop-app
 npm install
 npm run tauri dev
 ```

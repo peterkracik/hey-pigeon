@@ -1,41 +1,44 @@
 name: build-macos
 
 on:
-        push:
-                tags: ["v*"]
-        workflow_dispatch:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
-        build-dmg:
-                runs-on: macos-latest
-                permissions:
-                        contents: write
-                steps:
-                        - uses: actions/checkout@v4
+  build-dmg:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
 
-                        - uses: actions/setup-node@v4
-                          with:
-                                  node-version: 20
-                                  cache: npm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop-app/package-lock.json
 
-                        - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
-                        - run: npm ci
+      - run: npm ci
+        working-directory: desktop-app
 
-                        - uses: tauri-apps/tauri-action@v0
-                          env:
-                                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                                  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-                                  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-                                  APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-                                  APPLE_ID: ${{ secrets.APPLE_ID }}
-                                  APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-                                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-                                  HEYPIGEON_OAUTH_CLIENT_ID: ${{ secrets.HEYPIGEON_OAUTH_CLIENT_ID }}
-                                  HEYPIGEON_OAUTH_CLIENT_SECRET: ${{ secrets.HEYPIGEON_OAUTH_CLIENT_SECRET }}
-                          with:
-                                  tagName: ${{ github.ref_name }}
-                                  releaseName: "Hey Pigeon v__VERSION__"
-                                  releaseDraft: true
-                                  prerelease: false
-                                  args: --target aarch64-apple-darwin
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HEYPIGEON_OAUTH_CLIENT_ID: ${{ secrets.HEYPIGEON_OAUTH_CLIENT_ID }}
+          HEYPIGEON_OAUTH_CLIENT_SECRET: ${{ secrets.HEYPIGEON_OAUTH_CLIENT_SECRET }}
+        with:
+          projectPath: desktop-app
+          tagName: ${{ github.ref_name }}
+          releaseName: "Hey Pigeon v__VERSION__"
+          releaseDraft: true
+          prerelease: false
+          args: --target aarch64-apple-darwin

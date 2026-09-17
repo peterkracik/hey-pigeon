@@ -147,12 +147,13 @@ export const syncNow = (accountId: string) =>
 
 /** Cross-device sync outcome for one account (mirrors mail::SyncStatus). */
 export interface SyncStatus {
-  state: "ok" | "unavailable" | "auth_expired" | "error";
+  /** "pending" = no round finished since the app started. */
+  state: "pending" | "ok" | "unavailable" | "auth_expired" | "error";
   detail: string | null;
-  /** Epoch ms of the last successful round; null until the first one. */
+  /** Epoch ms of the last successful round on any run; null = never. */
   last_sync_at: number | null;
 }
-/** Per-account sync status; accounts with no round yet are absent. */
+/** Per-account sync status; every connected account has an entry. */
 export const syncStatus = () =>
   invoke<Record<string, SyncStatus>>("sync_status");
 /** Runs the browser consent flow; resolves with the connected email address. */

@@ -31,6 +31,7 @@ const REMINDER_PREFIX: &str = "reminder:";
 const META_FILE_ID: &str = "file_id";
 const META_UPLOADED_FP: &str = "uploaded_fp";
 const META_SEEN_PREFIX: &str = "seen:";
+const META_LAST_SYNC_AT: &str = "last_sync_at";
 
 #[derive(Debug, thiserror::Error)]
 pub enum DevSyncError {
@@ -181,12 +182,21 @@ pub async fn sync_account<T: SyncTransport, S: Store>(
         // Our own upload must not come back as "changed" on the next list.
         store.sync_meta_set(account_id, &format!("{META_SEEN_PREFIX}{}", uploaded.id), &uploaded.fingerprint)?;
     }
+    store.sync_meta_set(account_id, META_LAST_SYNC_AT, &now_ms().to_string())?;
     log::info!(
         "devsync({account_id}): {} remote keys changed, {} reminders applied",
         changed_keys.len(),
         applied
     );
     Ok(applied > 0)
+}
+
+/// Epoch ms of the last round that completed for this account, on any
+/// run of the app (persisted — survives restarts). None until the first.
+pub fn last_sync_at<S: Store>(store: &S, account_id: &AccountId) -> Result<Option<i64>, StoreError> {
+    Ok(store
+        .sync_meta_get(account_id, META_LAST_SYNC_AT)?
+        .and_then(|v| v.parse().ok()))
 }
 
 async fn upload_or_create<T: SyncTransport>(
@@ -308,8 +318,10 @@ mod tests {
         // Device A sets a reminder and syncs.
         a.set_schedule(&"t1".into(), Some(42)).unwrap();
         record_reminder(&a, &acc, &"t1".into(), Some(42)).unwrap();
+        assert_eq!(last_sync_at(&a, &acc).unwrap(), None);
         assert!(!sync_account(&*remote, &a, &acc).await.unwrap(), "own write is not a local change");
         assert_eq!(remote.uploads(), 1);
+        assert!(last_sync_at(&a, &acc).unwrap().is_some_and(|t| t <= now_ms()));
 
         // Device B syncs: reminder lands on its thread row.
         assert!(sync_account(&*remote, &b, &acc).await.unwrap());

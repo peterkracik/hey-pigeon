@@ -61,6 +61,8 @@ pub struct MailState {
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncState {
+    /// No round has finished since the app started (one is on its way).
+    Pending,
     Ok,
     /// Scope missing / Drive API not enabled — needs a re-connect or setup
     /// step (detail says which), not a retry.
@@ -73,7 +75,8 @@ pub enum SyncState {
 pub struct SyncStatus {
     pub state: SyncState,
     pub detail: Option<String>,
-    /// Epoch ms of the last successful round; kept across failures.
+    /// Epoch ms of the last successful round, on any run of the app —
+    /// persisted by the core, so it survives restarts and failures.
     pub last_sync_at: Option<i64>,
 }
 
@@ -289,12 +292,27 @@ pub async fn set_schedule(
     Ok(())
 }
 
-/// Cross-device sync state per account (Settings UI).
+/// Cross-device sync state per account (Settings UI). Every account gets
+/// an entry: `Pending` with the persisted last-sync time until the first
+/// round of this session reports in.
 #[tauri::command]
 pub fn sync_status(
     state: State<'_, MailState>,
 ) -> Result<std::collections::HashMap<AccountId, SyncStatus>, String> {
-    Ok(state.sync_status.lock().unwrap().clone())
+    let live = state.sync_status.lock().unwrap().clone();
+    let mut out = std::collections::HashMap::new();
+    for account in state.store.list_accounts().map_err(estr)? {
+        let status = match live.get(&account.id) {
+            Some(s) => s.clone(),
+            None => SyncStatus {
+                state: SyncState::Pending,
+                detail: None,
+                last_sync_at: devsync::last_sync_at(&state.store, &account.id).map_err(estr)?,
+            },
+        };
+        out.insert(account.id, status);
+    }
+    Ok(out)
 }
 
 /// Update per-account settings: display name, color (predefined palette),
@@ -546,11 +564,13 @@ async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
         let Backend::Gmail(p) = &*backend else { return false };
         devsync::sync_account(p, &state.store, account_id).await
     };
+    // Persisted by the core on success; read it back so a failure still
+    // shows when things last worked, even across restarts.
+    let last_sync_at = devsync::last_sync_at(&state.store, account_id).unwrap_or(None);
     let mut statuses = state.sync_status.lock().unwrap();
     let previous = statuses.get(account_id).cloned();
-    let last_sync_at = previous.as_ref().and_then(|p| p.last_sync_at);
     let status = match &result {
-        Ok(_) => SyncStatus { state: SyncState::Ok, detail: None, last_sync_at: Some(now_ms()) },
+        Ok(_) => SyncStatus { state: SyncState::Ok, detail: None, last_sync_at },
         Err(devsync::DevSyncError::Transport(SyncError::Unavailable(why))) => {
             SyncStatus { state: SyncState::Unavailable, detail: Some(why.clone()), last_sync_at }
         }

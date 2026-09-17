@@ -307,6 +307,72 @@ Tauri 2 builds for iOS. To keep that door open, v1 must:
 - Realistic caveat: iOS build won't be free effort (App Store, background fetch
   limits, keyboard-first UX doesn't translate). Door open ≠ v1 requirement.
 
+## Cross-device sync (multiple Macs, later iOS)
+
+Still no server. Mail state already syncs through Gmail: read, archive, trash,
+labels, pin (a `STARRED` flip). What does **not** is the app-local state, and it
+is tiny — a few KB:
+
+| State | Where it lives today | Sync? |
+| --- | --- | --- |
+| Reminders (`threads.scheduled_at`) | SQLite, per thread, per account | **yes** — the one that hurts |
+| Prefs: hidden sidebar folders, account color, signature, AI provider + model | localStorage / SQLite | yes |
+| OAuth refresh tokens, AI API key | OS keychain | **no** — each device logs in on its own; AI key pasted per device (or iCloud Keychain, below) |
+
+### Decision: Google Drive `appDataFolder`, one per connected account
+
+Drive's [application data folder](https://developers.google.com/workspace/drive/api/guides/appdata)
+is a hidden, per-OAuth-client folder in the user's own Drive: invisible in the
+Drive UI, readable only by our client ID, wiped by the user from Google account
+settings. Free, plain REST from the Rust core (same `reqwest`, same tokens, same
+per-account sync loop), works identically on macOS, iOS and any future desktop
+target.
+
+- **Scope**: add `https://www.googleapis.com/auth/drive.appdata` to the OAuth
+  scope set (`crates/adapter-gmail/src/oauth.rs`). Existing users re-consent once.
+  Setup doc gains one step: enable the Drive API in the GCP project. The folder
+  is per OAuth client, so every device must use the same client ID — already true.
+- **Per account, no "anchor" account**: reminders for account A's threads live in
+  A's app data folder. Global prefs are written to *every* account's folder and
+  merged on read. A device with a subset of accounts gets exactly the data it
+  needs, and there is no "which account owns sync" question.
+- **One file per device — no write races**: Drive v3 has no `If-Match`
+  conditional update, so a single shared file would lose updates. Each device
+  writes only its own `state-<device-id>.json`: a map of key → `{value, ts,
+  device}`, tombstones included. Merge = newest `ts` per key across all files
+  (state-based LWW map: idempotent, no journal, no compaction). Tombstones are
+  garbage-collected after 30 days. Two devices at human speed never need more
+  than LWW; no CRDT library.
+- **Polling** piggybacks the per-account sync loop: `changes.list` with
+  `spaces=appDataFolder` and a stored page token returns empty when idle; only
+  changed files are downloaded (`files.get?alt=media`). Push after local
+  mutations, debounced. Drive quota (325k units/min/user) is irrelevant at this
+  volume.
+- **Architecture**: a `SyncTransport` port in `core` with a Drive adapter; a
+  `sync_state` table holds the page token and device id. Reminder writes stay
+  optimistic (SQLite first, sync later) — same shape as the outbox.
+
+### Rejected: Gmail as the metadata store
+
+Gmail has no per-message custom properties. Hidden labels
+(`labelListVisibility: labelHide`) work for booleans, but a reminder is a
+timestamp — that means minting a label per date. Gmail's own snooze is not
+settable via the API (`SNOOZED` is a system label). A JSON "config email" via
+`messages.insert` under a hidden label works (Apple Notes over IMAP did this) but
+shows up in All Mail and search, and every update is insert-then-delete. Drive's
+app data folder is the same idea without the pollution.
+
+### Later, optional: iCloud
+
+Only for Apple-only users who want Google to hold nothing beyond mail, or for
+syncing secrets. `tauri-plugin-icloud-kvs` exposes `NSUbiquitousKeyValueStore`
+(1 MB, 1024 keys — enough) on macOS + iOS; costs an Apple developer account,
+entitlements and a native plugin, and covers Apple devices only. Slot it as a
+second `SyncTransport` adapter if it is ever asked for. For the AI key,
+`apple-native-keyring-store` (`protected` feature) can mark keychain items
+`kSecAttrSynchronizable` so iCloud Keychain moves it between devices without it
+ever touching Drive.
+
 ## Security
 
 An email client is a high-value target: it holds auth for your whole digital life and
@@ -390,6 +456,7 @@ Ports (traits) in v1 — and what each one future-proofs:
 | `SecretStore` | OS keychain | iOS keychain, encrypted file fallback |
 | `AiProvider` | OpenAI | Anthropic, Ollama, any OpenAI-compatible |
 | `AuthFlow` | loopback redirect | iOS custom-URL-scheme redirect |
+| `SyncTransport` | Drive `appDataFolder` | iCloud KVS, WebDAV, any blob store |
 
 ### Rules
 
@@ -423,7 +490,7 @@ Ports (traits) in v1 — and what each one future-proofs:
 3. **M3 — full switch**: compose/reply/forward (`gmail.send`), attachments view,
    notifications, remote-image blocking, **AI: BYO OpenAI key, summarize + draft
    reply + Ask AI**. Cancel Superhuman.
-4. **M4+ (unordered)**: snooze (local), split inbox, more AI providers
+4. **M4+ (unordered)**: snooze (local), cross-device sync (Drive `appDataFolder`), split inbox, more AI providers
    (Anthropic, local/Ollama), AI triage experiments, shared OAuth client + release
    builds, iOS spike.
 

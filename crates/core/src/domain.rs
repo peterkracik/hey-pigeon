@@ -131,6 +131,12 @@ pub enum Mutation {
     Archive {
         thread_id: ThreadId,
     },
+    /// Reverse of Archive: restore a thread to the inbox (re-add INBOX,
+    /// flip is_archived/is_inbox back). Gmail has no separate endpoint for
+    /// this — it's the same threads.modify label flip, just addLabelIds.
+    Unarchive {
+        thread_id: ThreadId,
+    },
     MarkRead {
         thread_id: ThreadId,
         read: bool,
@@ -198,6 +204,10 @@ impl std::fmt::Debug for Mutation {
         match self {
             Mutation::Archive { thread_id } => f
                 .debug_struct("Archive")
+                .field("thread_id", thread_id)
+                .finish(),
+            Mutation::Unarchive { thread_id } => f
+                .debug_struct("Unarchive")
                 .field("thread_id", thread_id)
                 .finish(),
             Mutation::MarkRead { thread_id, read } => f

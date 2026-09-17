@@ -186,6 +186,13 @@ impl Store for MemStore {
                 t.is_inbox = false;
                 t.labels.retain(|l| l != "INBOX");
             }
+            Mutation::Unarchive { .. } => {
+                t.is_archived = false;
+                t.is_inbox = true;
+                if !t.labels.iter().any(|l| l == "INBOX") {
+                    t.labels.push("INBOX".to_string());
+                }
+            }
             Mutation::MarkRead { read, .. } => t.is_read = *read,
             Mutation::Trash { .. } => {
                 t.is_inbox = false;
@@ -213,6 +220,7 @@ impl Store for MemStore {
         };
         let id = match mutation {
             Mutation::Archive { thread_id }
+            | Mutation::Unarchive { thread_id }
             | Mutation::MarkRead { thread_id, .. }
             | Mutation::Star { thread_id, .. }
             | Mutation::ModifyLabel { thread_id, .. }
@@ -414,12 +422,12 @@ impl MailProvider for FakeProvider {
         &self,
         _account_id: &AccountId,
         thread_id: &ThreadId,
-    ) -> Result<Vec<Message>, MailError> {
+    ) -> Result<(bool, Vec<Message>), MailError> {
         Ok(self
             .threads
             .iter()
             .find(|(t, _)| &t.id == thread_id)
-            .map(|(_, msgs)| msgs.clone())
+            .map(|(t, msgs)| (t.has_attachment, msgs.clone()))
             .unwrap_or_default())
     }
 

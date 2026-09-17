@@ -182,20 +182,27 @@ pub async fn get_thread(
     state: State<'_, MailState>,
     thread_id: ThreadId,
 ) -> Result<Option<ThreadWithMessages>, String> {
-    let Some(thread) = state.store.get_thread(&thread_id).map_err(estr)? else {
+    let Some(mut thread) = state.store.get_thread(&thread_id).map_err(estr)? else {
         return Ok(None);
     };
     let mut messages = state.store.list_messages(&thread_id).map_err(estr)?;
     let missing_bodies = messages.iter().all(|m| m.body_html.is_none() && m.body_text.is_none());
     if missing_bodies {
         let backend = state.backend.read().await;
-        let fetched =
+        let (has_attachment, fetched) =
             with_provider!(&*backend, p => p.fetch_bodies(&thread.account_id, &thread_id).await)
                 .map_err(estr)?;
         for m in &fetched {
             state.store.upsert_message(m).map_err(estr)?;
         }
         messages = state.store.list_messages(&thread_id).map_err(estr)?;
+        // list/backfill only ever see Gmail's metadata tier (no MIME parts,
+        // so has_attachment defaults false there — this first-open fetch is
+        // the only place it can be corrected; persist it back to the thread.
+        if has_attachment != thread.has_attachment {
+            thread.has_attachment = has_attachment;
+            state.store.upsert_thread(&thread).map_err(estr)?;
+        }
     }
     Ok(Some(ThreadWithMessages { thread, messages }))
 }

@@ -467,6 +467,21 @@
     // TRASH/SPAM); until then archive ('e') is disabled in Trash and Spam —
     // remove-INBOX would be a nonsensical no-op on already-trashed mail.
     if (ipc.isTauri && action === "done" && (folder === "trash" || folder === "spam")) return;
+    // Unchecking "done": restore to inbox immediately, no undo ceremony
+    // (mirrors InboxList's clickDone "unchecking: no ceremony") — the row
+    // stays visible with done flipped off, unlike mark-done/delete below
+    // which drop the row from the current list entirely.
+    if (em && action === "done" && em.done) {
+      emailsData = emailsData.map((e) => (e.id === id ? { ...e, done: false } : e));
+      if (ipc.isTauri) {
+        ipc.mutate(em.accountId, { kind: "unarchive", thread_id: id } as const).catch((e) => {
+          console.error("mutate failed", e);
+          toast("danger", "Could not restore to inbox", String(e));
+          emailsData = emailsData.map((e2) => (e2.id === id ? { ...e2, done: true } : e2));
+        });
+      }
+      return;
+    }
     if (em && (action === "done" || action === "delete")) {
       // Optimistic: drop from the local list now; the backend mutation is
       // deferred so Undo can cancel it and reinsert the row in place.

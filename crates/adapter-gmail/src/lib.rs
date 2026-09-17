@@ -869,11 +869,12 @@ impl MailProvider for GmailProvider {
         &self,
         account_id: &AccountId,
         thread_id: &ThreadId,
-    ) -> Result<Vec<Message>, MailError> {
+    ) -> Result<(bool, Vec<Message>), MailError> {
         let wire: WireThread = self
             .get_json(account_id, &format!("{API}/threads/{thread_id}?format=full"))
             .await?;
-        Ok(to_thread(account_id, &wire).1)
+        let (thread, messages) = to_thread(account_id, &wire);
+        Ok((thread.has_attachment, messages))
     }
 
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
@@ -931,6 +932,9 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
     Some(match mutation {
         Mutation::Archive { thread_id } => {
             (thread_id, serde_json::json!({ "removeLabelIds": ["INBOX"] }))
+        }
+        Mutation::Unarchive { thread_id } => {
+            (thread_id, serde_json::json!({ "addLabelIds": ["INBOX"] }))
         }
         Mutation::MarkRead { thread_id, read } => {
             let key = if *read { "removeLabelIds" } else { "addLabelIds" };
@@ -1156,6 +1160,42 @@ mod tests {
         assert_eq!(messages[0].to_addrs, vec!["me@example.com"]);
         assert_eq!(thread.labels, vec!["INBOX", "UNREAD"]);
         assert!(!thread.is_archived, "inbox mail is not archived");
+        assert!(!thread.has_attachment, "plain text/html parts carry no filename");
+    }
+
+    #[test]
+    fn wire_thread_detects_nested_attachment() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "messages": [{
+                "id": "m1",
+                "labelIds": ["INBOX"],
+                "snippet": "see attached",
+                "internalDate": "1756600000000",
+                "payload": {
+                    "mimeType": "multipart/mixed",
+                    "headers": [],
+                    "parts": [
+                        {
+                            "mimeType": "multipart/alternative",
+                            "headers": [],
+                            "parts": [
+                                {"mimeType": "text/plain", "headers": [], "body": {"data": "aGk"}}
+                            ]
+                        },
+                        {
+                            "mimeType": "application/pdf",
+                            "filename": "report.pdf",
+                            "headers": [],
+                            "body": {"attachmentId": "a1"}
+                        }
+                    ]
+                }
+            }]
+        });
+        let wire: WireThread = serde_json::from_value(json).unwrap();
+        let (thread, _) = to_thread(&"acc".to_string(), &wire);
+        assert!(thread.has_attachment, "attachment part nested under multipart/mixed");
     }
 
     #[test]

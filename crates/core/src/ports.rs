@@ -125,12 +125,16 @@ pub trait MailProvider {
     ) -> impl std::future::Future<Output = Result<HistoryPage, MailError>> + Send;
 
     /// Full messages (with bodies) for one thread — fetched lazily when the
-    /// user opens a thread whose bodies are not local yet.
+    /// user opens a thread whose bodies are not local yet. This is also the
+    /// only sync tier that returns the MIME parts tree (list/backfill only
+    /// ever fetch `format=metadata`, which omits `parts` entirely), so it's
+    /// the sole place `has_attachment` can be (re)computed accurately; the
+    /// caller is expected to persist it onto the thread.
     fn fetch_bodies(
         &self,
         account_id: &AccountId,
         thread_id: &ThreadId,
-    ) -> impl std::future::Future<Output = Result<Vec<Message>, MailError>> + Send;
+    ) -> impl std::future::Future<Output = Result<(bool, Vec<Message>), MailError>> + Send;
 
     /// Apply one local mutation remotely (used by the outbox drain).
     fn apply(

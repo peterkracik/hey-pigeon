@@ -77,6 +77,7 @@ export const SNIPPET_END = "\ue001";
 
 export type BackendMutation =
   | { kind: "archive"; thread_id: string }
+  | { kind: "unarchive"; thread_id: string }
   | { kind: "mark_read"; thread_id: string; read: boolean }
   | { kind: "trash"; thread_id: string }
   | { kind: "star"; thread_id: string; starred: boolean }

@@ -765,15 +765,22 @@ impl Store for SqliteStore {
                 return self.flip_label(thread_id, label_id, *add);
             }
             Mutation::Archive { thread_id } => (thread_id, (true, false)),
+            Mutation::Unarchive { thread_id } => (thread_id, (false, true)),
             Mutation::Trash { thread_id } => (thread_id, (false, false)),
         };
         let Some(mut t) = self.get_thread(thread_id)? else {
             return Err(StoreError(format!("unknown thread {thread_id}")));
         };
         let (is_archived, is_inbox) = flags;
-        t.labels.retain(|l| l != "INBOX");
-        if matches!(mutation, Mutation::Trash { .. }) && !t.labels.iter().any(|l| l == "TRASH") {
-            t.labels.push("TRASH".to_string());
+        if matches!(mutation, Mutation::Unarchive { .. }) {
+            if !t.labels.iter().any(|l| l == "INBOX") {
+                t.labels.push("INBOX".to_string());
+            }
+        } else {
+            t.labels.retain(|l| l != "INBOX");
+            if matches!(mutation, Mutation::Trash { .. }) && !t.labels.iter().any(|l| l == "TRASH") {
+                t.labels.push("TRASH".to_string());
+            }
         }
         let labels = serde_json::to_string(&t.labels).map_err(err)?;
         self.with(|c| {
@@ -1129,6 +1136,27 @@ mod tests {
         let t2 = s.get_thread(&"t2".to_string()).unwrap().unwrap();
         assert!(t2.is_archived && !t2.is_inbox);
         assert_eq!(t2.labels, vec!["STARRED".to_string()]);
+    }
+
+    #[test]
+    fn unarchive_apply_local_restores_thread_to_inbox() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX", "STARRED"], true, false, 1000);
+        s.apply_local(&Mutation::Archive { thread_id: "t1".to_string() }).unwrap();
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), Vec::<String>::new());
+
+        s.apply_local(&Mutation::Unarchive { thread_id: "t1".to_string() }).unwrap();
+        let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert!(t1.is_inbox && !t1.is_archived);
+        assert_eq!(t1.labels, vec!["STARRED".to_string(), "INBOX".to_string()]);
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["t1"]);
+
+        // idempotent: unarchiving an already-inbox thread doesn't duplicate INBOX
+        s.apply_local(&Mutation::Unarchive { thread_id: "t1".to_string() }).unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
+            vec!["STARRED".to_string(), "INBOX".to_string()]
+        );
     }
 
     #[test]

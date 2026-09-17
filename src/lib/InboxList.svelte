@@ -718,6 +718,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Wide layout: unwrap so conv/subject-wrap sit directly in .row's flex
+     flow, exactly where they'd be without this wrapper. Narrow layout
+     turns it into the real line-2 box (see the media query below). */
+  .row-bottom {
+    display: contents;
+  }
   /* Conversation marker — absence means a single email. */
   .conv {
     display: inline-flex;
@@ -782,22 +788,18 @@
     .snippet {
       display: none;
     }
-    /* Row wraps to 2 lines: from + time stay on line 1, conv + subject
-       move to line 2. .row::after is a zero-size flex item with
-       flex-basis:100% — the standard force-a-line-break trick. It must be
-       the break itself (not .conv), because a flex item with basis:100%
-       claims the whole line for wrap-assignment purposes even once it
-       shrinks back down, so the sibling right after it would wrap again
-       onto a 3rd line instead of sharing line 2. */
+    /* Row wraps to 2 lines: star/avatar/from/badges/time stay on line 1,
+       .row-bottom (conv + subject) is line 2. Earlier attempts tried to
+       force the break with an implicit width-overflow wrap (line 1's items
+       just running out of room) *and* an explicit flex-basis:100% break at
+       the same time — those two mechanisms race, and whichever the browser
+       resolves first can strand .right on its own 3rd line. Making
+       .row-bottom a single real flex item (instead of two loose ones) and
+       giving IT flex-basis:100% avoids the race entirely: it's simply the
+       last item in flex `order`, so nothing after it can be mis-assigned. */
     .row {
       flex-wrap: wrap;
       row-gap: 4px;
-    }
-    .row::after {
-      content: "";
-      order: 2;
-      flex-basis: 100%;
-      width: 0;
     }
     .from {
       flex-shrink: 1;
@@ -808,25 +810,29 @@
     .right {
       order: 1;
     }
-    /* Nothing on line 1 grows anymore (snippet, the old flexible spacer,
-       is hidden), so without this the trailing group just left-packs
-       after "from" and leaves the rest of the row blank. margin-left:auto
-       eats the leftover space in front of .right, pinning time/actions to
-       the true right edge again. */
+    /* Nothing else on line 1 grows (snippet, the old flexible spacer, is
+       hidden), so without this the trailing group just left-packs after
+       "from" and leaves the rest of the row blank. margin-left:auto eats
+       the leftover space in front of .right, pinning time/actions to the
+       true right edge again. */
     .right {
       margin-left: auto;
     }
-    /* subject-wrap goes first on line 2 (indented to sit under "from"),
-       conv (the reply-count bubble) trails after it — putting the fixed
-       34px conv slot first pushed the subject text ~35px further right
-       than "from" above it, so the two lines didn't line up. */
+    /* 86px = row padding(16) + .star(16) + gap(14) + avatar(26) + gap(14)
+       — the exact x-offset where "from" starts on line 1, so the subject
+       on line 2 lines up under it instead of under the checkbox. */
+    .row-bottom {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      order: 2;
+      flex-basis: 100%;
+      margin-left: 86px;
+    }
     .subject-wrap {
-      order: 3;
       max-width: none;
-      margin-left: 70px;
     }
     .conv {
-      order: 4;
       margin-left: 0;
     }
   }
@@ -1001,14 +1007,17 @@
   .action-btn.pin-active:hover {
     color: var(--blue-600, var(--tag-sky-fg));
   }
+  /* Left = 86px, the row's avatar rail (16 pad + 16 star + 14 gap + 26
+     avatar + 14 gap) — lines the expanded body up under the sender name
+     instead of resetting to the row's outer edge. */
   .preview {
-    padding: 20px 16px 12px;
+    padding: var(--space-3) 16px 12px 86px;
   }
   .preview-to {
     font-family: var(--font-body);
     font-size: 12px;
     color: var(--text-tertiary);
-    margin: -8px 0 12px;
+    margin: 0 0 var(--space-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

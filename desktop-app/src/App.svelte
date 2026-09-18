@@ -405,7 +405,11 @@
     const mapped = base
       .filter((e) => unified || e.accountId === activeAccountId)
       .map((e) =>
-        unified ? { ...e, accountTag: accounts.find((a) => a.id === e.accountId)?.tag } : e,
+        // The ring only helps once there's more than one account to tell apart —
+        // with a single account it's a uniform, purely decorative outline.
+        unified && accounts.length > 1
+          ? { ...e, accountTag: accounts.find((a) => a.id === e.accountId)?.tag }
+          : e,
       );
     const q = quickFilterOpen ? quickFilter.trim() : "";
     if (!q) return mapped;

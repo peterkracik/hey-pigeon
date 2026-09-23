@@ -1571,6 +1571,14 @@
                 value={emailSortOrder}
                 onchange={setEmailSortOrder}
               />
+              {#if view === "mail"}
+                <span class="sort-filter-sep"></span>
+                <Switch
+                  checked={inboxFilter === "unread"}
+                  onchange={(v) => setInboxFilter(v ? "unread" : "all")}
+                  label="Unread only"
+                />
+              {/if}
               {#if view !== "calendar"}
                 <span class="sort-filter-sep"></span>
                 <span class="sort-filter-label">Date</span>

@@ -6,6 +6,7 @@
   import EmailBody from "./EmailBody.svelte";
   import Avatar from "./ds/Avatar.svelte";
   import { EMAIL_ACTIONS, type Email } from "./data";
+  import * as ipc from "./ipc";
   import type { BackendTriageLabel } from "./ipc";
   import PriorityIndicator from "./PriorityIndicator.svelte";
   import TriageBadges from "./TriageBadges.svelte";
@@ -236,6 +237,76 @@
       { label: "Older", items: older, isPinnedGroup: false },
     ].filter((g) => g.items.length > 0);
   });
+  // ------------------------------------------------------- AI group summary
+  // Day-group summaries only (DESIGN.md: AI runs on an explicit click, never
+  // in the background) \u2014 gate the whole affordance on a configured key so
+  // it's invisible until the user has set one up (same check as Settings).
+  let aiConfigured = $state(false);
+  if (ipc.isTauri) {
+    ipc
+      .aiStatus()
+      .then((s) => (aiConfigured = s.configured))
+      .catch(() => {});
+  }
+
+  interface GroupSummary {
+    /** Identifies exactly which active emails this summary covers \u2014 a
+     *  mismatch (new mail, an email getting marked done, account switch)
+     *  means the cached text is stale and the button reverts to "Summarize". */
+    cacheKey: string;
+    text: string;
+    generating: boolean;
+    error: string | null;
+    open: boolean;
+  }
+  // Keyed by group label (Today/Last 7 days/Older/Pinned) \u2014 only one of
+  // each is ever visible at a time, so the label alone is a fine key.
+  // ponytail: session-only cache (component state, not SQLite) \u2014
+  // generation is a manual click anyway, so losing it on restart just costs
+  // one more click + one cheap API call; add durable storage if that stops
+  // being true.
+  let summaries: Record<string, GroupSummary> = $state({});
+
+  // Active mail (not marked done) is worth summarizing \u2014 read or unread,
+  // matching "done" as this app's one notion of resolved. Caps token cost
+  // too. Cap at 30 items: enough for a
+  // 2\u20133 line digest, more would just get truncated by the model anyway.
+  const MAX_SUMMARY_ITEMS = 30;
+
+  function summaryCacheKey(label: string, active: Email[]): string {
+    return (
+      label +
+      ":" +
+      active
+        .map((e) => `${e.accountId}:${e.id}:${e.lastMsgAt ?? 0}`)
+        .sort()
+        .join(",")
+    );
+  }
+
+  function toggleSummary(label: string) {
+    const s = summaries[label];
+    if (!s) return;
+    summaries = { ...summaries, [label]: { ...s, open: !s.open } };
+  }
+
+  async function runSummary(label: string, active: Email[]) {
+    const cacheKey = summaryCacheKey(label, active);
+    summaries = { ...summaries, [label]: { cacheKey, text: "", generating: true, error: null, open: true } };
+    try {
+      const items: ipc.SummaryItem[] = active
+        .slice(0, MAX_SUMMARY_ITEMS)
+        .map((e) => ({ from: e.from, subject: e.subject, snippet: e.snippet }));
+      const text = await ipc.summarizeGroup("openai", items);
+      summaries = { ...summaries, [label]: { cacheKey, text, generating: false, error: null, open: true } };
+    } catch (err) {
+      summaries = {
+        ...summaries,
+        [label]: { cacheKey, text: "", generating: false, error: String(err), open: true },
+      };
+    }
+  }
+
   const activeActions = $derived(
     (hoverActions.length ? hoverActions : ["done", "delete", "pin"])
       .map((k) => EMAIL_ACTIONS.find((a) => a.key === k))
@@ -273,8 +344,35 @@
 
 <div>
   {#each groups as g, gi (gi)}
+    {@const active = g.items.filter((e) => !e.done)}
+    {@const summaryKey = active.length ? summaryCacheKey(g.label, active) : null}
+    {@const summary = summaries[g.label]}
+    {@const summaryReady = summaryKey !== null && summary?.cacheKey === summaryKey}
     <div class:pinned-group={g.isPinnedGroup}>
-      <div class="group-label">{g.label}</div>
+      <div class="group-label-row">
+        <div class="group-label">{g.label}</div>
+        {#if aiConfigured && summaryKey}
+          {#if summaryReady}
+            <button
+              type="button"
+              class="summary-toggle"
+              disabled={summary.generating}
+              onclick={() => toggleSummary(g.label)}
+            >
+              {summary.generating ? "Summarizing\u2026" : summary.open ? "Hide summary" : "Show summary"}
+            </button>
+          {:else}
+            <button type="button" class="summary-toggle" onclick={() => runSummary(g.label, active)}>
+              Summarize {active.length} active
+            </button>
+          {/if}
+        {/if}
+      </div>
+      {#if summaryReady && summary.open}
+        <div class="summary-block" class:is-error={!!summary.error}>
+          {summary.generating ? "Summarizing\u2026" : (summary.error ?? summary.text)}
+        </div>
+      {/if}
       {#each g.items as e (e.id)}
         <div class:selected-card={selectedId === e.id}>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -557,6 +655,12 @@
     margin-bottom: 20px;
     border-bottom: 1px solid var(--border-subtle);
   }
+  .group-label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
   .group-label {
     padding: 18px 0 8px;
     font-family: var(--font-body);
@@ -564,7 +668,44 @@
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+    color: var(--accent-primary);
+  }
+  .summary-toggle {
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    padding: 0;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
     color: var(--text-tertiary);
+    cursor: pointer;
+  }
+  .summary-toggle:hover:not(:disabled) {
+    color: var(--text-secondary);
+  }
+  .summary-toggle:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  /* Deliberately short and boxed \u2014 a few lines, never a scrolling essay,
+     regardless of how much the model returns (the prompt asks for brevity
+     too, this is the visual backstop). */
+  .summary-block {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    font-family: var(--font-body);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre-line;
+    max-height: 4.6em;
+    overflow: hidden;
+  }
+  .summary-block.is-error {
+    color: var(--state-danger);
   }
   .selected-card {
     margin: 0 -16px 8px;

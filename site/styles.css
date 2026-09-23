@@ -71,8 +71,8 @@ nav.site a:hover { color: var(--text-primary); }
 .btn-gradient {
   display: inline-flex; align-items: center; gap: 8px; height: 48px; padding: 0 20px;
   border: none; border-radius: var(--radius-sm); font-family: var(--font-body);
-  font-weight: 600; font-size: var(--text-body-l); color: #fff; cursor: pointer;
-  background: linear-gradient(135deg, #FF83BC, #C43277); transition: filter var(--duration-fast) var(--ease-standard);
+  font-weight: 600; font-size: var(--text-body-l); color: #5C2748; cursor: pointer;
+  background: linear-gradient(135deg, #FFD6EC, #E39BC4); transition: filter var(--duration-fast) var(--ease-standard);
 }
 .btn-gradient:hover { filter: brightness(1.05); }
 .btn-ghost-lg {

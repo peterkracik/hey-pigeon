@@ -3,3 +3,4 @@ dist
 .pi/
 .pi-lens/
 target
+**/.DS_Store

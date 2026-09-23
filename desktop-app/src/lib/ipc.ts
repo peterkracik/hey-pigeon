@@ -115,6 +115,9 @@ export interface OutAttachment {
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
+import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 export const isTauri = "__TAURI_INTERNALS__" in globalThis;
 
@@ -359,6 +362,27 @@ export function messagesToThreadMsgs(
     html: Boolean(m.body_html),
     bodyText: m.body_text ?? undefined,
   }));
+}
+
+// ------------------------------------------------------------ Auto-update
+// GitHub Releases doubles as the update server (tauri.conf.json
+// plugins.updater) — signed against the keypair generated for this repo.
+// Only ever runs on demand (Settings "Check for updates"), never silently
+// in the background.
+
+/** Installed app version ("dev" outside Tauri). */
+export const appVersion = () => (isTauri ? getVersion() : Promise.resolve("dev"));
+
+/** Resolves to the pending Update when a newer signed build exists on
+ *  GitHub Releases, else null. */
+export const checkForUpdate = (): Promise<Update | null> =>
+  isTauri ? checkUpdate() : Promise.resolve(null);
+
+/** Downloads + installs the update found by checkForUpdate, then relaunches
+ *  — nothing after the await runs, the process restarts on the new build. */
+export async function installUpdate(update: Update): Promise<void> {
+  await update.downloadAndInstall();
+  await relaunch();
 }
 
 /** TEMP diagnostic: log a message into the Rust app log. */

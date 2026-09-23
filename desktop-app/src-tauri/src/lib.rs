@@ -14,6 +14,9 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            // Mobile has no updater — desktop-only, per Tauri's own guidance.
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let data_dir = tauri::Manager::path(app).app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             // Shared with `ai::init` — see the comment on `mail::init` for why
@@ -26,6 +29,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
         // Mail bodies render in an iframe (untrusted HTML), so link clicks and
         // target=_blank popups still navigate through this webview — cancel any
         // navigation that isn't the app's own origin and hand it to the OS

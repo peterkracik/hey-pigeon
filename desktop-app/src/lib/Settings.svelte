@@ -263,6 +263,41 @@
     }
   }
 
+  // --------------------------------------------------------------- Updates
+  let appVersionText = $state("");
+  ipc.appVersion().then((v) => (appVersionText = v));
+
+  type UpdateCheckState = "idle" | "checking" | "upToDate" | "available" | "downloading" | "error";
+  let updateCheckState: UpdateCheckState = $state("idle");
+  let pendingUpdate: Awaited<ReturnType<typeof ipc.checkForUpdate>> = $state(null);
+  let updateError: string | null = $state(null);
+
+  async function checkForUpdates() {
+    if (!ipc.isTauri) return;
+    updateCheckState = "checking";
+    updateError = null;
+    try {
+      pendingUpdate = await ipc.checkForUpdate();
+      updateCheckState = pendingUpdate ? "available" : "upToDate";
+    } catch (e) {
+      updateError = String(e);
+      updateCheckState = "error";
+    }
+  }
+
+  async function installUpdateNow() {
+    if (!pendingUpdate) return;
+    updateCheckState = "downloading";
+    updateError = null;
+    try {
+      await ipc.installUpdate(pendingUpdate);
+      // relaunch() ends this process — nothing below ever runs on success.
+    } catch (e) {
+      updateError = String(e);
+      updateCheckState = "error";
+    }
+  }
+
   function reorderOrAdd(targetIndex: number) {
     if (!dragKey) return;
     let next = hoverActions.filter((k) => k !== dragKey);
@@ -631,7 +666,50 @@
     </div>
   </section>
 
-  <div class="copyright">© 2026 heypigeon.app · v1.0.0</div>
+  <section>
+    <div class="group-head">
+      <h2>Updates</h2>
+      <p>Checks GitHub for a newer signed build — only when you ask, never silently in the background.</p>
+    </div>
+    <div class="group-body">
+      <div class="setting-row">
+        <div class="setting-text">
+          <div class="setting-title">Version {appVersionText}</div>
+          <div class="setting-desc">
+            {#if updateCheckState === "checking"}
+              Checking for updates…
+            {:else if updateCheckState === "upToDate"}
+              You're on the latest version.
+            {:else if updateCheckState === "available" && pendingUpdate}
+              Update available: v{pendingUpdate.version}
+            {:else if updateCheckState === "downloading"}
+              Downloading and installing… the app will restart.
+            {:else if updateCheckState === "error"}
+              {updateError}
+            {:else if !ipc.isTauri}
+              Updates only run in the installed app, not this browser preview.
+            {/if}
+          </div>
+        </div>
+        <div class="setting-control">
+          {#if updateCheckState === "available"}
+            <Button variant="secondary" size="sm" onclick={installUpdateNow}>Install &amp; restart</Button>
+          {:else}
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!ipc.isTauri || updateCheckState === "checking" || updateCheckState === "downloading"}
+              onclick={checkForUpdates}
+            >
+              {updateCheckState === "checking" ? "Checking…" : "Check for updates"}
+            </Button>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="copyright">© 2026 heypigeon.app · v{appVersionText || "…"}</div>
 </div>
 
 <style>

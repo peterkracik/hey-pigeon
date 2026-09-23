@@ -207,6 +207,15 @@
     pinListEnabled = v;
     localStorage.setItem("pinListEnabled", JSON.stringify(pinListEnabled));
   }
+  // Opt-in: generate AI summaries (inbox groups + open thread) as soon as
+  // they're viewable instead of waiting for an explicit "Summarize" click.
+  // Off by default \u2014 same explicit-action privacy posture as everywhere
+  // else in the AI section until the user turns this on themselves.
+  let autoSummarize = $state(readJson("autoSummarize", false));
+  function setAutoSummarize(v: boolean) {
+    autoSummarize = v;
+    localStorage.setItem("autoSummarize", JSON.stringify(autoSummarize));
+  }
   let liveAccounts: Account[] = $state([]);
   // Lazy loading: rows come in pages of 50; scrolling near the bottom raises
   // the limit and refetches (keyset-paginated locally — milliseconds).
@@ -1637,6 +1646,7 @@
             initialReplyOpen={threadReplyStart}
             triageLabels={liveTriageLabels}
             onSetTriageLabels={setTriageLabels}
+            {autoSummarize}
           />
         {:else}
           <InboxList
@@ -1657,6 +1667,7 @@
             signatureFor={(em) => signatureFor(em.accountId)}
             {hoverActions}
             {pinListEnabled}
+            {autoSummarize}
             {remindRequestId}
             onRemindHandled={() => (remindRequestId = null)}
             triageLabels={liveTriageLabels}
@@ -1770,6 +1781,8 @@
             onHoverActionsChange={setHoverActions}
             {pinListEnabled}
             onPinListChange={setPinListEnabled}
+            {autoSummarize}
+            onAutoSummarizeChange={setAutoSummarize}
             onAddAccount={addAccount}
             onRemoveAccount={removeAccount}
             onUpdateAccount={updateAccount}

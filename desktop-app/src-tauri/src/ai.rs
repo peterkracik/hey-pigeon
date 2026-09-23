@@ -30,6 +30,31 @@ pub struct SummaryItem {
     pub snippet: String,
 }
 
+/// Thread summaries render in the same fixed-height block as group
+/// summaries, but recap turns in ONE conversation rather than digest many
+/// separate emails — different framing needs a different system prompt.
+const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, recapping an email conversation so they can skip reading every message. Talk directly to them, warm and casual — e.g. \"Sarah's asking for the invoice, and Priya already sent the draft.\" Return at most 3 short lines covering who said what and where things currently stand. Plain text only: no markdown, no headers, no bullet characters, no preamble.";
+
+/// One message's contribution to a thread summary — sender + trimmed body
+/// text only (never HTML), same privacy posture as `SummaryItem`.
+#[derive(serde::Deserialize)]
+pub struct ThreadSummaryItem {
+    pub from: String,
+    pub snippet: String,
+}
+
+fn build_thread_summary_prompt(subject: &str, items: &[ThreadSummaryItem]) -> String {
+    let mut out = format!("Subject: {subject}\n\n");
+    out.push_str(
+        &items
+            .iter()
+            .map(|i| format!("{}: {}", i.from, i.snippet))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    );
+    out
+}
+
 /// Pure prompt builder — no network, unit-testable directly (DESIGN.md's
 /// fakes-over-mocks convention, same as `adapter-openai::build_body`).
 fn build_summary_prompt(items: &[SummaryItem]) -> String {
@@ -293,6 +318,61 @@ pub async fn ai_summarize_group(
     }
 }
 
+/// Summarize one open thread's messages into a short recap. Caller
+/// (ThreadView.svelte) triggers this only on an explicit click and caches
+/// the result client-side keyed on the thread's message ids \u2014 this
+/// command itself is stateless and always calls the provider.
+#[tauri::command]
+pub async fn ai_summarize_thread(
+    state: State<'_, AiState>,
+    provider_id: String,
+    subject: String,
+    items: Vec<ThreadSummaryItem>,
+) -> Result<String, String> {
+    if items.is_empty() {
+        return Err("nothing to summarize".to_string());
+    }
+    match provider_id.as_str() {
+        "openai" => {
+            let key = state
+                .secrets
+                .get(&key_secret_key("openai"))
+                .map_err(estr)?
+                .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
+            let model = state
+                .secrets
+                .get(&model_secret_key("openai"))
+                .map_err(estr)?
+                .unwrap_or_else(|| {
+                    OpenAiProvider::model_catalog()
+                        .into_iter()
+                        .next()
+                        .map(|m| m.id)
+                        .unwrap_or_default()
+                });
+            let req = CompletionRequest {
+                model,
+                messages: vec![
+                    ChatMessage {
+                        role: ChatRole::System,
+                        content: THREAD_SUMMARY_SYSTEM_PROMPT.to_string(),
+                    },
+                    ChatMessage {
+                        role: ChatRole::User,
+                        content: build_thread_summary_prompt(&subject, &items),
+                    },
+                ],
+            };
+            OpenAiProvider::new(key)
+                .complete(req)
+                .await
+                .map(|s| s.trim().to_string())
+                .map_err(estr)
+        }
+        other => Err(format!("unknown AI provider {other}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,5 +396,23 @@ mod tests {
         assert!(prompt.contains("billing@x.com"));
         assert!(prompt.contains("Weekly digest"));
         assert_eq!(prompt.matches("From:").count(), 2);
+    }
+
+    #[test]
+    fn build_thread_summary_prompt_includes_subject_and_each_message() {
+        let items = vec![
+            ThreadSummaryItem {
+                from: "Sarah".to_string(),
+                snippet: "Can you send the invoice?".to_string(),
+            },
+            ThreadSummaryItem {
+                from: "Me".to_string(),
+                snippet: "Sent, let me know if anything's missing.".to_string(),
+            },
+        ];
+        let prompt = build_thread_summary_prompt("Invoice #42", &items);
+        assert!(prompt.starts_with("Subject: Invoice #42"));
+        assert!(prompt.contains("Sarah: Can you send the invoice?"));
+        assert!(prompt.contains("Me: Sent, let me know if anything's missing."));
     }
 }

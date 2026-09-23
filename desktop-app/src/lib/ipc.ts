@@ -240,6 +240,20 @@ export interface SummaryItem {
 export const summarizeGroup = (providerId: string, items: SummaryItem[]) =>
   invoke<string>("ai_summarize_group", { providerId, items });
 
+export interface ThreadSummaryItem {
+  from: string;
+  snippet: string;
+}
+/** Summarize one open thread's messages (sender + trimmed body, never the
+ *  raw HTML) into a short recap. Rejects with a friendly message when no
+ *  key is configured. Caller is responsible for caching \u2014 this always
+ *  calls the provider. */
+export const summarizeThread = (
+  providerId: string,
+  subject: string,
+  items: ThreadSummaryItem[],
+) => invoke<string>("ai_summarize_thread", { providerId, subject, items });
+
 // ------------------------------------------------------------ AI triage (Jev)
 
 export interface TriageStatus {

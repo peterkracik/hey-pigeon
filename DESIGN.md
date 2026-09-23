@@ -250,9 +250,11 @@ trait AiProvider {
   - **Draft reply** — generate a reply draft in the user's tone into the composer;
     user always edits/sends, never auto-send.
   - **Ask AI** via cmd+k — free-form question grounded in the open thread.
-- **Privacy rules**: email content leaves the machine **only** on an explicit AI
-  action, never in the background. No AI provider sees anything unless the user
-  pressed the button. State this in the UI the first time.
+- **Privacy rules**: email content leaves the machine **only** on explicit user
+  action \u2014 pressing the button, or opting into "Auto-summarize" in Settings
+  (off by default), which then runs summaries for inbox groups and the open
+  thread without a per-item click. No other AI feature (draft, edit, ask) ever
+  runs unattended. State this in the UI the first time.
 - Cost is the user's own (pennies at personal volume). Show token/cost estimate in
   settings later, not in v1.
 

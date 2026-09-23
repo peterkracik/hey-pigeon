@@ -14,6 +14,32 @@ use tauri::{Manager, State};
 /// straight in the compose body otherwise (no post-processing beyond trim).
 const EDIT_SYSTEM_PROMPT: &str = "You are an email writing assistant. You may be given the prior conversation for context — use it to answer questions or reference details the user asks for. Apply the user's instruction to the given text and return ONLY the revised text — no preamble, no explanation, no markdown formatting, no surrounding quotes.";
 
+/// Group summaries render in a fixed-height collapsible block in the inbox
+/// list (never a scrolling essay), so brevity is enforced in the prompt
+/// itself rather than truncated after the fact.
+const SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, giving them a quick heads-up on their active (not yet done) emails. Talk directly to them, warm and casual — e.g. \"You've got an invoice from...\" or \"Sarah followed up on...\" — first or second person, never a detached report. Return at most 3 short lines, one per notable item or theme; merge similar emails into one line. Plain text only: no markdown, no headers, no bullet characters, no preamble. If nothing is worth calling out, say so in one friendly line (e.g. \"Nothing urgent here.\").";
+
+/// One email's contribution to a group summary — subject + snippet only,
+/// never the full body (same privacy posture as Jev triage in
+/// `adapter-jev`: this is a batch of many emails, so keeping the payload
+/// small also matters for cost).
+#[derive(serde::Deserialize)]
+pub struct SummaryItem {
+    pub from: String,
+    pub subject: String,
+    pub snippet: String,
+}
+
+/// Pure prompt builder — no network, unit-testable directly (DESIGN.md's
+/// fakes-over-mocks convention, same as `adapter-openai::build_body`).
+fn build_summary_prompt(items: &[SummaryItem]) -> String {
+    items
+        .iter()
+        .map(|i| format!("From: {}\nSubject: {}\n{}", i.from, i.subject, i.snippet))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 pub struct AiState {
     secrets: Arc<dyn SecretStore + Send + Sync>,
 }
@@ -209,5 +235,86 @@ pub async fn ai_edit_text(
                 .map_err(estr)
         }
         other => Err(format!("unknown AI provider {other}")),
+    }
+}
+
+/// Summarize a batch of active (not-done) emails from one inbox-list group
+/// (a day bucket) into a few short lines. Caller (InboxList.svelte) triggers this
+/// only on an explicit click and caches the result client-side keyed on the
+/// group's contents \u2014 this command itself is stateless and always calls
+/// the provider.
+#[tauri::command]
+pub async fn ai_summarize_group(
+    state: State<'_, AiState>,
+    provider_id: String,
+    items: Vec<SummaryItem>,
+) -> Result<String, String> {
+    if items.is_empty() {
+        return Err("nothing to summarize".to_string());
+    }
+    match provider_id.as_str() {
+        "openai" => {
+            let key = state
+                .secrets
+                .get(&key_secret_key("openai"))
+                .map_err(estr)?
+                .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
+            let model = state
+                .secrets
+                .get(&model_secret_key("openai"))
+                .map_err(estr)?
+                .unwrap_or_else(|| {
+                    OpenAiProvider::model_catalog()
+                        .into_iter()
+                        .next()
+                        .map(|m| m.id)
+                        .unwrap_or_default()
+                });
+            let req = CompletionRequest {
+                model,
+                messages: vec![
+                    ChatMessage {
+                        role: ChatRole::System,
+                        content: SUMMARY_SYSTEM_PROMPT.to_string(),
+                    },
+                    ChatMessage {
+                        role: ChatRole::User,
+                        content: build_summary_prompt(&items),
+                    },
+                ],
+            };
+            OpenAiProvider::new(key)
+                .complete(req)
+                .await
+                .map(|s| s.trim().to_string())
+                .map_err(estr)
+        }
+        other => Err(format!("unknown AI provider {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_summary_prompt_includes_each_item() {
+        let items = vec![
+            SummaryItem {
+                from: "billing@x.com".to_string(),
+                subject: "Invoice #42".to_string(),
+                snippet: "Payment due Friday".to_string(),
+            },
+            SummaryItem {
+                from: "newsletter@y.com".to_string(),
+                subject: "Weekly digest".to_string(),
+                snippet: "Top stories this week".to_string(),
+            },
+        ];
+        let prompt = build_summary_prompt(&items);
+        assert!(prompt.contains("Invoice #42"));
+        assert!(prompt.contains("billing@x.com"));
+        assert!(prompt.contains("Weekly digest"));
+        assert_eq!(prompt.matches("From:").count(), 2);
     }
 }

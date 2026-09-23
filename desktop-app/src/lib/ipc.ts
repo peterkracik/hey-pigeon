@@ -228,6 +228,18 @@ export const aiEditText = (
   history?: string,
 ) => invoke<string>("ai_edit_text", { providerId, instruction, text, history });
 
+export interface SummaryItem {
+  from: string;
+  subject: string;
+  snippet: string;
+}
+/** Summarize a batch of active, not-done emails (subject + snippet only,
+ *  never the full body) into a few short lines. Rejects with a friendly message when
+ *  no key is configured. Caller is responsible for caching \u2014 this always
+ *  calls the provider. */
+export const summarizeGroup = (providerId: string, items: SummaryItem[]) =>
+  invoke<string>("ai_summarize_group", { providerId, items });
+
 // ------------------------------------------------------------ AI triage (Jev)
 
 export interface TriageStatus {

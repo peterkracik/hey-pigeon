@@ -115,8 +115,8 @@
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--text-primary);
+    background: var(--accent-primary);
+    color: var(--text-inverse);
     display: flex;
     align-items: center;
     justify-content: center;

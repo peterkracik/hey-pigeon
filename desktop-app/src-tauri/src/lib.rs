@@ -83,6 +83,7 @@ pub fn run() {
             ai::remove_ai_key,
             ai::set_ai_model,
             ai::ai_edit_text,
+            ai::ai_summarize_group,
             autolabel::autolabel_status,
             autolabel::set_jev_key,
             autolabel::remove_jev_key,

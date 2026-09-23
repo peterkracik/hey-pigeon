@@ -1850,14 +1850,9 @@
     margin: 0 auto;
     width: 100%;
     box-sizing: border-box;
-    padding: 0 32px 40px 96px;
+    padding: 0 32px 40px;
     display: flex;
     flex-direction: column;
-  }
-  @media (max-width: 900px) {
-    .column {
-      padding-left: 32px;
-    }
   }
   .topbar {
     display: flex;

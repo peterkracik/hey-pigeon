@@ -305,7 +305,15 @@
               title={e.accountTag ? "account" : undefined}
               style:--ring={e.accountTag ? `var(--tag-${e.accountTag}-fg)` : undefined}
             >
-              <Avatar email={e.fromAddr} accountId={e.accountId} name={e.from} size={26} />
+              <Avatar
+                email={e.fromAddr}
+                accountId={e.accountId}
+                name={e.from}
+                size={26}
+                bg={e.accountTag ? `var(--tag-${e.accountTag}-bg)` : undefined}
+                fg={e.accountTag ? `var(--tag-${e.accountTag}-fg)` : undefined}
+                fontWeight={700}
+              />
               {#if e.unread}
                 <span class="unread-dot" title="Unread"></span>
               {/if}

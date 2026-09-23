@@ -33,3 +33,9 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 tauri-plugin-notification = "2.4.0"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+
+# tauri-plugin-notification's macOS backend uses the deprecated NSUserNotification
+# API, which shows no app icon on modern macOS. Reminder notifications go through
+# UNUserNotificationCenter directly instead - see mail.rs::send_reminder_notification.
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-usernotifications = "0.3"

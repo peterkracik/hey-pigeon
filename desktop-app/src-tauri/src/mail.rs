@@ -13,6 +13,7 @@ use heypigeon_core::ports::{MailProvider, SecretStore, Store, SyncError};
 use heypigeon_core::{devsync, outbox, sync};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::RwLock;
 
@@ -736,14 +737,43 @@ fn notify_due_reminders(handle: &AppHandle) {
         if notified.get(&thread.id) == Some(&due_at) {
             continue; // already notified for this exact schedule
         }
-        let _ = handle
-            .notification()
-            .builder()
-            .title(format!("Reminder: {}", thread.subject))
-            .body(&thread.from_summary)
-            .show();
+        send_reminder_notification(
+            handle,
+            format!("Reminder: {}", thread.subject),
+            &thread.from_summary,
+        );
         notified.insert(thread.id.clone(), due_at);
     }
+}
+
+/// tauri-plugin-notification's macOS backend uses the deprecated `NSUserNotification`
+/// API (via notify-rust/mac-notification-sys), which shows no app icon on modern
+/// macOS regardless of the bundled icon.icns - the API itself is broken there.
+/// Route through `UNUserNotificationCenter` (mac-usernotifications) directly
+/// instead, with an action button + time-sensitive level so it doesn't just
+/// vanish like a plain banner. Other platforms keep the Tauri plugin.
+#[cfg(target_os = "macos")]
+fn send_reminder_notification(_handle: &AppHandle, title: String, body: &str) {
+    use mac_usernotifications::{Action, InterruptionLevel, Notification};
+    if let Err(e) = Notification::new()
+        .title(title)
+        .message(body)
+        .action(Action::button("view", "Open"))
+        .interruption_level(InterruptionLevel::TimeSensitive)
+        .send_blocking()
+    {
+        log::warn!("reminder notification failed: {e}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn send_reminder_notification(handle: &AppHandle, title: String, body: &str) {
+    let _ = handle
+        .notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show();
 }
 
 /// Window focus → immediate delta sync, rate-limited to one per

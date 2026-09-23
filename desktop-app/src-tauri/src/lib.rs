@@ -18,6 +18,17 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+            // Reminder notifications post via UNUserNotificationCenter directly
+            // (see mail.rs::send_reminder_notification) — needs its own permission
+            // prompt since it bypasses tauri-plugin-notification on macOS. Spawned,
+            // not blocking: this runs before the window shows, and `request_auth`
+            // blocks until the user answers the permission dialog.
+            #[cfg(target_os = "macos")]
+            tauri::async_runtime::spawn(async {
+                if let Err(e) = mac_usernotifications::request_auth().await {
+                    log::warn!("failed to request notification permission: {e}");
+                }
+            });
             let data_dir = tauri::Manager::path(app).app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             // Shared with `ai::init` — see the comment on `mail::init` for why

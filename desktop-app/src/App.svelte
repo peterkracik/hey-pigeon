@@ -1904,7 +1904,7 @@
   }
   .back {
     position: absolute;
-    left: -40px;
+    left: -32px;
     top: 50%;
     transform: translateY(-50%);
   }

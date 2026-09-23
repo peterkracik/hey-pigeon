@@ -142,7 +142,7 @@
   // a new thread start its own request immediately, even if the previous
   // thread's request is still resolving in the background.
   $effect(() => {
-    if (!aiConfigured || !autoSummarize || !email || messages.length <= 1) return;
+    if (!aiConfigured || !autoSummarize || !email || messages.length < 1) return;
     const key = threadSummaryCacheKey(email.id, messages);
     if (threadSummary?.cacheKey === key) return;
     runThreadSummary(email);
@@ -191,7 +191,7 @@
         />
       </div>
     {/if}
-    {#if aiConfigured && messages.length > 1}
+    {#if aiConfigured && messages.length >= 1}
       {@const summaryKey = threadSummaryCacheKey(em.id, messages)}
       {@const summaryReady = threadSummary?.cacheKey === summaryKey}
       <div class="thread-summary-row">

@@ -198,18 +198,18 @@
   // the design's fixed slices.
   const groups = $derived.by(() => {
     if (mode === "scheduled") {
-      // Calendar/todo view: bucketed by due date. Relative order within each
-      // bucket follows whatever order the caller already sorted `emails`
-      // into (ascending-by-schedule by default, so overdue sorts first in
-      // Today naturally — App.svelte's filters & sorting row can reverse it
-      // or promote unread instead, which this must not undo).
+      // Calendar/todo view: bucketed by due date, past-due split into its
+      // own group at the top. Relative order within each bucket follows
+      // whatever order the caller already sorted `emails` into.
+      const now = Date.now();
       const startToday = new Date().setHours(0, 0, 0, 0);
       const t1 = startToday + DAY_MS;
       const t2 = startToday + 2 * DAY_MS;
       const t7 = startToday + 7 * DAY_MS;
       const at = (e: Email) => e.scheduledAt ?? 0;
       return [
-        { label: "Today", items: emails.filter((e) => at(e) < t1), isPinnedGroup: false },
+        { label: "Overdue", items: emails.filter((e) => at(e) < now), isPinnedGroup: false },
+        { label: "Today", items: emails.filter((e) => at(e) >= now && at(e) < t1), isPinnedGroup: false },
         { label: "Tomorrow", items: emails.filter((e) => at(e) >= t1 && at(e) < t2), isPinnedGroup: false },
         { label: "This week", items: emails.filter((e) => at(e) >= t2 && at(e) < t7), isPinnedGroup: false },
         { label: "Later", items: emails.filter((e) => at(e) >= t7), isPinnedGroup: false },
@@ -1039,9 +1039,9 @@
     gap: 4px;
     padding: 2px 8px;
     border-radius: var(--radius-pill);
-    background: var(--accent-highlight-bg);
+    background: var(--tag-sky-bg);
     border: 1px solid transparent;
-    color: var(--accent-highlight);
+    color: var(--tag-sky-fg);
     font-family: var(--font-mono);
     font-size: 10.5px;
     white-space: nowrap;
@@ -1052,10 +1052,14 @@
   }
   .sched-badge:hover {
     background: var(--surface-card);
-    border-color: var(--accent-highlight);
+    border-color: var(--tag-sky-fg);
   }
   .sched-badge.overdue {
-    color: var(--tag-coral-fg);
+    background: var(--accent-highlight-bg);
+    color: var(--accent-highlight);
+  }
+  .sched-badge.overdue:hover {
+    border-color: var(--accent-highlight);
   }
   .remind-menu {
     position: fixed;

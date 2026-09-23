@@ -12,7 +12,6 @@
   import Icon from "./lib/ds/Icon.svelte";
   import Toast from "./lib/ds/Toast.svelte";
   import SegmentedControl from "./lib/ds/SegmentedControl.svelte";
-  import Switch from "./lib/ds/Switch.svelte";
   import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type LabelDef, type ThreadMsg } from "./lib/data";
   import type { ComposeData } from "./lib/Composer.svelte";
   import type { ReplySendData } from "./lib/InlineReply.svelte";
@@ -1342,7 +1341,7 @@
         />
       </button>
       <button class="rail-btn" class:active={view === "search"} title="Search" onclick={openSearch}>
-        <Icon d="M11 4a7 7 0 105.6 11.2l4.2 4.2" size={17} />
+        <Icon d="M11 3a8 8 0 100 16 8 8 0 000-16zM21 21l-4.35-4.35" size={17} />
       </button>
     </div>
     <button class="rail-btn rail-cmdk" title="Command palette (Cmd+K)" onclick={() => (paletteOpen = true)}>
@@ -1573,11 +1572,21 @@
               />
               {#if view === "mail"}
                 <span class="sort-filter-sep"></span>
-                <Switch
-                  checked={inboxFilter === "unread"}
-                  onchange={(v) => setInboxFilter(v ? "unread" : "all")}
-                  label="Unread only"
-                />
+                <Tooltip label="Unread only" side="bottom">
+                  <IconButton
+                    size="sm"
+                    active={inboxFilter === "unread"}
+                    label="Unread only"
+                    onclick={() => setInboxFilter(inboxFilter === "unread" ? "all" : "unread")}
+                  >
+                    <Icon
+                      d="M12 12m-5 0a5 5 0 1010 0 5 5 0 10-10 0"
+                      size={14}
+                      fill={inboxFilter === "unread" ? "var(--accent-highlight)" : "none"}
+                      stroke={inboxFilter === "unread" ? "var(--accent-highlight)" : "currentColor"}
+                    />
+                  </IconButton>
+                </Tooltip>
               {/if}
               {#if view !== "calendar"}
                 <span class="sort-filter-sep"></span>
@@ -1595,7 +1604,15 @@
                 />
               {/if}
               <span class="sort-filter-sep"></span>
-              <Switch checked={attachmentOnly} onchange={setAttachmentOnly} label="Has attachment" />
+              <Tooltip label="Has attachment" side="bottom">
+                <IconButton size="sm" active={attachmentOnly} label="Has attachment" onclick={() => setAttachmentOnly(!attachmentOnly)}>
+                  <Icon
+                    d="M21 12.5l-8.4 8.4a5 5 0 01-7-7l8.4-8.4a3.5 3.5 0 015 5l-7.9 7.9"
+                    size={14}
+                    stroke={attachmentOnly ? "var(--accent-highlight)" : "currentColor"}
+                  />
+                </IconButton>
+              </Tooltip>
               {#if liveTriageLabels.length > 0}
                 <span class="sort-filter-sep"></span>
                 <span class="sort-filter-label">Label</span>

@@ -64,6 +64,10 @@ export interface Email {
   /** Gmail label-id union over the thread (live mode) — palette label ops. */
   labels?: string[];
   labelTag?: string;
+  /** Local-only Jev triage priority (live mode). Never synced to Gmail. */
+  priority?: "spam" | "low" | "medium" | "high";
+  /** Local-only Jev triage label ids (live mode). Never synced to Gmail. */
+  triageLabelIds?: string[];
   attachment?: boolean;
   attachments?: Attachment[];
   /** Messages in the thread (live mode) — >1 marks a conversation. */

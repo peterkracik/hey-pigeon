@@ -71,7 +71,8 @@ impl GmailProvider {
             account_id.clone(),
             CachedToken {
                 access_token: tokens.access_token.clone(),
-                expires_at: Instant::now() + Duration::from_secs(tokens.expires_in.saturating_sub(60)),
+                expires_at: Instant::now()
+                    + Duration::from_secs(tokens.expires_in.saturating_sub(60)),
             },
         );
         Ok(())
@@ -97,7 +98,8 @@ impl GmailProvider {
             account_id.clone(),
             CachedToken {
                 access_token: access.clone(),
-                expires_at: Instant::now() + Duration::from_secs(tokens.expires_in.saturating_sub(60)),
+                expires_at: Instant::now()
+                    + Duration::from_secs(tokens.expires_in.saturating_sub(60)),
             },
         );
         Ok(access)
@@ -157,7 +159,10 @@ impl GmailProvider {
             picture: Option<String>,
         }
         let info: UserInfo = self
-            .get_json(account_id, "https://openidconnect.googleapis.com/v1/userinfo")
+            .get_json(
+                account_id,
+                "https://openidconnect.googleapis.com/v1/userinfo",
+            )
             .await
             .ok()?;
         info.picture
@@ -176,7 +181,11 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp).await?.json::<T>().await.map_err(|e| MailError::Provider(e.to_string()))
+        Self::check(resp)
+            .await?
+            .json::<T>()
+            .await
+            .map_err(|e| MailError::Provider(e.to_string()))
     }
 
     async fn post_json(
@@ -217,7 +226,10 @@ impl GmailProvider {
             .http
             .post(format!("{UPLOAD_API}/messages/send?uploadType=multipart"))
             .bearer_auth(token)
-            .header("Content-Type", format!("multipart/related; boundary=\"{B}\""))
+            .header(
+                "Content-Type",
+                format!("multipart/related; boundary=\"{B}\""),
+            )
             .body(body)
             .send()
             .await
@@ -268,7 +280,9 @@ impl GmailProvider {
         let body = resp.text().await.unwrap_or_default();
         Err(match status.as_u16() {
             401 => MailError::AuthExpired,
-            429 => MailError::RateLimited { retry_after_secs: retry_after },
+            429 => MailError::RateLimited {
+                retry_after_secs: retry_after,
+            },
             // 404 stays a plain provider error — `HistoryExpired` is scoped to
             // the history checkpoint (ports.rs); `list_history` maps it there.
             _ => MailError::Provider(format!("{status}: {body}")),
@@ -297,7 +311,9 @@ fn history_checkpoint(list: &WireHistoryList, start_history_id: &str) -> String 
         .max()
         .map(|id| id.to_string())
         .unwrap_or_else(|| {
-            list.history_id.clone().unwrap_or_else(|| start_history_id.to_string())
+            list.history_id
+                .clone()
+                .unwrap_or_else(|| start_history_id.to_string())
         })
 }
 
@@ -487,7 +503,10 @@ fn decode_entities(s: &str) -> String {
                 .and_then(|n| {
                     n.strip_prefix('x')
                         .or_else(|| n.strip_prefix('X'))
-                        .map_or_else(|| n.parse::<u32>().ok(), |h| u32::from_str_radix(h, 16).ok())
+                        .map_or_else(
+                            || n.parse::<u32>().ok(),
+                            |h| u32::from_str_radix(h, 16).ok(),
+                        )
                 })
                 .and_then(char::from_u32),
         };
@@ -508,8 +527,17 @@ fn decode_entities(s: &str) -> String {
 
 /// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
 fn display_name(from: &str) -> String {
-    let name = from.split('<').next().unwrap_or("").trim().trim_matches('"');
-    if name.is_empty() { from.trim().to_string() } else { name.to_string() }
+    let name = from
+        .split('<')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"');
+    if name.is_empty() {
+        from.trim().to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 /// "Priya Nair <priya@acme.co>" → "priya@acme.co".
@@ -544,7 +572,10 @@ fn part_has_attachment(part: &WirePart) -> bool {
 
 fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Message {
     let payload = w.payload.as_ref();
-    let from_addr = payload.and_then(|p| header(p, "From")).unwrap_or("").to_string();
+    let from_addr = payload
+        .and_then(|p| header(p, "From"))
+        .unwrap_or("")
+        .to_string();
     let to_addrs = payload
         .and_then(|p| header(p, "To"))
         .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
@@ -564,10 +595,14 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
             .and_then(decode_body)
     };
     let body_html = body_of("text/html").or_else(|| {
-        payload.filter(|p| p.mime_type == "text/html").and_then(|_| direct_body())
+        payload
+            .filter(|p| p.mime_type == "text/html")
+            .and_then(|_| direct_body())
     });
     let body_text = body_of("text/plain").or_else(|| {
-        payload.filter(|p| p.mime_type == "text/plain").and_then(|_| direct_body())
+        payload
+            .filter(|p| p.mime_type == "text/plain")
+            .and_then(|_| direct_body())
     });
     Message {
         id: w.id.clone(),
@@ -585,7 +620,11 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
 }
 
 fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>) {
-    let messages: Vec<Message> = wire.messages.iter().map(|m| to_message(account_id, &wire.id, m)).collect();
+    let messages: Vec<Message> = wire
+        .messages
+        .iter()
+        .map(|m| to_message(account_id, &wire.id, m))
+        .collect();
     let last = messages.last();
     let subject = wire
         .messages
@@ -616,6 +655,9 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
             .messages
             .iter()
             .any(|m| m.payload.as_ref().is_some_and(part_has_attachment)),
+        // Local-only metadata — the wire never carries Jev triage results.
+        priority: None,
+        triage_label_ids: Vec::new(),
     };
     (thread, messages)
 }
@@ -631,7 +673,10 @@ fn encode_header(value: &str) -> String {
     if value.is_ascii() {
         value.to_string()
     } else {
-        format!("=?UTF-8?B?{}?=", base64::engine::general_purpose::STANDARD.encode(value))
+        format!(
+            "=?UTF-8?B?{}?=",
+            base64::engine::general_purpose::STANDARD.encode(value)
+        )
     }
 }
 
@@ -682,18 +727,29 @@ fn build_mime(
         return mime;
     }
     const MIX: &str = "hp.mix.7MA4YWxkTrZu0gW";
-    mime.push_str(&format!("Content-Type: multipart/mixed; boundary=\"{MIX}\"\r\n\r\n"));
+    mime.push_str(&format!(
+        "Content-Type: multipart/mixed; boundary=\"{MIX}\"\r\n\r\n"
+    ));
     mime.push_str(&format!("--{MIX}\r\n"));
     mime.push_str(&body_block);
     for a in attachments {
         // ponytail: quoted UTF-8 filename, no RFC 2231 encoding — modern
         // clients tolerate it; add encoding if a client mangles names.
-        let name: String =
-            a.filename.chars().filter(|c| !matches!(c, '"' | '\r' | '\n')).collect();
-        let ctype = if a.mime_type.is_empty() { "application/octet-stream" } else { &a.mime_type };
+        let name: String = a
+            .filename
+            .chars()
+            .filter(|c| !matches!(c, '"' | '\r' | '\n'))
+            .collect();
+        let ctype = if a.mime_type.is_empty() {
+            "application/octet-stream"
+        } else {
+            &a.mime_type
+        };
         mime.push_str(&format!("--{MIX}\r\n"));
         mime.push_str(&format!("Content-Type: {ctype}; name=\"{name}\"\r\n"));
-        mime.push_str(&format!("Content-Disposition: attachment; filename=\"{name}\"\r\n"));
+        mime.push_str(&format!(
+            "Content-Disposition: attachment; filename=\"{name}\"\r\n"
+        ));
         mime.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
         mime.push_str(&a.data_b64);
         mime.push_str("\r\n");
@@ -707,7 +763,10 @@ fn build_mime(
 impl MailProvider for GmailProvider {
     async fn profile(&self, account_id: &AccountId) -> Result<Profile, MailError> {
         let p: WireProfile = self.get_json(account_id, &format!("{API}/profile")).await?;
-        Ok(Profile { email: p.email_address, history_id: p.history_id })
+        Ok(Profile {
+            email: p.email_address,
+            history_id: p.history_id,
+        })
     }
 
     async fn list_recent(
@@ -753,7 +812,10 @@ impl MailProvider for GmailProvider {
             threads.extend(futures::future::try_join_all(futs).await?);
         }
 
-        Ok(ThreadPage { threads, next_page_token: list.next_page_token })
+        Ok(ThreadPage {
+            threads,
+            next_page_token: list.next_page_token,
+        })
     }
 
     async fn list_labels(&self, account_id: &AccountId) -> Result<Vec<Label>, MailError> {
@@ -764,7 +826,11 @@ impl MailProvider for GmailProvider {
             .labels
             .into_iter()
             .filter(|l| l.label_type == "user")
-            .map(|l| Label { account_id: account_id.clone(), id: l.id, name: l.name })
+            .map(|l| Label {
+                account_id: account_id.clone(),
+                id: l.id,
+                name: l.name,
+            })
             .collect())
     }
 
@@ -783,7 +849,8 @@ impl MailProvider for GmailProvider {
     }
 
     async fn delete_label(&self, account_id: &AccountId, label_id: &str) -> Result<(), MailError> {
-        self.delete(account_id, &format!("{API}/labels/{label_id}")).await
+        self.delete(account_id, &format!("{API}/labels/{label_id}"))
+            .await
     }
 
     async fn list_history(
@@ -801,10 +868,13 @@ impl MailProvider for GmailProvider {
         }
         // Gmail 404s an expired/too-old startHistoryId — the one place a 404
         // means "resync from scratch".
-        let list: WireHistoryList =
-            self.get_json(account_id, url.as_str()).await.map_err(|e| {
-                if is_not_found(&e) { MailError::HistoryExpired } else { e }
-            })?;
+        let list: WireHistoryList = self.get_json(account_id, url.as_str()).await.map_err(|e| {
+            if is_not_found(&e) {
+                MailError::HistoryExpired
+            } else {
+                e
+            }
+        })?;
 
         let mut changes = Vec::new();
         let mut added_threads: Vec<String> = Vec::new();
@@ -853,7 +923,11 @@ impl MailProvider for GmailProvider {
                     }
                 })
                 .collect();
-            for (thread, messages) in futures::future::try_join_all(futs).await?.into_iter().flatten() {
+            for (thread, messages) in futures::future::try_join_all(futs)
+                .await?
+                .into_iter()
+                .flatten()
+            {
                 changes.push(HistoryChange::MessageAdded { thread, messages });
             }
         }
@@ -872,7 +946,10 @@ impl MailProvider for GmailProvider {
         thread_id: &ThreadId,
     ) -> Result<(bool, Vec<Message>), MailError> {
         let wire: WireThread = self
-            .get_json(account_id, &format!("{API}/threads/{thread_id}?format=full"))
+            .get_json(
+                account_id,
+                &format!("{API}/threads/{thread_id}?format=full"),
+            )
             .await?;
         let (thread, messages) = to_thread(account_id, &wire);
         Ok((thread.has_attachment, messages))
@@ -890,8 +967,15 @@ impl MailProvider for GmailProvider {
             reply_to_thread,
         } = mutation
         {
-            let mime =
-                build_mime(to, cc, bcc, subject, body_text, body_html.as_deref(), attachments);
+            let mime = build_mime(
+                to,
+                cc,
+                bcc,
+                subject,
+                body_text,
+                body_html.as_deref(),
+                attachments,
+            );
             if attachments.is_empty() {
                 let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime);
                 let mut payload = serde_json::json!({ "raw": raw });
@@ -922,8 +1006,12 @@ impl MailProvider for GmailProvider {
         }
         let (thread_id, body) =
             modify_body(mutation).expect("Send/Trash handled above; rest are label flips");
-        self.post_json(account_id, &format!("{API}/threads/{thread_id}/modify"), &body)
-            .await
+        self.post_json(
+            account_id,
+            &format!("{API}/threads/{thread_id}/modify"),
+            &body,
+        )
+        .await
     }
 }
 
@@ -931,23 +1019,40 @@ impl MailProvider for GmailProvider {
 /// Send/Trash, which use dedicated endpoints.
 fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
     Some(match mutation {
-        Mutation::Archive { thread_id } => {
-            (thread_id, serde_json::json!({ "removeLabelIds": ["INBOX"] }))
-        }
+        Mutation::Archive { thread_id } => (
+            thread_id,
+            serde_json::json!({ "removeLabelIds": ["INBOX"] }),
+        ),
         Mutation::Unarchive { thread_id } => {
             (thread_id, serde_json::json!({ "addLabelIds": ["INBOX"] }))
         }
         Mutation::MarkRead { thread_id, read } => {
-            let key = if *read { "removeLabelIds" } else { "addLabelIds" };
+            let key = if *read {
+                "removeLabelIds"
+            } else {
+                "addLabelIds"
+            };
             (thread_id, serde_json::json!({ key: ["UNREAD"] }))
         }
         // Star is sugar over a STARRED label flip (mirrors MarkRead).
         Mutation::Star { thread_id, starred } => {
-            let key = if *starred { "addLabelIds" } else { "removeLabelIds" };
+            let key = if *starred {
+                "addLabelIds"
+            } else {
+                "removeLabelIds"
+            };
             (thread_id, serde_json::json!({ key: ["STARRED"] }))
         }
-        Mutation::ModifyLabel { thread_id, label_id, add } => {
-            let key = if *add { "addLabelIds" } else { "removeLabelIds" };
+        Mutation::ModifyLabel {
+            thread_id,
+            label_id,
+            add,
+        } => {
+            let key = if *add {
+                "addLabelIds"
+            } else {
+                "removeLabelIds"
+            };
             (thread_id, serde_json::json!({ key: [label_id] }))
         }
         Mutation::Trash { .. } | Mutation::Send { .. } => return None,
@@ -976,7 +1081,9 @@ mod tests {
         assert!(mime.contains("Content-Type: text/plain; charset=UTF-8\r\n"));
         // body is the last base64 chunk
         let b64 = mime.rsplit("\r\n\r\n").next().unwrap().trim();
-        let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
         assert_eq!(String::from_utf8(decoded).unwrap(), "body text");
     }
 
@@ -997,9 +1104,19 @@ mod tests {
         // both parts decode back
         let dec = |needle: &str| {
             let start = mime.find(needle).unwrap();
-            let b64 = mime[start..].split("\r\n\r\n").nth(1).unwrap().split("\r\n").next().unwrap();
-            String::from_utf8(base64::engine::general_purpose::STANDARD.decode(b64).unwrap())
+            let b64 = mime[start..]
+                .split("\r\n\r\n")
+                .nth(1)
                 .unwrap()
+                .split("\r\n")
+                .next()
+                .unwrap();
+            String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .unwrap(),
+            )
+            .unwrap()
         };
         assert_eq!(dec("text/plain"), "plain body");
         assert_eq!(dec("text/html"), "<b>rich</b> body");
@@ -1037,7 +1154,10 @@ mod tests {
 
     #[test]
     fn star_and_modify_label_wire_bodies() {
-        let star = |on: bool| Mutation::Star { thread_id: "t1".to_string(), starred: on };
+        let star = |on: bool| Mutation::Star {
+            thread_id: "t1".to_string(),
+            starred: on,
+        };
         let starred = star(true);
         let (tid, body) = modify_body(&starred).unwrap();
         assert_eq!(tid, "t1");
@@ -1060,23 +1180,43 @@ mod tests {
             serde_json::json!({ "removeLabelIds": ["Label_7"] })
         );
         // Trash/Send use dedicated endpoints, never threads.modify
-        assert!(modify_body(&Mutation::Trash { thread_id: "t1".to_string() }).is_none());
+        assert!(modify_body(&Mutation::Trash {
+            thread_id: "t1".to_string()
+        })
+        .is_none());
     }
 
     #[test]
     fn ascii_subject_not_encoded() {
-        let mime = build_mime(&["a@x.com".to_string()], &[], &[], "Plain subject", "b", None, &[]);
+        let mime = build_mime(
+            &["a@x.com".to_string()],
+            &[],
+            &[],
+            "Plain subject",
+            "b",
+            None,
+            &[],
+        );
         assert!(mime.contains("Subject: Plain subject\r\n"));
     }
 
     #[test]
     fn entities_are_decoded() {
-        assert_eq!(decode_entities("Su&#39;s card &lt;a&gt; &amp; more"), "Su's card <a> & more");
+        assert_eq!(
+            decode_entities("Su&#39;s card &lt;a&gt; &amp; more"),
+            "Su's card <a> & more"
+        );
         assert_eq!(decode_entities("caf&#xE9; &nbsp;ok"), "café \u{a0}ok");
-        assert_eq!(decode_entities("5 & 6 &unknown; &#zz;"), "5 & 6 &unknown; &#zz;");
+        assert_eq!(
+            decode_entities("5 & 6 &unknown; &#zz;"),
+            "5 & 6 &unknown; &#zz;"
+        );
         assert_eq!(decode_entities("no entities"), "no entities");
         // multibyte char inside the 10-byte lookahead window must not panic
-        assert_eq!(decode_entities("výhodná & príležitosť"), "výhodná & príležitosť");
+        assert_eq!(
+            decode_entities("výhodná & príležitosť"),
+            "výhodná & príležitosť"
+        );
         assert_eq!(decode_entities("&abýcdéf;x"), "&abýcdéf;x");
     }
 
@@ -1161,7 +1301,10 @@ mod tests {
         assert_eq!(messages[0].to_addrs, vec!["me@example.com"]);
         assert_eq!(thread.labels, vec!["INBOX", "UNREAD"]);
         assert!(!thread.is_archived, "inbox mail is not archived");
-        assert!(!thread.has_attachment, "plain text/html parts carry no filename");
+        assert!(
+            !thread.has_attachment,
+            "plain text/html parts carry no filename"
+        );
     }
 
     #[test]
@@ -1196,7 +1339,10 @@ mod tests {
         });
         let wire: WireThread = serde_json::from_value(json).unwrap();
         let (thread, _) = to_thread(&"acc".to_string(), &wire);
-        assert!(thread.has_attachment, "attachment part nested under multipart/mixed");
+        assert!(
+            thread.has_attachment,
+            "attachment part nested under multipart/mixed"
+        );
     }
 
     #[test]
@@ -1270,7 +1416,11 @@ mod tests {
             {"id": "Label_7", "name": "Receipts", "type": "user"}
         ]});
         let list: WireLabelsList = serde_json::from_value(json).unwrap();
-        let user: Vec<_> = list.labels.into_iter().filter(|l| l.label_type == "user").collect();
+        let user: Vec<_> = list
+            .labels
+            .into_iter()
+            .filter(|l| l.label_type == "user")
+            .collect();
         assert_eq!(user.len(), 1);
         assert_eq!(user[0].id, "Label_7");
         assert_eq!(user[0].name, "Receipts");

@@ -119,7 +119,12 @@ pub fn record_reminder<S: Store>(
     thread_id: &ThreadId,
     scheduled_at: Option<i64>,
 ) -> Result<(), StoreError> {
-    record_local(store, account_id, &reminder_key(thread_id), scheduled_at.map(Into::into))
+    record_local(
+        store,
+        account_id,
+        &reminder_key(thread_id),
+        scheduled_at.map(Into::into),
+    )
 }
 
 /// One full sync round for one account: pull every changed remote state
@@ -147,18 +152,24 @@ pub async fn sync_account<T: SyncTransport, S: Store>(
             store.sync_meta_set(account_id, META_FILE_ID, &file.id)?;
         }
         let seen_key = format!("{META_SEEN_PREFIX}{}", file.id);
-        if store.sync_meta_get(account_id, &seen_key)?.as_deref() == Some(file.fingerprint.as_str()) {
+        if store.sync_meta_get(account_id, &seen_key)?.as_deref() == Some(file.fingerprint.as_str())
+        {
             continue;
         }
         let bytes = transport.download(account_id, &file.id).await?;
-        let snapshot: Snapshot = serde_json::from_slice(&bytes).map_err(|e| DevSyncError::Corrupt {
-            name: file.name.clone(),
-            reason: e.to_string(),
-        })?;
+        let snapshot: Snapshot =
+            serde_json::from_slice(&bytes).map_err(|e| DevSyncError::Corrupt {
+                name: file.name.clone(),
+                reason: e.to_string(),
+            })?;
         if snapshot.v != SNAPSHOT_VERSION {
             // A newer app wrote it; skip rather than misread it. The old
             // fingerprint is left unrecorded so an upgrade re-reads it.
-            log::warn!("devsync({account_id}): {} has version {}, skipping", file.name, snapshot.v);
+            log::warn!(
+                "devsync({account_id}): {} has version {}, skipping",
+                file.name,
+                snapshot.v
+            );
             continue;
         }
         changed_keys.extend(store.sync_merge(account_id, &snapshot.entries)?);
@@ -170,17 +181,26 @@ pub async fn sync_account<T: SyncTransport, S: Store>(
     let applied = apply_reminders(store, &entries, &changed_keys)?;
 
     // ---- push
-    let snapshot = Snapshot { v: SNAPSHOT_VERSION, device: device.clone(), entries };
+    let snapshot = Snapshot {
+        v: SNAPSHOT_VERSION,
+        device: device.clone(),
+        entries,
+    };
     let bytes = serde_json::to_vec(&snapshot).map_err(|e| StoreError(e.to_string()))?;
     let fp = fingerprint(&bytes);
     let file_id = store.sync_meta_get(account_id, META_FILE_ID)?;
     let uploaded_fp = store.sync_meta_get(account_id, META_UPLOADED_FP)?;
     if file_id.is_none() || uploaded_fp.as_deref() != Some(fp.as_str()) {
-        let uploaded = upload_or_create(transport, account_id, file_id.as_deref(), &own_name, bytes).await?;
+        let uploaded =
+            upload_or_create(transport, account_id, file_id.as_deref(), &own_name, bytes).await?;
         store.sync_meta_set(account_id, META_FILE_ID, &uploaded.id)?;
         store.sync_meta_set(account_id, META_UPLOADED_FP, &fp)?;
         // Our own upload must not come back as "changed" on the next list.
-        store.sync_meta_set(account_id, &format!("{META_SEEN_PREFIX}{}", uploaded.id), &uploaded.fingerprint)?;
+        store.sync_meta_set(
+            account_id,
+            &format!("{META_SEEN_PREFIX}{}", uploaded.id),
+            &uploaded.fingerprint,
+        )?;
     }
     store.sync_meta_set(account_id, META_LAST_SYNC_AT, &now_ms().to_string())?;
     log::info!(
@@ -193,7 +213,10 @@ pub async fn sync_account<T: SyncTransport, S: Store>(
 
 /// Epoch ms of the last round that completed for this account, on any
 /// run of the app (persisted — survives restarts). None until the first.
-pub fn last_sync_at<S: Store>(store: &S, account_id: &AccountId) -> Result<Option<i64>, StoreError> {
+pub fn last_sync_at<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+) -> Result<Option<i64>, StoreError> {
     Ok(store
         .sync_meta_get(account_id, META_LAST_SYNC_AT)?
         .and_then(|v| v.parse().ok()))
@@ -207,7 +230,10 @@ async fn upload_or_create<T: SyncTransport>(
     bytes: Vec<u8>,
 ) -> Result<RemoteFile, SyncError> {
     if let Some(id) = file_id {
-        match transport.upload(account_id, Some(id), name, bytes.clone()).await {
+        match transport
+            .upload(account_id, Some(id), name, bytes.clone())
+            .await
+        {
             Err(SyncError::NotFound) => {
                 log::info!("devsync({account_id}): own state file vanished remotely, recreating");
             }
@@ -229,7 +255,9 @@ fn apply_reminders<S: Store>(
 ) -> Result<usize, StoreError> {
     let mut applied = 0usize;
     for entry in entries {
-        let Some(thread_id) = reminder_thread(&entry.key) else { continue };
+        let Some(thread_id) = reminder_thread(&entry.key) else {
+            continue;
+        };
         let want: Option<i64> = entry.value.as_ref().and_then(|v| v.as_i64());
         let changed = changed_keys.iter().any(|k| k == &entry.key);
         if !changed && want.is_none() {
@@ -271,6 +299,8 @@ mod tests {
             scheduled_at: None,
             labels: vec!["INBOX".into()],
             has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
         }
     }
 
@@ -283,9 +313,24 @@ mod tests {
 
     #[test]
     fn lww_newest_ts_then_device_wins() {
-        let a = SyncEntry { key: "k".into(), value: None, ts: 5, device: "a".into() };
-        let b = SyncEntry { key: "k".into(), value: None, ts: 6, device: "a".into() };
-        let c = SyncEntry { key: "k".into(), value: None, ts: 6, device: "b".into() };
+        let a = SyncEntry {
+            key: "k".into(),
+            value: None,
+            ts: 5,
+            device: "a".into(),
+        };
+        let b = SyncEntry {
+            key: "k".into(),
+            value: None,
+            ts: 6,
+            device: "a".into(),
+        };
+        let c = SyncEntry {
+            key: "k".into(),
+            value: None,
+            ts: 6,
+            device: "b".into(),
+        };
         assert!(b.is_newer_than(&a));
         assert!(!a.is_newer_than(&b));
         assert!(c.is_newer_than(&b));
@@ -299,10 +344,23 @@ mod tests {
         // A remote entry from a device whose clock is far ahead.
         let far = now_ms() + 3_600_000;
         store
-            .sync_merge(&acc, &[SyncEntry { key: reminder_key(&"t1".into()), value: Some(1.into()), ts: far, device: "zzz".into() }])
+            .sync_merge(
+                &acc,
+                &[SyncEntry {
+                    key: reminder_key(&"t1".into()),
+                    value: Some(1.into()),
+                    ts: far,
+                    device: "zzz".into(),
+                }],
+            )
             .unwrap();
         record_reminder(&store, &acc, &"t1".into(), Some(2)).unwrap();
-        let e = store.sync_entries(&acc).unwrap().into_iter().next().unwrap();
+        let e = store
+            .sync_entries(&acc)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
         assert_eq!(e.value, Some(2.into()), "local edit must win");
         assert_eq!(e.ts, far + 1);
         assert_eq!(e.device, "dev");
@@ -319,13 +377,21 @@ mod tests {
         a.set_schedule(&"t1".into(), Some(42)).unwrap();
         record_reminder(&a, &acc, &"t1".into(), Some(42)).unwrap();
         assert_eq!(last_sync_at(&a, &acc).unwrap(), None);
-        assert!(!sync_account(&*remote, &a, &acc).await.unwrap(), "own write is not a local change");
+        assert!(
+            !sync_account(&*remote, &a, &acc).await.unwrap(),
+            "own write is not a local change"
+        );
         assert_eq!(remote.uploads(), 1);
-        assert!(last_sync_at(&a, &acc).unwrap().is_some_and(|t| t <= now_ms()));
+        assert!(last_sync_at(&a, &acc)
+            .unwrap()
+            .is_some_and(|t| t <= now_ms()));
 
         // Device B syncs: reminder lands on its thread row.
         assert!(sync_account(&*remote, &b, &acc).await.unwrap());
-        assert_eq!(b.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at, Some(42));
+        assert_eq!(
+            b.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at,
+            Some(42)
+        );
         assert_eq!(remote.uploads(), 2, "B publishes its merged view");
         assert_eq!(remote.file_count(&acc), 2);
 
@@ -341,7 +407,10 @@ mod tests {
         record_reminder(&b, &acc, &"t1".into(), None).unwrap();
         sync_account(&*remote, &b, &acc).await.unwrap();
         assert!(sync_account(&*remote, &a, &acc).await.unwrap());
-        assert_eq!(a.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at, None);
+        assert_eq!(
+            a.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at,
+            None
+        );
     }
 
     #[tokio::test]
@@ -361,7 +430,10 @@ mod tests {
         // Thread arrives via backfill; the next round applies it.
         b.upsert_thread(&thread("t1", "acc")).unwrap();
         assert!(sync_account(&*remote, &b, &acc).await.unwrap());
-        assert_eq!(b.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at, Some(7));
+        assert_eq!(
+            b.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at,
+            Some(7)
+        );
     }
 
     #[tokio::test]
@@ -381,7 +453,10 @@ mod tests {
     async fn corrupt_remote_file_is_an_error_not_a_panic() {
         let remote = Arc::new(MemTransport::default());
         let acc = "acc".to_string();
-        remote.upload(&acc, None, "state-x.json", b"{not json".to_vec()).await.unwrap();
+        remote
+            .upload(&acc, None, "state-x.json", b"{not json".to_vec())
+            .await
+            .unwrap();
         let a = device_store("acc", "dev-a");
         assert!(matches!(
             sync_account(&*remote, &a, &acc).await,

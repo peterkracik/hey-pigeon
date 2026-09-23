@@ -169,6 +169,33 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, key)
     );
     ",
+    // v11 — Jev auto-triage (local-only labels + priority). `triage_labels`
+    // is a small global list (Settings-managed, not per-account like Gmail
+    // `labels`). `threads.triage_label_ids` is a JSON array of
+    // `triage_labels.id`, replaced wholesale per classification — same
+    // shape as the existing Gmail `labels` column, so `delete_triage_label`
+    // reuses `delete_label`'s strip-from-JSON pattern. `triage_msg_count` is
+    // the `msg_count` a thread was last classified at: NULL or stale (≠
+    // current msg_count) means `list_threads_needing_triage` returns it —
+    // covers "never classified" and "new message arrived" with one check.
+    // All three are deliberately absent from `upsert_thread`'s column list:
+    // local-only, like `scheduled_at`.
+    "
+    CREATE TABLE triage_labels (
+        id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT COLLATE NOCASE NOT NULL UNIQUE
+    );
+    ALTER TABLE threads ADD COLUMN triage_label_ids TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE threads ADD COLUMN priority TEXT;
+    ALTER TABLE threads ADD COLUMN triage_msg_count INTEGER;
+    ",
+    // v12 — manual triage-label overrides (Peter's decision: sticky, not
+    // fed back into future Jev requests). 0/default = Jev owns the labels;
+    // 1 = the user edited them directly (footer "+" menu / badge ×), so
+    // `set_thread_triage` must leave `triage_label_ids` alone on the next
+    // auto-classification — only `priority`/`triage_msg_count` keep
+    // updating. `reset_triage` ("Reanalyze all emails") clears the pin.
+    "ALTER TABLE threads ADD COLUMN triage_labels_manual INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -251,28 +278,45 @@ impl SqliteStore {
     /// so tests can build a DB at an older schema version and prove the real
     /// upgrade path over pre-existing data.
     fn init_to(conn: Connection, target: usize) -> Result<Self, StoreError> {
-        conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
-        conn.pragma_update(None, "foreign_keys", "ON").map_err(err)?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(err)?;
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .map_err(err)?;
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(err)?;
-        for (i, migration) in MIGRATIONS.iter().enumerate().take(target).skip(version as usize) {
+        for (i, migration) in MIGRATIONS
+            .iter()
+            .enumerate()
+            .take(target)
+            .skip(version as usize)
+        {
             conn.execute_batch(migration).map_err(err)?;
             conn.pragma_update(None, "user_version", i as i64 + 1)
                 .map_err(err)?;
         }
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, StoreError> {
-        let conn = self.conn.lock().map_err(|_| StoreError("lock poisoned".into()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StoreError("lock poisoned".into()))?;
         f(&conn).map_err(err)
     }
 
     /// Add/remove one label in the thread's labels JSON union. is_inbox /
     /// is_archived stay untouched — label flips never move mail between the
     /// flag-driven folders (Archive/Trash own those).
-    fn flip_label(&self, thread_id: &ThreadId, label_id: &str, add: bool) -> Result<(), StoreError> {
+    fn flip_label(
+        &self,
+        thread_id: &ThreadId,
+        label_id: &str,
+        add: bool,
+    ) -> Result<(), StoreError> {
         let Some(mut t) = self.get_thread(thread_id)? else {
             return Err(StoreError(format!("unknown thread {thread_id}")));
         };
@@ -282,7 +326,10 @@ impl SqliteStore {
         }
         let labels = serde_json::to_string(&t.labels).map_err(err)?;
         self.with(|c| {
-            c.execute("UPDATE threads SET labels = ?2 WHERE id = ?1", params![thread_id, labels])
+            c.execute(
+                "UPDATE threads SET labels = ?2 WHERE id = ?1",
+                params![thread_id, labels],
+            )
         })?;
         Ok(())
     }
@@ -310,12 +357,30 @@ impl SqliteStore {
             // REFERENCES accounts under foreign_keys=ON) must go before the
             // account row, and a failure must not leave a half-wiped cache.
             let tx = c.unchecked_transaction()?;
-            tx.execute("DELETE FROM outbox WHERE account_id = ?1", params![account_id])?;
-            tx.execute("DELETE FROM sync_kv WHERE account_id = ?1", params![account_id])?;
-            tx.execute("DELETE FROM sync_meta WHERE account_id = ?1", params![account_id])?;
-            tx.execute("DELETE FROM messages WHERE account_id = ?1", params![account_id])?;
-            tx.execute("DELETE FROM threads WHERE account_id = ?1", params![account_id])?;
-            tx.execute("DELETE FROM labels WHERE account_id = ?1", params![account_id])?;
+            tx.execute(
+                "DELETE FROM outbox WHERE account_id = ?1",
+                params![account_id],
+            )?;
+            tx.execute(
+                "DELETE FROM sync_kv WHERE account_id = ?1",
+                params![account_id],
+            )?;
+            tx.execute(
+                "DELETE FROM sync_meta WHERE account_id = ?1",
+                params![account_id],
+            )?;
+            tx.execute(
+                "DELETE FROM messages WHERE account_id = ?1",
+                params![account_id],
+            )?;
+            tx.execute(
+                "DELETE FROM threads WHERE account_id = ?1",
+                params![account_id],
+            )?;
+            tx.execute(
+                "DELETE FROM labels WHERE account_id = ?1",
+                params![account_id],
+            )?;
             tx.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
             tx.commit()
         })
@@ -379,11 +444,15 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         scheduled_at: r.get(11)?,
         labels: serde_json::from_str(&r.get::<_, String>(12)?).unwrap_or_default(),
         has_attachment: r.get(13)?,
+        priority: r
+            .get::<_, Option<String>>(14)?
+            .and_then(|s| Priority::parse(&s)),
+        triage_label_ids: serde_json::from_str(&r.get::<_, String>(15)?).unwrap_or_default(),
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -491,8 +560,17 @@ impl Store for SqliteStore {
                    label_ids = excluded.label_ids,
                    is_read = excluded.is_read",
                 params![
-                    m.id, m.thread_id, m.account_id, m.from_addr, to_addrs, m.date,
-                    m.snippet, m.body_html, m.body_text, label_ids, m.is_read
+                    m.id,
+                    m.thread_id,
+                    m.account_id,
+                    m.from_addr,
+                    to_addrs,
+                    m.date,
+                    m.snippet,
+                    m.body_html,
+                    m.body_text,
+                    label_ids,
+                    m.is_read
                 ],
             )
             .map(|_| ())
@@ -501,14 +579,19 @@ impl Store for SqliteStore {
 
     fn delete_message(&self, message_id: &MessageId) -> Result<(), StoreError> {
         self.with(|c| {
-            c.execute("DELETE FROM messages WHERE id = ?1", params![message_id]).map(|_| ())
+            c.execute("DELETE FROM messages WHERE id = ?1", params![message_id])
+                .map(|_| ())
         })
     }
 
     fn delete_thread(&self, thread_id: &ThreadId) -> Result<(), StoreError> {
         self.with(|c| {
-            c.execute("DELETE FROM messages WHERE thread_id = ?1", params![thread_id])?;
-            c.execute("DELETE FROM threads WHERE id = ?1", params![thread_id]).map(|_| ())
+            c.execute(
+                "DELETE FROM messages WHERE thread_id = ?1",
+                params![thread_id],
+            )?;
+            c.execute("DELETE FROM threads WHERE id = ?1", params![thread_id])
+                .map(|_| ())
         })
     }
 
@@ -533,7 +616,9 @@ impl Store for SqliteStore {
                  LIMIT ?3"
             ))?;
             let rows = match label_param {
-                Some(id) => stmt.query_map(params![account_id, before, limit, id], row_to_thread)?,
+                Some(id) => {
+                    stmt.query_map(params![account_id, before, limit, id], row_to_thread)?
+                }
                 None => stmt.query_map(params![account_id, before, limit], row_to_thread)?,
             };
             rows.collect()
@@ -565,7 +650,10 @@ impl Store for SqliteStore {
     fn set_labels(&self, account_id: &AccountId, labels: &[Label]) -> Result<(), StoreError> {
         self.with(|c| {
             // Wholesale replace: labels deleted upstream must disappear.
-            c.execute("DELETE FROM labels WHERE account_id = ?1", params![account_id])?;
+            c.execute(
+                "DELETE FROM labels WHERE account_id = ?1",
+                params![account_id],
+            )?;
             let mut stmt =
                 c.prepare("INSERT INTO labels (account_id, id, name) VALUES (?1, ?2, ?3)")?;
             for l in labels {
@@ -582,10 +670,157 @@ impl Store for SqliteStore {
                  ORDER BY name COLLATE NOCASE, account_id",
             )?;
             let rows = stmt.query_map([], |r| {
-                Ok(Label { account_id: r.get(0)?, id: r.get(1)?, name: r.get(2)? })
+                Ok(Label {
+                    account_id: r.get(0)?,
+                    id: r.get(1)?,
+                    name: r.get(2)?,
+                })
             })?;
             rows.collect()
         })
+    }
+
+    fn list_triage_labels(&self) -> Result<Vec<TriageLabel>, StoreError> {
+        self.with(|c| {
+            let mut stmt =
+                c.prepare("SELECT id, name FROM triage_labels ORDER BY name COLLATE NOCASE")?;
+            let rows = stmt.query_map([], |r| {
+                let id: i64 = r.get(0)?;
+                Ok(TriageLabel {
+                    id: id.to_string(),
+                    name: r.get(1)?,
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
+    fn create_triage_label(&self, name: &str) -> Result<TriageLabel, StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO triage_labels (name) VALUES (?1)",
+                params![name],
+            )?;
+            let id = c.last_insert_rowid();
+            // A new label may match mail already synced, not just future
+            // mail — make every thread stale so the poller (bounded by its
+            // own per-tick cap) gradually reclassifies existing inboxes too.
+            c.execute("UPDATE threads SET triage_msg_count = NULL", [])?;
+            Ok(TriageLabel {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+        })
+    }
+
+    /// Same invalidation `create_triage_label` does, exposed directly for
+    /// Settings' explicit "Reanalyze all emails" action. Also clears any
+    /// manual label pins — an explicit full reanalysis should let Jev take
+    /// another pass rather than staying blocked by an old manual edit.
+    fn reset_triage(&self) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE threads SET triage_msg_count = NULL, triage_labels_manual = 0",
+                [],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn rename_triage_label(&self, id: &str, new_name: &str) -> Result<(), StoreError> {
+        let id_num: i64 = id
+            .parse()
+            .map_err(|_| StoreError(format!("invalid triage label id {id}")))?;
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE triage_labels SET name = ?2 WHERE id = ?1",
+                params![id_num, new_name],
+            )
+        })?;
+        if n == 0 {
+            return Err(StoreError(format!("unknown triage label {id}")));
+        }
+        Ok(())
+    }
+
+    /// Remove a triage category locally: drop the row AND strip the id from
+    /// every thread's `triage_label_ids` JSON array — mirrors `delete_label`.
+    fn delete_triage_label(&self, id: &str) -> Result<(), StoreError> {
+        let id_num: i64 = id
+            .parse()
+            .map_err(|_| StoreError(format!("invalid triage label id {id}")))?;
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            tx.execute("DELETE FROM triage_labels WHERE id = ?1", params![id_num])?;
+            tx.execute(
+                "UPDATE threads SET triage_label_ids =
+                    (SELECT json_group_array(value) FROM json_each(threads.triage_label_ids)
+                     WHERE value <> ?1)
+                 WHERE EXISTS (SELECT 1 FROM json_each(threads.triage_label_ids) WHERE value = ?1)",
+                params![id],
+            )?;
+            tx.commit()
+        })
+    }
+
+    fn list_threads_needing_triage(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE triage_msg_count IS NULL OR triage_msg_count != msg_count
+                 ORDER BY last_msg_at DESC
+                 LIMIT ?1"
+            ))?;
+            let rows = stmt.query_map(params![limit], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
+    fn set_thread_triage(
+        &self,
+        thread_id: &ThreadId,
+        label_ids: &[String],
+        priority: Priority,
+        at_msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let labels = serde_json::to_string(label_ids).map_err(err)?;
+        // A manually-pinned thread keeps its user-chosen labels — only
+        // priority/version move. The CASE runs inside SQLite so this stays
+        // one statement instead of a read-modify-write race.
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET
+                    triage_label_ids = CASE WHEN triage_labels_manual = 1 THEN triage_label_ids ELSE ?2 END,
+                    priority = ?3,
+                    triage_msg_count = ?4
+                 WHERE id = ?1",
+                params![thread_id, labels, priority.as_str(), at_msg_count],
+            )
+        })?;
+        if n == 0 {
+            return Err(StoreError(format!("unknown thread {thread_id}")));
+        }
+        Ok(())
+    }
+
+    /// User-driven label edit (footer "+" menu / badge ×): wholesale-replace
+    /// and pin, so the next `set_thread_triage` leaves it alone.
+    fn set_manual_triage_labels(
+        &self,
+        thread_id: &ThreadId,
+        label_ids: &[String],
+    ) -> Result<(), StoreError> {
+        let labels = serde_json::to_string(label_ids).map_err(err)?;
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET triage_label_ids = ?2, triage_labels_manual = 1 WHERE id = ?1",
+                params![thread_id, labels],
+            )
+        })?;
+        if n == 0 {
+            return Err(StoreError(format!("unknown thread {thread_id}")));
+        }
+        Ok(())
     }
 
     fn get_thread(&self, thread_id: &ThreadId) -> Result<Option<Thread>, StoreError> {
@@ -764,7 +999,11 @@ impl Store for SqliteStore {
             Mutation::Star { thread_id, starred } => {
                 return self.flip_label(thread_id, "STARRED", *starred);
             }
-            Mutation::ModifyLabel { thread_id, label_id, add } => {
+            Mutation::ModifyLabel {
+                thread_id,
+                label_id,
+                add,
+            } => {
                 return self.flip_label(thread_id, label_id, *add);
             }
             Mutation::Archive { thread_id } => (thread_id, (true, false)),
@@ -781,7 +1020,8 @@ impl Store for SqliteStore {
             }
         } else {
             t.labels.retain(|l| l != "INBOX");
-            if matches!(mutation, Mutation::Trash { .. }) && !t.labels.iter().any(|l| l == "TRASH") {
+            if matches!(mutation, Mutation::Trash { .. }) && !t.labels.iter().any(|l| l == "TRASH")
+            {
                 t.labels.push("TRASH".to_string());
             }
         }
@@ -838,7 +1078,10 @@ impl Store for SqliteStore {
     }
 
     fn outbox_delete(&self, id: i64) -> Result<(), StoreError> {
-        self.with(|c| c.execute("DELETE FROM outbox WHERE id = ?1", params![id]).map(|_| ()))
+        self.with(|c| {
+            c.execute("DELETE FROM outbox WHERE id = ?1", params![id])
+                .map(|_| ())
+        })
     }
 
     fn outbox_bump_attempts(&self, id: i64) -> Result<(), StoreError> {
@@ -852,7 +1095,11 @@ impl Store for SqliteStore {
     }
 
     /// Never synced to Gmail — `upsert_thread` leaves the column alone.
-    fn set_schedule(&self, thread_id: &ThreadId, scheduled_at: Option<i64>) -> Result<bool, StoreError> {
+    fn set_schedule(
+        &self,
+        thread_id: &ThreadId,
+        scheduled_at: Option<i64>,
+    ) -> Result<bool, StoreError> {
         let n = self.with(|c| {
             c.execute(
                 "UPDATE threads SET scheduled_at = ?2 WHERE id = ?1",
@@ -887,17 +1134,30 @@ impl Store for SqliteStore {
                 let raw: Option<String> = r.get(1)?;
                 let value = match raw {
                     Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
                     })?),
                     None => None,
                 };
-                Ok(SyncEntry { key: r.get(0)?, value, ts: r.get(2)?, device: r.get(3)? })
+                Ok(SyncEntry {
+                    key: r.get(0)?,
+                    value,
+                    ts: r.get(2)?,
+                    device: r.get(3)?,
+                })
             })?;
             rows.collect()
         })
     }
 
-    fn sync_merge(&self, account_id: &AccountId, entries: &[SyncEntry]) -> Result<Vec<String>, StoreError> {
+    fn sync_merge(
+        &self,
+        account_id: &AccountId,
+        entries: &[SyncEntry],
+    ) -> Result<Vec<String>, StoreError> {
         let mut changed = Vec::new();
         self.with(|c| {
             let tx = c.unchecked_transaction()?;
@@ -914,10 +1174,7 @@ impl Store for SqliteStore {
                         OR (excluded.ts = sync_kv.ts AND excluded.device > sync_kv.device)",
                 )?;
                 for e in entries {
-                    let value = match &e.value {
-                        Some(v) => Some(v.to_string()),
-                        None => None,
-                    };
+                    let value = e.value.as_ref().map(|v| v.to_string());
                     let n = stmt.execute(params![account_id, e.key, value, e.ts, e.device])?;
                     if n > 0 {
                         changed.push(e.key.clone());
@@ -929,7 +1186,11 @@ impl Store for SqliteStore {
         Ok(changed)
     }
 
-    fn sync_meta_get(&self, account_id: &AccountId, key: &str) -> Result<Option<String>, StoreError> {
+    fn sync_meta_get(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+    ) -> Result<Option<String>, StoreError> {
         self.with(|c| {
             c.query_row(
                 "SELECT value FROM sync_meta WHERE account_id = ?1 AND key = ?2",
@@ -940,7 +1201,12 @@ impl Store for SqliteStore {
         })
     }
 
-    fn sync_meta_set(&self, account_id: &AccountId, key: &str, value: &str) -> Result<(), StoreError> {
+    fn sync_meta_set(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
         self.with(|c| {
             c.execute(
                 "INSERT INTO sync_meta (account_id, key, value) VALUES (?1, ?2, ?3)
@@ -965,7 +1231,12 @@ mod tests {
     }
 
     fn entry(key: &str, value: Option<i64>, ts: i64, device: &str) -> SyncEntry {
-        SyncEntry { key: key.into(), value: value.map(Into::into), ts, device: device.into() }
+        SyncEntry {
+            key: key.into(),
+            value: value.map(Into::into),
+            ts,
+            device: device.into(),
+        }
     }
 
     #[test]
@@ -980,22 +1251,48 @@ mod tests {
     fn sync_merge_is_last_writer_wins() {
         let s = store();
         let acc = "a1".to_string();
-        assert_eq!(s.sync_merge(&acc, &[entry("k", Some(1), 10, "a")]).unwrap(), vec!["k"]);
+        assert_eq!(
+            s.sync_merge(&acc, &[entry("k", Some(1), 10, "a")]).unwrap(),
+            vec!["k"]
+        );
         // Older loses, equal ts + lower device loses, equal ts + higher device wins.
-        assert!(s.sync_merge(&acc, &[entry("k", Some(2), 9, "z")]).unwrap().is_empty());
-        assert!(s.sync_merge(&acc, &[entry("k", Some(3), 10, "0")]).unwrap().is_empty());
-        assert_eq!(s.sync_merge(&acc, &[entry("k", Some(4), 10, "b")]).unwrap(), vec!["k"]);
+        assert!(s
+            .sync_merge(&acc, &[entry("k", Some(2), 9, "z")])
+            .unwrap()
+            .is_empty());
+        assert!(s
+            .sync_merge(&acc, &[entry("k", Some(3), 10, "0")])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            s.sync_merge(&acc, &[entry("k", Some(4), 10, "b")]).unwrap(),
+            vec!["k"]
+        );
         // Newer tombstone wins and reads back as None.
-        assert_eq!(s.sync_merge(&acc, &[entry("k", None, 11, "a")]).unwrap(), vec!["k"]);
+        assert_eq!(
+            s.sync_merge(&acc, &[entry("k", None, 11, "a")]).unwrap(),
+            vec!["k"]
+        );
         let all = s.sync_entries(&acc).unwrap();
         assert_eq!(all, vec![entry("k", None, 11, "a")]);
         // Sorted by key; JSON values round-trip.
-        s.sync_merge(&acc, &[entry("b", Some(2), 1, "a"), entry("a", Some(1), 1, "a")]).unwrap();
-        let keys: Vec<_> = s.sync_entries(&acc).unwrap().into_iter().map(|e| e.key).collect();
+        s.sync_merge(
+            &acc,
+            &[entry("b", Some(2), 1, "a"), entry("a", Some(1), 1, "a")],
+        )
+        .unwrap();
+        let keys: Vec<_> = s
+            .sync_entries(&acc)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
         assert_eq!(keys, vec!["a", "b", "k"]);
         assert_eq!(s.sync_entries(&acc).unwrap()[0].value, Some(1.into()));
         // Unknown account is rejected (FK), not silently accepted.
-        assert!(s.sync_merge(&"nope".to_string(), &[entry("k", None, 1, "a")]).is_err());
+        assert!(s
+            .sync_merge(&"nope".to_string(), &[entry("k", None, 1, "a")])
+            .is_err());
     }
 
     #[test]
@@ -1005,13 +1302,20 @@ mod tests {
         assert_eq!(s.sync_meta_get(&acc, "file_id").unwrap(), None);
         s.sync_meta_set(&acc, "file_id", "f1").unwrap();
         s.sync_meta_set(&acc, "file_id", "f2").unwrap();
-        assert_eq!(s.sync_meta_get(&acc, "file_id").unwrap().as_deref(), Some("f2"));
+        assert_eq!(
+            s.sync_meta_get(&acc, "file_id").unwrap().as_deref(),
+            Some("f2")
+        );
         s.sync_merge(&acc, &[entry("k", Some(1), 1, "a")]).unwrap();
         let device = s.sync_device_id().unwrap();
         s.delete_account("a1").unwrap();
         assert_eq!(s.sync_meta_get(&acc, "file_id").unwrap(), None);
         assert!(s.sync_entries(&acc).unwrap().is_empty());
-        assert_eq!(s.sync_device_id().unwrap(), device, "device id is install-wide");
+        assert_eq!(
+            s.sync_device_id().unwrap(),
+            device,
+            "device id is install-wide"
+        );
     }
 
     #[tokio::test]
@@ -1019,18 +1323,34 @@ mod tests {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 25, 10);
 
-        let n = sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let n = sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert_eq!(n, 25);
-        assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-1"));
-        let threads = store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap();
+        assert_eq!(
+            store.list_accounts().unwrap()[0].history_id.as_deref(),
+            Some("hist-1")
+        );
+        let threads = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 100)
+            .unwrap();
         assert_eq!(threads.len(), 25);
-        assert!(threads.windows(2).all(|w| w[0].last_msg_at >= w[1].last_msg_at));
+        assert!(threads
+            .windows(2)
+            .all(|w| w[0].last_msg_at >= w[1].last_msg_at));
 
         // keyset pagination: second page strictly older, no overlap
-        let page1 = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap();
+        let page1 = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap();
         let page2 = store
-            .list_threads(None, &ThreadFilter::Inbox, Some(page1.last().unwrap().last_msg_at), 10)
+            .list_threads(
+                None,
+                &ThreadFilter::Inbox,
+                Some(page1.last().unwrap().last_msg_at),
+                10,
+            )
             .unwrap();
         assert_eq!(page2.len(), 10);
         assert!(page2[0].last_msg_at < page1.last().unwrap().last_msg_at);
@@ -1040,9 +1360,13 @@ mod tests {
     async fn messages_round_trip() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
-        let t = &store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0];
+        let t = &store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0];
         let msgs = store.list_messages(&t.id).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].thread_id, t.id);
@@ -1054,14 +1378,31 @@ mod tests {
     async fn optimistic_archive_with_outbox_drain() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].id.clone();
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .id
+            .clone();
 
-        outbox::enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() }).unwrap();
+        outbox::enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Archive {
+                thread_id: id.clone(),
+            },
+        )
+        .unwrap();
 
         // local view updated instantly; thread gone from inbox list
         assert!(store.get_thread(&id).unwrap().unwrap().is_archived);
-        assert!(!store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap().iter().any(|t| t.id == id));
+        assert!(!store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == id));
 
         let (applied, failed) = outbox::drain(&provider, &store, 10).await.unwrap();
         assert_eq!((applied, failed), (1, 0));
@@ -1072,8 +1413,13 @@ mod tests {
     async fn metadata_reupsert_preserves_fetched_bodies() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 1, 10);
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let t = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].clone();
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let t = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .clone();
         let mut m = store.list_messages(&t.id).unwrap()[0].clone();
         assert!(m.body_text.is_some(), "fixture has a body");
 
@@ -1083,15 +1429,24 @@ mod tests {
         store.upsert_message(&m).unwrap();
 
         let after = store.list_messages(&t.id).unwrap()[0].clone();
-        assert!(after.body_text.is_some(), "body survives metadata re-upsert");
+        assert!(
+            after.body_text.is_some(),
+            "body survives metadata re-upsert"
+        );
     }
 
     #[tokio::test]
     async fn scheduled_at_survives_sync_reupsert() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].id.clone();
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .id
+            .clone();
 
         store.set_schedule(&id, Some(1_756_700_000_000)).unwrap();
         assert_eq!(
@@ -1101,7 +1456,9 @@ mod tests {
 
         // Delta/backfill re-upserts the same thread from provider data
         // (which never carries a schedule) — must not clobber it.
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
         assert_eq!(
             store.get_thread(&id).unwrap().unwrap().scheduled_at,
             Some(1_756_700_000_000),
@@ -1109,7 +1466,9 @@ mod tests {
         );
 
         // Listing exposes it too (drives the calendar view).
-        let listed = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap();
+        let listed = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap();
         assert_eq!(
             listed.iter().find(|t| t.id == id).unwrap().scheduled_at,
             Some(1_756_700_000_000)
@@ -1118,29 +1477,51 @@ mod tests {
         // Clearing works and unknown threads error.
         store.set_schedule(&id, None).unwrap();
         assert_eq!(store.get_thread(&id).unwrap().unwrap().scheduled_at, None);
-        assert!(!store.set_schedule(&"nope".to_string(), Some(1)).unwrap(), "unknown thread → false");
+        assert!(
+            !store.set_schedule(&"nope".to_string(), Some(1)).unwrap(),
+            "unknown thread → false"
+        );
     }
 
     #[tokio::test]
     async fn list_scheduled_includes_archived_threads() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].id.clone();
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .id
+            .clone();
         store.set_schedule(&id, Some(42)).unwrap();
 
         // "Remind later" flow: schedule, then archive to clear the inbox.
-        outbox::enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() })
-            .unwrap();
+        outbox::enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Archive {
+                thread_id: id.clone(),
+            },
+        )
+        .unwrap();
         assert!(
-            !store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap().iter().any(|t| t.id == id),
+            !store
+                .list_threads(None, &ThreadFilter::Inbox, None, 10)
+                .unwrap()
+                .iter()
+                .any(|t| t.id == id),
             "archived thread leaves the inbox list"
         );
 
         // ...but the calendar feed still shows it.
         let scheduled = store.list_scheduled().unwrap();
         assert_eq!(scheduled.iter().filter(|t| t.id == id).count(), 1);
-        assert_eq!(scheduled.iter().find(|t| t.id == id).unwrap().scheduled_at, Some(42));
+        assert_eq!(
+            scheduled.iter().find(|t| t.id == id).unwrap().scheduled_at,
+            Some(42)
+        );
 
         // Clearing the schedule removes it from the feed.
         store.set_schedule(&id, None).unwrap();
@@ -1172,13 +1553,19 @@ mod tests {
             scheduled_at: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
         })
         .unwrap();
     }
 
     fn ids(s: &SqliteStore, f: &ThreadFilter) -> Vec<String> {
-        let mut v: Vec<String> =
-            s.list_threads(None, f, None, 100).unwrap().into_iter().map(|t| t.id).collect();
+        let mut v: Vec<String> = s
+            .list_threads(None, f, None, 100)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
         v.sort();
         v
     }
@@ -1194,7 +1581,14 @@ mod tests {
         seed_labelled(&s, "trash", &["TRASH"], false, false, 3000);
         seed_labelled(&s, "arch", &["Label_9"], false, true, 2000);
         // trashed starred/labelled mail must not leak into Starred/label views
-        seed_labelled(&s, "trash-star", &["STARRED", "TRASH", "Label_9"], false, false, 1000);
+        seed_labelled(
+            &s,
+            "trash-star",
+            &["STARRED", "TRASH", "Label_9"],
+            false,
+            false,
+            1000,
+        );
         // partially-trashed thread (one message trashed elsewhere) keeps
         // INBOX — still lives in Inbox AND All, plus Trash
         seed_labelled(&s, "part-trash", &["INBOX", "TRASH"], true, false, 900);
@@ -1204,7 +1598,11 @@ mod tests {
         assert_eq!(ids(&s, &ThreadFilter::Inbox), ["in", "part-trash", "star"]);
         assert_eq!(ids(&s, &ThreadFilter::Starred), ["star"]);
         assert_eq!(ids(&s, &ThreadFilter::Sent), ["sent"]);
-        assert_eq!(ids(&s, &ThreadFilter::Drafts), ["draft"], "trashed draft hidden from Drafts");
+        assert_eq!(
+            ids(&s, &ThreadFilter::Drafts),
+            ["draft"],
+            "trashed draft hidden from Drafts"
+        );
         assert_eq!(ids(&s, &ThreadFilter::Spam), ["spam"]);
         assert_eq!(
             ids(&s, &ThreadFilter::Trash),
@@ -1250,27 +1648,44 @@ mod tests {
             scheduled_at: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
         };
-        s.upsert_thread(&mk("a-unread", "a1", &["INBOX"], true, false)).unwrap();
-        s.upsert_thread(&mk("a-read", "a1", &["INBOX"], true, true)).unwrap();
-        s.upsert_thread(&mk("b-unread", "a2", &["INBOX"], true, false)).unwrap();
+        s.upsert_thread(&mk("a-unread", "a1", &["INBOX"], true, false))
+            .unwrap();
+        s.upsert_thread(&mk("a-read", "a1", &["INBOX"], true, true))
+            .unwrap();
+        s.upsert_thread(&mk("b-unread", "a2", &["INBOX"], true, false))
+            .unwrap();
         // not in the inbox — must not count toward Inbox, only its own label
-        s.upsert_thread(&mk("a-label-unread", "a1", &["Label_1"], false, false)).unwrap();
+        s.upsert_thread(&mk("a-label-unread", "a1", &["Label_1"], false, false))
+            .unwrap();
 
-        assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 2, "both accounts");
         assert_eq!(
-            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Inbox).unwrap(),
+            s.count_unread(None, &ThreadFilter::Inbox).unwrap(),
+            2,
+            "both accounts"
+        );
+        assert_eq!(
+            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Inbox)
+                .unwrap(),
             1,
             "account-scoped"
         );
         assert_eq!(
-            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Label("Label_1".to_string()))
-                .unwrap(),
+            s.count_unread(
+                Some(&"a1".to_string()),
+                &ThreadFilter::Label("Label_1".to_string())
+            )
+            .unwrap(),
             1
         );
         assert_eq!(
-            s.count_unread(Some(&"a1".to_string()), &ThreadFilter::Label("Label_2".to_string()))
-                .unwrap(),
+            s.count_unread(
+                Some(&"a1".to_string()),
+                &ThreadFilter::Label("Label_2".to_string())
+            )
+            .unwrap(),
             0,
             "non-matching label"
         );
@@ -1280,12 +1695,18 @@ mod tests {
     fn trash_apply_local_moves_thread_into_trash_folder() {
         let s = store();
         seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
-        s.apply_local(&Mutation::Trash { thread_id: "t1".to_string() }).unwrap();
+        s.apply_local(&Mutation::Trash {
+            thread_id: "t1".to_string(),
+        })
+        .unwrap();
         assert_eq!(ids(&s, &ThreadFilter::Inbox), Vec::<String>::new());
         assert_eq!(ids(&s, &ThreadFilter::Trash), ["t1"]);
         // archive: INBOX label drops so the thread leaves the label-derived views
         seed_labelled(&s, "t2", &["INBOX", "STARRED"], true, false, 1000);
-        s.apply_local(&Mutation::Archive { thread_id: "t2".to_string() }).unwrap();
+        s.apply_local(&Mutation::Archive {
+            thread_id: "t2".to_string(),
+        })
+        .unwrap();
         let t2 = s.get_thread(&"t2".to_string()).unwrap().unwrap();
         assert!(t2.is_archived && !t2.is_inbox);
         assert_eq!(t2.labels, vec!["STARRED".to_string()]);
@@ -1295,17 +1716,26 @@ mod tests {
     fn unarchive_apply_local_restores_thread_to_inbox() {
         let s = store();
         seed_labelled(&s, "t1", &["INBOX", "STARRED"], true, false, 1000);
-        s.apply_local(&Mutation::Archive { thread_id: "t1".to_string() }).unwrap();
+        s.apply_local(&Mutation::Archive {
+            thread_id: "t1".to_string(),
+        })
+        .unwrap();
         assert_eq!(ids(&s, &ThreadFilter::Inbox), Vec::<String>::new());
 
-        s.apply_local(&Mutation::Unarchive { thread_id: "t1".to_string() }).unwrap();
+        s.apply_local(&Mutation::Unarchive {
+            thread_id: "t1".to_string(),
+        })
+        .unwrap();
         let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
         assert!(t1.is_inbox && !t1.is_archived);
         assert_eq!(t1.labels, vec!["STARRED".to_string(), "INBOX".to_string()]);
         assert_eq!(ids(&s, &ThreadFilter::Inbox), ["t1"]);
 
         // idempotent: unarchiving an already-inbox thread doesn't duplicate INBOX
-        s.apply_local(&Mutation::Unarchive { thread_id: "t1".to_string() }).unwrap();
+        s.apply_local(&Mutation::Unarchive {
+            thread_id: "t1".to_string(),
+        })
+        .unwrap();
         assert_eq!(
             s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
             vec!["STARRED".to_string(), "INBOX".to_string()]
@@ -1316,17 +1746,29 @@ mod tests {
     fn star_and_modify_label_apply_local_flip_labels_only() {
         let s = store();
         seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
-        let star = |on: bool| Mutation::Star { thread_id: "t1".to_string(), starred: on };
+        let star = |on: bool| Mutation::Star {
+            thread_id: "t1".to_string(),
+            starred: on,
+        };
         s.apply_local(&star(true)).unwrap();
         let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
         assert_eq!(t.labels, ["INBOX", "STARRED"]);
-        assert!(t.is_inbox && !t.is_archived, "star must not move the thread");
+        assert!(
+            t.is_inbox && !t.is_archived,
+            "star must not move the thread"
+        );
         assert_eq!(ids(&s, &ThreadFilter::Starred), ["t1"]);
         // idempotent: starring again doesn't duplicate the label
         s.apply_local(&star(true)).unwrap();
-        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX", "STARRED"]);
+        assert_eq!(
+            s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
+            ["INBOX", "STARRED"]
+        );
         s.apply_local(&star(false)).unwrap();
-        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX"]);
+        assert_eq!(
+            s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
+            ["INBOX"]
+        );
         assert_eq!(ids(&s, &ThreadFilter::Starred), Vec::<String>::new());
         // generic label flip: same machinery, same guarantees
         let flip = |add: bool| Mutation::ModifyLabel {
@@ -1341,7 +1783,10 @@ mod tests {
         assert_eq!(t.labels, ["INBOX"]);
         assert!(t.is_inbox && !t.is_archived);
         // unknown thread errors like the other mutations
-        let missing = Mutation::Star { thread_id: "nope".to_string(), starred: true };
+        let missing = Mutation::Star {
+            thread_id: "nope".to_string(),
+            starred: true,
+        };
         assert!(s.apply_local(&missing).is_err());
     }
 
@@ -1353,7 +1798,8 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
         };
-        s.set_labels(&"a1".to_string(), &[l("L1", "zeta"), l("L2", "Alpha")]).unwrap();
+        s.set_labels(&"a1".to_string(), &[l("L1", "zeta"), l("L2", "Alpha")])
+            .unwrap();
         let listed = s.list_labels().unwrap();
         assert_eq!(
             listed.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(),
@@ -1361,7 +1807,8 @@ mod tests {
             "name-sorted, case-insensitive"
         );
         // wholesale replace: deleted labels disappear
-        s.set_labels(&"a1".to_string(), &[l("L2", "Alpha renamed")]).unwrap();
+        s.set_labels(&"a1".to_string(), &[l("L2", "Alpha renamed")])
+            .unwrap();
         let listed = s.list_labels().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "L2");
@@ -1376,13 +1823,18 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
         };
-        s.set_labels(&"a1".to_string(), &[l("L1", "Old"), l("L2", "Keep")]).unwrap();
+        s.set_labels(&"a1".to_string(), &[l("L1", "Old"), l("L2", "Keep")])
+            .unwrap();
         seed_labelled(&s, "t1", &["INBOX", "L1"], true, false, 2000);
         seed_labelled(&s, "t2", &["L1", "L2"], false, true, 1000);
 
         s.rename_label("a1", "L1", "New").unwrap();
-        let names: Vec<String> =
-            s.list_labels().unwrap().into_iter().map(|x| x.name).collect();
+        let names: Vec<String> = s
+            .list_labels()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
         assert_eq!(names, ["Keep", "New"]);
 
         s.delete_label("a1", "L1").unwrap();
@@ -1390,11 +1842,185 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "L2");
         // threads no longer carry the deleted id…
-        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX"]);
-        assert_eq!(s.get_thread(&"t2".to_string()).unwrap().unwrap().labels, ["L2"]);
+        assert_eq!(
+            s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
+            ["INBOX"]
+        );
+        assert_eq!(
+            s.get_thread(&"t2".to_string()).unwrap().unwrap().labels,
+            ["L2"]
+        );
         // …so the label view is empty while other labels keep working.
-        assert_eq!(ids(&s, &ThreadFilter::Label("L1".to_string())), Vec::<String>::new());
+        assert_eq!(
+            ids(&s, &ThreadFilter::Label("L1".to_string())),
+            Vec::<String>::new()
+        );
         assert_eq!(ids(&s, &ThreadFilter::Label("L2".to_string())), ["t2"]);
+    }
+
+    #[test]
+    fn triage_label_create_rename_delete_and_needs_triage() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        seed_labelled(&s, "t2", &["INBOX"], true, false, 900);
+
+        // Never classified — both threads need it.
+        assert_eq!(s.list_threads_needing_triage(10).unwrap().len(), 2);
+
+        let label = s.create_triage_label("Bills").unwrap();
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&label.id),
+            Priority::High,
+            1,
+        )
+        .unwrap();
+
+        // t1 is current now (triage_msg_count matches msg_count); t2 isn't.
+        let pending: Vec<String> = s
+            .list_threads_needing_triage(10)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(pending, ["t2"]);
+        let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t1.priority, Some(Priority::High));
+        assert_eq!(t1.triage_label_ids, vec![label.id.clone()]);
+
+        // A new label may match mail already synced — invalidates everyone,
+        // including t1, so the poller gets a chance to backfill old mail.
+        s.create_triage_label("Work").unwrap();
+        assert_eq!(
+            s.list_threads_needing_triage(10).unwrap().len(),
+            2,
+            "new label makes every thread stale again"
+        );
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&label.id),
+            Priority::High,
+            1,
+        )
+        .unwrap();
+
+        s.rename_triage_label(&label.id, "Bills & Receipts")
+            .unwrap();
+        assert_eq!(
+            s.list_triage_labels()
+                .unwrap()
+                .iter()
+                .find(|l| l.id == label.id)
+                .unwrap()
+                .name,
+            "Bills & Receipts"
+        );
+
+        s.delete_triage_label(&label.id).unwrap();
+        assert!(s
+            .list_triage_labels()
+            .unwrap()
+            .iter()
+            .all(|l| l.id != label.id));
+        assert!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids
+                .is_empty(),
+            "deleted label stripped from threads"
+        );
+    }
+
+    #[test]
+    fn create_triage_label_rejects_duplicate_name_case_insensitively() {
+        let s = store();
+        s.create_triage_label("Bills").unwrap();
+        assert!(s.create_triage_label("bills").is_err());
+    }
+
+    #[tokio::test]
+    async fn triage_survives_sync_reupsert() {
+        let s = store();
+        let provider = FakeProvider::with_sample_data("a1", 1, 10);
+        sync::backfill(&provider, &s, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = s.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0]
+            .id
+            .clone();
+        let label = s.create_triage_label("Newsletter").unwrap();
+        let t = s.get_thread(&id).unwrap().unwrap();
+        s.set_thread_triage(
+            &id,
+            std::slice::from_ref(&label.id),
+            Priority::Low,
+            t.msg_count,
+        )
+        .unwrap();
+
+        // Provider data never carries triage — a re-upsert must not clobber it.
+        sync::backfill(&provider, &s, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+
+        let after = s.get_thread(&id).unwrap().unwrap();
+        assert_eq!(after.priority, Some(Priority::Low));
+        assert_eq!(after.triage_label_ids, vec![label.id]);
+    }
+
+    #[test]
+    fn manual_triage_labels_survive_reclassification_until_reset() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        let bills = s.create_triage_label("Bills").unwrap();
+        let work = s.create_triage_label("Work").unwrap();
+
+        // User manually picks "Work" for this thread.
+        s.set_manual_triage_labels(&"t1".to_string(), std::slice::from_ref(&work.id))
+            .unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids,
+            vec![work.id.clone()]
+        );
+
+        // Jev reclassifies (e.g. a new message bumped msg_count) and would
+        // have said "Bills" — the manual pin must win; priority still moves.
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&bills.id),
+            Priority::High,
+            1,
+        )
+        .unwrap();
+        let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(
+            t1.triage_label_ids,
+            vec![work.id.clone()],
+            "manual pin wins over Jev"
+        );
+        assert_eq!(t1.priority, Some(Priority::High), "priority still updates");
+
+        // "Reanalyze all emails" clears the pin — Jev's next pass applies.
+        s.reset_triage().unwrap();
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&bills.id),
+            Priority::Medium,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids,
+            vec![bills.id],
+            "reset_triage lifts the pin"
+        );
     }
 
     #[test]
@@ -1426,7 +2052,10 @@ mod tests {
         }
         let s = SqliteStore::open(&path).unwrap(); // runs v7 + v8
         let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
-        assert!(t.labels.is_empty(), "pre-v7 rows default to '[]', healed by backfill");
+        assert!(
+            t.labels.is_empty(),
+            "pre-v7 rows default to '[]', healed by backfill"
+        );
         assert_eq!(ids(&s, &ThreadFilter::Inbox), ["t1"]);
         assert!(s.list_labels().unwrap().is_empty());
         // v8 clears the checkpoint so the next delta_sync actually runs the
@@ -1439,19 +2068,80 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[test]
+    fn v11_migration_adds_triage_columns_to_existing_data() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v11-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v10.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let _ = SqliteStore::init_to(conn, 10).unwrap(); // pre-v11 schema
+        }
+        {
+            // Raw v10-shape rows — upsert_thread would already write `labels`
+            // and `has_attachment`, which exist by v10; triage columns don't.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (id, email, display_name, color, history_id)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky', 'hist-1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                                      is_inbox, is_archived, msg_count, from_summary, last_from_addr,
+                                      labels, has_attachment)
+                 VALUES ('t1', 'a1', 'Old row', 'snip', 1000, 1, 1, 0, 1, 'Someone',
+                         'someone@x.com', '[]', 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v11
+        let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t.priority, None, "pre-existing rows default to no priority");
+        assert!(
+            t.triage_label_ids.is_empty(),
+            "pre-existing rows default to '[]'"
+        );
+        assert!(s.list_triage_labels().unwrap().is_empty());
+        // New capability works immediately after upgrade, on the pre-existing row.
+        let label = s.create_triage_label("Bills").unwrap();
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&label.id),
+            Priority::High,
+            1,
+        )
+        .unwrap();
+        let after = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(after.priority, Some(Priority::High));
+        assert_eq!(after.triage_label_ids, vec![label.id]);
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[tokio::test]
     async fn delete_account_removes_labels_and_children() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
-        sync::backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        assert!(!store.list_labels().unwrap().is_empty(), "backfill stored labels");
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        assert!(
+            !store.list_labels().unwrap().is_empty(),
+            "backfill stored labels"
+        );
 
         // Must not hit "FOREIGN KEY constraint failed" from the labels table.
         store.delete_account("a1").unwrap();
 
         assert!(store.list_accounts().unwrap().is_empty());
         assert!(store.list_labels().unwrap().is_empty());
-        assert!(store.list_threads(None, &ThreadFilter::All, None, 10).unwrap().is_empty());
+        assert!(store
+            .list_threads(None, &ThreadFilter::All, None, 10)
+            .unwrap()
+            .is_empty());
         assert!(store.outbox_list(10).unwrap().is_empty());
     }
 
@@ -1481,6 +2171,8 @@ mod tests {
             scheduled_at: None,
             labels: vec!["INBOX".to_string()],
             has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
         })
         .unwrap();
         s.upsert_message(&Message {
@@ -1506,8 +2198,24 @@ mod tests {
     #[test]
     fn search_basic_match_with_snippet() {
         let s = store();
-        seed_thread(&s, "t1", "Quarterly report", "priya@x.com", "numbers attached", 1000, false);
-        seed_thread(&s, "t2", "Lunch plans", "sam@x.com", "pizza on friday", 2000, false);
+        seed_thread(
+            &s,
+            "t1",
+            "Quarterly report",
+            "priya@x.com",
+            "numbers attached",
+            1000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Lunch plans",
+            "sam@x.com",
+            "pizza on friday",
+            2000,
+            false,
+        );
 
         let hits = search(&s, "quarterly");
         assert_eq!(hits.len(), 1);
@@ -1521,7 +2229,15 @@ mod tests {
     #[test]
     fn search_prefix_on_last_term() {
         let s = store();
-        seed_thread(&s, "t1", "Quarterly report", "priya@x.com", "numbers attached", 1000, false);
+        seed_thread(
+            &s,
+            "t1",
+            "Quarterly report",
+            "priya@x.com",
+            "numbers attached",
+            1000,
+            false,
+        );
 
         // typing "quart…" mid-word already matches (search-as-you-type)
         assert_eq!(search(&s, "quart").len(), 1);
@@ -1533,8 +2249,24 @@ mod tests {
     #[test]
     fn search_is_unread_filter() {
         let s = store();
-        seed_thread(&s, "t1", "Budget review", "priya@x.com", "q3 budget", 1000, true);
-        seed_thread(&s, "t2", "Budget draft", "sam@x.com", "first pass", 2000, false);
+        seed_thread(
+            &s,
+            "t1",
+            "Budget review",
+            "priya@x.com",
+            "q3 budget",
+            1000,
+            true,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Budget draft",
+            "sam@x.com",
+            "first pass",
+            2000,
+            false,
+        );
 
         let hits = search(&s, "is:unread budget");
         assert_eq!(hits.len(), 1);
@@ -1548,8 +2280,24 @@ mod tests {
     #[test]
     fn search_from_filter() {
         let s = store();
-        seed_thread(&s, "t1", "Budget review", "priya@x.com", "q3 budget", 1000, false);
-        seed_thread(&s, "t2", "Budget draft", "sam@x.com", "first pass", 2000, false);
+        seed_thread(
+            &s,
+            "t1",
+            "Budget review",
+            "priya@x.com",
+            "q3 budget",
+            1000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Budget draft",
+            "sam@x.com",
+            "first pass",
+            2000,
+            false,
+        );
 
         let hits = search(&s, "from:priya budget");
         assert_eq!(hits.len(), 1);
@@ -1563,9 +2311,33 @@ mod tests {
     #[test]
     fn search_excludes_spam_and_trash() {
         let s = store();
-        seed_thread(&s, "keep", "Invoice due", "a@x.com", "pay the invoice", 3000, false);
-        seed_thread(&s, "junk-spam", "Invoice prize", "b@x.com", "win an invoice", 2000, false);
-        seed_thread(&s, "junk-trash", "Invoice old", "c@x.com", "stale invoice", 1000, false);
+        seed_thread(
+            &s,
+            "keep",
+            "Invoice due",
+            "a@x.com",
+            "pay the invoice",
+            3000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "junk-spam",
+            "Invoice prize",
+            "b@x.com",
+            "win an invoice",
+            2000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "junk-trash",
+            "Invoice old",
+            "c@x.com",
+            "stale invoice",
+            1000,
+            false,
+        );
         for (id, label) in [("junk-spam", "SPAM"), ("junk-trash", "TRASH")] {
             let mut t = s.get_thread(&id.to_string()).unwrap().unwrap();
             t.labels = vec![label.to_string()];
@@ -1580,7 +2352,9 @@ mod tests {
         // operators-only branch
         let hits = search(&s, "from:x.com");
         assert_eq!(
-            hits.iter().map(|h| h.thread.id.as_str()).collect::<Vec<_>>(),
+            hits.iter()
+                .map(|h| h.thread.id.as_str())
+                .collect::<Vec<_>>(),
             ["keep"]
         );
 
@@ -1601,20 +2375,63 @@ mod tests {
             .as_millis() as i64;
         // "invoice" only in the body vs in the subject — subject wins even
         // though the body-hit thread is slightly newer.
-        seed_thread(&s, "t1", "Invoice overdue", "a@x.com", "see attachment", now - 60_000, false);
-        seed_thread(&s, "t2", "Hello", "b@x.com", "the invoice is attached here", now, false);
+        seed_thread(
+            &s,
+            "t1",
+            "Invoice overdue",
+            "a@x.com",
+            "see attachment",
+            now - 60_000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Hello",
+            "b@x.com",
+            "the invoice is attached here",
+            now,
+            false,
+        );
         // identical text, different age — newer first
-        seed_thread(&s, "t3", "Standup notes", "c@x.com", "same text", now - 86_400_000 * 30, false);
-        seed_thread(&s, "t4", "Standup notes", "d@x.com", "same text", now, false);
+        seed_thread(
+            &s,
+            "t3",
+            "Standup notes",
+            "c@x.com",
+            "same text",
+            now - 86_400_000 * 30,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t4",
+            "Standup notes",
+            "d@x.com",
+            "same text",
+            now,
+            false,
+        );
         // filler so bm25's idf term is positive (with a 4-doc corpus where
         // half the docs match, idf is 0 and every score ties at 0)
         for i in 0..4 {
-            seed_thread(&s, &format!("f{i}"), "Misc chatter", "z@x.com", "nothing relevant", now - 1_000_000, false);
+            seed_thread(
+                &s,
+                &format!("f{i}"),
+                "Misc chatter",
+                "z@x.com",
+                "nothing relevant",
+                now - 1_000_000,
+                false,
+            );
         }
 
         let hits = search(&s, "invoice");
         assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].thread.id, "t1", "subject match ranks above body match");
+        assert_eq!(
+            hits[0].thread.id, "t1",
+            "subject match ranks above body match"
+        );
 
         let hits = search(&s, "standup");
         assert_eq!(hits.len(), 2);
@@ -1624,8 +2441,24 @@ mod tests {
     #[test]
     fn search_diacritics_fold_both_ways() {
         let s = store();
-        seed_thread(&s, "t1", "Péter birthday", "peter@x.com", "cake at five", 1000, false);
-        seed_thread(&s, "t2", "Peter standup", "peter@x.com", "notes", 2000, false);
+        seed_thread(
+            &s,
+            "t1",
+            "Péter birthday",
+            "peter@x.com",
+            "cake at five",
+            1000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Peter standup",
+            "peter@x.com",
+            "notes",
+            2000,
+            false,
+        );
 
         // remove_diacritics 2: Péter ≈ Peter in both directions
         assert_eq!(search(&s, "peter").len(), 2);
@@ -1652,8 +2485,7 @@ mod tests {
         // The one upgrade path every existing install takes: data written at
         // v4 (no FTS, no triggers), then opening at v5 must make it
         // searchable via the 'rebuild' backfill alone.
-        let dir = std::env::temp_dir()
-            .join(format!("heypigeon-test-migr-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-migr-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("v4.db");
         let _ = std::fs::remove_file(&path);
@@ -1688,7 +2520,11 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap(); // runs v5 incl. rebuild
-        assert_eq!(search(&s, "zanzibar").len(), 1, "subject indexed by rebuild");
+        assert_eq!(
+            search(&s, "zanzibar").len(),
+            1,
+            "subject indexed by rebuild"
+        );
         assert_eq!(search(&s, "flights").len(), 1, "body indexed by rebuild");
         let _ = std::fs::remove_file(&path);
     }

@@ -55,7 +55,10 @@ pub fn ai_status(state: State<'_, AiState>) -> Result<AiStatus, String> {
     // Only "openai" exists today; check it explicitly rather than a loop
     // over a provider registry that doesn't exist yet either.
     let configured = matches!(state.secrets.get(&key_secret_key("openai")), Ok(Some(_)));
-    let model = state.secrets.get(&model_secret_key("openai")).map_err(estr)?;
+    let model = state
+        .secrets
+        .get(&model_secret_key("openai"))
+        .map_err(estr)?;
     Ok(AiStatus {
         configured,
         provider_id: configured.then(|| "openai".to_string()),
@@ -70,7 +73,10 @@ pub fn ai_models(provider_id: String) -> Result<Vec<AiModel>, String> {
     match provider_id.as_str() {
         "openai" => Ok(OpenAiProvider::model_catalog()
             .into_iter()
-            .map(|m| AiModel { id: m.id, label: m.label })
+            .map(|m| AiModel {
+                id: m.id,
+                label: m.label,
+            })
             .collect()),
         other => Err(format!("unknown AI provider {other}")),
     }
@@ -93,7 +99,10 @@ pub async fn set_ai_key(
         "openai" => {
             let provider = OpenAiProvider::new(key.clone());
             provider.verify().await.map_err(estr)?;
-            state.secrets.set(&key_secret_key("openai"), &key).map_err(estr)
+            state
+                .secrets
+                .set(&key_secret_key("openai"), &key)
+                .map_err(estr)
         }
         other => Err(format!("unknown AI provider {other}")),
     }
@@ -103,8 +112,14 @@ pub async fn set_ai_key(
 pub fn remove_ai_key(state: State<'_, AiState>, provider_id: String) -> Result<(), String> {
     match provider_id.as_str() {
         "openai" => {
-            state.secrets.delete(&key_secret_key("openai")).map_err(estr)?;
-            state.secrets.delete(&model_secret_key("openai")).map_err(estr)
+            state
+                .secrets
+                .delete(&key_secret_key("openai"))
+                .map_err(estr)?;
+            state
+                .secrets
+                .delete(&model_secret_key("openai"))
+                .map_err(estr)
         }
         other => Err(format!("unknown AI provider {other}")),
     }
@@ -114,9 +129,16 @@ pub fn remove_ai_key(state: State<'_, AiState>, provider_id: String) -> Result<(
 /// reuses the SecretStore's generic key/value shape rather than a new
 /// SQLite migration for one string).
 #[tauri::command]
-pub fn set_ai_model(state: State<'_, AiState>, provider_id: String, model: String) -> Result<(), String> {
+pub fn set_ai_model(
+    state: State<'_, AiState>,
+    provider_id: String,
+    model: String,
+) -> Result<(), String> {
     match provider_id.as_str() {
-        "openai" => state.secrets.set(&model_secret_key("openai"), &model).map_err(estr),
+        "openai" => state
+            .secrets
+            .set(&model_secret_key("openai"), &model)
+            .map_err(estr),
         other => Err(format!("unknown AI provider {other}")),
     }
 }
@@ -170,11 +192,21 @@ pub async fn ai_edit_text(
             let req = CompletionRequest {
                 model,
                 messages: vec![
-                    ChatMessage { role: ChatRole::System, content: EDIT_SYSTEM_PROMPT.to_string() },
-                    ChatMessage { role: ChatRole::User, content: user_content },
+                    ChatMessage {
+                        role: ChatRole::System,
+                        content: EDIT_SYSTEM_PROMPT.to_string(),
+                    },
+                    ChatMessage {
+                        role: ChatRole::User,
+                        content: user_content,
+                    },
                 ],
             };
-            OpenAiProvider::new(key).complete(req).await.map(|s| s.trim().to_string()).map_err(estr)
+            OpenAiProvider::new(key)
+                .complete(req)
+                .await
+                .map(|s| s.trim().to_string())
+                .map_err(estr)
         }
         other => Err(format!("unknown AI provider {other}")),
     }

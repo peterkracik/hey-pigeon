@@ -31,6 +31,17 @@ export interface BackendThread {
   labels: string[];
   /** True if any message in the thread has an attachment. */
   has_attachment: boolean;
+  /** Local-only Jev triage priority. Never synced to Gmail. */
+  priority: "spam" | "low" | "medium" | "high" | null;
+  /** Local-only Jev triage labels (BackendTriageLabel ids), distinct from
+   *  `labels` (real Gmail label ids). Never synced to Gmail. */
+  triage_label_ids: string[];
+}
+
+/** One app-local Jev triage category (Settings-managed, not a Gmail label). */
+export interface BackendTriageLabel {
+  id: string;
+  name: string;
 }
 
 /** One user-created Gmail label (system labels map to folders). */
@@ -214,6 +225,43 @@ export const aiEditText = (
   history?: string,
 ) => invoke<string>("ai_edit_text", { providerId, instruction, text, history });
 
+// ------------------------------------------------------------ AI triage (Jev)
+
+export interface TriageStatus {
+  configured: boolean;
+  enabled: boolean;
+  last_error: string | null;
+}
+
+/** Whether Jev is configured/enabled, and the last classification error
+ *  (if any) — the stored key is never sent back to the frontend. */
+export const autolabelStatus = () => invoke<TriageStatus>("autolabel_status");
+/** Validate the key against Jev before it's persisted. */
+export const setJevKey = (apiKey: string) =>
+  invoke<void>("set_jev_key", { apiKey });
+export const removeJevKey = () => invoke<void>("remove_jev_key");
+/** Runs automatically at the end of the ~30s sync poll when enabled —
+ *  subject + snippet (never the full body) go to TypeSafe for labels and a
+ *  priority. */
+export const setAutolabelEnabled = (enabled: boolean) =>
+  invoke<void>("set_autolabel_enabled", { enabled });
+export const listTriageLabels = () =>
+  invoke<BackendTriageLabel[]>("list_triage_labels");
+export const createTriageLabel = (name: string) =>
+  invoke<BackendTriageLabel>("create_triage_label", { name });
+export const renameTriageLabel = (id: string, newName: string) =>
+  invoke<void>("rename_triage_label", { id, newName });
+export const deleteTriageLabel = (id: string) =>
+  invoke<void>("delete_triage_label", { id });
+/** Force every thread stale for triage — the next poll ticks reclassify
+ *  the whole mailbox gradually. Existing labels/priority stay until each
+ *  thread's turn comes up. */
+export const reanalyzeAllTriage = () => invoke<void>("reanalyze_all_triage");
+/** Manual label edit (footer "+" menu / badge ×) — sticky, survives future
+ *  auto-classification until "Reanalyze all emails" clears the pin. */
+export const setManualTriageLabels = (threadId: string, labelIds: string[]) =>
+  invoke<void>("set_manual_triage_labels", { threadId, labelIds });
+
 const avatarCache = new Map<string, Promise<string | null>>();
 /** Sender contact photo (People API), cached per session. */
 export function lookupAvatar(
@@ -279,6 +327,8 @@ export function threadToEmail(t: BackendThread): Email {
     // survives refresh and syncs both directions via delta sync.
     pinned: t.labels.includes("STARRED"),
     labels: t.labels,
+    priority: t.priority ?? undefined,
+    triageLabelIds: t.triage_label_ids,
     fromAddr: t.last_from_addr || undefined,
     msgCount: t.msg_count,
     lastMsgAt: t.last_msg_at,

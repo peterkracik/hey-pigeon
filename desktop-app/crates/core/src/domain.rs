@@ -54,6 +54,55 @@ pub struct Thread {
     /// filename (i.e. an attachment). Drives the list-row paperclip icon.
     #[serde(default)]
     pub has_attachment: bool,
+    /// Local-only AI triage priority (Jev). Never synced to Gmail — same
+    /// contract as `scheduled_at`.
+    #[serde(default)]
+    pub priority: Option<Priority>,
+    /// Local-only AI triage labels (Jev), by `TriageLabel::id`. Distinct
+    /// from `labels` (real Gmail label ids) — never written to Gmail.
+    #[serde(default)]
+    pub triage_label_ids: Vec<String>,
+}
+
+/// AI-assigned urgency (Jev triage). Ordered spam→high for sorting — Spam
+/// is a distinct bottom tier ("don't bother showing this a priority at
+/// all"), not just a lower number than Low.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum Priority {
+    Spam,
+    Low,
+    Medium,
+    High,
+}
+
+impl Priority {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Priority::Spam => "spam",
+            Priority::Low => "low",
+            Priority::Medium => "medium",
+            Priority::High => "high",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "spam" => Some(Priority::Spam),
+            "low" => Some(Priority::Low),
+            "medium" => Some(Priority::Medium),
+            "high" => Some(Priority::High),
+            _ => None,
+        }
+    }
+}
+
+/// A user-defined local triage category (Jev auto-label). App-local only —
+/// never a real Gmail label, unlike `Label`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TriageLabel {
+    pub id: String,
+    pub name: String,
 }
 
 /// One Gmail label (user-created only — system labels map to folders).

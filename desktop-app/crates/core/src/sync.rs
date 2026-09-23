@@ -81,7 +81,10 @@ pub async fn delta_sync<M: MailProvider, S: Store>(
     // if a trailing page reports nothing newer.
     let mut latest = start.clone();
     loop {
-        let page = match provider.list_history(account_id, &start, page_token.take()).await {
+        let page = match provider
+            .list_history(account_id, &start, page_token.take())
+            .await
+        {
             Ok(p) => p,
             Err(MailError::HistoryExpired) => {
                 log::info!("delta({account_id}): history expired, re-running backfill");
@@ -128,15 +131,26 @@ fn apply_change<S: Store>(
                 store.upsert_message(m)?;
             }
         }
-        HistoryChange::MessageDeleted { thread_id, message_id } => {
+        HistoryChange::MessageDeleted {
+            thread_id,
+            message_id,
+        } => {
             store.delete_message(message_id)?;
             touched.push(thread_id.clone());
         }
-        HistoryChange::LabelsAdded { thread_id, message_id, labels } => {
+        HistoryChange::LabelsAdded {
+            thread_id,
+            message_id,
+            labels,
+        } => {
             update_labels(store, thread_id, message_id, labels, &[])?;
             touched.push(thread_id.clone());
         }
-        HistoryChange::LabelsRemoved { thread_id, message_id, labels } => {
+        HistoryChange::LabelsRemoved {
+            thread_id,
+            message_id,
+            labels,
+        } => {
             update_labels(store, thread_id, message_id, &[], labels)?;
             touched.push(thread_id.clone());
         }
@@ -196,7 +210,9 @@ pub fn derive_is_archived(labels: &[String], messages: &[Message]) -> bool {
         && !has("TRASH")
         && !has("SPAM")
         && !has("DRAFT")
-        && messages.iter().any(|m| !m.label_ids.iter().any(|l| l == "SENT"))
+        && messages
+            .iter()
+            .any(|m| !m.label_ids.iter().any(|l| l == "SENT"))
 }
 
 /// Rebuild a thread's derived row from its stored messages after in-place
@@ -236,8 +252,17 @@ fn newer_history_id(candidate: &str, current: &str) -> bool {
 
 /// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
 fn display_name(from: &str) -> String {
-    let name = from.split('<').next().unwrap_or("").trim().trim_matches('"');
-    if name.is_empty() { from.trim().to_string() } else { name.to_string() }
+    let name = from
+        .split('<')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"');
+    if name.is_empty() {
+        from.trim().to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 /// "Priya Nair <priya@acme.co>" → "priya@acme.co".
@@ -271,10 +296,14 @@ mod tests {
         assert_eq!(n, 25, "all pages walked");
         let accounts = store.list_accounts().unwrap();
         assert_eq!(accounts[0].history_id.as_deref(), Some("hist-1"));
-        let threads = store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap();
+        let threads = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 100)
+            .unwrap();
         assert_eq!(threads.len(), 25);
         // newest first
-        assert!(threads.windows(2).all(|w| w[0].last_msg_at >= w[1].last_msg_at));
+        assert!(threads
+            .windows(2)
+            .all(|w| w[0].last_msg_at >= w[1].last_msg_at));
     }
 
     fn new_thread_change(account_id: &str, i: usize, date: i64) -> HistoryChange {
@@ -294,6 +323,8 @@ mod tests {
             scheduled_at: None,
             labels: vec!["INBOX".to_string(), "UNREAD".to_string()],
             has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
         };
         let message = crate::domain::Message {
             id: format!("{tid}:m0"),
@@ -308,14 +339,21 @@ mod tests {
             label_ids: vec!["INBOX".to_string(), "UNREAD".to_string()],
             is_read: false,
         };
-        HistoryChange::MessageAdded { thread, messages: vec![message] }
+        HistoryChange::MessageAdded {
+            thread,
+            messages: vec![message],
+        }
     }
 
     async fn synced_fixture(n: usize) -> (FakeProvider, MemStore) {
         let provider = FakeProvider::with_sample_data("a1", n, 10);
         let store = MemStore::default();
-        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
-        backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
+        backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
         (provider, store)
     }
 
@@ -324,23 +362,35 @@ mod tests {
         let (provider, store) = synced_fixture(3).await;
         provider.push_history(new_thread_change("a1", 0, 1_756_700_000_000), "hist-2");
 
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert!(changed);
-        let threads = store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap();
+        let threads = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 100)
+            .unwrap();
         assert_eq!(threads.len(), 4);
         assert_eq!(threads[0].id, "a1:new0", "new mail sorts first");
         assert!(!threads[0].is_read);
         // checkpoint advanced → second run is a no-op
-        assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-2"));
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        assert_eq!(
+            store.list_accounts().unwrap()[0].history_id.as_deref(),
+            Some("hist-2")
+        );
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
         assert!(!changed);
     }
 
     #[tokio::test]
     async fn delta_applies_deleted_message() {
         let (provider, store) = synced_fixture(3).await;
-        let victim = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].clone();
+        let victim = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .clone();
         provider.push_history(
             HistoryChange::MessageDeleted {
                 thread_id: victim.id.clone(),
@@ -349,18 +399,28 @@ mod tests {
             "hist-2",
         );
 
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert!(changed);
         // sole message gone → thread dropped entirely
         assert!(store.get_thread(&victim.id).unwrap().is_none());
-        assert_eq!(store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap().len(), 2);
+        assert_eq!(
+            store
+                .list_threads(None, &ThreadFilter::Inbox, None, 100)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
     async fn delta_applies_label_changes() {
         let (provider, store) = synced_fixture(3).await;
-        let threads = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap();
+        let threads = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap();
         let (a, b, c) = (&threads[0], &threads[1], &threads[2]);
         // a: UNREAD added; b: INBOX removed (archive); c: trashed (Gmail
         // adds TRASH and removes INBOX)
@@ -397,7 +457,9 @@ mod tests {
             "hist-5",
         );
 
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert!(changed);
         assert!(!store.get_thread(&a.id).unwrap().unwrap().is_read);
@@ -406,20 +468,34 @@ mod tests {
         let c_after = store.get_thread(&c.id).unwrap().unwrap();
         assert!(c_after.labels.iter().any(|l| l == "TRASH"));
         assert!(!c_after.is_inbox && !c_after.is_archived);
-        let listed = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap();
+        let listed = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, a.id);
-        let trash = store.list_threads(None, &ThreadFilter::Trash, None, 10).unwrap();
+        let trash = store
+            .list_threads(None, &ThreadFilter::Trash, None, 10)
+            .unwrap();
         assert_eq!(trash.len(), 1);
         assert_eq!(trash[0].id, c.id);
-        assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-5"));
+        assert_eq!(
+            store.list_accounts().unwrap()[0].history_id.as_deref(),
+            Some("hist-5")
+        );
     }
 
     #[tokio::test]
     async fn delta_label_changes_update_thread_labels_union() {
         let (provider, store) = synced_fixture(1).await;
-        let t = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].clone();
-        assert_eq!(t.labels, vec!["INBOX".to_string()], "backfill stores the union");
+        let t = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .clone();
+        assert_eq!(
+            t.labels,
+            vec!["INBOX".to_string()],
+            "backfill stores the union"
+        );
 
         provider.push_history(
             HistoryChange::LabelsAdded {
@@ -429,12 +505,16 @@ mod tests {
             },
             "hist-2",
         );
-        delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         let after = store.get_thread(&t.id).unwrap().unwrap();
         assert!(after.labels.iter().any(|l| l == "STARRED"));
         assert!(after.labels.iter().any(|l| l == "Label_1"));
-        let starred = store.list_threads(None, &ThreadFilter::Starred, None, 10).unwrap();
+        let starred = store
+            .list_threads(None, &ThreadFilter::Starred, None, 10)
+            .unwrap();
         assert_eq!(starred.len(), 1);
         let labelled = store
             .list_threads(None, &ThreadFilter::Label("Label_1".to_string()), None, 10)
@@ -449,9 +529,14 @@ mod tests {
             },
             "hist-3",
         );
-        delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
         let after = store.get_thread(&t.id).unwrap().unwrap();
-        assert!(!after.labels.iter().any(|l| l == "STARRED"), "union follows removals");
+        assert!(
+            !after.labels.iter().any(|l| l == "STARRED"),
+            "union follows removals"
+        );
     }
 
     #[test]
@@ -471,10 +556,16 @@ mod tests {
         };
         // Sent-only thread: never in the inbox ≠ archived — belongs to Sent.
         let sent_only = vec![msg(&["SENT"])];
-        assert!(!derive_is_archived(&thread_labels_union(&sent_only), &sent_only));
+        assert!(!derive_is_archived(
+            &thread_labels_union(&sent_only),
+            &sent_only
+        ));
         // Received mail without INBOX/TRASH/SPAM/DRAFT: the user archived it.
         let archived = vec![msg(&[])];
-        assert!(derive_is_archived(&thread_labels_union(&archived), &archived));
+        assert!(derive_is_archived(
+            &thread_labels_union(&archived),
+            &archived
+        ));
         // Sent thread with an archived reply: Sent AND Archive.
         let mixed = vec![msg(&["SENT"]), msg(&[])];
         assert!(derive_is_archived(&thread_labels_union(&mixed), &mixed));
@@ -490,18 +581,29 @@ mod tests {
         let (_, store) = synced_fixture(1).await;
         let labels = store.list_labels().unwrap();
         assert_eq!(labels.len(), 2, "FakeProvider serves two user labels");
-        assert!(labels.iter().any(|l| l.name == "Projects" && l.account_id == "a1"));
+        assert!(labels
+            .iter()
+            .any(|l| l.name == "Projects" && l.account_id == "a1"));
     }
 
     #[tokio::test]
     async fn delta_unarchives_locally_archived_thread() {
         let (provider, store) = synced_fixture(3).await;
-        let victim = store.list_threads(None, &ThreadFilter::Inbox, None, 1).unwrap()[0].clone();
+        let victim = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .clone();
         // Local archive (optimistic apply): is_archived=1, is_inbox=0.
         store
-            .apply_local(&crate::domain::Mutation::Archive { thread_id: victim.id.clone() })
+            .apply_local(&crate::domain::Mutation::Archive {
+                thread_id: victim.id.clone(),
+            })
             .unwrap();
-        assert!(store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap().iter().all(|t| t.id != victim.id));
+        assert!(store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()
+            .iter()
+            .all(|t| t.id != victim.id));
         // Another device moves it back to the inbox.
         provider.push_history(
             HistoryChange::LabelsAdded {
@@ -512,39 +614,74 @@ mod tests {
             "hist-2",
         );
 
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert!(changed);
         let t = store.get_thread(&victim.id).unwrap().unwrap();
-        assert!(t.is_inbox && !t.is_archived, "remote un-archive clears local archive");
-        assert!(store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap().iter().any(|t| t.id == victim.id));
+        assert!(
+            t.is_inbox && !t.is_archived,
+            "remote un-archive clears local archive"
+        );
+        assert!(store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == victim.id));
     }
 
     #[tokio::test]
     async fn delta_falls_back_to_backfill_on_expired_history() {
         let (provider, store) = synced_fixture(5).await;
-        store.set_history_id(&"a1".to_string(), "hist-ancient").unwrap();
+        store
+            .set_history_id(&"a1".to_string(), "hist-ancient")
+            .unwrap();
         provider.expire_history();
 
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert!(changed, "fallback backfill counts as a change");
-        assert_eq!(store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap().len(), 5);
+        assert_eq!(
+            store
+                .list_threads(None, &ThreadFilter::Inbox, None, 100)
+                .unwrap()
+                .len(),
+            5
+        );
         // checkpoint reset to the fresh profile history id
-        assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-1"));
+        assert_eq!(
+            store.list_accounts().unwrap()[0].history_id.as_deref(),
+            Some("hist-1")
+        );
     }
 
     #[tokio::test]
     async fn delta_without_checkpoint_runs_backfill() {
         let provider = FakeProvider::with_sample_data("a1", 4, 10);
         let store = MemStore::default();
-        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
 
-        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30).await.unwrap();
+        let changed = delta_sync(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
 
         assert!(changed);
-        assert_eq!(store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap().len(), 4);
-        assert_eq!(store.list_accounts().unwrap()[0].history_id.as_deref(), Some("hist-1"));
+        assert_eq!(
+            store
+                .list_threads(None, &ThreadFilter::Inbox, None, 100)
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            store.list_accounts().unwrap()[0].history_id.as_deref(),
+            Some("hist-1")
+        );
     }
 
     #[tokio::test]
@@ -554,8 +691,18 @@ mod tests {
         store
             .upsert_account(&crate::fakes::sample_account("a1"))
             .unwrap();
-        backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        backfill(&provider, &store, &"a1".to_string(), 30).await.unwrap();
-        assert_eq!(store.list_threads(None, &ThreadFilter::Inbox, None, 100).unwrap().len(), 5);
+        backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .list_threads(None, &ThreadFilter::Inbox, None, 100)
+                .unwrap()
+                .len(),
+            5
+        );
     }
 }

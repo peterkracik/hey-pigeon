@@ -6,11 +6,13 @@
   import SearchOverlay from "./lib/SearchOverlay.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
   import Settings from "./lib/Settings.svelte";
+  import TriageFilter from "./lib/TriageFilter.svelte";
   import IconButton from "./lib/ds/IconButton.svelte";
   import Tooltip from "./lib/ds/Tooltip.svelte";
   import Icon from "./lib/ds/Icon.svelte";
   import Toast from "./lib/ds/Toast.svelte";
   import SegmentedControl from "./lib/ds/SegmentedControl.svelte";
+  import Switch from "./lib/ds/Switch.svelte";
   import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type LabelDef, type ThreadMsg } from "./lib/data";
   import type { ComposeData } from "./lib/Composer.svelte";
   import type { ReplySendData } from "./lib/InlineReply.svelte";
@@ -66,6 +68,32 @@
     inboxFilter = v as "all" | "unread";
     localStorage.setItem("inboxFilter", JSON.stringify(inboxFilter));
   }
+  // Filters & sorting row — collapsed by default, revealed below the
+  // All/Unread (or All/Hide done) segmented control via its own toggle.
+  let sortFilterOpen = $state(false);
+  let emailSortOrder: "newest" | "oldest" | "unread" = $state(readJson("emailSortOrder", "newest"));
+  function setEmailSortOrder(v: string) {
+    emailSortOrder = v as "newest" | "oldest" | "unread";
+    localStorage.setItem("emailSortOrder", JSON.stringify(emailSortOrder));
+  }
+  let attachmentOnly = $state(readJson("attachmentOnly", false));
+  function setAttachmentOnly(v: boolean) {
+    attachmentOnly = v;
+    localStorage.setItem("attachmentOnly", JSON.stringify(attachmentOnly));
+  }
+  // Received-date filter — mail view only (live mode has lastMsgAt; mock
+  // seed data doesn't, so undated rows always pass rather than vanishing
+  // in browser dev mode). Calendar view already buckets by due date
+  // (Today/Tomorrow/This week/Later), so it doesn't get a second one.
+  let dateFilter: "all" | "today" | "week" | "month" = $state(readJson("dateFilter", "all"));
+  function setDateFilter(v: string) {
+    dateFilter = v as "all" | "today" | "week" | "month";
+    localStorage.setItem("dateFilter", JSON.stringify(dateFilter));
+  }
+  // All three persist across relaunch (unlike activeTriageFilter) — this
+  // keeps the toggle button visibly "on" even while the row is collapsed,
+  // so a stale filter can't silently hide mail unnoticed.
+  const hasNonDefaultSortFilter = $derived(attachmentOnly || emailSortOrder !== "newest" || dateFilter !== "all");
   // Gmail label management (context menu). Optimistic sidebar update, then
   // reconcile from listLabels once the backend confirms (or on failure).
   function reconcileLabels() {
@@ -200,6 +228,11 @@
       .finally(() => (loadingMore = false));
   }
   let liveLabels: ipc.BackendLabel[] = $state([]);
+  let liveTriageLabels: ipc.BackendTriageLabel[] = $state([]);
+  // Jev triage filter (topbar expand icon next to the folder title) —
+  // null = no filter, else a BackendTriageLabel id. Not persisted; resets
+  // to "All" on relaunch like the other transient view filters.
+  let activeTriageFilter: string | null = $state(null);
 
   // Folder key → backend list_threads filter. `label:<id>` passes through;
   // scheduled/settings (and the mock label-* keys) have no backend folder.
@@ -258,7 +291,7 @@
     const f = folder;
     const filter = filterFor(f);
     const wantFolder = filter !== null && filter !== "inbox";
-    const [accounts, threads, folderThreads, scheduled, labels, unreadCounts] = await Promise.all([
+    const [accounts, threads, folderThreads, scheduled, labels, unreadCounts, triageLabels] = await Promise.all([
       ipc.listAccounts(),
       ipc.listThreads(undefined, undefined, undefined, listLimit),
       wantFolder
@@ -267,8 +300,10 @@
       ipc.listScheduled(),
       ipc.listLabels(),
       ipc.unreadCounts(unified ? undefined : activeAccountId),
+      ipc.listTriageLabels(),
     ]);
     liveCounts = unreadCounts;
+    liveTriageLabels = triageLabels;
     notifyNewMail(threads);
     liveAccounts = accounts.map((a) => ({
       id: a.id,
@@ -398,12 +433,21 @@
         ? emailsData
             .filter((e) => e.scheduledAt !== undefined)
             .filter((e) => schedFilter === "all" || !e.done)
+            .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter))
             .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
         : emailsData
             .filter((e) => (folder === "all" ? true : e.folder === folder))
-            .filter((e) => inboxFilter === "all" || e.unread);
+            .filter((e) => inboxFilter === "all" || e.unread)
+            .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter));
     const mapped = base
       .filter((e) => unified || e.accountId === activeAccountId)
+      .filter((e) => !attachmentOnly || e.attachment)
+      .filter((e) => {
+        if (view === "calendar" || dateFilter === "all" || e.lastMsgAt === undefined) return true;
+        const startOfToday = new Date().setHours(0, 0, 0, 0);
+        const days = dateFilter === "today" ? 0 : dateFilter === "week" ? 6 : 29;
+        return e.lastMsgAt >= startOfToday - days * 86_400_000;
+      })
       .map((e) =>
         // The ring only helps once there's more than one account to tell apart —
         // with a single account it's a uniform, purely decorative outline.
@@ -411,15 +455,24 @@
           ? { ...e, accountTag: accounts.find((a) => a.id === e.accountId)?.tag }
           : e,
       );
+    // Filters & sorting row: "newest" is each branch's natural order above,
+    // "oldest" reverses it, "unread" stably promotes unread items without
+    // otherwise reordering (Array#sort is stable).
+    const ordered =
+      emailSortOrder === "oldest"
+        ? [...mapped].reverse()
+        : emailSortOrder === "unread"
+          ? [...mapped].sort((a, b) => Number(!!b.unread) - Number(!!a.unread))
+          : mapped;
     const q = quickFilterOpen ? quickFilter.trim() : "";
-    if (!q) return mapped;
+    if (!q) return ordered;
     // Fuzzy filter over what's already loaded — client-side, no backend call.
     // Subsequence fuzzy on from/subject (short fields, typo-tolerant reads
     // well); the body snippet is prose — a 4-char subsequence matches almost
     // any paragraph, so it's a plain substring check instead, and ranked
     // below a real subject/sender match rather than fuzzy-scored itself.
     const ql = q.toLowerCase();
-    return mapped
+    return ordered
       .map((e) => {
         const subj = fuzzyScore(q, e.subject);
         const from = fuzzyScore(q, e.from);
@@ -626,6 +679,21 @@
         toast("danger", "Could not schedule", String(e));
         emailsData = emailsData.map((x) => (x.id === id ? { ...x, scheduledAt: previous } : x));
       });
+  }
+
+  /// Manual label edit (footer/header "+" menu or badge ×) — optimistic,
+  /// sticky on the backend (survives future auto-classification).
+  function setTriageLabels(id: string, labelIds: string[]) {
+    const em = emailsData.find((e) => e.id === id);
+    if (!em) return;
+    const previous = em.triageLabelIds;
+    emailsData = emailsData.map((e) => (e.id === id ? { ...e, triageLabelIds: labelIds } : e));
+    if (!ipc.isTauri) return;
+    ipc.setManualTriageLabels(id, labelIds).catch((e) => {
+      console.error("set_manual_triage_labels failed", e);
+      toast("danger", "Could not update labels", String(e));
+      emailsData = emailsData.map((x) => (x.id === id ? { ...x, triageLabelIds: previous } : x));
+    });
   }
 
   function switchView(v: "mail" | "calendar") {
@@ -1360,54 +1428,76 @@
                 </Tooltip>
               </div>
             {/if}
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <span
-              class="title"
-              class:static={threadOpen}
-              onclick={() => {
-                if (threadOpen) return;
-                folder = "inbox";
-                unified = true;
-              }}
-            >
-              {title}
-              {#if !threadOpen}
-                <span class="count">{emails.length}</span>
+            <div class="title-row">
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <span
+                class="title"
+                class:static={threadOpen}
+                class:tab-inactive={activeTriageFilter !== null}
+                onclick={() => {
+                  if (threadOpen) return;
+                  folder = "inbox";
+                  unified = true;
+                  activeTriageFilter = null;
+                }}
+              >
+                {title}
+                {#if !threadOpen}
+                  <span class="count">{emails.length}</span>
+                {/if}
+              </span>
+              {#if !threadOpen && view === "mail"}
+                <TriageFilter
+                  labels={liveTriageLabels}
+                  activeId={activeTriageFilter}
+                  onSelect={(id) => (activeTriageFilter = id)}
+                />
               {/if}
-            </span>
+            </div>
             <div class="spacer"></div>
             {#if !threadOpen}
               <div class="topbar-actions">
-                {#if view === "calendar"}
-                  <span class="topbar-filter">
-                    <SegmentedControl
-                      size="sm"
-                      options={[
-                        { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
-                        { value: "active", d: "M12 5a7 7 0 100 14 7 7 0 000-14z", title: "Hide done" },
-                      ]}
-                      value={schedFilter}
-                      onchange={setSchedFilter}
-                    />
-                  </span>
-                {:else if view === "mail"}
-                  <span class="topbar-filter">
-                    <SegmentedControl
-                      size="sm"
-                      options={[
-                        { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
-                        {
-                          value: "unread",
-                          d: "M12 12m-5 0a5 5 0 1010 0 5 5 0 10-10 0",
-                          filled: true,
-                          title: "Unread only",
-                        },
-                      ]}
-                      value={inboxFilter}
-                      onchange={setInboxFilter}
-                    />
-                  </span>
-                {/if}
+                <div class="topbar-actions-col">
+                  {#if view === "calendar"}
+                    <span class="topbar-filter">
+                      <SegmentedControl
+                        size="sm"
+                        options={[
+                          { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
+                          { value: "active", d: "M12 5a7 7 0 100 14 7 7 0 000-14z", title: "Hide done" },
+                        ]}
+                        value={schedFilter}
+                        onchange={setSchedFilter}
+                      />
+                    </span>
+                  {:else if view === "mail"}
+                    <span class="topbar-filter">
+                      <SegmentedControl
+                        size="sm"
+                        options={[
+                          { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
+                          {
+                            value: "unread",
+                            d: "M12 12m-5 0a5 5 0 1010 0 5 5 0 10-10 0",
+                            filled: true,
+                            title: "Unread only",
+                          },
+                        ]}
+                        value={inboxFilter}
+                        onchange={setInboxFilter}
+                      />
+                    </span>
+                  {/if}
+                  <button
+                    class="filter-toggle"
+                    class:active={sortFilterOpen || hasNonDefaultSortFilter}
+                    title={sortFilterOpen ? "Hide filters & sorting" : "Filters & sorting"}
+                    onclick={() => (sortFilterOpen = !sortFilterOpen)}
+                  >
+                    <Icon d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" size={13} />
+                    <span>Filters</span>
+                  </button>
+                </div>
               </div>
             {/if}
             {#if threadOpen && email}
@@ -1468,6 +1558,43 @@
               </button>
             </div>
           {/if}
+          {#if sortFilterOpen && !threadOpen}
+            <div class="sort-filter-bar">
+              <span class="sort-filter-label">Sort</span>
+              <SegmentedControl
+                size="sm"
+                options={[
+                  { value: "newest", label: "Newest" },
+                  { value: "oldest", label: "Oldest" },
+                  { value: "unread", label: "Unread first" },
+                ]}
+                value={emailSortOrder}
+                onchange={setEmailSortOrder}
+              />
+              {#if view !== "calendar"}
+                <span class="sort-filter-sep"></span>
+                <span class="sort-filter-label">Date</span>
+                <SegmentedControl
+                  size="sm"
+                  options={[
+                    { value: "all", label: "All" },
+                    { value: "today", label: "Today" },
+                    { value: "week", label: "This week" },
+                    { value: "month", label: "This month" },
+                  ]}
+                  value={dateFilter}
+                  onchange={setDateFilter}
+                />
+              {/if}
+              <span class="sort-filter-sep"></span>
+              <Switch checked={attachmentOnly} onchange={setAttachmentOnly} label="Has attachment" />
+              {#if liveTriageLabels.length > 0}
+                <span class="sort-filter-sep"></span>
+                <span class="sort-filter-label">Label</span>
+                <TriageFilter labels={liveTriageLabels} activeId={activeTriageFilter} onSelect={(id) => (activeTriageFilter = id)} />
+              {/if}
+            </div>
+          {/if}
         {/if}
         {#if threadOpen}
           <ThreadView
@@ -1483,6 +1610,8 @@
             onToggleDone={() => email && onEmailAction(email.id, "done")}
             onForward={() => email && forwardEmail(email.id)}
             initialReplyOpen={threadReplyStart}
+            triageLabels={liveTriageLabels}
+            onSetTriageLabels={setTriageLabels}
           />
         {:else}
           <InboxList
@@ -1505,6 +1634,8 @@
             {pinListEnabled}
             {remindRequestId}
             onRemindHandled={() => (remindRequestId = null)}
+            triageLabels={liveTriageLabels}
+            onSetTriageLabels={setTriageLabels}
           />
           {#if emails.length === 0}
             <div class="empty">{view === "calendar" ? "Nothing scheduled" : "Nothing here yet"}</div>
@@ -1774,13 +1905,46 @@
     font-size: 20px;
     color: var(--text-primary);
   }
+  .title-row {
+    display: flex;
+    /* Text baselines match regardless of font-size — .topbar's own
+       align-items:center would otherwise vertically center each box by
+       height, leaving the smaller TriageFilter tabs sitting visibly
+       higher than the title's baseline. */
+    align-items: baseline;
+    gap: 16px;
+    min-width: 0;
+  }
   .title.static {
     cursor: default;
   }
-  .count {
-    font-size: 14px;
+  /* Only one "tab" (this title, or a TriageFilter label) is bold at a
+     time — Superhuman-style. */
+  .title.tab-inactive {
     color: var(--text-tertiary);
-    font-weight: 400;
+  }
+  /* iOS-style notification badge — fixed height/min-width doubles as the
+     fix for the TriageFilter chevron jumping horizontally as the digit
+     count changes (6 vs 15 vs 156). */
+  .count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    margin-left: -6px;
+    border-radius: 999px;
+    background: var(--tag-coral-fg);
+    color: var(--white);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    font-weight: 700;
+    position: relative;
+    z-index: 1;
+    top: -11px;
+    box-shadow: 0 0 0 2px var(--bg-canvas);
   }
   /* A normal-sized search row below the title — not squeezed into the
      20px title row alongside the segmented control / Cmd+K button. */
@@ -1833,6 +1997,14 @@
     gap: 2px;
     margin-right: -6px;
   }
+  /* Stacks the All/Unread (or All/Hide done) segmented control above the
+     filters & sorting toggle, both right-aligned in the topbar's corner. */
+  .topbar-actions-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
   .topbar-filter {
     display: flex;
     align-items: center;
@@ -1841,6 +2013,64 @@
   }
   .topbar-filter:not(:last-child) {
     margin-right: 10px;
+  }
+  /* Stacked in .topbar-actions-col, not side-by-side — the horizontal gap
+     above would otherwise pull the segmented control off the right edge
+     that the filter-toggle button below it aligns to. */
+  .topbar-actions-col .topbar-filter {
+    margin-right: 0;
+  }
+  /* Filters & sorting toggle — same icon/label color language as the
+     sidebar's nav-item pills (secondary by default, primary on hover,
+     inverse on a solid pill when active). */
+  .filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border: none;
+    background: none;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    transition:
+      background var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+  .filter-toggle:hover {
+    background: var(--surface-card);
+    box-shadow: var(--shadow-xs);
+    color: var(--text-primary);
+  }
+  .filter-toggle.active {
+    background: var(--surface-inverse);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-inverse);
+  }
+  /* Filters & sorting row — same slot/pattern as .quick-filter-bar, opened
+     by the toggle button below the topbar's segmented control. */
+  .sort-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 0 14px;
+    margin-top: -4px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 8px;
+  }
+  .sort-filter-label {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+  }
+  .sort-filter-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border-subtle);
   }
   /* Replaces the title/filter row while any row is checked. */
   .bulk-bar {

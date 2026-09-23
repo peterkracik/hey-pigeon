@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/adapter-gmail", "crates/adapter-sqlite", "crates/adapter-openai", "src-tauri"]
+members = ["crates/core", "crates/adapter-gmail", "crates/adapter-sqlite", "crates/adapter-openai", "crates/adapter-jev", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

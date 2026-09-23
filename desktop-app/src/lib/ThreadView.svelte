@@ -4,7 +4,10 @@
   import Icon from "./ds/Icon.svelte";
   import ThreadMessage from "./ThreadMessage.svelte";
   import InlineReply, { type ReplySendData } from "./InlineReply.svelte";
+  import PriorityIndicator from "./PriorityIndicator.svelte";
+  import TriageBadges from "./TriageBadges.svelte";
   import type { Email, ThreadMsg } from "./data";
+  import type { BackendTriageLabel } from "./ipc";
 
   let {
     email,
@@ -16,6 +19,8 @@
     onForward,
     replySignature,
     initialReplyOpen = 0,
+    triageLabels = [],
+    onSetTriageLabels,
   }: {
     email: Email | undefined;
     onClose: () => void;
@@ -30,6 +35,11 @@
      *  last message (palette Reply / 'r' shortcut). "last" resolves lazily
      *  because bodies load async. 0 = no request. */
     initialReplyOpen?: number;
+    /** Jev triage label id→name lookup, for the classification badges shown
+     *  under the subject. */
+    triageLabels?: BackendTriageLabel[];
+    /** Manual label edit (badges' "+" menu / ×). Omit to render read-only. */
+    onSetTriageLabels?: (id: string, labelIds: string[]) => void;
   } = $props();
 
   // "last" = reply to the newest message once messages resolve (bodies are
@@ -84,6 +94,24 @@
 {#snippet content(em: Email)}
   <div class="content" class:fs={fullscreen}>
     <h1>{em.subject}</h1>
+    {#if em.priority || em.triageLabelIds?.length || onSetTriageLabels}
+      <div class="triage-header">
+        <PriorityIndicator priority={em.priority} />
+        <TriageBadges
+          labelIds={em.triageLabelIds}
+          {triageLabels}
+          onToggleLabel={onSetTriageLabels
+            ? (id) => {
+                const current = em.triageLabelIds ?? [];
+                const next = current.includes(id)
+                  ? current.filter((x) => x !== id)
+                  : [...current, id];
+                onSetTriageLabels(em.id, next);
+              }
+            : undefined}
+        />
+      </div>
+    {/if}
     <div>
       {#each messages as m (m.id)}
         <ThreadMessage
@@ -159,6 +187,13 @@
     font-weight: 700;
     color: var(--text-primary);
     margin: 0 0 18px;
+  }
+  .triage-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: -10px 0 18px;
   }
   .content.fs {
     padding: 0 28px;

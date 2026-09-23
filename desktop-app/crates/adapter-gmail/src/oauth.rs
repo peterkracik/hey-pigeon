@@ -162,12 +162,20 @@ async fn wait_for_code(listener: TcpListener, expected_state: &str) -> Result<St
             Err(OauthError::Authorization("state mismatch".to_string()))
         }
         (Some(code), Some(_), _) => Ok(code),
-        _ => Err(OauthError::Authorization("missing code or state".to_string())),
+        _ => Err(OauthError::Authorization(
+            "missing code or state".to_string(),
+        )),
     };
 
     let (status, msg) = match &result {
-        Ok(_) => ("200 OK", "Signed in. You can close this tab and return to Hey Pigeon."),
-        Err(_) => ("400 Bad Request", "Authorization failed. Return to Hey Pigeon and retry."),
+        Ok(_) => (
+            "200 OK",
+            "Signed in. You can close this tab and return to Hey Pigeon.",
+        ),
+        Err(_) => (
+            "400 Bad Request",
+            "Authorization failed. Return to Hey Pigeon and retry.",
+        ),
     };
     let body = format!(
         "<!DOCTYPE html><html><body style=\"font-family:sans-serif;padding:40px\"><h2>{msg}</h2></body></html>"
@@ -201,7 +209,9 @@ mod tests {
 
         let client = tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
-            let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
             s.write_all(b"GET /?code=abc123&state=st HTTP/1.1\r\nHost: x\r\n\r\n")
                 .await
                 .unwrap();
@@ -222,8 +232,12 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
-            let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-            s.write_all(b"GET /?code=abc&state=WRONG HTTP/1.1\r\n\r\n").await.unwrap();
+            let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            s.write_all(b"GET /?code=abc&state=WRONG HTTP/1.1\r\n\r\n")
+                .await
+                .unwrap();
         });
         assert!(wait_for_code(listener, "st").await.is_err());
     }

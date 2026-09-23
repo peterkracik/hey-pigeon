@@ -159,6 +159,110 @@
     }
   }
 
+  // --------------------------------------------------------- AI triage (Jev)
+  // Runs automatically in the background (unlike the AI section above,
+  // which only ever sends content on an explicit action) — the copy below
+  // must say so plainly.
+  let triageStatus = $state<ipc.TriageStatus | null>(null);
+  let triageLabels: ipc.BackendTriageLabel[] = $state([]);
+  let jevKeyInput = $state("");
+  let jevSaving = $state(false);
+  let jevError: string | null = $state(null);
+  let confirmingRemoveJev = $state(false);
+  let newLabelInput = $state("");
+  let labelError: string | null = $state(null);
+
+  if (ipc.isTauri) {
+    ipc
+      .autolabelStatus()
+      .then((s) => (triageStatus = s))
+      .catch(() => {});
+    ipc
+      .listTriageLabels()
+      .then((l) => (triageLabels = l))
+      .catch(() => {});
+  }
+
+  const triageConfigured = $derived(triageStatus?.configured ?? false);
+  const triageEnabled = $derived(triageStatus?.enabled ?? false);
+
+  async function connectJev() {
+    const key = jevKeyInput.trim();
+    if (!ipc.isTauri || !key) return;
+    jevSaving = true;
+    jevError = null;
+    try {
+      await ipc.setJevKey(key);
+      triageStatus = await ipc.autolabelStatus();
+      jevKeyInput = "";
+    } catch (e) {
+      jevError = String(e);
+    } finally {
+      jevSaving = false;
+    }
+  }
+
+  async function disconnectJev() {
+    if (!ipc.isTauri) return;
+    confirmingRemoveJev = false;
+    try {
+      await ipc.removeJevKey();
+      triageStatus = await ipc.autolabelStatus();
+    } catch (e) {
+      jevError = String(e);
+    }
+  }
+
+  async function toggleAutolabel(v: boolean) {
+    if (!ipc.isTauri || !triageStatus) return;
+    const prev = triageStatus.enabled;
+    triageStatus = { ...triageStatus, enabled: v }; // optimistic
+    try {
+      await ipc.setAutolabelEnabled(v);
+    } catch (e) {
+      jevError = String(e);
+      triageStatus = { ...triageStatus, enabled: prev };
+    }
+  }
+
+  async function addTriageLabel() {
+    const name = newLabelInput.trim();
+    if (!ipc.isTauri || !name) return;
+    labelError = null;
+    try {
+      const label = await ipc.createTriageLabel(name);
+      triageLabels = [...triageLabels, label].sort((a, b) => a.name.localeCompare(b.name));
+      newLabelInput = "";
+    } catch (e) {
+      labelError = String(e);
+    }
+  }
+
+  async function removeTriageLabel(id: string) {
+    if (!ipc.isTauri) return;
+    labelError = null;
+    try {
+      await ipc.deleteTriageLabel(id);
+      triageLabels = triageLabels.filter((l) => l.id !== id);
+    } catch (e) {
+      labelError = String(e);
+    }
+  }
+
+  // Doesn't clear anything itself — just marks every thread stale so the
+  // ~30s poll gradually reclassifies the whole mailbox (bounded per tick).
+  let reanalyzeQueued = $state(false);
+  async function reanalyzeAll() {
+    if (!ipc.isTauri) return;
+    labelError = null;
+    try {
+      await ipc.reanalyzeAllTriage();
+      reanalyzeQueued = true;
+    } catch (e) {
+      labelError = String(e);
+    }
+  }
+
   function reorderOrAdd(targetIndex: number) {
     if (!dragKey) return;
     let next = hoverActions.filter((k) => k !== dragKey);
@@ -321,6 +425,117 @@
           {#if aiError}
             <div class="ai-error">{aiError}</div>
           {/if}
+        {/if}
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="group-head">
+      <h2>Triage</h2>
+      <p>
+        Jev sorts new mail into your own labels below and flags a priority automatically, in the background — subject and
+        snippet (never the full message) are sent to Jev to do this.
+      </p>
+    </div>
+    <div class="group-body">
+      <div class="account-block">
+        <div class="account-row">
+          <div class="ai-mark">TS</div>
+          <div class="account-text">
+            <div class="setting-title">Jev</div>
+            <div class="account-email">{triageConfigured ? "Connected" : "Not connected"}</div>
+          </div>
+          {#if triageConfigured}
+            {#if confirmingRemoveJev}
+              <Button variant="danger" size="sm" onclick={disconnectJev}>Really remove?</Button>
+            {:else}
+              <Button variant="ghost" size="sm" onclick={() => (confirmingRemoveJev = true)}>Remove</Button>
+            {/if}
+          {/if}
+        </div>
+        {#if triageConfigured}
+          <div class="account-subsettings">
+            <div class="sub-row">
+              <span class="sub-label">Auto-triage</span>
+              <Switch checked={triageEnabled} onchange={toggleAutolabel} />
+            </div>
+            <div class="sub-row">
+              <span class="sub-label">Reanalyze</span>
+              <div class="reanalyze-control">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onclick={() => {
+                    reanalyzeQueued = false;
+                    reanalyzeAll();
+                  }}
+                >
+                  Reanalyze all emails
+                </Button>
+                {#if reanalyzeQueued}
+                  <span class="sub-muted">Queued — processes gradually in the background.</span>
+                {/if}
+              </div>
+            </div>
+            {#if triageStatus?.last_error}
+              <div class="sub-row">
+                <span class="sub-static warn">Last run failed: {triageStatus.last_error}</span>
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <div class="ai-connect-row">
+            <input
+              class="sub-input ai-key-input"
+              type="password"
+              autocomplete="off"
+              placeholder="API key"
+              bind:value={jevKeyInput}
+              onkeydown={(ev) => {
+                if (ev.key === "Enter") connectJev();
+              }}
+            />
+            <Button variant="secondary" size="sm" disabled={!jevKeyInput.trim() || jevSaving} onclick={connectJev}>
+              {jevSaving ? "Verifying…" : "Connect"}
+            </Button>
+          </div>
+          {#if jevError}
+            <div class="ai-error">{jevError}</div>
+          {/if}
+        {/if}
+      </div>
+
+      <div class="triage-labels">
+        <div class="drag-label">Labels</div>
+        <div class="available-zone">
+          {#each triageLabels as l (l.id)}
+            <span class="action-chip selected">
+              {l.name}
+              <button class="chip-x" aria-label="Remove {l.name}" onclick={() => removeTriageLabel(l.id)}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                  <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </button>
+            </span>
+          {/each}
+          {#if triageLabels.length === 0}
+            <span class="drop-hint">No labels yet</span>
+          {/if}
+        </div>
+        <div class="ai-connect-row">
+          <input
+            class="sub-input"
+            placeholder="New label name"
+            bind:value={newLabelInput}
+            onkeydown={(ev) => {
+              if (ev.key === "Enter") addTriageLabel();
+            }}
+          />
+          <Button variant="secondary" size="sm" disabled={!newLabelInput.trim()} onclick={addTriageLabel}>Add</Button>
+        </div>
+        {#if labelError}
+          <div class="ai-error">{labelError}</div>
         {/if}
       </div>
     </div>
@@ -545,6 +760,19 @@
   }
   .add-account {
     padding-top: 14px;
+  }
+  .triage-labels {
+    margin-top: 16px;
+  }
+  .reanalyze-control {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .reanalyze-control :global(.btn) {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .hover-actions {
     display: flex;

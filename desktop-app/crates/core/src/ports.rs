@@ -215,10 +215,18 @@ pub trait AiProvider {
         Self: Sync,
     {
         async move {
-            let model = self.models().into_iter().next().map(|m| m.id).unwrap_or_default();
+            let model = self
+                .models()
+                .into_iter()
+                .next()
+                .map(|m| m.id)
+                .unwrap_or_default();
             self.complete(CompletionRequest {
                 model,
-                messages: vec![ChatMessage { role: ChatRole::User, content: "ping".to_string() }],
+                messages: vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "ping".to_string(),
+                }],
             })
             .await
             .map(|_| ())
@@ -294,6 +302,87 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    // ---- AI triage (Jev): local-only labels + priority ----
+    // Default impls keep pre-triage adapters compiling; the SQLite adapter
+    // and MemStore implement all of them.
+
+    /// All user-defined triage categories (Settings "Triage" list).
+    fn list_triage_labels(&self) -> Result<Vec<TriageLabel>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    /// Create a new local triage category. Also invalidates every thread's
+    /// triage version (see `list_threads_needing_triage`) so the new label
+    /// gets a chance to match existing mail, not just future mail.
+    fn create_triage_label(&self, name: &str) -> Result<TriageLabel, StoreError> {
+        let _ = name;
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    fn rename_triage_label(&self, id: &str, new_name: &str) -> Result<(), StoreError> {
+        let _ = (id, new_name);
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    /// Delete a triage category; must also strip it from every thread it
+    /// was applied to (mirrors `Store::delete_label`'s Gmail-side cleanup).
+    fn delete_triage_label(&self, id: &str) -> Result<(), StoreError> {
+        let _ = id;
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    /// Threads whose triage is missing or stale: never classified, or a
+    /// message arrived since (`msg_count` grew), or a label was added/
+    /// removed/renamed since (`create_triage_label` bumps everyone stale).
+    /// Bounded by `limit` — the caller polls this repeatedly, it does not
+    /// need every stale thread at once.
+    fn list_threads_needing_triage(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
+        let _ = limit;
+        Ok(Vec::new())
+    }
+
+    /// Persist one thread's Jev result: sets `priority` and records
+    /// `at_msg_count` as the version this classification covers so
+    /// `list_threads_needing_triage` stops returning it until the thread
+    /// changes again. Wholesale-replaces `label_ids` (like `set_labels`)
+    /// UNLESS the user has manually edited this thread's labels
+    /// (`set_manual_triage_labels`) — a manual choice is sticky and must
+    /// survive Jev re-classifying the thread for a new message.
+    fn set_thread_triage(
+        &self,
+        thread_id: &ThreadId,
+        label_ids: &[String],
+        priority: Priority,
+        at_msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, label_ids, priority, at_msg_count);
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    /// User-driven label edit (the footer "+" menu / badge ×). Wholesale-
+    /// replaces the thread's triage labels AND marks them manually pinned,
+    /// so future `set_thread_triage` calls leave them alone — only
+    /// `reset_triage` ("Reanalyze all emails") clears the pin.
+    fn set_manual_triage_labels(
+        &self,
+        thread_id: &ThreadId,
+        label_ids: &[String],
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, label_ids);
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    /// Force every thread stale for triage (Settings "Reanalyze all
+    /// emails"). Same mechanism `create_triage_label` already uses when a
+    /// new label is added — doesn't clear existing labels/priority, they
+    /// just get overwritten as `list_threads_needing_triage` reaches each
+    /// thread again, bounded by the poller's per-tick cap. Also clears any
+    /// manual label pins — an explicit "reanalyze everything" should give
+    /// Jev a fresh shot rather than staying blocked by old manual edits.
+    fn reset_triage(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     /// Apply a mutation locally (the optimistic half).
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError>;
 
@@ -307,7 +396,11 @@ pub trait Store {
     /// user's devices via `SyncTransport` instead. Ok(false) = unknown
     /// thread (a reminder can arrive from another device before the
     /// thread itself is backfilled here; the caller retries later).
-    fn set_schedule(&self, thread_id: &ThreadId, scheduled_at: Option<i64>) -> Result<bool, StoreError>;
+    fn set_schedule(
+        &self,
+        thread_id: &ThreadId,
+        scheduled_at: Option<i64>,
+    ) -> Result<bool, StoreError>;
 
     // ---- cross-device sync map (DESIGN.md "Cross-device sync") ----
     // Default impls keep pre-sync adapters compiling; the SQLite adapter
@@ -329,19 +422,32 @@ pub trait Store {
     /// Last-writer-wins upsert: each entry replaces the stored one only if
     /// `SyncEntry::is_newer_than` it (or none is stored). Returns the keys
     /// whose stored entry changed.
-    fn sync_merge(&self, account_id: &AccountId, entries: &[SyncEntry]) -> Result<Vec<String>, StoreError> {
+    fn sync_merge(
+        &self,
+        account_id: &AccountId,
+        entries: &[SyncEntry],
+    ) -> Result<Vec<String>, StoreError> {
         let _ = (account_id, entries);
         Err(StoreError("sync not supported by this store".into()))
     }
 
     /// Small per-account bookkeeping for the sync loop (remote file id,
     /// fingerprints of what was last uploaded / downloaded).
-    fn sync_meta_get(&self, account_id: &AccountId, key: &str) -> Result<Option<String>, StoreError> {
+    fn sync_meta_get(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+    ) -> Result<Option<String>, StoreError> {
         let _ = (account_id, key);
         Ok(None)
     }
 
-    fn sync_meta_set(&self, account_id: &AccountId, key: &str, value: &str) -> Result<(), StoreError> {
+    fn sync_meta_set(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
         let _ = (account_id, key, value);
         Err(StoreError("sync not supported by this store".into()))
     }

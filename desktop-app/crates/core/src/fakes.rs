@@ -40,6 +40,14 @@ struct MemStoreInner {
     /// account → key → entry (the cross-device LWW map).
     sync_kv: HashMap<AccountId, HashMap<String, SyncEntry>>,
     sync_meta: HashMap<(AccountId, String), String>,
+    triage_labels: Vec<TriageLabel>,
+    next_triage_label_id: i64,
+    /// thread → `msg_count` at its last Jev classification. Missing/stale
+    /// (≠ current `msg_count`) means `list_threads_needing_triage` returns it.
+    triage_versions: HashMap<ThreadId, i64>,
+    /// Threads whose triage labels were manually edited — `set_thread_triage`
+    /// must leave them alone until `reset_triage` clears the pin.
+    triage_labels_manual: std::collections::HashSet<ThreadId>,
 }
 
 impl MemStore {
@@ -105,6 +113,11 @@ impl Store for MemStore {
             if t.scheduled_at.is_none() {
                 t.scheduled_at = old.scheduled_at;
             }
+            // Same contract for Jev triage (priority/triage_label_ids): the
+            // provider never sets these, so a fresh upsert always carries
+            // the empty default — preserve whatever Jev last computed.
+            t.priority = old.priority;
+            t.triage_label_ids = old.triage_label_ids.clone();
         }
         g.threads.insert(t.id.clone(), t);
         Ok(())
@@ -188,6 +201,112 @@ impl Store for MemStore {
         let mut v: Vec<Label> = g.labels.values().flatten().cloned().collect();
         v.sort_by(|a, b| (&a.account_id, &a.id).cmp(&(&b.account_id, &b.id)));
         Ok(v)
+    }
+
+    fn list_triage_labels(&self) -> Result<Vec<TriageLabel>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v = g.triage_labels.clone();
+        v.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(v)
+    }
+
+    fn create_triage_label(&self, name: &str) -> Result<TriageLabel, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        if g.triage_labels
+            .iter()
+            .any(|l| l.name.eq_ignore_ascii_case(name))
+        {
+            return Err(StoreError(format!("triage label '{name}' already exists")));
+        }
+        g.next_triage_label_id += 1;
+        let label = TriageLabel {
+            id: g.next_triage_label_id.to_string(),
+            name: name.to_string(),
+        };
+        g.triage_labels.push(label.clone());
+        // A new label may match mail already synced, not just future mail —
+        // make everyone stale so the poller gradually reclassifies (bounded
+        // by its own per-tick limit).
+        g.triage_versions.clear();
+        Ok(label)
+    }
+
+    fn rename_triage_label(&self, id: &str, new_name: &str) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let label = g
+            .triage_labels
+            .iter_mut()
+            .find(|l| l.id == id)
+            .ok_or_else(|| StoreError(format!("unknown triage label {id}")))?;
+        label.name = new_name.to_string();
+        Ok(())
+    }
+
+    fn delete_triage_label(&self, id: &str) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.triage_labels.retain(|l| l.id != id);
+        for t in g.threads.values_mut() {
+            t.triage_label_ids.retain(|l| l != id);
+        }
+        Ok(())
+    }
+
+    fn reset_triage(&self) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.triage_versions.clear();
+        g.triage_labels_manual.clear();
+        Ok(())
+    }
+
+    fn list_threads_needing_triage(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| g.triage_versions.get(&t.id) != Some(&t.msg_count))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
+    fn set_thread_triage(
+        &self,
+        thread_id: &ThreadId,
+        label_ids: &[String],
+        priority: Priority,
+        at_msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let manual = g.triage_labels_manual.contains(thread_id);
+        let t = g
+            .threads
+            .get_mut(thread_id)
+            .ok_or_else(|| StoreError(format!("unknown thread {thread_id}")))?;
+        // A manually-pinned thread keeps its user-chosen labels — only
+        // priority/version move (matches SqliteStore's CASE).
+        if !manual {
+            t.triage_label_ids = label_ids.to_vec();
+        }
+        t.priority = Some(priority);
+        g.triage_versions.insert(thread_id.clone(), at_msg_count);
+        Ok(())
+    }
+
+    fn set_manual_triage_labels(
+        &self,
+        thread_id: &ThreadId,
+        label_ids: &[String],
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let t = g
+            .threads
+            .get_mut(thread_id)
+            .ok_or_else(|| StoreError(format!("unknown thread {thread_id}")))?;
+        t.triage_label_ids = label_ids.to_vec();
+        g.triage_labels_manual.insert(thread_id.clone());
+        Ok(())
     }
 
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError> {
@@ -283,7 +402,11 @@ impl Store for MemStore {
         Ok(())
     }
 
-    fn set_schedule(&self, thread_id: &ThreadId, scheduled_at: Option<i64>) -> Result<bool, StoreError> {
+    fn set_schedule(
+        &self,
+        thread_id: &ThreadId,
+        scheduled_at: Option<i64>,
+    ) -> Result<bool, StoreError> {
         let mut g = self.inner.lock().unwrap();
         match g.threads.get_mut(thread_id) {
             Some(t) => {
@@ -318,7 +441,11 @@ impl Store for MemStore {
         Ok(v)
     }
 
-    fn sync_merge(&self, account_id: &AccountId, entries: &[SyncEntry]) -> Result<Vec<String>, StoreError> {
+    fn sync_merge(
+        &self,
+        account_id: &AccountId,
+        entries: &[SyncEntry],
+    ) -> Result<Vec<String>, StoreError> {
         let mut g = self.inner.lock().unwrap();
         if !g.accounts.contains_key(account_id) {
             return Err(StoreError(format!("unknown account {account_id}")));
@@ -335,14 +462,26 @@ impl Store for MemStore {
         Ok(changed)
     }
 
-    fn sync_meta_get(&self, account_id: &AccountId, key: &str) -> Result<Option<String>, StoreError> {
+    fn sync_meta_get(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+    ) -> Result<Option<String>, StoreError> {
         let g = self.inner.lock().unwrap();
-        Ok(g.sync_meta.get(&(account_id.clone(), key.to_string())).cloned())
+        Ok(g.sync_meta
+            .get(&(account_id.clone(), key.to_string()))
+            .cloned())
     }
 
-    fn sync_meta_set(&self, account_id: &AccountId, key: &str, value: &str) -> Result<(), StoreError> {
+    fn sync_meta_set(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
         let mut g = self.inner.lock().unwrap();
-        g.sync_meta.insert((account_id.clone(), key.to_string()), value.to_string());
+        g.sync_meta
+            .insert((account_id.clone(), key.to_string()), value.to_string());
         Ok(())
     }
 }
@@ -375,7 +514,12 @@ impl MemTransport {
         self.inner.lock().unwrap().downloads
     }
     pub fn file_count(&self, account_id: &AccountId) -> usize {
-        self.inner.lock().unwrap().files.get(account_id).map_or(0, |m| m.len())
+        self.inner
+            .lock()
+            .unwrap()
+            .files
+            .get(account_id)
+            .map_or(0, |m| m.len())
     }
     /// Simulate the user wiping the app's data folder.
     pub fn clear(&self, account_id: &AccountId) {
@@ -459,7 +603,11 @@ impl SyncTransport for MemTransport {
             .entry(account_id.clone())
             .or_default()
             .insert(id.clone(), (name.to_string(), bytes));
-        Ok(RemoteFile { id, name: name.to_string(), fingerprint })
+        Ok(RemoteFile {
+            id,
+            name: name.to_string(),
+            fingerprint,
+        })
     }
 }
 
@@ -502,6 +650,8 @@ impl FakeProvider {
                     // Every 5th sample thread carries an attachment — just
                     // enough variety to eyeball the icon in Fake-backend dev mode.
                     has_attachment: i % 5 == 0,
+                    priority: None,
+                    triage_label_ids: Vec::new(),
                 };
                 let message = Message {
                     id: format!("{tid}:m0"),
@@ -608,7 +758,11 @@ impl MailProvider for FakeProvider {
         } else {
             self.history.lock().unwrap().clone()
         };
-        Ok(HistoryPage { changes, next_page_token: None, latest_history_id: latest })
+        Ok(HistoryPage {
+            changes,
+            next_page_token: None,
+            latest_history_id: latest,
+        })
     }
 
     async fn fetch_bodies(
@@ -656,6 +810,8 @@ mod tests {
             scheduled_at: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
         }
     }
 
@@ -664,16 +820,33 @@ mod tests {
     fn memstore_star_and_modify_label_flip_labels_only() {
         let s = MemStore::default();
         s.upsert_thread(&thread("t1", &["INBOX"])).unwrap();
-        let star = |on: bool| Mutation::Star { thread_id: "t1".to_string(), starred: on };
+        let star = |on: bool| Mutation::Star {
+            thread_id: "t1".to_string(),
+            starred: on,
+        };
         s.apply_local(&star(true)).unwrap();
         let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
         assert_eq!(t.labels, ["INBOX", "STARRED"]);
-        assert!(t.is_inbox && !t.is_archived, "star must not move the thread");
-        assert_eq!(s.list_threads(None, &ThreadFilter::Starred, None, 10).unwrap().len(), 1);
+        assert!(
+            t.is_inbox && !t.is_archived,
+            "star must not move the thread"
+        );
+        assert_eq!(
+            s.list_threads(None, &ThreadFilter::Starred, None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
         s.apply_local(&star(true)).unwrap(); // idempotent — no duplicate label
-        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX", "STARRED"]);
+        assert_eq!(
+            s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
+            ["INBOX", "STARRED"]
+        );
         s.apply_local(&star(false)).unwrap();
-        assert_eq!(s.get_thread(&"t1".to_string()).unwrap().unwrap().labels, ["INBOX"]);
+        assert_eq!(
+            s.get_thread(&"t1".to_string()).unwrap().unwrap().labels,
+            ["INBOX"]
+        );
         let flip = |add: bool| Mutation::ModifyLabel {
             thread_id: "t1".to_string(),
             label_id: "Label_7".to_string(),

@@ -6,6 +6,9 @@
   import EmailBody from "./EmailBody.svelte";
   import Avatar from "./ds/Avatar.svelte";
   import { EMAIL_ACTIONS, type Email } from "./data";
+  import type { BackendTriageLabel } from "./ipc";
+  import PriorityIndicator from "./PriorityIndicator.svelte";
+  import TriageBadges from "./TriageBadges.svelte";
 
   let {
     emails,
@@ -24,6 +27,8 @@
     mode = "inbox",
     remindRequestId = null,
     onRemindHandled,
+    triageLabels = [],
+    onSetTriageLabels,
   }: {
     emails: Email[];
     selectedId: string | null;
@@ -46,6 +51,12 @@
      *  to that row (command palette / 'h' shortcut). Cleared via callback. */
     remindRequestId?: string | null;
     onRemindHandled?: () => void;
+    /** Jev triage label id→name lookup, for the classification badges shown
+     *  in the open-preview footer next to the reply actions. */
+    triageLabels?: BackendTriageLabel[];
+    /** Manual label edit (footer "+" menu / badge ×). Omit to render the
+     *  footer badges read-only. */
+    onSetTriageLabels?: (id: string, labelIds: string[]) => void;
   } = $props();
 
   const DONE_D = "M20 6L9 17l-5-5";
@@ -186,19 +197,21 @@
   // the design's fixed slices.
   const groups = $derived.by(() => {
     if (mode === "scheduled") {
-      // Calendar/todo view: ascending by schedule; overdue sorts first in
-      // Today naturally (earlier timestamps).
-      const sorted = [...emails].sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0));
+      // Calendar/todo view: bucketed by due date. Relative order within each
+      // bucket follows whatever order the caller already sorted `emails`
+      // into (ascending-by-schedule by default, so overdue sorts first in
+      // Today naturally — App.svelte's filters & sorting row can reverse it
+      // or promote unread instead, which this must not undo).
       const startToday = new Date().setHours(0, 0, 0, 0);
       const t1 = startToday + DAY_MS;
       const t2 = startToday + 2 * DAY_MS;
       const t7 = startToday + 7 * DAY_MS;
       const at = (e: Email) => e.scheduledAt ?? 0;
       return [
-        { label: "Today", items: sorted.filter((e) => at(e) < t1), isPinnedGroup: false },
-        { label: "Tomorrow", items: sorted.filter((e) => at(e) >= t1 && at(e) < t2), isPinnedGroup: false },
-        { label: "This week", items: sorted.filter((e) => at(e) >= t2 && at(e) < t7), isPinnedGroup: false },
-        { label: "Later", items: sorted.filter((e) => at(e) >= t7), isPinnedGroup: false },
+        { label: "Today", items: emails.filter((e) => at(e) < t1), isPinnedGroup: false },
+        { label: "Tomorrow", items: emails.filter((e) => at(e) >= t1 && at(e) < t2), isPinnedGroup: false },
+        { label: "This week", items: emails.filter((e) => at(e) >= t2 && at(e) < t7), isPinnedGroup: false },
+        { label: "Later", items: emails.filter((e) => at(e) >= t7), isPinnedGroup: false },
       ].filter((g) => g.items.length > 0);
     }
     const head = pinned.length ? [{ label: "Pinned", items: pinned, isPinnedGroup: true }] : [];
@@ -284,6 +297,7 @@
                 <Icon d={DONE_D} size={11} strokeWidth={2.6} />
               </button>
             </Tooltip>
+            <PriorityIndicator priority={e.priority} />
             <span
               class="avatar-wrap"
               class:ringed={!!e.accountTag}
@@ -434,6 +448,24 @@
                     </IconButton>
                   </Tooltip>
                 </div>
+                {#if e.priority || e.triageLabelIds?.length}
+                  <div class="footer-badges">
+                    <PriorityIndicator priority={e.priority} />
+                    <TriageBadges
+                      labelIds={e.triageLabelIds}
+                      {triageLabels}
+                      onToggleLabel={onSetTriageLabels
+                        ? (id) => {
+                            const current = e.triageLabelIds ?? [];
+                            const next = current.includes(id)
+                              ? current.filter((x) => x !== id)
+                              : [...current, id];
+                            onSetTriageLabels(e.id, next);
+                          }
+                        : undefined}
+                    />
+                  </div>
+                {/if}
                 <div class="spacer"></div>
                 <button
                   class="open-thread"
@@ -840,6 +872,16 @@
     flex-shrink: 0;
     color: var(--text-tertiary);
     display: flex;
+  }
+  /* Classification badges in the open-preview footer, next to reply/reply-all/forward.
+     Priority/label pill rendering itself lives in PriorityIndicator/TriageBadges
+     (shared with ThreadView's full-thread header). */
+  .footer-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 12px;
+    flex-wrap: wrap;
   }
   .sched-badge {
     flex-shrink: 0;

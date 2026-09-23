@@ -22,7 +22,7 @@ const BACKFILL_DAYS: u32 = 30;
 const DELTA_POLL_SECS: u64 = 30;
 /// Focus-triggered delta syncs at most this often.
 const FOCUS_SYNC_MIN_SECS: u64 = 5;
-const THREADS_UPDATED: &str = "threads_updated";
+pub(crate) const THREADS_UPDATED: &str = "threads_updated";
 const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
 /// Mail backend selector. `MailProvider` is not dyn-compatible (RPITIT), so
@@ -189,7 +189,10 @@ pub fn unread_counts(
         ("spam", ThreadFilter::Spam),
         ("trash", ThreadFilter::Trash),
     ] {
-        let n = state.store.count_unread(account_id.as_ref(), &filter).map_err(estr)?;
+        let n = state
+            .store
+            .count_unread(account_id.as_ref(), &filter)
+            .map_err(estr)?;
         out.insert(key.to_string(), n);
     }
     for label in state.store.list_labels().map_err(estr)? {
@@ -220,7 +223,10 @@ pub async fn search_threads(
     limit: Option<u32>,
 ) -> Result<Vec<SearchResult>, String> {
     let parsed = heypigeon_core::search::parse(&query);
-    state.store.search(&parsed, limit.unwrap_or(50)).map_err(estr)
+    state
+        .store
+        .search(&parsed, limit.unwrap_or(50))
+        .map_err(estr)
 }
 
 /// Thread + messages; fetches bodies from the provider on first open
@@ -234,7 +240,9 @@ pub async fn get_thread(
         return Ok(None);
     };
     let mut messages = state.store.list_messages(&thread_id).map_err(estr)?;
-    let missing_bodies = messages.iter().all(|m| m.body_html.is_none() && m.body_text.is_none());
+    let missing_bodies = messages
+        .iter()
+        .all(|m| m.body_html.is_none() && m.body_text.is_none());
     if missing_bodies {
         let backend = state.backend.read().await;
         let (has_attachment, fetched) =
@@ -282,6 +290,8 @@ pub async fn sync_now(
     let backend = state.backend.read().await;
     let n = with_provider!(&*backend, p => sync::backfill(p, &state.store, &account_id, BACKFILL_DAYS).await)
         .map_err(estr)?;
+    drop(backend);
+    crate::autolabel::classify_pending(&app).await;
     let _ = app.emit(THREADS_UPDATED, ());
     Ok(n)
 }
@@ -303,8 +313,12 @@ pub async fn set_schedule(
         .get_thread(&thread_id)
         .map_err(estr)?
         .ok_or_else(|| format!("unknown thread {thread_id}"))?;
-    state.store.set_schedule(&thread_id, scheduled_at).map_err(estr)?;
-    devsync::record_reminder(&state.store, &thread.account_id, &thread_id, scheduled_at).map_err(estr)?;
+    state
+        .store
+        .set_schedule(&thread_id, scheduled_at)
+        .map_err(estr)?;
+    devsync::record_reminder(&state.store, &thread.account_id, &thread_id, scheduled_at)
+        .map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
     // Push straight away — one small upload — so a second device sees the
     // reminder on its next poll instead of after ours.
@@ -418,7 +432,10 @@ pub async fn update_label(
         let r: Result<(), String> = async {
             with_provider!(&*backend, p => p.update_label(&account_id, &label_id, &new_name).await)
                 .map_err(estr)?;
-            state.store.rename_label(&account_id, &label_id, &new_name).map_err(estr)?;
+            state
+                .store
+                .rename_label(&account_id, &label_id, &new_name)
+                .map_err(estr)?;
             let labels =
                 with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
             state.store.set_labels(&account_id, &labels).map_err(estr)?;
@@ -430,7 +447,11 @@ pub async fn update_label(
         }
     }
     let _ = app.emit(THREADS_UPDATED, ());
-    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("; "))
+    }
 }
 
 /// Delete a user label remotely (every owning account — see `label_owners`),
@@ -448,7 +469,10 @@ pub async fn delete_label(
         let r: Result<(), String> = async {
             with_provider!(&*backend, p => p.delete_label(&account_id, &label_id).await)
                 .map_err(estr)?;
-            state.store.delete_label(&account_id, &label_id).map_err(estr)?;
+            state
+                .store
+                .delete_label(&account_id, &label_id)
+                .map_err(estr)?;
             let labels =
                 with_provider!(&*backend, p => p.list_labels(&account_id).await).map_err(estr)?;
             state.store.set_labels(&account_id, &labels).map_err(estr)?;
@@ -460,7 +484,11 @@ pub async fn delete_label(
         }
     }
     let _ = app.emit(THREADS_UPDATED, ());
-    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("; "))
+    }
 }
 
 /// Disconnect an account: local data + stored refresh token.
@@ -495,7 +523,10 @@ pub async fn lookup_avatar(
 /// Run the OAuth consent flow, connect the Gmail account, start backfill.
 /// The one command that changes the active backend.
 #[tauri::command]
-pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> Result<String, String> {
+pub async fn start_gmail_oauth(
+    app: AppHandle,
+    state: State<'_, MailState>,
+) -> Result<String, String> {
     let config = load_oauth_config()?;
     let tokens = oauth::authorize(&config, |url| {
         // ponytail: macOS-only browser open; switch to tauri-plugin-opener
@@ -508,10 +539,16 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
     let provider = GmailProvider::new(config, Arc::clone(&state.secrets));
     // Account id = email address; fetch it with the fresh access token.
     let bootstrap_id: AccountId = "pending".to_string();
-    provider.install_tokens(&bootstrap_id, &tokens).await.map_err(estr)?;
+    provider
+        .install_tokens(&bootstrap_id, &tokens)
+        .await
+        .map_err(estr)?;
     let profile = provider.profile(&bootstrap_id).await.map_err(estr)?;
     let email = profile.email.clone();
-    provider.install_tokens(&email, &tokens).await.map_err(estr)?;
+    provider
+        .install_tokens(&email, &tokens)
+        .await
+        .map_err(estr)?;
     let avatar_url = provider.fetch_profile_photo(&email).await;
 
     let existing = state.store.list_accounts().map_err(estr)?;
@@ -521,9 +558,9 @@ pub async fn start_gmail_oauth(app: AppHandle, state: State<'_, MailState>) -> R
         .find(|a| a.id == email)
         .map(|a| a.color.clone())
         .unwrap_or_else(|| {
-            ACCOUNT_COLORS[existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count()
-                % ACCOUNT_COLORS.len()]
-                .to_string()
+            ACCOUNT_COLORS
+                [existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count() % ACCOUNT_COLORS.len()]
+            .to_string()
         });
     state
         .store
@@ -584,7 +621,9 @@ async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
     let state = handle.state::<MailState>();
     let result = {
         let backend = state.backend.read().await;
-        let Backend::Gmail(p) = &*backend else { return false };
+        let Backend::Gmail(p) = &*backend else {
+            return false;
+        };
         devsync::sync_account(p, &state.store, account_id).await
     };
     // Persisted by the core on success; read it back so a failure still
@@ -593,20 +632,35 @@ async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
     let mut statuses = state.sync_status.lock().unwrap();
     let previous = statuses.get(account_id).cloned();
     let status = match &result {
-        Ok(_) => SyncStatus { state: SyncState::Ok, detail: None, last_sync_at },
-        Err(devsync::DevSyncError::Transport(SyncError::Unavailable(why))) => {
-            SyncStatus { state: SyncState::Unavailable, detail: Some(why.clone()), last_sync_at }
-        }
-        Err(devsync::DevSyncError::Transport(SyncError::AuthExpired)) => {
-            SyncStatus { state: SyncState::AuthExpired, detail: None, last_sync_at }
-        }
-        Err(e) => SyncStatus { state: SyncState::Error, detail: Some(e.to_string()), last_sync_at },
+        Ok(_) => SyncStatus {
+            state: SyncState::Ok,
+            detail: None,
+            last_sync_at,
+        },
+        Err(devsync::DevSyncError::Transport(SyncError::Unavailable(why))) => SyncStatus {
+            state: SyncState::Unavailable,
+            detail: Some(why.clone()),
+            last_sync_at,
+        },
+        Err(devsync::DevSyncError::Transport(SyncError::AuthExpired)) => SyncStatus {
+            state: SyncState::AuthExpired,
+            detail: None,
+            last_sync_at,
+        },
+        Err(e) => SyncStatus {
+            state: SyncState::Error,
+            detail: Some(e.to_string()),
+            last_sync_at,
+        },
     };
     let same_failure = previous
         .as_ref()
         .is_some_and(|p| p.state == status.state && p.detail == status.detail);
     if status.state != SyncState::Ok && !same_failure {
-        log::warn!("devsync({account_id}) failed: {}", status.detail.as_deref().unwrap_or("auth expired"));
+        log::warn!(
+            "devsync({account_id}) failed: {}",
+            status.detail.as_deref().unwrap_or("auth expired")
+        );
     }
     statuses.insert(account_id.clone(), status);
     result.unwrap_or(false)
@@ -645,6 +699,7 @@ pub fn spawn_delta_loop(handle: AppHandle) {
         loop {
             interval.tick().await;
             delta_sync_all(&handle).await;
+            crate::autolabel::classify_pending(&handle).await;
             notify_due_reminders(&handle);
         }
     });
@@ -672,7 +727,9 @@ fn notify_due_reminders(handle: &AppHandle) {
         scheduled.iter().map(|t| &t.id).collect();
     notified.retain(|id, _| still_scheduled.contains(id));
     for thread in &scheduled {
-        let Some(due_at) = thread.scheduled_at else { continue };
+        let Some(due_at) = thread.scheduled_at else {
+            continue;
+        };
         if due_at > now_ms {
             continue;
         }
@@ -714,6 +771,7 @@ fn spawn_startup_sync(handle: AppHandle, account_id: AccountId) {
         if delta_account(handle.clone(), account_id).await {
             let _ = handle.emit(THREADS_UPDATED, ());
         }
+        crate::autolabel::classify_pending(&handle).await;
     });
 }
 
@@ -723,7 +781,10 @@ fn spawn_startup_sync(handle: AppHandle, account_id: AccountId) {
 // in debug builds) — two independent instances over the same JSON file
 // would each persist() a whole-file rewrite from its own stale cache and
 // could silently clobber the other's writes (Gmail tokens vs. AI keys).
-pub fn init(app: &tauri::App, secrets: Arc<dyn SecretStore + Send + Sync>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn init(
+    app: &tauri::App,
+    secrets: Arc<dyn SecretStore + Send + Sync>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     let store = SqliteStore::open(&data_dir.join("heypigeon.db"))?;
@@ -748,7 +809,10 @@ pub fn init(app: &tauri::App, secrets: Arc<dyn SecretStore + Send + Sync>) -> Re
     let (backend, sync_accounts) = match gmail_accounts {
         Some((config, account_ids)) => {
             log::info!("backend: gmail ({})", account_ids.join(", "));
-            (Backend::Gmail(GmailProvider::new(config, Arc::clone(&secrets))), account_ids)
+            (
+                Backend::Gmail(GmailProvider::new(config, Arc::clone(&secrets))),
+                account_ids,
+            )
         }
         None => {
             log::info!("backend: fake");

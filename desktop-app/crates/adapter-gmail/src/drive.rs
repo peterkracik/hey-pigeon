@@ -67,8 +67,12 @@ fn classify_403(body: &str) -> String {
     let lower = body.to_lowercase();
     if lower.contains("insufficient") || lower.contains("scope") {
         "the account's Google grant predates the Drive scope — re-connect the account to enable sync".into()
-    } else if lower.contains("accessnotconfigured") || lower.contains("has not been used") || lower.contains("disabled") {
-        "Google Drive API is not enabled in your OAuth project — see docs/google-oauth-setup.md".into()
+    } else if lower.contains("accessnotconfigured")
+        || lower.contains("has not been used")
+        || lower.contains("disabled")
+    {
+        "Google Drive API is not enabled in your OAuth project — see docs/google-oauth-setup.md"
+            .into()
     } else {
         format!("403: {body}")
     }
@@ -100,7 +104,13 @@ impl SyncTransport for GmailProvider {
                 url.push_str(&crate::urlencode(t));
             }
             let token = self.drive_token(account_id).await?;
-            let resp = self.http.get(&url).bearer_auth(token).send().await.map_err(net)?;
+            let resp = self
+                .http
+                .get(&url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(net)?;
             let page: WireFileList = check(resp)
                 .await?
                 .json()
@@ -118,7 +128,10 @@ impl SyncTransport for GmailProvider {
         let token = self.drive_token(account_id).await?;
         let resp = self
             .http
-            .get(format!("{DRIVE_API}/{}?alt=media", crate::urlencode(file_id)))
+            .get(format!(
+                "{DRIVE_API}/{}?alt=media",
+                crate::urlencode(file_id)
+            ))
             .bearer_auth(token)
             .send()
             .await
@@ -151,8 +164,13 @@ impl SyncTransport for GmailProvider {
                 let metadata = serde_json::json!({ "name": name, "parents": ["appDataFolder"] });
                 let body = multipart_related(B, &metadata.to_string(), &bytes);
                 self.http
-                    .post(format!("{DRIVE_UPLOAD_API}?uploadType=multipart&fields={FILE_FIELDS}"))
-                    .header("Content-Type", format!("multipart/related; boundary=\"{B}\""))
+                    .post(format!(
+                        "{DRIVE_UPLOAD_API}?uploadType=multipart&fields={FILE_FIELDS}"
+                    ))
+                    .header(
+                        "Content-Type",
+                        format!("multipart/related; boundary=\"{B}\""),
+                    )
                     .body(body)
             }
         };
@@ -192,7 +210,10 @@ mod tests {
 
     #[test]
     fn forbidden_bodies_are_classified() {
-        assert!(classify_403(r#"{"error":{"message":"Request had insufficient authentication scopes."}}"#).contains("re-connect"));
+        assert!(classify_403(
+            r#"{"error":{"message":"Request had insufficient authentication scopes."}}"#
+        )
+        .contains("re-connect"));
         assert!(classify_403(r#"{"error":{"status":"PERMISSION_DENIED","message":"Google Drive API has not been used in project 1 before or it is disabled."}}"#).contains("not enabled"));
         assert!(classify_403("something else").starts_with("403:"));
     }
@@ -202,7 +223,8 @@ mod tests {
         let f: WireFile = serde_json::from_str(r#"{"id":"1","name":"state-a.json"}"#).unwrap();
         let r: RemoteFile = f.into();
         assert_eq!(r.fingerprint, "");
-        let f: WireFile = serde_json::from_str(r#"{"id":"1","name":"n","md5Checksum":"abc"}"#).unwrap();
+        let f: WireFile =
+            serde_json::from_str(r#"{"id":"1","name":"n","md5Checksum":"abc"}"#).unwrap();
         assert_eq!(RemoteFile::from(f).fingerprint, "abc");
     }
 }

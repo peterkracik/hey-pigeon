@@ -470,7 +470,9 @@
       <h2>Triage</h2>
       <p>
         Jev sorts new mail into your own labels below and flags a priority automatically, in the background — subject and
-        snippet (never the full message) are sent to Jev to do this.
+        snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not
+        part of Hey Pigeon — see <a href="https://jevtypesafeai.com" rel="noopener noreferrer">jevtypesafeai.com</a> for
+        what it is and how it works.
       </p>
     </div>
     <div class="group-body">

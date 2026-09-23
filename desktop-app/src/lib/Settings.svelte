@@ -11,6 +11,8 @@
     onHoverActionsChange,
     pinListEnabled,
     onPinListChange,
+    autoSummarize,
+    onAutoSummarizeChange,
     onAddAccount,
     onRemoveAccount,
     onUpdateAccount,
@@ -20,6 +22,10 @@
     onHoverActionsChange: (next: string[]) => void;
     pinListEnabled: boolean;
     onPinListChange: (v: boolean) => void;
+    /** Auto-generate AI summaries (inbox groups + open thread) instead of
+     *  requiring an explicit "Summarize" click. Off by default. */
+    autoSummarize: boolean;
+    onAutoSummarizeChange: (v: boolean) => void;
     onAddAccount?: () => void;
     onRemoveAccount?: (id: string) => void;
     onUpdateAccount?: (id: string, fields: { displayName?: string; color?: string; signature?: string }) => void;
@@ -408,7 +414,10 @@
   <section>
     <div class="group-head">
       <h2>AI</h2>
-      <p>Bring your own API key. Email content is sent to the provider only when you press an AI action — never in the background.</p>
+      <p>
+        Bring your own API key. Email content is sent to the provider only on an explicit AI action \u2014 drafting and
+        editing always run on your click; summaries run on your click too, unless you turn on auto-summarize below.
+      </p>
     </div>
     <div class="group-body">
       <div class="account-block">
@@ -439,6 +448,10 @@
                   <option value={m.id}>{m.label}</option>
                 {/each}
               </select>
+            </div>
+            <div class="sub-row">
+              <span class="sub-label">Auto-summarize</span>
+              <Switch checked={autoSummarize} onchange={onAutoSummarizeChange} />
             </div>
           </div>
         {:else}

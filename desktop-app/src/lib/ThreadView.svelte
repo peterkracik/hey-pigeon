@@ -7,6 +7,7 @@
   import PriorityIndicator from "./PriorityIndicator.svelte";
   import TriageBadges from "./TriageBadges.svelte";
   import type { Email, ThreadMsg } from "./data";
+  import * as ipc from "./ipc";
   import type { BackendTriageLabel } from "./ipc";
 
   let {
@@ -21,6 +22,7 @@
     initialReplyOpen = 0,
     triageLabels = [],
     onSetTriageLabels,
+    autoSummarize = false,
   }: {
     email: Email | undefined;
     onClose: () => void;
@@ -40,6 +42,9 @@
     triageLabels?: BackendTriageLabel[];
     /** Manual label edit (badges' "+" menu / ×). Omit to render read-only. */
     onSetTriageLabels?: (id: string, labelIds: string[]) => void;
+    /** Auto-generate this thread's summary as soon as it's viewable, instead
+     *  of waiting for an explicit "Summarize" click. */
+    autoSummarize?: boolean;
   } = $props();
 
   // "last" = reply to the newest message once messages resolve (bodies are
@@ -68,6 +73,80 @@
   const activeReplyId = $derived(
     replyTargetId === "last" ? (messages[messages.length - 1]?.id ?? null) : replyTargetId,
   );
+
+  // ------------------------------------------------------- AI thread summary
+  // Same affordance as InboxList's group summary \u2014 runs on an explicit
+  // click by default, or automatically once the thread opens when the user
+  // has opted into "Auto-summarize" in Settings (DESIGN.md AI privacy rules).
+  // Gated on a configured key, same check as Settings/InboxList.
+  let aiConfigured = $state(false);
+  if (ipc.isTauri) {
+    ipc
+      .aiStatus()
+      .then((s) => (aiConfigured = s.configured))
+      .catch(() => {});
+  }
+
+  interface ThreadSummary {
+    /** Identifies exactly which messages this summary covers \u2014 a mismatch
+     *  (new reply arrives) means the cached text is stale and the button
+     *  reverts to "Summarize thread". */
+    cacheKey: string;
+    text: string;
+    generating: boolean;
+    error: string | null;
+    open: boolean;
+  }
+  // ponytail: session-only, one thread open at a time \u2014 same non-durable
+  // cache tradeoff as InboxList's group summaries.
+  let threadSummary: ThreadSummary | null = $state(null);
+
+  function threadSummaryCacheKey(id: string, msgs: ThreadMsg[]): string {
+    return id + ":" + msgs.map((m) => m.id).join(",");
+  }
+
+  function messagePlainText(m: ThreadMsg): string {
+    return (m.bodyText ?? (m.html ? m.body.replace(/<[^>]+>/g, " ") : m.body) ?? "").trim();
+  }
+
+  function toggleThreadSummary() {
+    if (!threadSummary) return;
+    threadSummary = { ...threadSummary, open: !threadSummary.open };
+  }
+
+  async function runThreadSummary(em: Email) {
+    const cacheKey = threadSummaryCacheKey(em.id, messages);
+    threadSummary = { cacheKey, text: "", generating: true, error: null, open: true };
+    try {
+      const items: ipc.ThreadSummaryItem[] = messages.map((m) => ({
+        from: m.isMe ? "Me" : m.from,
+        snippet: messagePlainText(m).slice(0, 600),
+      }));
+      const text = await ipc.summarizeThread("openai", em.subject, items);
+      // The user may have switched to a different thread (or this thread's
+      // messages changed) while the request was in flight \u2014 a newer call
+      // already moved the cache key on, so drop this now-stale result
+      // instead of clobbering the newer one (last-requested wins, not
+      // last-resolved).
+      if (threadSummary?.cacheKey !== cacheKey) return;
+      threadSummary = { cacheKey, text, generating: false, error: null, open: true };
+    } catch (err) {
+      if (threadSummary?.cacheKey !== cacheKey) return;
+      threadSummary = { cacheKey, text: "", generating: false, error: String(err), open: true };
+    }
+  }
+
+  // Auto-summarize opt-in (Settings): kick off this thread's summary as soon
+  // as it's viewable and isn't already cached/in flight for THIS thread.
+  // Checking only cacheKey (not a bare `generating` flag) lets switching to
+  // a new thread start its own request immediately, even if the previous
+  // thread's request is still resolving in the background.
+  $effect(() => {
+    if (!aiConfigured || !autoSummarize || !email || messages.length <= 1) return;
+    const key = threadSummaryCacheKey(email.id, messages);
+    if (threadSummary?.cacheKey === key) return;
+    runThreadSummary(email);
+  });
 
   // Reset per-thread UI state only when the thread actually changes — the
   // email prop gets a new identity on every sync refresh, which must not
@@ -111,6 +190,31 @@
             : undefined}
         />
       </div>
+    {/if}
+    {#if aiConfigured && messages.length > 1}
+      {@const summaryKey = threadSummaryCacheKey(em.id, messages)}
+      {@const summaryReady = threadSummary?.cacheKey === summaryKey}
+      <div class="thread-summary-row">
+        {#if summaryReady && threadSummary}
+          <button
+            type="button"
+            class="summary-toggle"
+            disabled={threadSummary.generating}
+            onclick={toggleThreadSummary}
+          >
+            {threadSummary.generating ? "Summarizing\u2026" : threadSummary.open ? "Hide summary" : "Show summary"}
+          </button>
+        {:else}
+          <button type="button" class="summary-toggle" onclick={() => runThreadSummary(em)}>
+            Summarize thread
+          </button>
+        {/if}
+      </div>
+      {#if summaryReady && threadSummary && threadSummary.open}
+        <div class="summary-block" class:is-error={!!threadSummary.error}>
+          {threadSummary.generating ? "Summarizing\u2026" : (threadSummary.error ?? threadSummary.text)}
+        </div>
+      {/if}
     {/if}
     <div>
       {#each messages as m (m.id)}
@@ -194,6 +298,46 @@
     gap: 8px;
     flex-wrap: wrap;
     margin: -10px 0 18px;
+  }
+  .thread-summary-row {
+    margin: -10px 0 10px;
+  }
+  .summary-toggle {
+    border: none;
+    background: none;
+    padding: 0;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    cursor: pointer;
+  }
+  .summary-toggle:hover:not(:disabled) {
+    color: var(--text-secondary);
+  }
+  .summary-toggle:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  /* Deliberately short and boxed \u2014 a few lines, never a scrolling essay,
+     regardless of how much the model returns (the prompt asks for brevity
+     too, this is the visual backstop). Same treatment as InboxList's group
+     summary block. */
+  .summary-block {
+    margin-bottom: 18px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    font-family: var(--font-body);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre-line;
+    max-height: 4.6em;
+    overflow: hidden;
+  }
+  .summary-block.is-error {
+    color: var(--state-danger);
   }
   .content.fs {
     padding: 0 28px;

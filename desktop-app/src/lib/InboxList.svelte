@@ -24,6 +24,7 @@
     onSchedule,
     hoverActions,
     pinListEnabled,
+    autoSummarize = false,
     signatureFor,
     mode = "inbox",
     remindRequestId = null,
@@ -46,6 +47,9 @@
     signatureFor?: (email: Email) => string | undefined;
     hoverActions: string[];
     pinListEnabled: boolean;
+    /** Auto-generate each group's summary as soon as it has active mail,
+     *  instead of waiting for an explicit "Summarize" click. */
+    autoSummarize?: boolean;
     /** 'scheduled' = calendar view: group by scheduledAt instead of date. */
     mode?: "inbox" | "scheduled";
     /** Imperative hook: set to a row id to open the remind popover anchored
@@ -238,9 +242,11 @@
     ].filter((g) => g.items.length > 0);
   });
   // ------------------------------------------------------- AI group summary
-  // Day-group summaries only (DESIGN.md: AI runs on an explicit click, never
-  // in the background) \u2014 gate the whole affordance on a configured key so
-  // it's invisible until the user has set one up (same check as Settings).
+  // Day-group summaries only \u2014 runs on an explicit click by default, or
+  // automatically once a group has active mail when the user has opted into
+  // "Auto-summarize" in Settings (DESIGN.md AI privacy rules). Gate the whole
+  // affordance on a configured key so it's invisible until the user has set
+  // one up (same check as Settings).
   let aiConfigured = $state(false);
   if (ipc.isTauri) {
     ipc
@@ -290,6 +296,33 @@
     summaries = { ...summaries, [label]: { ...s, open: !s.open } };
   }
 
+  // Auto-summarize opt-in (Settings): kick off any group's summary as soon
+  // as it has active mail and isn't already cached/in flight. One group at a
+  // time (sequential await, not Promise.all) so opening a big inbox doesn't
+  // fire N simultaneous provider calls. Converges on its own \u2014 once
+  // summaries[label].cacheKey matches, this stops re-firing for that group.
+  let autoSummarizing = false;
+  async function runAutoSummaries(gs: typeof groups) {
+    if (autoSummarizing) return;
+    autoSummarizing = true;
+    try {
+      for (const g of gs) {
+        const active = g.items.filter((e) => !e.done);
+        if (!active.length) continue;
+        const key = summaryCacheKey(g.label, active);
+        const s = summaries[g.label];
+        if (s?.cacheKey === key || s?.generating) continue;
+        await runSummary(g.label, active);
+      }
+    } finally {
+      autoSummarizing = false;
+    }
+  }
+  $effect(() => {
+    if (!aiConfigured || !autoSummarize) return;
+    runAutoSummaries(groups);
+  });
+
   async function runSummary(label: string, active: Email[]) {
     const cacheKey = summaryCacheKey(label, active);
     summaries = { ...summaries, [label]: { cacheKey, text: "", generating: true, error: null, open: true } };
@@ -298,8 +331,13 @@
         .slice(0, MAX_SUMMARY_ITEMS)
         .map((e) => ({ from: e.from, subject: e.subject, snippet: e.snippet }));
       const text = await ipc.summarizeGroup("openai", items);
+      // A newer request for this same label (content changed mid-flight, or
+      // the label got reused) already moved the cache key on \u2014 drop this
+      // now-stale result instead of clobbering the newer one.
+      if (summaries[label]?.cacheKey !== cacheKey) return;
       summaries = { ...summaries, [label]: { cacheKey, text, generating: false, error: null, open: true } };
     } catch (err) {
+      if (summaries[label]?.cacheKey !== cacheKey) return;
       summaries = {
         ...summaries,
         [label]: { cacheKey, text: "", generating: false, error: String(err), open: true },

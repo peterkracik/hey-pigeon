@@ -16,7 +16,8 @@ pub fn run() {
             }
             // Mobile has no updater — desktop-only, per Tauri's own guidance.
             #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             let data_dir = tauri::Manager::path(app).app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             // Shared with `ai::init` — see the comment on `mail::init` for why

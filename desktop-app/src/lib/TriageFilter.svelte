@@ -91,11 +91,7 @@
     align-items: baseline;
     gap: 14px;
     overflow-x: auto;
-    scrollbar-width: none;
     min-width: 0;
-  }
-  .tabs::-webkit-scrollbar {
-    display: none;
   }
   .tab {
     border: none;

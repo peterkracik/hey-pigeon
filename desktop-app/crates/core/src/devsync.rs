@@ -24,7 +24,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{AccountId, SyncEntry, ThreadId};
+use crate::domain::{now_ms, AccountId, SyncEntry, ThreadId};
 use crate::ports::{RemoteFile, Store, StoreError, SyncError, SyncTransport};
 
 const FILE_PREFIX: &str = "state-";
@@ -98,13 +98,6 @@ fn fingerprint(bytes: &[u8]) -> String {
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     format!("{:016x}", h.finish())
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// Record a local write so it wins LWW and reaches other devices on the

@@ -61,13 +61,22 @@ impl MemStore {
 }
 
 /// Same folder semantics as the SQLite adapter's SQL (keep in lockstep).
+/// True while a thread's "remind me" schedule is still in the future.
+fn is_snoozed(t: &Thread) -> bool {
+    t.scheduled_at.is_some_and(|at| at > now_ms())
+}
+
 fn matches_filter(t: &Thread, filter: &ThreadFilter) -> bool {
     let has = |l: &str| t.labels.iter().any(|x| x == l);
     // Junk only when trashed/spam AND out of the inbox — a partially-trashed
     // thread keeps INBOX and stays in All/Starred/Sent/label views.
     let junk = (has("TRASH") || has("SPAM")) && !has("INBOX");
     match filter {
-        ThreadFilter::Inbox => t.is_inbox && !t.is_archived,
+        // "Remind me later" = snooze: a thread scheduled for a future
+        // instant stays out of the inbox until that instant passes (it
+        // still lives in Scheduled / All). Keep in lockstep with the SQLite
+        // adapter's thread_filter_sql.
+        ThreadFilter::Inbox => t.is_inbox && !t.is_archived && !is_snoozed(t),
         ThreadFilter::All => !junk,
         ThreadFilter::Starred => has("STARRED") && !junk,
         ThreadFilter::Sent => has("SENT") && !junk,
@@ -897,5 +906,40 @@ mod tests {
         let t = s.get_thread(&"t1".to_string()).unwrap().unwrap();
         assert_eq!(t.labels, ["INBOX"]);
         assert!(t.is_inbox && !t.is_archived);
+    }
+
+    #[test]
+    fn future_schedule_hides_thread_from_inbox_until_due() {
+        let s = MemStore::default();
+        s.upsert_thread(&thread("later", &["INBOX"])).unwrap();
+        s.upsert_thread(&thread("now", &["INBOX"])).unwrap();
+        let inbox = |s: &MemStore| {
+            let mut v: Vec<String> = s
+                .list_threads(None, &ThreadFilter::Inbox, None, 10)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect();
+            v.sort();
+            v
+        };
+        s.set_schedule(&"later".to_string(), Some(now_ms() + 86_400_000))
+            .unwrap();
+        s.set_schedule(&"now".to_string(), Some(now_ms() - 60_000))
+            .unwrap();
+        assert_eq!(inbox(&s), ["now"], "snoozed thread leaves the inbox");
+        assert_eq!(
+            s.list_threads(None, &ThreadFilter::All, None, 10)
+                .unwrap()
+                .len(),
+            2,
+            "All mail still shows it"
+        );
+        s.set_schedule(&"later".to_string(), None).unwrap();
+        assert_eq!(
+            inbox(&s),
+            ["later", "now"],
+            "clearing the schedule restores it"
+        );
     }
 }

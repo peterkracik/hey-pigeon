@@ -241,7 +241,17 @@ fn thread_filter_sql<'a>(filter: &'a ThreadFilter, label_bind: &str) -> (String,
     match filter {
         // Flag-based, not label-based: the optimistic local apply flips
         // the flags instantly, before any provider round-trip.
-        ThreadFilter::Inbox => ("is_inbox = 1 AND is_archived = 0".to_string(), None),
+        // "Remind me later" = snooze: a thread scheduled for a future
+        // instant is hidden from the inbox (list and unread badge) until
+        // that instant passes. It stays in Scheduled / All / Archive.
+        ThreadFilter::Inbox => (
+            format!(
+                "is_inbox = 1 AND is_archived = 0
+                 AND (scheduled_at IS NULL OR scheduled_at <= {})",
+                now_ms()
+            ),
+            None,
+        ),
         // Archive semantics: see sync::derive_is_archived — no INBOX/
         // TRASH/SPAM/DRAFT and at least one received (non-SENT) message.
         ThreadFilter::Archive => ("is_archived = 1".to_string(), None),
@@ -1537,6 +1547,45 @@ mod tests {
             !store.set_schedule(&"nope".to_string(), Some(1)).unwrap(),
             "unknown thread → false"
         );
+    }
+
+    /// "Remind me later" = snooze: while the schedule is in the future the
+    /// thread is out of the inbox list and badge; once due (or cleared) it
+    /// is back. Scheduled / All keep showing it throughout.
+    #[test]
+    fn future_schedule_hides_thread_from_inbox_until_due() {
+        let s = store();
+        seed_labelled(&s, "later", &["INBOX"], true, false, 8000);
+        seed_labelled(&s, "now", &["INBOX"], true, false, 7000);
+        s.with(|c| {
+            c.execute("UPDATE threads SET is_read = 0", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let far_future = now_ms() + 86_400_000;
+        s.set_schedule(&"later".to_string(), Some(far_future))
+            .unwrap();
+        // Due already (one minute ago) — a reminder that fired stays visible.
+        s.set_schedule(&"now".to_string(), Some(now_ms() - 60_000))
+            .unwrap();
+
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["now"]);
+        assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 1);
+        // Other views are untouched by the snooze.
+        assert_eq!(ids(&s, &ThreadFilter::All), ["later", "now"]);
+        assert_eq!(
+            s.list_scheduled()
+                .unwrap()
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            ["now", "later"]
+        );
+
+        // Removing the schedule brings the thread straight back.
+        s.set_schedule(&"later".to_string(), None).unwrap();
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["later", "now"]);
+        assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 2);
     }
 
     #[tokio::test]

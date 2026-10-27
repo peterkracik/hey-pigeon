@@ -77,6 +77,16 @@ pub struct Thread {
     pub follow_up_since: Option<i64>,
 }
 
+/// Current wall-clock time as epoch milliseconds — the unit `scheduled_at`
+/// and the other local-only timestamps use. A snoozed thread ("remind me
+/// later") is one whose `scheduled_at` is still in the future by this clock.
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// AI-assigned urgency (Jev triage). Ordered spam→high for sorting — Spam
 /// is a distinct bottom tier ("don't bother showing this a priority at
 /// all"), not just a lower number than Low.

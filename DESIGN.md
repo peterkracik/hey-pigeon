@@ -294,7 +294,7 @@ Archiving an email should feel like checking off a task.
 | 0 / 1 / 2 | unified / account 1 / account 2 |
 | g i / g a | go inbox / go archive |
 | n | need reply (waiting on my answer) |
-| h | remind me — optionally "only if no reply" (follow-up) |
+| h | remind me — hides the thread from the inbox until the chosen date (snooze); optionally "only if no reply" (follow-up) |
 | ? | keyboard shortcut cheat sheet |
 
 ## iOS (future, shapes v1 decisions)
@@ -320,7 +320,7 @@ is tiny — a few KB:
 
 | State | Where it lives today | Sync? |
 | --- | --- | --- |
-| Reminders (`threads.scheduled_at`) | SQLite, per thread, per account | **yes** — the one that hurts |
+| Reminders (`threads.scheduled_at`) — "remind me later" is also a snooze: the inbox query and unread badge skip the thread while `scheduled_at` is in the future; it stays in Scheduled / All mail and resurfaces (with a notification) once due | SQLite, per thread, per account | **yes** — the one that hurts |
 | Need reply flag (`threads.needs_reply`) | SQLite, per thread, per account | yes — same path as reminders (`needs_reply:<thread_id>` keys) |
 | Follow-up marker (`threads.follow_up_since`) — "remind me if no reply", cleared by the sync loop once someone else writes in the thread | SQLite, per thread, per account | yes — same path (`follow_up:<thread_id>` keys) |
 | Prefs: hidden sidebar folders, account color, signature, AI provider + model | localStorage / SQLite | yes |

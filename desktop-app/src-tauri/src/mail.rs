@@ -6,7 +6,8 @@ use std::sync::Arc;
 use heypigeon_adapter_gmail::{oauth, GmailProvider};
 use heypigeon_adapter_sqlite::SqliteStore;
 use heypigeon_core::domain::{
-    Account, AccountId, Label, Message, Mutation, SearchResult, Thread, ThreadFilter, ThreadId,
+    now_ms, Account, AccountId, Label, Message, Mutation, SearchResult, Thread, ThreadFilter,
+    ThreadId,
 };
 use heypigeon_core::fakes::FakeProvider;
 use heypigeon_core::ports::{MailProvider, SecretStore, Store, SyncError};
@@ -79,13 +80,6 @@ pub struct SyncStatus {
     /// Epoch ms of the last successful round, on any run of the app —
     /// persisted by the core, so it survives restarts and failures.
     pub last_sync_at: Option<i64>,
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 #[derive(Serialize)]
@@ -779,6 +773,10 @@ fn notify_due_reminders(handle: &AppHandle) {
     let still_scheduled: std::collections::HashSet<&ThreadId> =
         scheduled.iter().map(|t| &t.id).collect();
     notified.retain(|id, _| still_scheduled.contains(id));
+    // A reminder coming due also ends its snooze: the thread is hidden from
+    // the inbox until `scheduled_at`, so the list must refetch now that
+    // the inbox query includes it again.
+    let mut newly_due = false;
     for thread in &scheduled {
         let Some(due_at) = thread.scheduled_at else {
             continue;
@@ -806,6 +804,11 @@ fn notify_due_reminders(handle: &AppHandle) {
             );
         }
         notified.insert(thread.id.clone(), due_at);
+        newly_due = true;
+    }
+    drop(notified);
+    if newly_due {
+        let _ = handle.emit(THREADS_UPDATED, ());
     }
 }
 

@@ -142,7 +142,7 @@ fn load_oauth_config() -> Result<oauth::ClientConfig, String> {
     if let (Some(id), Some(secret)) = (BUILTIN_CLIENT_ID, BUILTIN_CLIENT_SECRET) {
         return Ok(oauth::ClientConfig {
             client_id: id.to_string(),
-            client_secret: secret.to_string(),
+            client_secret: Some(secret.to_string()),
         });
     }
     Err(format!(

@@ -49,6 +49,12 @@ You'll need your own Google OAuth client for Gmail/Drive access — see
 release build (macOS) which ships with a default client baked in — see
 [Releases](https://github.com/peterkracik/hey-pigeon/releases).
 
+## iOS
+
+A native SwiftUI app over the same Rust core is taking shape in
+[`ios-app/`](./ios-app) — design in [docs/ios.md](./docs/ios.md). Scaffold
+stage: not yet daily-drivable.
+
 ## License
 
 Not currently licensed for reuse/redistribution — source is visible for

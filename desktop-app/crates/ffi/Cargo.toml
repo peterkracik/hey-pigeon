@@ -1,0 +1,36 @@
+[package]
+name = "heypigeon-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "UniFFI facade over the Hey Pigeon core for the native iOS shell"
+
+[lib]
+name = "heypigeon_ffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+default = []
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+heypigeon-core = { path = "../core" }
+heypigeon-adapter-gmail = { path = "../adapter-gmail" }
+heypigeon-adapter-sqlite = { path = "../adapter-sqlite" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+uniffi = { version = "0.32", features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

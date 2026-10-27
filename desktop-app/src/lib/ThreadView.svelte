@@ -6,7 +6,7 @@
   import InlineReply, { type ReplySendData } from "./InlineReply.svelte";
   import PriorityIndicator from "./PriorityIndicator.svelte";
   import TriageBadges from "./TriageBadges.svelte";
-  import type { Email, ThreadMsg } from "./data";
+  import { EMAIL_ACTIONS, type Email, type ThreadMsg } from "./data";
   import * as ipc from "./ipc";
   import type { BackendTriageLabel } from "./ipc";
 
@@ -17,6 +17,7 @@
     fullscreen,
     onToggleFullscreen,
     onToggleDone,
+    onToggleNeedsReply,
     onForward,
     replySignature,
     initialReplyOpen = 0,
@@ -31,6 +32,8 @@
     fullscreen: boolean;
     onToggleFullscreen: (v: boolean) => void;
     onToggleDone: () => void;
+    /** Flip the thread's local "needs reply" flag (full-screen header). */
+    onToggleNeedsReply?: () => void;
     /** Forward the open thread's latest message (palette / message action). */
     onForward?: () => void;
     /** One-shot request counter: each bump opens the inline reply on the
@@ -46,6 +49,8 @@
      *  of waiting for an explicit "Summarize" click. */
     autoSummarize?: boolean;
   } = $props();
+
+  const NEED_REPLY_D = EMAIL_ACTIONS.find((a) => a.key === "needreply")!.d;
 
   // "last" = reply to the newest message once messages resolve (bodies are
   // fetched async — a concrete id picked too early would be the stub row's).
@@ -265,6 +270,13 @@
               {/if}
             </IconButton>
           </Tooltip>
+          {#if onToggleNeedsReply}
+            <Tooltip label={email.needsReply ? "Clear need reply" : "Need reply"} side="bottom">
+              <IconButton label="Need reply" active={!!email.needsReply} onclick={onToggleNeedsReply}>
+                <Icon d={NEED_REPLY_D} size={15} stroke={email.needsReply ? "var(--tag-amber-fg)" : "currentColor"} />
+              </IconButton>
+            </Tooltip>
+          {/if}
           <Tooltip label="Delete" side="bottom">
             <IconButton label="Delete">
               <Icon d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-9 0l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" size={15} />

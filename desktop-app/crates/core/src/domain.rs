@@ -62,6 +62,12 @@ pub struct Thread {
     /// from `labels` (real Gmail label ids) — never written to Gmail.
     #[serde(default)]
     pub triage_label_ids: Vec<String>,
+    /// Local-only "needs reply" flag — the user marked this thread as
+    /// waiting on their answer. Never synced to Gmail (same contract as
+    /// `scheduled_at`: stores preserve it across provider re-upserts, and it
+    /// travels between devices through the cross-device sync map).
+    #[serde(default)]
+    pub needs_reply: bool,
 }
 
 /// AI-assigned urgency (Jev triage). Ordered spam→high for sorting — Spam

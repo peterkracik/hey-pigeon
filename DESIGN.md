@@ -318,6 +318,7 @@ is tiny — a few KB:
 | State | Where it lives today | Sync? |
 | --- | --- | --- |
 | Reminders (`threads.scheduled_at`) | SQLite, per thread, per account | **yes** — the one that hurts |
+| Need reply flag (`threads.needs_reply`) | SQLite, per thread, per account | yes — same path as reminders (`needs_reply:<thread_id>` keys) |
 | Prefs: hidden sidebar folders, account color, signature, AI provider + model | localStorage / SQLite | yes |
 | OAuth refresh tokens, AI API key | OS keychain | **no** — each device logs in on its own; AI key pasted per device (or iCloud Keychain, below) |
 

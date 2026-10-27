@@ -196,6 +196,12 @@ const MIGRATIONS: &[&str] = &[
     // auto-classification — only `priority`/`triage_msg_count` keep
     // updating. `reset_triage` ("Reanalyze all emails") clears the pin.
     "ALTER TABLE threads ADD COLUMN triage_labels_manual INTEGER NOT NULL DEFAULT 0;",
+    // v13 — local-only "needs reply" flag (the user marked the thread as
+    // waiting on their answer). Same contract as `scheduled_at`: absent from
+    // `upsert_thread`'s column list so provider re-upserts never clobber it;
+    // writes go through `set_needs_reply` only and reach other devices via
+    // the cross-device sync map (`needs_reply:<thread_id>` keys).
+    "ALTER TABLE threads ADD COLUMN needs_reply INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -349,6 +355,23 @@ impl SqliteStore {
         })
     }
 
+    /// Every thread flagged "needs reply", regardless of inbox/archive state
+    /// or the inbox page window — same reasoning as `list_scheduled`: the
+    /// Need reply view must keep showing a flagged thread after it is
+    /// archived or scrolls past the inbox page limit. Newest first, matching
+    /// the inbox's natural order.
+    pub fn list_needs_reply(&self) -> Result<Vec<Thread>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE needs_reply = 1
+                 ORDER BY last_msg_at DESC"
+            ))?;
+            let rows = stmt.query_map([], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
     /// Remove an account and everything belonging to it (used when the dev
     /// fake account is replaced by a real one).
     pub fn delete_account(&self, account_id: &str) -> Result<(), StoreError> {
@@ -448,11 +471,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
             .get::<_, Option<String>>(14)?
             .and_then(|s| Priority::parse(&s)),
         triage_label_ids: serde_json::from_str(&r.get::<_, String>(15)?).unwrap_or_default(),
+        needs_reply: r.get(16)?,
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -1109,6 +1133,17 @@ impl Store for SqliteStore {
         Ok(n > 0)
     }
 
+    /// Never synced to Gmail — `upsert_thread` leaves the column alone.
+    fn set_needs_reply(&self, thread_id: &ThreadId, needs_reply: bool) -> Result<bool, StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET needs_reply = ?2 WHERE id = ?1",
+                params![thread_id, needs_reply],
+            )
+        })?;
+        Ok(n > 0)
+    }
+
     fn sync_device_id(&self) -> Result<String, StoreError> {
         self.with(|c| {
             // 64 random bits from SQLite itself — no rand dependency here.
@@ -1528,6 +1563,60 @@ mod tests {
         assert!(!store.list_scheduled().unwrap().iter().any(|t| t.id == id));
     }
 
+    #[tokio::test]
+    async fn needs_reply_survives_sync_reupsert_and_feeds_its_view() {
+        let store = store();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .id
+            .clone();
+        assert!(!store.get_thread(&id).unwrap().unwrap().needs_reply);
+
+        assert!(store.set_needs_reply(&id, true).unwrap());
+        assert!(store.get_thread(&id).unwrap().unwrap().needs_reply);
+
+        // Provider data never carries the flag — a re-upsert must keep it.
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        assert!(
+            store.get_thread(&id).unwrap().unwrap().needs_reply,
+            "needs_reply survives provider re-upsert"
+        );
+        assert!(
+            store
+                .list_threads(None, &ThreadFilter::Inbox, None, 10)
+                .unwrap()
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .needs_reply
+        );
+
+        // Archiving clears the inbox but not the Need reply feed.
+        outbox::enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Archive {
+                thread_id: id.clone(),
+            },
+        )
+        .unwrap();
+        let flagged = store.list_needs_reply().unwrap();
+        assert_eq!(flagged.iter().filter(|t| t.id == id).count(), 1);
+        assert!(flagged.iter().all(|t| t.needs_reply));
+
+        // Clearing removes it; unknown threads report false.
+        assert!(store.set_needs_reply(&id, false).unwrap());
+        assert!(!store.list_needs_reply().unwrap().iter().any(|t| t.id == id));
+        assert!(!store.set_needs_reply(&"nope".to_string(), true).unwrap());
+    }
+
     // ------------------------------------------------------------- folders
 
     fn seed_labelled(
@@ -1551,6 +1640,7 @@ mod tests {
             from_summary: "Someone".to_string(),
             last_from_addr: "someone@example.com".to_string(),
             scheduled_at: None,
+            needs_reply: false,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -1646,6 +1736,7 @@ mod tests {
             from_summary: "Someone".to_string(),
             last_from_addr: "someone@example.com".to_string(),
             scheduled_at: None,
+            needs_reply: false,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -2169,6 +2260,7 @@ mod tests {
             from_summary: from.to_string(),
             last_from_addr: from.to_string(),
             scheduled_at: None,
+            needs_reply: false,
             labels: vec!["INBOX".to_string()],
             has_attachment: false,
             priority: None,

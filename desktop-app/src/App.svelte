@@ -12,7 +12,7 @@
   import Icon from "./lib/ds/Icon.svelte";
   import Toast from "./lib/ds/Toast.svelte";
   import SegmentedControl from "./lib/ds/SegmentedControl.svelte";
-  import { ACCOUNTS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type LabelDef, type ThreadMsg } from "./lib/data";
+  import { ACCOUNTS, EMAIL_ACTIONS, EMAILS_SEED, FOLDER_TITLES, LABELS, type Account, type Email, type LabelDef, type ThreadMsg } from "./lib/data";
   import type { ComposeData } from "./lib/Composer.svelte";
   import type { ReplySendData } from "./lib/InlineReply.svelte";
   import { toasts, toast, dismissToast } from "./lib/toast.svelte";
@@ -141,11 +141,15 @@
         reconcileLabels();
       });
   }
-  let view: "mail" | "calendar" | "search" = $state("mail");
+  // "needreply" is the Need reply view: the rail's third list, every
+  // thread flagged as waiting on my answer (DESIGN.md: local-only flag,
+  // synced between devices like reminders).
+  type ListView = "mail" | "calendar" | "needreply";
+  let view: ListView | "search" = $state("mail");
   // Search is a real view, not an overlay bolted on top — it fully replaces
   // the mail/calendar content (no risk of it silently sitting on top of a
   // folder switch that happened underneath). Remember which one to return to.
-  let searchReturn: "mail" | "calendar" = "mail";
+  let searchReturn: ListView = "mail";
   function openSearch() {
     if (view !== "search") searchReturn = view;
     view = "search";
@@ -299,13 +303,14 @@
     const f = folder;
     const filter = filterFor(f);
     const wantFolder = filter !== null && filter !== "inbox";
-    const [accounts, threads, folderThreads, scheduled, labels, unreadCounts, triageLabels] = await Promise.all([
+    const [accounts, threads, folderThreads, scheduled, needsReply, labels, unreadCounts, triageLabels] = await Promise.all([
       ipc.listAccounts(),
       ipc.listThreads(undefined, undefined, undefined, listLimit),
       wantFolder
         ? ipc.listThreads(filter!, undefined, undefined, listLimit)
         : Promise.resolve([] as ipc.BackendThread[]),
       ipc.listScheduled(),
+      ipc.listNeedsReply(),
       ipc.listLabels(),
       ipc.unreadCounts(unified ? undefined : activeAccountId),
       ipc.listTriageLabels(),
@@ -344,6 +349,11 @@
     // list_threads page limit) must still feed the calendar view. Ones no
     // longer in the inbox must not leak into the inbox folder view.
     for (const t of scheduled) {
+      if (!seen.has(t.id)) push(t, !t.is_inbox || t.is_archived ? "archive" : "inbox");
+    }
+    // Same for flagged threads — the Need reply view must keep showing a
+    // thread after it is archived or scrolls past the inbox page.
+    for (const t of needsReply) {
       if (!seen.has(t.id)) push(t, !t.is_inbox || t.is_archived ? "archive" : "inbox");
     }
     emailsData = rows;
@@ -443,10 +453,18 @@
             .filter((e) => schedFilter === "all" || !e.done)
             .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter))
             .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
-        : emailsData
-            .filter((e) => (folder === "all" ? true : e.folder === folder))
-            .filter((e) => inboxFilter === "all" || e.unread)
-            .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter));
+        : view === "needreply"
+          ? // Need reply view: every flagged thread whatever its folder,
+            // newest mail first (same natural order as the inbox).
+            emailsData
+              .filter((e) => e.needsReply)
+              .filter((e) => inboxFilter === "all" || e.unread)
+              .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter))
+              .sort((a, b) => (b.lastMsgAt ?? 0) - (a.lastMsgAt ?? 0))
+          : emailsData
+              .filter((e) => (folder === "all" ? true : e.folder === folder))
+              .filter((e) => inboxFilter === "all" || e.unread)
+              .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter));
     const mapped = base
       .filter((e) => unified || e.accountId === activeAccountId)
       .filter((e) => !attachmentOnly || e.attachment)
@@ -505,6 +523,8 @@
   const title = $derived.by(() =>
     view === "calendar"
       ? "Scheduled"
+      : view === "needreply"
+        ? "Need reply"
       : unified && folder === "inbox"
         ? "All inboxes"
         : (FOLDER_TITLES[folder] ??
@@ -617,6 +637,10 @@
       }
       return;
     }
+    if (em && action === "needreply") {
+      setNeedsReply(id, !em.needsReply);
+      return;
+    }
     if (em && action === "reply") {
       openThread(id, true);
       return;
@@ -689,6 +713,32 @@
       });
   }
 
+  // Local-only "needs reply" flag (never synced to Gmail; travels between
+  // devices like reminders). Optimistic; the backend confirms via
+  // threads_updated → refreshLive. `quiet` skips the toast — used when the
+  // flag clears itself because a reply just went out.
+  function setNeedsReply(id: string, needsReply: boolean, quiet = false) {
+    const em = emailsData.find((e) => e.id === id);
+    if (!em || !!em.needsReply === needsReply) return;
+    emailsData = emailsData.map((e) => (e.id === id ? { ...e, needsReply: needsReply || undefined } : e));
+    const confirm = () => {
+      if (quiet) return;
+      toast("success", needsReply ? "Marked as need reply" : "Need reply cleared", em.subject);
+    };
+    if (!ipc.isTauri) {
+      confirm();
+      return;
+    }
+    ipc
+      .setNeedsReply(em.accountId, id, needsReply)
+      .then(confirm)
+      .catch((e) => {
+        console.error("set_needs_reply failed", e);
+        toast("danger", "Could not update need reply", String(e));
+        emailsData = emailsData.map((x) => (x.id === id ? { ...x, needsReply: em.needsReply } : x));
+      });
+  }
+
   /// Manual label edit (footer/header "+" menu or badge ×) — optimistic,
   /// sticky on the backend (survives future auto-classification).
   function setTriageLabels(id: string, labelIds: string[]) {
@@ -704,7 +754,7 @@
     });
   }
 
-  function switchView(v: "mail" | "calendar") {
+  function switchView(v: ListView) {
     if (view === v) return;
     view = v;
     selectedId = null;
@@ -783,6 +833,9 @@
     let fired = false;
     const timer = setTimeout(() => {
       fired = true;
+      // Replying is what the flag was waiting for — clear it once the send
+      // commits (after the undo window, so a cancelled reply keeps it).
+      if (em.needsReply) setNeedsReply(em.id, false, true);
       if (!ipc.isTauri) {
         toast("success", "Reply sent", to ? `To ${to}` : em.from);
         return;
@@ -981,6 +1034,7 @@
 
   const LABEL_D =
     "M20.6 12.3l-8-8A2 2 0 0011.2 3.7L4 4v7.2a2 2 0 00.6 1.4l8 8a2 2 0 002.8 0l5.2-5.2a2 2 0 000-2.8zM8 8h.01";
+  const NEED_REPLY_D = EMAIL_ACTIONS.find((a) => a.key === "needreply")!.d;
 
   // Palette/shortcut target: the open thread wins, else the keyboard cursor,
   // else the selected row.
@@ -1105,6 +1159,8 @@
       onEmailAction(em.id, key);
     } else if (key === "star") {
       onEmailAction(em.id, "pin");
+    } else if (key === "needreply") {
+      onEmailAction(em.id, "needreply");
     } else if (key === "remind") {
       // The popover lives in InboxList — close the thread first so the list
       // (and the anchor row) is mounted before the request lands.
@@ -1239,6 +1295,11 @@
       forwardEmail(actId);
       return;
     }
+    if (ev.key === "n" && actId !== null) {
+      ev.preventDefault();
+      onEmailAction(actId, "needreply");
+      return;
+    }
     if (ev.key === "h" && actId !== null) {
       // Remind popover — same path as the palette's "Remind me".
       ev.preventDefault();
@@ -1349,6 +1410,14 @@
           size={17}
         />
       </button>
+      <button
+        class="rail-btn"
+        class:active={view === "needreply"}
+        title="Need reply"
+        onclick={() => switchView("needreply")}
+      >
+        <Icon d={NEED_REPLY_D} size={17} />
+      </button>
       <button class="rail-btn" class:active={view === "search"} title="Search" onclick={openSearch}>
         <Icon d="M11 3a8 8 0 100 16 8 8 0 000-16zM21 21l-4.35-4.35" size={17} />
       </button>
@@ -1407,6 +1476,11 @@
                       d="M12 17v5M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16a1 1 0 001 1h12a1 1 0 001-1v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1z"
                       size={15}
                     />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip label="Need reply" side="bottom">
+                  <IconButton label="Need reply" onclick={() => bulkAction("needreply")}>
+                    <Icon d={NEED_REPLY_D} size={15} />
                   </IconButton>
                 </Tooltip>
                 <Tooltip label="Delete" side="bottom">
@@ -1478,7 +1552,7 @@
                         onchange={setSchedFilter}
                       />
                     </span>
-                  {:else if view === "mail"}
+                  {:else if view === "mail" || view === "needreply"}
                     <span class="topbar-filter">
                       <SegmentedControl
                         size="sm"
@@ -1517,6 +1591,11 @@
                     {:else}
                       <Icon d="M20 6L9 17l-5-5" size={15} />
                     {/if}
+                  </IconButton>
+                </Tooltip>
+                <Tooltip label={email.needsReply ? "Clear need reply" : "Need reply"} side="bottom">
+                  <IconButton label="Need reply" active={!!email.needsReply} onclick={() => onEmailAction(email!.id, "needreply")}>
+                    <Icon d={NEED_REPLY_D} size={15} stroke={email.needsReply ? "var(--tag-amber-fg)" : "currentColor"} />
                   </IconButton>
                 </Tooltip>
                 <Tooltip label="Delete" side="bottom">
@@ -1642,6 +1721,7 @@
             {fullscreen}
             onToggleFullscreen={(v) => (fullscreen = v)}
             onToggleDone={() => email && onEmailAction(email.id, "done")}
+            onToggleNeedsReply={() => email && onEmailAction(email.id, "needreply")}
             onForward={() => email && forwardEmail(email.id)}
             initialReplyOpen={threadReplyStart}
             triageLabels={liveTriageLabels}
@@ -1654,7 +1734,7 @@
             {selectedId}
             {cursorId}
             {selectedIds}
-            mode={view === "calendar" ? "scheduled" : "inbox"}
+            mode={view === "calendar" ? "scheduled" : view === "needreply" ? "needreply" : "inbox"}
             onSelect={selectEmail}
             onOpen={openThread}
             onAction={onEmailAction}
@@ -1674,7 +1754,9 @@
             onSetTriageLabels={setTriageLabels}
           />
           {#if emails.length === 0}
-            <div class="empty">{view === "calendar" ? "Nothing scheduled" : "Nothing here yet"}</div>
+            <div class="empty">
+              {view === "calendar" ? "Nothing scheduled" : view === "needreply" ? "Nothing waiting for a reply" : "Nothing here yet"}
+            </div>
           {/if}
         {/if}
         {/if}

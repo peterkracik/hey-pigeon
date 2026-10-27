@@ -402,6 +402,12 @@ pub trait Store {
         scheduled_at: Option<i64>,
     ) -> Result<bool, StoreError>;
 
+    /// Set or clear a thread's "needs reply" flag. Same contract as
+    /// `set_schedule`: local metadata, never sent to the mail provider,
+    /// synced between the user's devices via `SyncTransport`. Ok(false) =
+    /// unknown thread (the caller retries once the thread is backfilled).
+    fn set_needs_reply(&self, thread_id: &ThreadId, needs_reply: bool) -> Result<bool, StoreError>;
+
     // ---- cross-device sync map (DESIGN.md "Cross-device sync") ----
     // Default impls keep pre-sync adapters compiling; the SQLite adapter
     // and MemStore implement all of them.

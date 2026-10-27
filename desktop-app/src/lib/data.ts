@@ -52,6 +52,9 @@ export interface Email {
   lastMsgAt?: number;
   /** Local-only "remind me" schedule (epoch ms). Never synced to Gmail. */
   scheduledAt?: number;
+  /** Local-only "needs reply" flag — waiting on my answer. Never synced to
+   *  Gmail; feeds the Need reply view. */
+  needsReply?: boolean;
   subject: string;
   snippet: string;
   time: string;
@@ -128,6 +131,12 @@ export const EMAIL_ACTIONS: EmailAction[] = [
     key: "remind",
     label: "Remind me",
     d: "M12 8v5l3 2M12 3a9 9 0 100 18 9 9 0 000-18z",
+  },
+  // Speech bubble with an exclamation: "this one is waiting on me".
+  {
+    key: "needreply",
+    label: "Need reply",
+    d: "M21 12a2 2 0 01-2 2H8l-4 4V6a2 2 0 012-2h13a2 2 0 012 2zM12.5 7v3.5M12.5 13.5h.01",
   },
   {
     key: "spam",
@@ -231,6 +240,7 @@ export const EMAILS_SEED: Email[] = [
     time: "9:14 AM",
     unread: true,
     scheduledAt: mockSchedule(0, 18),
+    needsReply: true,
     thread: [
       {
         id: "t1",
@@ -322,6 +332,7 @@ export const EMAILS_SEED: Email[] = [
     folder: "inbox",
     pinned: true,
     scheduledAt: mockSchedule(1, 9),
+    needsReply: true,
     from: "Ana Torres",
     subject: "Invoice #4021",
     snippet:

@@ -50,8 +50,10 @@
     /** Auto-generate each group's summary as soon as it has active mail,
      *  instead of waiting for an explicit "Summarize" click. */
     autoSummarize?: boolean;
-    /** 'scheduled' = calendar view: group by scheduledAt instead of date. */
-    mode?: "inbox" | "scheduled";
+    /** 'scheduled' = calendar view: group by scheduledAt instead of date;
+     *  'needreply' = the Need reply view: date groups like the inbox, but no
+     *  pinned group (the flag is the only thing these rows have in common). */
+    mode?: "inbox" | "scheduled" | "needreply";
     /** Imperative hook: set to a row id to open the remind popover anchored
      *  to that row (command palette / 'h' shortcut). Cleared via callback. */
     remindRequestId?: string | null;
@@ -65,6 +67,7 @@
   } = $props();
 
   const DONE_D = "M20 6L9 17l-5-5";
+  const NEED_REPLY_D = EMAIL_ACTIONS.find((a) => a.key === "needreply")!.d;
 
   // Select checkboxes take no space at all until a selection is active
   // (keyboard `x`, or the bulk bar); then every row shows one. The list
@@ -227,7 +230,7 @@
         ...head,
         { label: "Today", items: rest.slice(0, 2), isPinnedGroup: false },
         { label: "Last 7 days", items: rest.slice(2), isPinnedGroup: false },
-      ];
+      ].filter((g) => g.items.length > 0);
     }
     const startOfToday = new Date().setHours(0, 0, 0, 0);
     const weekAgo = startOfToday - 7 * 86_400_000;
@@ -498,6 +501,20 @@
                 {fmtSched(e.scheduledAt)}
               </button>
             {/if}
+            {#if e.needsReply}
+              <button
+                type="button"
+                class="reply-badge"
+                title="Waiting on your reply — click to clear"
+                onclick={(ev) => {
+                  ev.stopPropagation();
+                  onAction(e.id, "needreply");
+                }}
+              >
+                <Icon d={NEED_REPLY_D} size={11} />
+                Reply
+              </button>
+            {/if}
             {#if e.attachment}
               <span class="clip" title="Has attachment">
                 <Icon d="M21 12.5l-8.4 8.4a5 5 0 01-7-7l8.4-8.4a3.5 3.5 0 015 5l-7.9 7.9" size={12} />
@@ -515,7 +532,7 @@
                   <Icon d={DONE_D} size={15} strokeWidth={e.done || completing.has(e.id) ? 2.2 : 1.6} />
                 </button>
                 {#each activeActions as def (def.key)}
-                  {@const active = def.key === "pin" && e.pinned}
+                  {@const active = (def.key === "pin" && e.pinned) || (def.key === "needreply" && !!e.needsReply)}
                   <button
                     class="action-btn"
                     class:pin-active={active}
@@ -884,7 +901,8 @@
   .row.done-strike .clip {
     opacity: 0.5;
   }
-  .row.done-strike .sched-badge {
+  .row.done-strike .sched-badge,
+  .row.done-strike .reply-badge {
     color: var(--text-tertiary);
     background: var(--surface-sunken);
   }
@@ -1011,6 +1029,7 @@
       min-width: 60px;
     }
     .sched-badge,
+    .reply-badge,
     .clip,
     .right {
       order: 1;
@@ -1076,6 +1095,29 @@
   .sched-badge:hover {
     background: var(--surface-card);
     border-color: var(--tag-sky-fg);
+  }
+  /* Same pill as the schedule stamp, amber: "waiting on me". */
+  .reply-badge {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    background: var(--tag-amber-bg);
+    border: 1px solid transparent;
+    color: var(--tag-amber-fg);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background 100ms,
+      border-color 100ms;
+  }
+  .reply-badge:hover {
+    background: var(--surface-card);
+    border-color: var(--tag-amber-fg);
   }
   .sched-badge.overdue {
     background: var(--accent-highlight-bg);

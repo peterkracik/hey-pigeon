@@ -66,8 +66,9 @@
 
   const DONE_D = "M20 6L9 17l-5-5";
 
-  // Select checkbox is hidden by default; it shows on row hover (CSS) and on
-  // every row once any row is selected — same reveal pattern as .actions.
+  // Select checkboxes take no space at all until a selection is active
+  // (keyboard `x`, or the bulk bar); then every row shows one. The list
+  // root carries `--rail` so the dependent offsets follow (see .list).
   const anySelected = $derived(selectedIds.size > 0);
 
   let replyingId: string | null = $state(null);
@@ -382,7 +383,7 @@
   }}
 />
 
-<div>
+<div class="list" class:has-selection={anySelected}>
   {#each groups as g, gi (gi)}
     {@const active = g.items.filter((e) => !e.done)}
     {@const summaryKey = active.length ? summaryCacheKey(g.label, active) : null}
@@ -429,7 +430,6 @@
               type="button"
               class="select-check"
               class:checked={selectedIds.has(e.id)}
-              class:show={anySelected}
               title={selectedIds.has(e.id) ? "Deselect" : "Select"}
               onclick={(ev) => {
                 ev.stopPropagation();
@@ -753,6 +753,16 @@
   .summary-block.is-error {
     color: var(--state-danger);
   }
+  /* --rail: x-offset where "from" starts on a row = row padding(16) +
+     avatar(26) + gap(14), plus the select-check(16) + gap(14) while a
+     selection is active. The narrow-width subject line and the expanded
+     preview line up under it. */
+  .list {
+    --rail: 56px;
+  }
+  .list.has-selection {
+    --rail: 86px;
+  }
   .selected-card {
     margin: 0 -16px 8px;
     background: var(--surface-card);
@@ -795,9 +805,10 @@
   }
   /* Multi-select checkbox (bulk actions): empty light-gray circle, filled
      inverse when the row is selected — same language as the bulk bar's
-     master check. Hidden by default (space kept, no layout shift); revealed
-     on row hover, or on every row while a selection is active. */
+     master check. Not rendered at all (no reserved space) until a
+     selection is active; then every row shows one. */
   .select-check {
+    display: none;
     width: 16px;
     height: 16px;
     flex-shrink: 0;
@@ -807,21 +818,16 @@
     padding: 0;
     cursor: pointer;
     color: transparent;
-    display: flex;
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
-    opacity: 0;
     transition:
-      opacity 100ms,
       background 100ms,
       border-color 100ms,
       color 100ms;
   }
-  .row:hover .select-check,
-  .select-check.show,
-  .select-check.checked {
-    opacity: 1;
+  .has-selection .select-check {
+    display: flex;
   }
   .select-check:hover {
     border-color: var(--text-tertiary);
@@ -840,7 +846,7 @@
   .row.completing::after {
     content: "";
     position: absolute;
-    left: 44px;
+    left: calc(var(--rail) - 42px);
     right: 16px;
     top: 50%;
     height: 1.5px;
@@ -1017,16 +1023,15 @@
     .right {
       margin-left: auto;
     }
-    /* 86px = row padding(16) + .select-check(16) + gap(14) + avatar(26) + gap(14)
-       — the exact x-offset where "from" starts on line 1, so the subject
-       on line 2 lines up under it instead of under the checkbox. */
+    /* --rail = the exact x-offset where "from" starts on line 1, so the
+       subject on line 2 lines up under it instead of under the avatar. */
     .row-bottom {
       display: flex;
       align-items: center;
       gap: 6px;
       order: 2;
       flex-basis: 100%;
-      margin-left: 86px;
+      margin-left: var(--rail);
     }
     .subject-wrap {
       max-width: none;
@@ -1227,11 +1232,10 @@
   .action-btn.done-btn.is-done:hover {
     color: var(--tag-mint-fg);
   }
-  /* Left = 86px, the row's avatar rail (16 pad + 16 check + 14 gap + 26
-     avatar + 14 gap) — lines the expanded body up under the sender name
-     instead of resetting to the row's outer edge. */
+  /* Left = --rail, the row's avatar rail — lines the expanded body up
+     under the sender name instead of resetting to the row's outer edge. */
   .preview {
-    padding: var(--space-3) 16px 12px 86px;
+    padding: var(--space-3) 16px 12px var(--rail);
   }
   .preview-to {
     font-family: var(--font-body);

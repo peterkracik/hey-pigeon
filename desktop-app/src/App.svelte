@@ -2505,7 +2505,7 @@
     align-items: flex-end;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     z-index: 200;
   }
 </style>

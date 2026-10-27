@@ -213,6 +213,13 @@ pub fn list_scheduled(state: State<'_, MailState>) -> Result<Vec<Thread>, String
     state.store.list_scheduled().map_err(estr)
 }
 
+/// Need reply feed: every thread the user flagged as waiting on their
+/// answer, regardless of inbox/archive state or the inbox page window.
+#[tauri::command]
+pub fn list_needs_reply(state: State<'_, MailState>) -> Result<Vec<Thread>, String> {
+    state.store.list_needs_reply().map_err(estr)
+}
+
 /// Local FTS5 search: Gmail-style operators + bare text → ranked threads
 /// with a snippet preview (same thread shape as `list_threads`).
 /// Async so the FTS scan runs off the main thread — search-as-you-type
@@ -323,6 +330,37 @@ pub async fn set_schedule(
     let _ = app.emit(THREADS_UPDATED, ());
     // Push straight away — one small upload — so a second device sees the
     // reminder on its next poll instead of after ours.
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        devsync_account(&handle, &thread.account_id).await;
+    });
+    Ok(())
+}
+
+/// Set or clear a thread's "needs reply" flag. Same shape and sync path as
+/// `set_schedule`: never sent to Gmail, reaches the user's other devices
+/// through the cross-device sync map.
+#[tauri::command]
+pub async fn set_needs_reply(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    account_id: AccountId,
+    thread_id: ThreadId,
+    needs_reply: bool,
+) -> Result<(), String> {
+    let _ = account_id; // command shape mirrors set_schedule; the thread knows its account
+    let thread = state
+        .store
+        .get_thread(&thread_id)
+        .map_err(estr)?
+        .ok_or_else(|| format!("unknown thread {thread_id}"))?;
+    state
+        .store
+        .set_needs_reply(&thread_id, needs_reply)
+        .map_err(estr)?;
+    devsync::record_needs_reply(&state.store, &thread.account_id, &thread_id, needs_reply)
+        .map_err(estr)?;
+    let _ = app.emit(THREADS_UPDATED, ());
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         devsync_account(&handle, &thread.account_id).await;

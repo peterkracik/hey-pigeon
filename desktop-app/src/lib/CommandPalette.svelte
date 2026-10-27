@@ -25,11 +25,13 @@
 
   // Pin == Gmail star — same pushpin icon as the row hover action.
   const PIN_D = EMAIL_ACTIONS.find((a) => a.key === "pin")!.d;
+  const NEED_REPLY_D = EMAIL_ACTIONS.find((a) => a.key === "needreply")!.d;
 
   const COMMANDS = [
     { key: "done", label: "Mark done", shortcut: "E", d: "M20 6L9 17l-5-5" },
     { key: "remind", label: "Remind me", shortcut: "H", d: "M12 7v5l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" },
     { key: "star", label: "Pin", shortcut: "S", d: PIN_D },
+    { key: "needreply", label: "Need reply", shortcut: "N", d: NEED_REPLY_D },
     { key: "move", label: "Move to folder", shortcut: "V", d: "M3 7l9 6 9-6M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z" },
     { key: "label", label: "Add label", shortcut: "L", d: "M20.6 12.3l-8-8A2 2 0 0011.2 3.7L4 4v7.2a2 2 0 00.6 1.4l8 8a2 2 0 002.8 0l5.2-5.2a2 2 0 000-2.8zM8 8h.01" },
     { key: "reply", label: "Reply", shortcut: "R", d: "M9 17l-5-5 5-5M4 12h11a5 5 0 010 10h-1" },

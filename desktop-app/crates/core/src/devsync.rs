@@ -10,7 +10,8 @@
 //! write races (Drive has no conditional PUT), and re-merging any file is
 //! idempotent, so a crash mid-sync is harmless.
 //!
-//! Keys are namespaced strings: `reminder:<thread_id>` → epoch ms.
+//! Keys are namespaced strings: `reminder:<thread_id>` → epoch ms,
+//! `needs_reply:<thread_id>` → `true` (a tombstone or `false` clears).
 // ponytail: tombstones are never garbage-collected. They cost ~80 bytes
 // each and a personal mailbox produces a few hundred a year; GC needs a
 // rule that survives a replica being offline longer than the GC window
@@ -27,6 +28,7 @@ use crate::ports::{RemoteFile, Store, StoreError, SyncError, SyncTransport};
 const FILE_PREFIX: &str = "state-";
 const FILE_SUFFIX: &str = ".json";
 const REMINDER_PREFIX: &str = "reminder:";
+const NEEDS_REPLY_PREFIX: &str = "needs_reply:";
 /// sync_meta keys.
 const META_FILE_ID: &str = "file_id";
 const META_UPLOADED_FP: &str = "uploaded_fp";
@@ -59,6 +61,14 @@ pub fn reminder_key(thread_id: &ThreadId) -> String {
 
 fn reminder_thread(key: &str) -> Option<&str> {
     key.strip_prefix(REMINDER_PREFIX)
+}
+
+pub fn needs_reply_key(thread_id: &ThreadId) -> String {
+    format!("{NEEDS_REPLY_PREFIX}{thread_id}")
+}
+
+fn needs_reply_thread(key: &str) -> Option<&str> {
+    key.strip_prefix(NEEDS_REPLY_PREFIX)
 }
 
 fn file_name(device: &str) -> String {
@@ -112,7 +122,7 @@ pub fn record_local<S: Store>(
     Ok(())
 }
 
-/// Convenience for the one key family that exists today.
+/// Convenience for the reminder key family.
 pub fn record_reminder<S: Store>(
     store: &S,
     account_id: &AccountId,
@@ -124,6 +134,23 @@ pub fn record_reminder<S: Store>(
         account_id,
         &reminder_key(thread_id),
         scheduled_at.map(Into::into),
+    )
+}
+
+/// Convenience for the "needs reply" key family. Clearing writes a
+/// tombstone rather than `false` so the map stays as small as the reminder
+/// one (both read back as "not flagged").
+pub fn record_needs_reply<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    thread_id: &ThreadId,
+    needs_reply: bool,
+) -> Result<(), StoreError> {
+    record_local(
+        store,
+        account_id,
+        &needs_reply_key(thread_id),
+        needs_reply.then(|| true.into()),
     )
 }
 
@@ -178,7 +205,7 @@ pub async fn sync_account<T: SyncTransport, S: Store>(
 
     // ---- project onto local rows
     let entries = store.sync_entries(account_id)?;
-    let applied = apply_reminders(store, &entries, &changed_keys)?;
+    let applied = apply_entries(store, &entries, &changed_keys)?;
 
     // ---- push
     let snapshot = Snapshot {
@@ -204,7 +231,7 @@ pub async fn sync_account<T: SyncTransport, S: Store>(
     }
     store.sync_meta_set(account_id, META_LAST_SYNC_AT, &now_ms().to_string())?;
     log::info!(
-        "devsync({account_id}): {} remote keys changed, {} reminders applied",
+        "devsync({account_id}): {} remote keys changed, {} thread flags applied",
         changed_keys.len(),
         applied
     );
@@ -243,34 +270,53 @@ async fn upload_or_create<T: SyncTransport>(
     transport.upload(account_id, None, name, bytes).await
 }
 
-/// Project reminder entries onto `threads.scheduled_at`. Keys that changed
-/// in this merge are applied whatever their value (a tombstone clears the
-/// local schedule); every live entry is additionally re-checked so a
-/// reminder set on another device lands once the thread itself arrives
-/// here via backfill. Returns how many threads were updated.
-fn apply_reminders<S: Store>(
+/// Project the per-thread entries onto their local thread columns:
+/// `reminder:*` → `threads.scheduled_at`, `needs_reply:*` →
+/// `threads.needs_reply`. Keys that changed in this merge are applied
+/// whatever their value (a tombstone clears the local flag); every live
+/// entry is additionally re-checked so a flag set on another device lands
+/// once the thread itself arrives here via backfill. Returns how many
+/// threads were updated.
+fn apply_entries<S: Store>(
     store: &S,
     entries: &[SyncEntry],
     changed_keys: &[String],
 ) -> Result<usize, StoreError> {
     let mut applied = 0usize;
     for entry in entries {
-        let Some(thread_id) = reminder_thread(&entry.key) else {
-            continue;
-        };
-        let want: Option<i64> = entry.value.as_ref().and_then(|v| v.as_i64());
         let changed = changed_keys.iter().any(|k| k == &entry.key);
-        if !changed && want.is_none() {
-            continue;
-        }
-        let Some(thread) = store.get_thread(&thread_id.to_string())? else {
-            continue; // not backfilled yet — retried on the next round
-        };
-        if thread.scheduled_at == want {
-            continue;
-        }
-        if store.set_schedule(&thread.id, want)? {
-            applied += 1;
+        if let Some(thread_id) = reminder_thread(&entry.key) {
+            let want: Option<i64> = entry.value.as_ref().and_then(|v| v.as_i64());
+            if !changed && want.is_none() {
+                continue;
+            }
+            let Some(thread) = store.get_thread(&thread_id.to_string())? else {
+                continue; // not backfilled yet — retried on the next round
+            };
+            if thread.scheduled_at == want {
+                continue;
+            }
+            if store.set_schedule(&thread.id, want)? {
+                applied += 1;
+            }
+        } else if let Some(thread_id) = needs_reply_thread(&entry.key) {
+            let want = entry
+                .value
+                .as_ref()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !changed && !want {
+                continue;
+            }
+            let Some(thread) = store.get_thread(&thread_id.to_string())? else {
+                continue; // not backfilled yet — retried on the next round
+            };
+            if thread.needs_reply == want {
+                continue;
+            }
+            if store.set_needs_reply(&thread.id, want)? {
+                applied += 1;
+            }
         }
     }
     Ok(applied)
@@ -297,6 +343,7 @@ mod tests {
             from_summary: "".into(),
             last_from_addr: "".into(),
             scheduled_at: None,
+            needs_reply: false,
             labels: vec!["INBOX".into()],
             has_attachment: false,
             priority: None,
@@ -407,6 +454,41 @@ mod tests {
         record_reminder(&b, &acc, &"t1".into(), None).unwrap();
         sync_account(&*remote, &b, &acc).await.unwrap();
         assert!(sync_account(&*remote, &a, &acc).await.unwrap());
+        assert_eq!(
+            a.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn needs_reply_round_trips_between_two_devices() {
+        let remote = Arc::new(MemTransport::default());
+        let acc = "acc".to_string();
+        let a = device_store("acc", "dev-a");
+        let b = device_store("acc", "dev-b");
+
+        // Device A flags the thread and syncs; B picks it up.
+        a.set_needs_reply(&"t1".into(), true).unwrap();
+        record_needs_reply(&a, &acc, &"t1".into(), true).unwrap();
+        assert!(!sync_account(&*remote, &a, &acc).await.unwrap());
+        assert!(sync_account(&*remote, &b, &acc).await.unwrap());
+        assert!(b.get_thread(&"t1".into()).unwrap().unwrap().needs_reply);
+
+        // A flag that arrives before the thread lands once it is backfilled.
+        let c = MemStore::with_device_id("dev-c");
+        c.upsert_account(&sample_account("acc")).unwrap();
+        assert!(!sync_account(&*remote, &c, &acc).await.unwrap());
+        c.upsert_thread(&thread("t1", "acc")).unwrap();
+        assert!(sync_account(&*remote, &c, &acc).await.unwrap());
+        assert!(c.get_thread(&"t1".into()).unwrap().unwrap().needs_reply);
+
+        // B clears it (tombstone); A sees the flag drop.
+        b.set_needs_reply(&"t1".into(), false).unwrap();
+        record_needs_reply(&b, &acc, &"t1".into(), false).unwrap();
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        assert!(sync_account(&*remote, &a, &acc).await.unwrap());
+        assert!(!a.get_thread(&"t1".into()).unwrap().unwrap().needs_reply);
+        // Reminders are untouched by the needs_reply key family.
         assert_eq!(
             a.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at,
             None

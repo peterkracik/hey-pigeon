@@ -321,6 +321,7 @@ mod tests {
             from_summary: "Newcomer".to_string(),
             last_from_addr: "new@example.com".to_string(),
             scheduled_at: None,
+            needs_reply: false,
             labels: vec!["INBOX".to_string(), "UNREAD".to_string()],
             has_attachment: false,
             priority: None,

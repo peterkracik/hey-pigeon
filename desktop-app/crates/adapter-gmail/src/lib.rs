@@ -650,6 +650,7 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         last_from_addr: last.map(|m| bare_addr(&m.from_addr)).unwrap_or_default(),
         // Local-only metadata — the wire never carries a schedule.
         scheduled_at: None,
+        needs_reply: false,
         labels,
         has_attachment: wire
             .messages

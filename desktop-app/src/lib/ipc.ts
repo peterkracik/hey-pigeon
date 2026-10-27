@@ -36,6 +36,8 @@ export interface BackendThread {
   /** Local-only Jev triage labels (BackendTriageLabel ids), distinct from
    *  `labels` (real Gmail label ids). Never synced to Gmail. */
   triage_label_ids: string[];
+  /** Local-only "needs reply" flag. Never synced to Gmail. */
+  needs_reply: boolean;
 }
 
 /** One app-local Jev triage category (Settings-managed, not a Gmail label). */
@@ -141,6 +143,9 @@ export const unreadCounts = (accountId?: string) =>
   invoke<Record<string, number>>("unread_counts", { accountId });
 /** Calendar feed: every scheduled thread, even archived / out of the inbox window. */
 export const listScheduled = () => invoke<BackendThread[]>("list_scheduled");
+/** Need reply feed: every flagged thread, even archived / out of the inbox window. */
+export const listNeedsReply = () =>
+  invoke<BackendThread[]>("list_needs_reply");
 /** Local FTS5 search (operators + bare text); ranked, with snippet. */
 export const searchThreads = (query: string, limit?: number) =>
   invoke<BackendSearchResult[]>("search_threads", { query, limit });
@@ -157,6 +162,12 @@ export const setSchedule = (
   threadId: string,
   scheduledAt: number | null,
 ) => invoke<void>("set_schedule", { accountId, threadId, scheduledAt });
+/** Set/clear the local "needs reply" flag. */
+export const setNeedsReply = (
+  accountId: string,
+  threadId: string,
+  needsReply: boolean,
+) => invoke<void>("set_needs_reply", { accountId, threadId, needsReply });
 export const syncNow = (accountId: string) =>
   invoke<number>("sync_now", { accountId });
 
@@ -362,6 +373,7 @@ export function threadToEmail(t: BackendThread): Email {
     msgCount: t.msg_count,
     lastMsgAt: t.last_msg_at,
     scheduledAt: t.scheduled_at ?? undefined,
+    needsReply: t.needs_reply || undefined,
     attachment: t.has_attachment,
   };
 }

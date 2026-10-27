@@ -118,6 +118,9 @@ impl Store for MemStore {
             // the empty default — preserve whatever Jev last computed.
             t.priority = old.priority;
             t.triage_label_ids = old.triage_label_ids.clone();
+            // needs_reply too: local-only, a provider upsert always carries
+            // the `false` default.
+            t.needs_reply = old.needs_reply;
         }
         g.threads.insert(t.id.clone(), t);
         Ok(())
@@ -417,6 +420,17 @@ impl Store for MemStore {
         }
     }
 
+    fn set_needs_reply(&self, thread_id: &ThreadId, needs_reply: bool) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.threads.get_mut(thread_id) {
+            Some(t) => {
+                t.needs_reply = needs_reply;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     fn sync_device_id(&self) -> Result<String, StoreError> {
         let mut g = self.inner.lock().unwrap();
         if g.device_id.is_none() {
@@ -646,6 +660,7 @@ impl FakeProvider {
                     from_summary: format!("Sender {i}"),
                     last_from_addr: format!("sender{i}@example.com"),
                     scheduled_at: None,
+                    needs_reply: false,
                     labels: vec!["INBOX".to_string()],
                     // Every 5th sample thread carries an attachment — just
                     // enough variety to eyeball the icon in Fake-backend dev mode.
@@ -808,6 +823,7 @@ mod tests {
             from_summary: String::new(),
             last_from_addr: String::new(),
             scheduled_at: None,
+            needs_reply: false,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,

@@ -55,6 +55,9 @@ export interface Email {
   /** Local-only "needs reply" flag — waiting on my answer. Never synced to
    *  Gmail; feeds the Need reply view. */
   needsReply?: boolean;
+  /** True when `scheduledAt` is a "remind me if no reply" follow-up: it
+   *  clears itself once someone else writes in the thread. */
+  followUp?: boolean;
   subject: string;
   snippet: string;
   time: string;

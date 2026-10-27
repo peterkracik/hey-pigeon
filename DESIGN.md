@@ -293,6 +293,9 @@ Archiving an email should feel like checking off a task.
 | cmd+k | command palette |
 | 0 / 1 / 2 | unified / account 1 / account 2 |
 | g i / g a | go inbox / go archive |
+| n | need reply (waiting on my answer) |
+| h | remind me — optionally "only if no reply" (follow-up) |
+| ? | keyboard shortcut cheat sheet |
 
 ## iOS (future, shapes v1 decisions)
 
@@ -319,6 +322,7 @@ is tiny — a few KB:
 | --- | --- | --- |
 | Reminders (`threads.scheduled_at`) | SQLite, per thread, per account | **yes** — the one that hurts |
 | Need reply flag (`threads.needs_reply`) | SQLite, per thread, per account | yes — same path as reminders (`needs_reply:<thread_id>` keys) |
+| Follow-up marker (`threads.follow_up_since`) — "remind me if no reply", cleared by the sync loop once someone else writes in the thread | SQLite, per thread, per account | yes — same path (`follow_up:<thread_id>` keys) |
 | Prefs: hidden sidebar folders, account color, signature, AI provider + model | localStorage / SQLite | yes |
 | OAuth refresh tokens, AI API key | OS keychain | **no** — each device logs in on its own; AI key pasted per device (or iCloud Keychain, below) |
 

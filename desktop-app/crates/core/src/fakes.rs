@@ -121,6 +121,7 @@ impl Store for MemStore {
             // needs_reply too: local-only, a provider upsert always carries
             // the `false` default.
             t.needs_reply = old.needs_reply;
+            t.follow_up_since = old.follow_up_since;
         }
         g.threads.insert(t.id.clone(), t);
         Ok(())
@@ -431,6 +432,21 @@ impl Store for MemStore {
         }
     }
 
+    fn set_follow_up(
+        &self,
+        thread_id: &ThreadId,
+        follow_up_since: Option<i64>,
+    ) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.threads.get_mut(thread_id) {
+            Some(t) => {
+                t.follow_up_since = follow_up_since;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     fn sync_device_id(&self) -> Result<String, StoreError> {
         let mut g = self.inner.lock().unwrap();
         if g.device_id.is_none() {
@@ -661,6 +677,7 @@ impl FakeProvider {
                     last_from_addr: format!("sender{i}@example.com"),
                     scheduled_at: None,
                     needs_reply: false,
+                    follow_up_since: None,
                     labels: vec!["INBOX".to_string()],
                     // Every 5th sample thread carries an attachment — just
                     // enough variety to eyeball the icon in Fake-backend dev mode.
@@ -824,6 +841,7 @@ mod tests {
             last_from_addr: String::new(),
             scheduled_at: None,
             needs_reply: false,
+            follow_up_since: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,

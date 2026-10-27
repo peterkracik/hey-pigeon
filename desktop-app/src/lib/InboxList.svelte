@@ -43,7 +43,9 @@
     onToggleSelect: (id: string) => void;
     onSendReply?: (email: Email, data: ReplySendData) => void;
     /** Set/clear the "remind me" schedule (epoch ms; null clears). */
-    onSchedule?: (id: string, scheduledAt: number | null) => void;
+    /** `followUp` = "remind me if no reply": the schedule clears itself once
+     *  someone else writes in the thread. */
+    onSchedule?: (id: string, scheduledAt: number | null, followUp?: boolean) => void;
     signatureFor?: (email: Email) => string | undefined;
     hoverActions: string[];
     pinListEnabled: boolean;
@@ -90,6 +92,9 @@
     presets: RemindPreset[];
   } | null = $state(null);
   let remindEl: HTMLDivElement | undefined = $state();
+  // "Only if no reply" toggle inside the popover — seeded from the row's
+  // current state so rescheduling a follow-up keeps it a follow-up.
+  let remindFollowUp = $state(false);
 
   // Custom pick step (native date/time inputs, no picker library).
   let pickOpen = $state(false);
@@ -104,11 +109,13 @@
 
   function confirmPick(id: string) {
     if (pickTs === null || pickTs <= Date.now()) return;
-    onSchedule?.(id, pickTs);
+    onSchedule?.(id, pickTs, remindFollowUp);
     remindMenu = null;
   }
 
   const CLOCK_D = "M12 8v4l3 3M12 21a9 9 0 100-18 9 9 0 000 18z";
+  // Reply arrow: "waiting on their answer" — the follow-up flavour of the stamp.
+  const FOLLOW_UP_D = "M9 14l-4-4 4-4M5 10h9a5 5 0 010 10h-2";
   const DAY_MS = 86_400_000;
 
   function remindPresets(): RemindPreset[] {
@@ -140,6 +147,7 @@
     pickOpen = false;
     pickDate = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
     pickTime = "09:00";
+    remindFollowUp = !!e.followUp;
     remindMenu = {
       id: e.id,
       x: Math.max(8, Math.min(r.right - 210, window.innerWidth - 218)),
@@ -490,14 +498,15 @@
               <button
                 type="button"
                 class="sched-badge"
+                class:followup={e.followUp}
                 class:overdue={e.scheduledAt < Date.now()}
-                title="Reschedule"
+                title={e.followUp ? "Follow-up — clears itself if they reply. Click to reschedule" : "Reschedule"}
                 onclick={(ev) => {
                   ev.stopPropagation();
                   if (onSchedule) openRemind(e, ev.currentTarget as HTMLElement);
                 }}
               >
-                <Icon d={CLOCK_D} size={11} />
+                <Icon d={e.followUp ? FOLLOW_UP_D : CLOCK_D} size={11} />
                 {fmtSched(e.scheduledAt)}
               </button>
             {/if}
@@ -644,6 +653,7 @@
                 <div onclick={(ev) => ev.stopPropagation()}>
                   <InlineReply
                     toName={e.from}
+                    subject={e.subject}
                     signature={signatureFor?.(e)}
                     history={e.thread}
                     onCancel={() => (replyingId = null)}
@@ -662,11 +672,23 @@
 {#if remindMenu}
   {@const menu = remindMenu}
   <div bind:this={remindEl} class="remind-menu" style:left="{menu.x}px" style:top="{menu.y}px">
+    <button
+      class="remind-item remind-toggle"
+      class:on={remindFollowUp}
+      title="Follow-up: the reminder clears itself once someone else writes in this thread"
+      onclick={() => (remindFollowUp = !remindFollowUp)}
+    >
+      <span class="remind-check" aria-hidden="true">
+        {#if remindFollowUp}<Icon d={DONE_D} size={10} strokeWidth={2.6} />{/if}
+      </span>
+      <span class="remind-label">Only if no reply</span>
+    </button>
+    <div class="remind-divider"></div>
     {#each menu.presets as p (p.label)}
       <button
         class="remind-item"
         onclick={() => {
-          onSchedule?.(menu.id, p.ts);
+          onSchedule?.(menu.id, p.ts, remindFollowUp);
           remindMenu = null;
         }}
       >
@@ -1119,6 +1141,14 @@
     background: var(--surface-card);
     border-color: var(--tag-amber-fg);
   }
+  /* Follow-up flavour: lavender, "waiting on them" rather than "on me". */
+  .sched-badge.followup {
+    background: var(--tag-lavender-bg);
+    color: var(--tag-lavender-fg);
+  }
+  .sched-badge.followup:hover {
+    border-color: var(--tag-lavender-fg);
+  }
   .sched-badge.overdue {
     background: var(--accent-highlight-bg);
     color: var(--accent-highlight);
@@ -1160,6 +1190,29 @@
   }
   .remind-item.remove .remind-label {
     color: var(--text-tertiary);
+  }
+  .remind-toggle .remind-label {
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .remind-toggle.on .remind-label {
+    color: var(--text-primary);
+  }
+  .remind-check {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-inverse);
+  }
+  .remind-toggle.on .remind-check {
+    background: var(--text-primary);
+    border-color: var(--text-primary);
   }
   .remind-when {
     font-family: var(--font-mono);

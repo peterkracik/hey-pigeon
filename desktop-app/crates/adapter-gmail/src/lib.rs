@@ -651,6 +651,7 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         // Local-only metadata — the wire never carries a schedule.
         scheduled_at: None,
         needs_reply: false,
+        follow_up_since: None,
         labels,
         has_attachment: wire
             .messages

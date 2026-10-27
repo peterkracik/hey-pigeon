@@ -5,6 +5,7 @@
   import Composer from "./lib/Composer.svelte";
   import SearchOverlay from "./lib/SearchOverlay.svelte";
   import CommandPalette from "./lib/CommandPalette.svelte";
+  import ShortcutsOverlay from "./lib/ShortcutsOverlay.svelte";
   import Settings from "./lib/Settings.svelte";
   import TriageFilter from "./lib/TriageFilter.svelte";
   import IconButton from "./lib/ds/IconButton.svelte";
@@ -183,6 +184,8 @@
   let scrollEl: HTMLDivElement | undefined = $state();
   let composeOpen = $state(false);
   let settingsOpen = $state(false);
+  // Keyboard cheat sheet ('?' / palette).
+  let shortcutsOpen = $state(false);
   // Restored draft after a send-undo; non-null reopens the composer prefilled.
   let composeDraft: ComposeData | null = $state(null);
   let paletteOpen = $state(false);
@@ -688,28 +691,33 @@
 
   // Local-only "remind me" schedule (never synced to Gmail). Optimistic; the
   // backend confirms via threads_updated → refreshLive.
-  function setSchedule(id: string, scheduledAt: number | null) {
+  // `followUp` arms it as "remind me if no reply": the backend clears the
+  // schedule by itself once someone else writes in the thread.
+  function setSchedule(id: string, scheduledAt: number | null, followUp = false) {
     const em = emailsData.find((e) => e.id === id);
     if (!em) return;
-    const previous = em.scheduledAt;
+    const previous = { scheduledAt: em.scheduledAt, followUp: em.followUp };
+    const isFollowUp = scheduledAt !== null && followUp;
     emailsData = emailsData.map((e) =>
-      e.id === id ? { ...e, scheduledAt: scheduledAt ?? undefined } : e,
+      e.id === id ? { ...e, scheduledAt: scheduledAt ?? undefined, followUp: isFollowUp || undefined } : e,
     );
     const confirm = () =>
-      scheduledAt !== null
-        ? toast("success", `Scheduled for ${ipc.fmtFull(scheduledAt)}`, em.subject)
-        : toast("success", "Schedule removed", em.subject);
+      scheduledAt === null
+        ? toast("success", "Schedule removed", em.subject)
+        : isFollowUp
+          ? toast("success", `Follow-up ${ipc.fmtFull(scheduledAt)} unless they reply`, em.subject)
+          : toast("success", `Scheduled for ${ipc.fmtFull(scheduledAt)}`, em.subject);
     if (!ipc.isTauri) {
       confirm();
       return;
     }
     ipc
-      .setSchedule(em.accountId, id, scheduledAt)
+      .setSchedule(em.accountId, id, scheduledAt, isFollowUp)
       .then(confirm)
       .catch((e) => {
         console.error("set_schedule failed", e);
         toast("danger", "Could not schedule", String(e));
-        emailsData = emailsData.map((x) => (x.id === id ? { ...x, scheduledAt: previous } : x));
+        emailsData = emailsData.map((x) => (x.id === id ? { ...x, ...previous } : x));
       });
   }
 
@@ -836,8 +844,14 @@
       // Replying is what the flag was waiting for — clear it once the send
       // commits (after the undo window, so a cancelled reply keeps it).
       if (em.needsReply) setNeedsReply(em.id, false, true);
+      // "Remind me if no reply" chosen in the reply editor — armed only once
+      // the send actually goes out (undo cancels both).
+      const armFollowUp = () => {
+        if (data.followUpAt) setSchedule(em.id, data.followUpAt, true);
+      };
       if (!ipc.isTauri) {
         toast("success", "Reply sent", to ? `To ${to}` : em.from);
+        armFollowUp();
         return;
       }
       ipc
@@ -856,7 +870,10 @@
           })),
           reply_to_thread: em.id,
         })
-        .then(() => toast("success", "Reply sent", `To ${to}`))
+        .then(() => {
+          toast("success", "Reply sent", `To ${to}`);
+          armFollowUp();
+        })
         .catch((e) => {
           console.error("send failed", e);
           toast("danger", "Could not send reply", String(e));
@@ -1124,6 +1141,11 @@
       applyStageAction(key);
       return;
     }
+    if (key === "shortcuts") {
+      closePalette();
+      shortcutsOpen = true;
+      return;
+    }
     if (key === "compose") {
       closePalette();
       composeOpen = true;
@@ -1210,8 +1232,22 @@
       if (ev.key === "Escape") settingsOpen = false;
       return;
     }
+    // Cheat sheet: Escape or '?' again closes; everything else is inert.
+    if (shortcutsOpen) {
+      if (ev.key === "Escape" || ev.key === "?") {
+        ev.preventDefault();
+        shortcutsOpen = false;
+      }
+      return;
+    }
     // List navigation — never while typing or while an overlay owns the keyboard.
     if (isEditable(ev.target) || paletteOpen || composeOpen) return;
+    if (ev.key === "?") {
+      // Works with a thread open too — it's the one key that explains the rest.
+      ev.preventDefault();
+      shortcutsOpen = true;
+      return;
+    }
     if (ev.key === "/") {
       ev.preventDefault();
       // A thread hides the list — quick-filtering it would have no visible
@@ -1763,6 +1799,8 @@
       </div>
     </div>
   </div>
+
+  <ShortcutsOverlay open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
 
   <CommandPalette
     open={paletteOpen}

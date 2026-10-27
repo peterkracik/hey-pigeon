@@ -238,6 +238,7 @@
           <div class="reply-card">
             <InlineReply
               toName={m.isMe ? em.from : m.from}
+              subject={em.subject}
               signature={replySignature}
               history={messages}
               onCancel={() => (replyTargetId = null)}

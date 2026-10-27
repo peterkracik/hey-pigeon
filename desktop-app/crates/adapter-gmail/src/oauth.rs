@@ -63,8 +63,14 @@ fn random_token() -> String {
 /// Run the full authorization flow. `open_url` is called once with the
 /// consent URL (the app decides how to open a browser — port boundary:
 /// this crate never touches the OS shell).
+///
+/// `login_hint` pre-selects a Google account on the consent screen — set
+/// when re-connecting a known account so the user is not asked to pick one
+/// (and is less likely to pick the wrong one). Google treats it as a hint
+/// only; the caller still has to check which account came back.
 pub async fn authorize(
     client: &ClientConfig,
+    login_hint: Option<&str>,
     open_url: impl FnOnce(&str),
 ) -> Result<TokenSet, OauthError> {
     let verifier = random_token();
@@ -75,21 +81,21 @@ pub async fn authorize(
     let port = listener.local_addr()?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}");
 
-    let auth_url = url::Url::parse_with_params(
-        AUTH_ENDPOINT,
-        &[
-            ("response_type", "code"),
-            ("client_id", &client.client_id),
-            ("redirect_uri", &redirect_uri),
-            ("scope", SCOPE),
-            ("code_challenge", &challenge),
-            ("code_challenge_method", "S256"),
-            ("state", &state),
-            ("access_type", "offline"),
-            ("prompt", "consent"),
-        ],
-    )
-    .expect("static url");
+    let mut params: Vec<(&str, &str)> = vec![
+        ("response_type", "code"),
+        ("client_id", &client.client_id),
+        ("redirect_uri", &redirect_uri),
+        ("scope", SCOPE),
+        ("code_challenge", &challenge),
+        ("code_challenge_method", "S256"),
+        ("state", &state),
+        ("access_type", "offline"),
+        ("prompt", "consent"),
+    ];
+    if let Some(hint) = login_hint {
+        params.push(("login_hint", hint));
+    }
+    let auth_url = url::Url::parse_with_params(AUTH_ENDPOINT, &params).expect("static url");
     open_url(auth_url.as_str());
 
     let code = tokio::time::timeout(AUTHORIZE_TIMEOUT, wait_for_code(listener, &state))
@@ -112,6 +118,11 @@ pub async fn authorize(
 }
 
 /// Exchange a refresh token for a fresh access token.
+///
+/// Error meaning matters to callers: `Token` is Google rejecting the grant
+/// (revoked, expired, password changed — `invalid_grant`), which only a
+/// fresh consent flow fixes; `Http`/`Io` are transport failures (offline)
+/// and say nothing about whether the account is still connected.
 pub async fn refresh(client: &ClientConfig, refresh_token: &str) -> Result<TokenSet, OauthError> {
     let resp = reqwest::Client::new()
         .post(TOKEN_ENDPOINT)

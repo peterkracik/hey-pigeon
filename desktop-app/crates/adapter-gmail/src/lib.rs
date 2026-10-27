@@ -90,9 +90,20 @@ impl GmailProvider {
             .get(&refresh_token_key(account_id))
             .map_err(|e| MailError::Provider(e.to_string()))?
             .ok_or(MailError::AuthExpired)?;
+        // Only a rejected grant means the account is disconnected. A
+        // transport failure (offline, DNS) must stay `Network`: the app
+        // tells the user to re-connect on `AuthExpired`, and a flaky
+        // connection must never trigger that.
         let tokens = oauth::refresh(&self.client, &refresh_token)
             .await
-            .map_err(|_| MailError::AuthExpired)?;
+            .map_err(|e| match e {
+                oauth::OauthError::Token(body) => {
+                    log::warn!("token refresh for {account_id} rejected: {body}");
+                    MailError::AuthExpired
+                }
+                oauth::OauthError::Http(e) if e.is_decode() => MailError::Provider(e.to_string()),
+                other => MailError::Network(other.to_string()),
+            })?;
         let access = tokens.access_token.clone();
         cache.insert(
             account_id.clone(),

@@ -188,8 +188,21 @@ export interface SyncStatus {
 /** Per-account sync status; every connected account has an entry. */
 export const syncStatus = () =>
   invoke<Record<string, SyncStatus>>("sync_status");
+/** Whether the account's Google grant still works (mirrors
+ *  mail::ConnectionState). "disconnected" = Google rejected the stored
+ *  token (revoked, expired, password changed) or none is stored: mail is
+ *  stale until the user reconnects. */
+export type ConnectionState = "connected" | "disconnected";
+/** Per-account connection state; every account has an entry. */
+export const connectionStatus = () =>
+  invoke<Record<string, ConnectionState>>("connection_status");
 /** Runs the browser consent flow; resolves with the connected email address. */
 export const startGmailOauth = () => invoke<string>("start_gmail_oauth");
+/** Re-runs the consent flow for a known account (pre-selected on Google's
+ *  side). Resolves with the email that actually signed in — Google treats
+ *  the pre-selection as a hint, so it may differ from `accountId`. */
+export const reconnectAccount = (accountId: string) =>
+  invoke<string>("reconnect_account", { accountId });
 
 export const updateAccount = (
   accountId: string,
@@ -340,6 +353,17 @@ export function lookupAvatar(
 export async function onThreadsUpdated(cb: () => void): Promise<() => void> {
   if (!isTauri) return () => {};
   return listen("threads_updated", cb);
+}
+
+/** Fires once per transition of an account into the disconnected state
+ *  (the backend edge-triggers it, not once per failed poll). */
+export async function onAccountDisconnected(
+  cb: (accountId: string) => void,
+): Promise<() => void> {
+  if (!isTauri) return () => {};
+  return listen<{ account_id: string }>("account_disconnected", (ev) =>
+    cb(ev.payload.account_id),
+  );
 }
 
 // ---------------------------------------------------------------- mapping

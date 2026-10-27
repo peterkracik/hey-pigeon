@@ -9,6 +9,7 @@
     onSelectAccount,
     onToggleUnified,
     onAddAccount,
+    disconnectedAccounts = [],
   }: {
     accounts: Account[];
     activeId: string;
@@ -16,7 +17,14 @@
     onSelectAccount: (id: string) => void;
     onToggleUnified: (v: boolean) => void;
     onAddAccount?: () => void;
+    /** Account ids whose Google grant stopped working: mail is stale until
+     *  reconnected (Settings → Accounts), so say so where the account shows. */
+    disconnectedAccounts?: string[];
   } = $props();
+
+  const isDisconnected = (id: string) => disconnectedAccounts.includes(id);
+  // "All inboxes" is affected too when any account is stale.
+  const anyDisconnected = $derived(accounts.some((a) => isDisconnected(a.id)));
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -40,13 +48,23 @@
 {/snippet}
 
 {#snippet avatar(a: Account, size: number = 28)}
-  <Avatar src={a.avatarUrl} email={a.email} name={a.label} {size} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
+  <span class="avatar-wrap">
+    <Avatar src={a.avatarUrl} email={a.email} name={a.label} {size} bg="var(--tag-{a.tag}-bg)" fg="var(--tag-{a.tag}-fg)" fontWeight={700} />
+    {#if isDisconnected(a.id)}
+      <span class="warn-badge" title="Disconnected — reconnect in Settings">!</span>
+    {/if}
+  </span>
 {/snippet}
 
 <div bind:this={root} class="root">
   <button class="trigger" onclick={() => (open = !open)}>
     {#if unified}
-      <span class="unified-badge">{@render unifiedIcon()}</span>
+      <span class="avatar-wrap">
+        <span class="unified-badge">{@render unifiedIcon()}</span>
+        {#if anyDisconnected}
+          <span class="warn-badge" title="An account is disconnected — reconnect in Settings">!</span>
+        {/if}
+      </span>
     {:else}
       {@render avatar(active)}
     {/if}
@@ -82,7 +100,11 @@
           {@render avatar(a)}
           <span class="item-body">
             <div class="item-title">{a.label}</div>
-            <div class="item-sub">{a.email}</div>
+            {#if isDisconnected(a.id)}
+              <div class="item-sub warn">Disconnected · reconnect in Settings</div>
+            {:else}
+              <div class="item-sub">{a.email}</div>
+            {/if}
           </span>
           <span class="acct-dot" style:background="var(--tag-{a.tag}-fg)"></span>
         </button>
@@ -203,6 +225,31 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .item-sub.warn {
+    color: var(--tag-amber-fg);
+    font-weight: 600;
+  }
+  .avatar-wrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .warn-badge {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--tag-amber-fg);
+    color: var(--text-inverse);
+    font-family: var(--font-body);
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 13px;
+    text-align: center;
+    box-shadow: 0 0 0 2px var(--bg-canvas);
   }
   .acct-dot {
     width: 8px;

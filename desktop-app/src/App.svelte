@@ -224,6 +224,54 @@
     localStorage.setItem("autoSummarize", JSON.stringify(autoSummarize));
   }
   let liveAccounts: Account[] = $state([]);
+  // Accounts whose Google grant stopped working (backend `connection_status`).
+  // Settings shows a Reconnect button for them, the sidebar marks them.
+  let disconnectedAccounts: string[] = $state([]);
+  // One toast per disconnect, kept until acted on. Keyed by account so the
+  // startup status read and the live event never stack two for one account.
+  const disconnectToasts = new Map<string, number>();
+
+  function notifyDisconnected(accountId: string) {
+    if (disconnectToasts.has(accountId)) return;
+    const id = toast("warning", "Account disconnected", `${accountId} — sign in again to keep syncing mail`, {
+      actionLabel: "Reconnect",
+      onAction: () => reconnectAccount(accountId),
+      duration: 0,
+    });
+    disconnectToasts.set(accountId, id);
+  }
+
+  function applyConnectionStatus(status: Record<string, ipc.ConnectionState>) {
+    disconnectedAccounts = Object.entries(status)
+      .filter(([, s]) => s === "disconnected")
+      .map(([id]) => id);
+    // A reconnect (or removal) retires its toast; a status read at startup
+    // raises one for an account that went bad while the app was closed.
+    for (const [id, toastId] of disconnectToasts) {
+      if (!disconnectedAccounts.includes(id)) {
+        dismissToast(toastId);
+        disconnectToasts.delete(id);
+      }
+    }
+    for (const id of disconnectedAccounts) notifyDisconnected(id);
+  }
+
+  async function reconnectAccount(id: string) {
+    if (!ipc.isTauri) return;
+    try {
+      const email = await ipc.reconnectAccount(id);
+      await refreshLive();
+      if (email === id) {
+        toast("success", "Account reconnected", email);
+      } else {
+        // Google honoured the pre-selection as a hint only: a different
+        // account got connected and the original one is still broken.
+        toast("warning", `Connected ${email} instead`, `${id} is still disconnected`);
+      }
+    } catch (e) {
+      toast("danger", "Could not reconnect account", String(e));
+    }
+  }
   // Lazy loading: rows come in pages of 50; scrolling near the bottom raises
   // the limit and refetches (keyset-paginated locally — milliseconds).
   const PAGE = 50;
@@ -318,7 +366,7 @@
     const f = folder;
     const filter = filterFor(f);
     const wantFolder = filter !== null && filter !== "inbox";
-    const [accounts, threads, folderThreads, scheduled, needsReply, labels, unreadCounts, triageLabels] = await Promise.all([
+    const [accounts, threads, folderThreads, scheduled, needsReply, labels, unreadCounts, triageLabels, connection] = await Promise.all([
       ipc.listAccounts(),
       ipc.listThreads(undefined, undefined, undefined, listLimit),
       wantFolder
@@ -329,8 +377,10 @@
       ipc.listLabels(),
       ipc.unreadCounts(unified ? undefined : activeAccountId),
       ipc.listTriageLabels(),
+      ipc.connectionStatus(),
     ]);
     liveCounts = unreadCounts;
+    applyConnectionStatus(connection);
     liveTriageLabels = triageLabels;
     notifyNewMail(threads);
     liveAccounts = accounts.map((a) => ({
@@ -395,6 +445,20 @@
         toast("danger", "Refresh failed", String(e));
       });
     }).then((u) => (unsub = u));
+    return () => unsub?.();
+  });
+
+  // Live disconnects (token revoked while the app runs). The backend fires
+  // this once per transition; the toast carries the Reconnect action.
+  $effect(() => {
+    if (!ipc.isTauri) return;
+    let unsub: (() => void) | undefined;
+    ipc
+      .onAccountDisconnected((id) => {
+        if (!disconnectedAccounts.includes(id)) disconnectedAccounts = [...disconnectedAccounts, id];
+        notifyDisconnected(id);
+      })
+      .then((u) => (unsub = u));
     return () => unsub?.();
   });
 
@@ -1421,6 +1485,7 @@
     onSelectAccount={(id) => (activeAccountId = id)}
     onToggleUnified={(v) => (unified = v)}
     onAddAccount={addAccount}
+    {disconnectedAccounts}
     {counts}
     labels={sidebarLabels}
     hidden={hiddenSidebar}
@@ -1927,7 +1992,9 @@
             onAutoSummarizeChange={setAutoSummarize}
             onAddAccount={addAccount}
             onRemoveAccount={removeAccount}
+            onReconnectAccount={reconnectAccount}
             onUpdateAccount={updateAccount}
+            {disconnectedAccounts}
           />
         </div>
       </div>

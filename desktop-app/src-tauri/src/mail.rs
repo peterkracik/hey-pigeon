@@ -25,6 +25,10 @@ const DELTA_POLL_SECS: u64 = 30;
 /// Focus-triggered delta syncs at most this often.
 const FOCUS_SYNC_MIN_SECS: u64 = 5;
 pub(crate) const THREADS_UPDATED: &str = "threads_updated";
+/// Emitted once per transition into the disconnected state, payload
+/// `{ account_id }` — the webview turns it into a toast with a Reconnect
+/// action. Never repeated on every failing poll.
+const ACCOUNT_DISCONNECTED: &str = "account_disconnected";
 const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
 /// Mail backend selector. `MailProvider` is not dyn-compatible (RPITIT), so
@@ -58,6 +62,26 @@ pub struct MailState {
     /// Last cross-device sync outcome per account: Settings shows it, and
     /// a failure is logged once per distinct cause, not every 30s tick.
     sync_status: std::sync::Mutex<std::collections::HashMap<AccountId, SyncStatus>>,
+    /// Accounts whose Google grant no longer works (revoked, expired, or
+    /// the refresh token is gone from the secret store). Mail for them is
+    /// stale until the user re-connects; Settings shows a Reconnect button
+    /// and the sidebar marks them. Transitions in/out are edge-triggered
+    /// (one notification per disconnect, not one per poll).
+    disconnected: std::sync::Mutex<std::collections::HashSet<AccountId>>,
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionState {
+    Connected,
+    /// Google rejected the stored grant (or none is stored): every
+    /// provider call fails until the account is re-connected.
+    Disconnected,
+}
+
+#[derive(Serialize, Clone)]
+struct AccountDisconnectedPayload {
+    account_id: AccountId,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
@@ -402,6 +426,63 @@ pub fn sync_status(
     Ok(out)
 }
 
+/// Connection state per account (Settings + sidebar). Every account gets
+/// an entry; the dev fake is always connected.
+#[tauri::command]
+pub fn connection_status(
+    state: State<'_, MailState>,
+) -> Result<std::collections::HashMap<AccountId, ConnectionState>, String> {
+    let disconnected = state.disconnected.lock().unwrap().clone();
+    Ok(state
+        .store
+        .list_accounts()
+        .map_err(estr)?
+        .into_iter()
+        .map(|a| {
+            let st = if disconnected.contains(&a.id) {
+                ConnectionState::Disconnected
+            } else {
+                ConnectionState::Connected
+            };
+            (a.id, st)
+        })
+        .collect())
+}
+
+/// Record that `account_id`'s grant stopped working. On the first failure
+/// (not every poll) notify: an app event for the in-app toast, and a desktop
+/// notification in case the window is in the background — stale mail with
+/// no explanation is the failure mode this exists to prevent.
+fn mark_disconnected(handle: &AppHandle, account_id: &AccountId) {
+    let state = handle.state::<MailState>();
+    let newly = state
+        .disconnected
+        .lock()
+        .unwrap()
+        .insert(account_id.clone());
+    if !newly {
+        return;
+    }
+    log::warn!("account {account_id} disconnected: Google rejected the stored grant");
+    let _ = handle.emit(
+        ACCOUNT_DISCONNECTED,
+        AccountDisconnectedPayload {
+            account_id: account_id.clone(),
+        },
+    );
+    send_notification(
+        handle,
+        "Account disconnected".to_string(),
+        &format!("{account_id} needs to be reconnected"),
+    );
+}
+
+/// Clear the disconnected mark after a working grant was observed. Returns
+/// whether the account had been marked (the UI must re-read status then).
+fn mark_connected(state: &MailState, account_id: &AccountId) -> bool {
+    state.disconnected.lock().unwrap().remove(account_id)
+}
+
 /// Update per-account settings: display name, color (predefined palette),
 /// signature. Omitted fields stay unchanged.
 #[tauri::command]
@@ -552,6 +633,7 @@ pub async fn remove_account(
     let _ = state
         .secrets
         .delete(&heypigeon_adapter_gmail::refresh_token_key(&account_id));
+    mark_connected(&state, &account_id);
     let _ = app.emit(THREADS_UPDATED, ());
     Ok(())
 }
@@ -577,8 +659,35 @@ pub async fn start_gmail_oauth(
     app: AppHandle,
     state: State<'_, MailState>,
 ) -> Result<String, String> {
+    connect_gmail(app, &state, None).await
+}
+
+/// Re-run the consent flow for a known account whose grant stopped working.
+/// Same flow as `start_gmail_oauth`, with the account pre-selected on
+/// Google's side. Resolves with the email that actually signed in: Google
+/// only treats the hint as a hint, so the caller checks it matches —
+/// a different account gets connected normally and the original stays
+/// disconnected.
+#[tauri::command]
+pub async fn reconnect_account(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    account_id: AccountId,
+) -> Result<String, String> {
+    let email = connect_gmail(app, &state, Some(&account_id)).await?;
+    if email != account_id {
+        log::warn!("reconnect of {account_id} signed in as {email} instead");
+    }
+    Ok(email)
+}
+
+async fn connect_gmail(
+    app: AppHandle,
+    state: &MailState,
+    login_hint: Option<&str>,
+) -> Result<String, String> {
     let config = load_oauth_config()?;
-    let tokens = oauth::authorize(&config, |url| {
+    let tokens = oauth::authorize(&config, login_hint, |url| {
         // ponytail: macOS-only browser open; switch to tauri-plugin-opener
         // when iOS/Windows matter (M4+).
         let _ = std::process::Command::new("open").arg(url).spawn();
@@ -628,6 +737,9 @@ pub async fn start_gmail_oauth(
     let _ = state.store.delete_account(FAKE_ACCOUNT_ID);
 
     *state.backend.write().await = Backend::Gmail(provider);
+    // A fresh grant was just installed — whichever way the user got here
+    // (Reconnect, or Add account with the same address).
+    mark_connected(state, &email);
     let _ = app.emit(THREADS_UPDATED, ());
     spawn_startup_sync(app.clone(), email.clone());
     Ok(email)
@@ -654,7 +766,13 @@ async fn delta_account(handle: AppHandle, account_id: AccountId) -> bool {
     let synced = devsync_account(&handle, &account_id).await;
     state.syncing.lock().unwrap().remove(&account_id);
     let changed = match result {
-        Ok(changed) => changed,
+        // A working grant clears a stale disconnected mark; the UI re-reads
+        // connection status on `threads_updated`, so report a change.
+        Ok(changed) => mark_connected(&state, &account_id) || changed,
+        Err(sync::SyncError::Mail(heypigeon_core::ports::MailError::AuthExpired)) => {
+            mark_disconnected(&handle, &account_id);
+            false
+        }
         Err(e) => {
             log::warn!("delta({account_id}) failed: {e}");
             false
@@ -712,7 +830,14 @@ async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
             status.detail.as_deref().unwrap_or("auth expired")
         );
     }
+    let auth_expired = status.state == SyncState::AuthExpired;
     statuses.insert(account_id.clone(), status);
+    drop(statuses);
+    // Drive and Gmail share the grant: a rejected token here means the
+    // whole account is disconnected, not just reminder sync.
+    if auth_expired {
+        mark_disconnected(handle, account_id);
+    }
     result.unwrap_or(false)
 }
 
@@ -791,13 +916,13 @@ fn notify_due_reminders(handle: &AppHandle) {
         // construction, one nobody answered — say so instead of a bare
         // "Reminder".
         if thread.follow_up_since.is_some() {
-            send_reminder_notification(
+            send_notification(
                 handle,
                 format!("Follow up: {}", thread.subject),
                 &format!("No reply from {}", thread.from_summary),
             );
         } else {
-            send_reminder_notification(
+            send_notification(
                 handle,
                 format!("Reminder: {}", thread.subject),
                 &thread.from_summary,
@@ -812,6 +937,8 @@ fn notify_due_reminders(handle: &AppHandle) {
     }
 }
 
+/// Desktop notification (reminders, account disconnects).
+///
 /// tauri-plugin-notification's macOS backend uses the deprecated `NSUserNotification`
 /// API (via notify-rust/mac-notification-sys), which shows no app icon on modern
 /// macOS regardless of the bundled icon.icns - the API itself is broken there.
@@ -819,7 +946,7 @@ fn notify_due_reminders(handle: &AppHandle) {
 /// instead, with an action button + time-sensitive level so it doesn't just
 /// vanish like a plain banner. Other platforms keep the Tauri plugin.
 #[cfg(target_os = "macos")]
-fn send_reminder_notification(_handle: &AppHandle, title: String, body: &str) {
+fn send_notification(_handle: &AppHandle, title: String, body: &str) {
     use mac_usernotifications::{Action, InterruptionLevel, Notification};
     if let Err(e) = Notification::new()
         .title(title)
@@ -828,12 +955,12 @@ fn send_reminder_notification(_handle: &AppHandle, title: String, body: &str) {
         .interruption_level(InterruptionLevel::TimeSensitive)
         .send_blocking()
     {
-        log::warn!("reminder notification failed: {e}");
+        log::warn!("notification failed: {e}");
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn send_reminder_notification(handle: &AppHandle, title: String, body: &str) {
+fn send_notification(handle: &AppHandle, title: String, body: &str) {
     let _ = handle
         .notification()
         .builder()
@@ -885,18 +1012,33 @@ pub fn init(
     std::fs::create_dir_all(&data_dir)?;
     let store = SqliteStore::open(&data_dir.join("heypigeon.db"))?;
 
+    let has_token = |id: &AccountId| {
+        matches!(
+            secrets.get(&heypigeon_adapter_gmail::refresh_token_key(id)),
+            Ok(Some(_))
+        )
+    };
+    // A stored account with no refresh token (secret store wiped or
+    // migrated) can never sync; it starts out disconnected so the UI says
+    // so instead of silently showing stale mail. No event: the webview
+    // reads connection status when it loads.
+    let disconnected: std::collections::HashSet<AccountId> = store
+        .list_accounts()
+        .unwrap_or_default()
+        .iter()
+        .filter(|a| a.id != FAKE_ACCOUNT_ID && !has_token(&a.id))
+        .map(|a| a.id.clone())
+        .collect();
+    for id in &disconnected {
+        log::warn!("account {id} has no stored refresh token; marked disconnected");
+    }
+
     // Gmail mode when config + stored refresh tokens for known accounts exist.
     let gmail_accounts = load_oauth_config().ok().and_then(|config| {
         let accounts = store.list_accounts().ok()?;
         let with_tokens: Vec<AccountId> = accounts
             .iter()
-            .filter(|a| {
-                a.id != FAKE_ACCOUNT_ID
-                    && matches!(
-                        secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)),
-                        Ok(Some(_))
-                    )
-            })
+            .filter(|a| a.id != FAKE_ACCOUNT_ID && has_token(&a.id))
             .map(|a| a.id.clone())
             .collect();
         (!with_tokens.is_empty()).then_some((config, with_tokens))
@@ -936,6 +1078,7 @@ pub fn init(
         syncing: std::sync::Mutex::new(std::collections::HashSet::new()),
         notified_reminders: std::sync::Mutex::new(std::collections::HashMap::new()),
         sync_status: std::sync::Mutex::new(std::collections::HashMap::new()),
+        disconnected: std::sync::Mutex::new(disconnected),
     });
     // Every account syncs independently — one failing must not block another.
     for account_id in sync_accounts {

@@ -15,7 +15,9 @@
     onAutoSummarizeChange,
     onAddAccount,
     onRemoveAccount,
+    onReconnectAccount,
     onUpdateAccount,
+    disconnectedAccounts = [],
   }: {
     accounts: Account[];
     hoverActions: string[];
@@ -28,8 +30,15 @@
     onAutoSummarizeChange: (v: boolean) => void;
     onAddAccount?: () => void;
     onRemoveAccount?: (id: string) => void;
+    /** Re-runs Google sign-in for a disconnected account (same address pre-selected). */
+    onReconnectAccount?: (id: string) => void;
     onUpdateAccount?: (id: string, fields: { displayName?: string; color?: string; signature?: string }) => void;
+    /** Account ids whose Google grant stopped working (revoked, expired,
+     *  password changed): mail is stale until reconnected. */
+    disconnectedAccounts?: string[];
   } = $props();
+
+  const isDisconnected = (id: string) => disconnectedAccounts.includes(id);
 
   // confirm()/alert() are no-ops in the macOS webview — two-click confirm instead.
   let confirmingRemoveId: string | null = $state(null);
@@ -65,8 +74,8 @@
   // ------------------------------------------------------- device sync
   // Reminders sync between the user's devices through the account's own
   // hidden Drive folder (DESIGN.md "Cross-device sync"). Read-only here:
-  // the only fix for a failure is re-connecting the account or enabling
-  // the Drive API, both outside this panel.
+  // an auth failure is fixed by the account row's Reconnect button, a
+  // missing Drive API by enabling it in Google Cloud, outside the app.
   let syncStatus: Record<string, ipc.SyncStatus> = $state({});
   // `now` ticks with the poll so "3 min ago" stays honest while the panel
   // is open (the sync loop runs every 30s; re-read on the same cadence).
@@ -340,7 +349,13 @@
             <div class="account-text">
               <div class="setting-title">{a.label}</div>
               <div class="account-email">{a.email}</div>
+              {#if isDisconnected(a.id)}
+                <div class="account-status warn">Disconnected — mail stops syncing until you sign in again</div>
+              {/if}
             </div>
+            {#if isDisconnected(a.id)}
+              <Button variant="primary" size="sm" onclick={() => onReconnectAccount?.(a.id)}>Reconnect</Button>
+            {/if}
             {#if confirmingRemoveId === a.id}
               <Button
                 variant="danger"
@@ -819,6 +834,15 @@
     font-family: var(--font-body);
     font-size: 13px;
     color: var(--text-tertiary);
+  }
+  .account-status {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    margin-top: 2px;
+  }
+  .account-status.warn {
+    color: var(--tag-amber-fg);
+    font-weight: 600;
   }
   .ai-mark {
     width: 32px;

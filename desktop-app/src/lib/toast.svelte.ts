@@ -14,6 +14,9 @@ export interface ToastItem {
 export interface ToastOpts {
   actionLabel?: string;
   onAction?: () => void;
+  /** Auto-dismiss delay in ms. 0 = sticky: stays until the user dismisses
+   *  it or takes the action (for things that need a decision, like a
+   *  disconnected account). */
   duration?: number;
 }
 
@@ -31,7 +34,9 @@ export function toast(tone: ToastTone, title: string, description?: string, opts
       }
     : undefined;
   toasts.push({ id, tone, title, description, actionLabel: opts?.actionLabel, onAction });
-  setTimeout(() => dismissToast(id), opts?.duration ?? (tone === "danger" ? 7000 : 4000));
+  const duration = opts?.duration ?? (tone === "danger" ? 7000 : 4000);
+  if (duration > 0) setTimeout(() => dismissToast(id), duration);
+  return id;
 }
 
 export function dismissToast(id: number) {

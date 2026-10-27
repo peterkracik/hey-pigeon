@@ -362,8 +362,9 @@ target.
   `sync_kv` is the per-account LWW map, `sync_meta` holds the device id, the
   remote file id and fingerprints. Reminder writes stay optimistic (SQLite
   first, sync later) — same shape as the outbox. Settings → Accounts shows the
-  per-account sync state, since the only fixes (re-connect, enable the API)
-  happen outside the app.
+  per-account sync state: a rejected grant marks the whole account
+  disconnected (toast + desktop notification, Reconnect button in Settings);
+  a missing Drive API is enabled outside the app.
 
 ### Rejected: Gmail as the metadata store
 

@@ -13,6 +13,7 @@
     onSelectAccount,
     onToggleUnified,
     onAddAccount,
+    disconnectedAccounts = [],
     counts,
     labels,
     width = 248,
@@ -33,6 +34,8 @@
     onSelectAccount: (id: string) => void;
     onToggleUnified: (v: boolean) => void;
     onAddAccount?: () => void;
+    /** Account ids whose Google grant stopped working (marked in the switcher). */
+    disconnectedAccounts?: string[];
     counts: Record<string, number>;
     labels: LabelDef[];
     width?: number;
@@ -165,7 +168,7 @@
   <div class="inner" style:width="{width}px">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="resize-handle" onmousedown={startResize}></div>
-    <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} {onAddAccount} />
+    <AccountSwitcher {accounts} activeId={activeAccountId} {unified} {onSelectAccount} {onToggleUnified} {onAddAccount} {disconnectedAccounts} />
     <div class="nav">
       {#each items.filter((it) => showingAll || !hiddenSet.has(it.key)) as it (it.key)}
         <button

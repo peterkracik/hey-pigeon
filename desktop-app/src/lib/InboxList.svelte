@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import IconButton from "./ds/IconButton.svelte";
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
@@ -8,6 +9,7 @@
   import { EMAIL_ACTIONS, type Email } from "./data";
   import * as ipc from "./ipc";
   import type { BackendTriageLabel } from "./ipc";
+  import { toast } from "./toast.svelte";
   import PriorityIndicator from "./PriorityIndicator.svelte";
   import TriageBadges from "./TriageBadges.svelte";
 
@@ -31,6 +33,7 @@
     onRemindHandled,
     triageLabels = [],
     onSetTriageLabels,
+    summaryToggleRequest = 0,
   }: {
     emails: Email[];
     selectedId: string | null;
@@ -66,6 +69,10 @@
     /** Manual label edit (footer "+" menu / badge ×). Omit to render the
      *  footer badges read-only. */
     onSetTriageLabels?: (id: string, labelIds: string[]) => void;
+    /** One-shot request counter: each bump shows or hides every group's
+     *  summary at once (palette "Show / hide summaries" / 'i' shortcut).
+     *  0 = no request. */
+    summaryToggleRequest?: number;
   } = $props();
 
   const DONE_D = "M20 6L9 17l-5-5";
@@ -333,6 +340,40 @@
   $effect(() => {
     if (!aiConfigured || !autoSummarize) return;
     runAutoSummaries(groups);
+  });
+
+  // Keyboard/palette toggle for every visible group at once. Mirrors the
+  // per-group button: if any current summary is showing, hide them all;
+  // otherwise show the ones already generated and generate the rest (an
+  // explicit keypress is as deliberate as the "Summarize" click, so the
+  // DESIGN.md "no AI call without a user action" rule still holds).
+  function toggleAllSummaries() {
+    if (!aiConfigured) {
+      toast("info", "Summaries need an AI key", "Add one in Settings → AI");
+      return;
+    }
+    const ready: string[] = [];
+    const missing: typeof groups = [];
+    for (const g of groups) {
+      const active = g.items.filter((e) => !e.done);
+      if (!active.length) continue;
+      const s = summaries[g.label];
+      if (s?.cacheKey === summaryCacheKey(g.label, active)) ready.push(g.label);
+      else missing.push(g);
+    }
+    if (!ready.length && !missing.length) return;
+    const anyOpen = ready.some((label) => summaries[label].open);
+    const next = { ...summaries };
+    for (const label of ready) next[label] = { ...next[label], open: !anyOpen };
+    summaries = next;
+    if (!anyOpen && missing.length) runAutoSummaries(missing);
+  }
+  let lastSummaryToggleReq = 0;
+  $effect(() => {
+    const req = summaryToggleRequest;
+    if (req === lastSummaryToggleReq) return;
+    lastSummaryToggleReq = req;
+    if (req > 0) untrack(toggleAllSummaries);
   });
 
   async function runSummary(label: string, active: Email[]) {
@@ -777,8 +818,10 @@
      regardless of how much the model returns (the prompt asks for brevity
      too, this is the visual backstop). */
   .summary-block {
-    margin-bottom: 10px;
-    padding: 8px 10px;
+    /* Same 16px bleed as .row / .selected-card so the boxes share edges
+       and the text inside lines up with the group label. */
+    margin: 0 -16px 10px;
+    padding: 8px 16px;
     border-radius: var(--radius-md);
     background: var(--surface-sunken);
     font-family: var(--font-body);

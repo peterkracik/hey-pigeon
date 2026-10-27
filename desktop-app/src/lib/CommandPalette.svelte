@@ -40,6 +40,7 @@
     { key: "inbox", label: "Go to Inbox", shortcut: "G I", d: "M3 12l9-9 9 9M5 10v10h14V10" },
     { key: "unified", label: "Go to All Inboxes", shortcut: "G U", d: "M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" },
     { key: "delete", label: "Delete", shortcut: "#", d: "M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-9 0l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13" },
+    { key: "summaries", label: "Show / hide summaries", shortcut: "I", d: "M4 6h16M4 12h10M4 18h7" },
     { key: "shortcuts", label: "Keyboard shortcuts", shortcut: "?", d: "M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zM7 10h.01M11 10h.01M15 10h.01M17 10h.01M8 14h8" },
   ];
 

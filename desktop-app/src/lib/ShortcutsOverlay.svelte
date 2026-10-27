@@ -54,6 +54,7 @@
         { keys: ["C"], label: "Compose new message" },
         { keys: ["R"], label: "Reply" },
         { keys: ["F"], label: "Forward" },
+        { keys: ["⌘", "J"], label: "AI assist (while writing)" },
         { keys: ["⌘", "B"], label: "Bold (while writing)" },
         { keys: ["⌘", "I"], label: "Italic (while writing)" },
         { keys: ["⌘", "U"], label: "Underline (while writing)" },

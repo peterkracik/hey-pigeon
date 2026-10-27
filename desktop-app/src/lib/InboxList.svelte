@@ -66,6 +66,10 @@
 
   const DONE_D = "M20 6L9 17l-5-5";
 
+  // Select checkbox is hidden by default; it shows on row hover (CSS) and on
+  // every row once any row is selected — same reveal pattern as .actions.
+  const anySelected = $derived(selectedIds.size > 0);
+
   let replyingId: string | null = $state(null);
 
   // ------------------------------------------------- remind/schedule popover
@@ -425,6 +429,7 @@
               type="button"
               class="select-check"
               class:checked={selectedIds.has(e.id)}
+              class:show={anySelected}
               title={selectedIds.has(e.id) ? "Deselect" : "Select"}
               onclick={(ev) => {
                 ev.stopPropagation();
@@ -790,7 +795,8 @@
   }
   /* Multi-select checkbox (bulk actions): empty light-gray circle, filled
      inverse when the row is selected — same language as the bulk bar's
-     master check. Always visible; it is the row's left rail. */
+     master check. Hidden by default (space kept, no layout shift); revealed
+     on row hover, or on every row while a selection is active. */
   .select-check {
     width: 16px;
     height: 16px;
@@ -805,10 +811,17 @@
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
+    opacity: 0;
     transition:
+      opacity 100ms,
       background 100ms,
       border-color 100ms,
       color 100ms;
+  }
+  .row:hover .select-check,
+  .select-check.show,
+  .select-check.checked {
+    opacity: 1;
   }
   .select-check:hover {
     border-color: var(--text-tertiary);

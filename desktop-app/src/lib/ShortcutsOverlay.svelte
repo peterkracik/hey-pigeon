@@ -46,6 +46,7 @@
         { keys: ["L"], label: "Add label" },
         { keys: ["V"], label: "Move to folder" },
         { keys: ["X"], label: "Select row" },
+        { keys: ["I"], label: "Show / hide AI summaries" },
       ],
     },
     {

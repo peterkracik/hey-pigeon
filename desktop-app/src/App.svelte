@@ -186,6 +186,12 @@
   let settingsOpen = $state(false);
   // Keyboard cheat sheet ('?' / palette).
   let shortcutsOpen = $state(false);
+  // One-shot counter: each bump asks the mounted view (thread or list) to
+  // show/hide its AI summaries ('i' / palette). Same pattern as remindRequestId.
+  let summaryToggleRequest = $state(0);
+  function toggleSummaries() {
+    summaryToggleRequest++;
+  }
   // Restored draft after a send-undo; non-null reopens the composer prefilled.
   let composeDraft: ComposeData | null = $state(null);
   let paletteOpen = $state(false);
@@ -1247,6 +1253,11 @@
       unified = true;
       return;
     }
+    if (key === "summaries") {
+      closePalette();
+      toggleSummaries();
+      return;
+    }
     const em = actionTarget();
     if (!em) {
       closePalette();
@@ -1355,10 +1366,18 @@
       }
       return;
     }
-    if (threadOpen) return;
     // OS chords (Cmd+C copy, Cmd+F find, Cmd+R reload…) must never trigger
     // the single-letter shortcuts below.
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (threadOpen) {
+      // 'i' = show/hide the thread summary; the list's 'i' lives below the
+      // 'g' chord so g-i still means "go to inbox" there.
+      if (ev.key === "i") {
+        ev.preventDefault();
+        toggleSummaries();
+      }
+      return;
+    }
     // 'g' prefix chords (g-i inbox, g-u unified) with a ~1s window.
     if (ev.key === "g") {
       pendingG = Date.now();
@@ -1376,6 +1395,11 @@
     if (ev.key === "c") {
       ev.preventDefault();
       composeOpen = true;
+      return;
+    }
+    if (ev.key === "i") {
+      ev.preventDefault();
+      toggleSummaries();
       return;
     }
     const actId = cursorId ?? selectedId;
@@ -1850,6 +1874,7 @@
             triageLabels={liveTriageLabels}
             onSetTriageLabels={setTriageLabels}
             {autoSummarize}
+            {summaryToggleRequest}
           />
         {:else}
           <InboxList
@@ -1871,6 +1896,7 @@
             {hoverActions}
             {pinListEnabled}
             {autoSummarize}
+            {summaryToggleRequest}
             {remindRequestId}
             onRemindHandled={() => (remindRequestId = null)}
             triageLabels={liveTriageLabels}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import IconButton from "./ds/IconButton.svelte";
   import Tooltip from "./ds/Tooltip.svelte";
   import Icon from "./ds/Icon.svelte";
@@ -9,6 +10,7 @@
   import { EMAIL_ACTIONS, type Email, type ThreadMsg } from "./data";
   import * as ipc from "./ipc";
   import type { BackendTriageLabel } from "./ipc";
+  import { toast } from "./toast.svelte";
 
   let {
     email,
@@ -24,6 +26,7 @@
     triageLabels = [],
     onSetTriageLabels,
     autoSummarize = false,
+    summaryToggleRequest = 0,
   }: {
     email: Email | undefined;
     onClose: () => void;
@@ -48,6 +51,10 @@
     /** Auto-generate this thread's summary as soon as it's viewable, instead
      *  of waiting for an explicit "Summarize" click. */
     autoSummarize?: boolean;
+    /** One-shot request counter: each bump shows or hides this thread's
+     *  summary (palette "Show / hide summaries" / 'i' shortcut), generating
+     *  it first if it isn't there yet. 0 = no request. */
+    summaryToggleRequest?: number;
   } = $props();
 
   const NEED_REPLY_D = EMAIL_ACTIONS.find((a) => a.key === "needreply")!.d;
@@ -151,6 +158,29 @@
     const key = threadSummaryCacheKey(email.id, messages);
     if (threadSummary?.cacheKey === key) return;
     runThreadSummary(email);
+  });
+
+  // Keyboard/palette toggle — same as clicking the summary button: hide an
+  // open summary, show a hidden one, generate a missing/stale one.
+  function toggleSummaryFromShortcut() {
+    if (!aiConfigured) {
+      toast("info", "Summaries need an AI key", "Add one in Settings → AI");
+      return;
+    }
+    if (!email || messages.length < 1) return;
+    const key = threadSummaryCacheKey(email.id, messages);
+    if (threadSummary?.cacheKey === key) {
+      if (!threadSummary.generating) toggleThreadSummary();
+    } else {
+      runThreadSummary(email);
+    }
+  }
+  let lastSummaryToggleReq = 0;
+  $effect(() => {
+    const req = summaryToggleRequest;
+    if (req === lastSummaryToggleReq) return;
+    lastSummaryToggleReq = req;
+    if (req > 0) untrack(toggleSummaryFromShortcut);
   });
 
   // Reset per-thread UI state only when the thread actually changes — the

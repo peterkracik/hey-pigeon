@@ -295,6 +295,7 @@ Archiving an email should feel like checking off a task.
 | g i / g a | go inbox / go archive |
 | n | need reply (waiting on my answer) |
 | h | remind me — hides the thread from the inbox until the chosen date (snooze); optionally "only if no reply" (follow-up) |
+| i | show / hide AI summaries (list: all day groups; thread: the thread summary) |
 | ? | keyboard shortcut cheat sheet |
 
 ## iOS (future, shapes v1 decisions)

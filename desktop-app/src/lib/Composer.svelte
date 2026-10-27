@@ -278,8 +278,15 @@
   // Cmd/Ctrl+B/I/U — WKWebView has no default Edit-menu bindings for these
   // in contenteditable, so wire them to the same toolbar commands.
   const SHORTCUT_CMDS: Record<string, string> = { b: "bold", i: "italic", u: "underline" };
+  let aiPopover: ReturnType<typeof AiEditPopover> | undefined = $state();
   function onBodyKeydown(ev: KeyboardEvent) {
     if (!(ev.metaKey || ev.ctrlKey)) return;
+    // Cmd+J: AI assist on the draft (or the current selection), Superhuman-style.
+    if (ev.key.toLowerCase() === "j") {
+      ev.preventDefault();
+      aiPopover?.toggle();
+      return;
+    }
     const cmd = SHORTCUT_CMDS[ev.key.toLowerCase()];
     if (!cmd) return;
     ev.preventDefault();
@@ -488,7 +495,7 @@
     <IconButton size="sm" label="Send later">
       <Icon d="M12 7v5l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" size={14} />
     </IconButton>
-    <AiEditPopover getTarget={aiGetTarget} onApply={aiApply} />
+    <AiEditPopover bind:this={aiPopover} getTarget={aiGetTarget} onApply={aiApply} />
     <input
       bind:this={fileInput}
       type="file"

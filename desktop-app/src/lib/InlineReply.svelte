@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import IconButton from "./ds/IconButton.svelte";
+  import Button from "./ds/Button.svelte";
   import Icon from "./ds/Icon.svelte";
   import AiEditPopover from "./AiEditPopover.svelte";
   import { toast } from "./toast.svelte";
@@ -109,8 +110,10 @@
   // Explicit click only (DESIGN.md: content leaves the machine on user
   // action). Whatever the user already typed becomes notes for the model;
   // in that case the draft is held for review before it replaces the text.
-  const DRAFT_D = "M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6zM4 20l1-4 2 2-3 2z";
+  // Pen-on-line: distinct from the sparkle the AI edit popover uses.
+  const DRAFT_D = "M4 20h16M12.5 5.5l3 3L8 16H5v-3l7.5-7.5zM14 4l2-2 3 3-2 2";
   let drafting = $state(false);
+  let aiPopover: ReturnType<typeof AiEditPopover> | undefined = $state();
   let draftPreview: string | null = $state(null);
 
   /** Editor text minus the prefilled signature — what the user actually wrote. */
@@ -306,6 +309,12 @@
   const SHORTCUT_CMDS: Record<string, string> = { b: "bold", i: "italic", u: "underline" };
   function onBodyKeydown(ev: KeyboardEvent) {
     if (!(ev.metaKey || ev.ctrlKey)) return;
+    // Cmd+J: AI assist on the draft (or the current selection), Superhuman-style.
+    if (ev.key.toLowerCase() === "j") {
+      ev.preventDefault();
+      aiPopover?.toggle();
+      return;
+    }
     const cmd = SHORTCUT_CMDS[ev.key.toLowerCase()];
     if (!cmd) return;
     ev.preventDefault();
@@ -491,10 +500,11 @@
           </div>
         {/if}
       </div>
-      <IconButton size="sm" label={drafting ? "Drafting…" : "Draft reply with AI"} disabled={drafting} onclick={draftWithAi}>
+      <Button variant="ghost" size="sm" disabled={drafting} onclick={draftWithAi}>
         <Icon d={DRAFT_D} size={14} />
-      </IconButton>
-      <AiEditPopover getTarget={aiGetTarget} onApply={aiApply} history={historyText} />
+        {drafting ? "Drafting…" : "Draft with AI"}
+      </Button>
+      <AiEditPopover bind:this={aiPopover} getTarget={aiGetTarget} onApply={aiApply} history={historyText} />
       <input
         bind:this={fileInput}
         type="file"

@@ -57,7 +57,8 @@
   // explicitly accepts it. null = no result yet (showing badges/input).
   let result: string | null = $state(null);
 
-  function toggle() {
+  /** Open/close from the host (Cmd+J while writing), same as clicking the button. */
+  export function toggle() {
     if (open) {
       close();
       return;

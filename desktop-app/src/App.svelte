@@ -2112,12 +2112,13 @@
     gap: 10px;
     width: 100%;
   }
+  /* Mirrors the row's .select-check circle in InboxList. */
   .master-check {
     width: 16px;
     height: 16px;
     flex-shrink: 0;
     border: 1.5px solid var(--border-default);
-    border-radius: 3px;
+    border-radius: 50%;
     background: none;
     padding: 0;
     cursor: pointer;

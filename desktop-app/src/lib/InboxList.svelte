@@ -66,8 +66,9 @@
 
   const DONE_D = "M20 6L9 17l-5-5";
 
-  // Checkbox row shows for every row once anything is selected, otherwise
-  // only on hover (CSS) — same reveal pattern as .actions.
+  // Select checkboxes take no space at all until a selection is active
+  // (keyboard `x`, or the bulk bar); then every row shows one. The list
+  // root carries `--rail` so the dependent offsets follow (see .list).
   const anySelected = $derived(selectedIds.size > 0);
 
   let replyingId: string | null = $state(null);
@@ -345,8 +346,10 @@
     }
   }
 
+  // Configurable hover actions. "Mark done" is not among them: it is the
+  // todo-list primary action and always renders first in the rail.
   const activeActions = $derived(
-    (hoverActions.length ? hoverActions : ["done", "delete", "pin"])
+    (hoverActions.length ? hoverActions : ["delete", "pin"])
       .map((k) => EMAIL_ACTIONS.find((a) => a.key === k))
       .filter((a): a is NonNullable<typeof a> => Boolean(a)),
   );
@@ -380,7 +383,7 @@
   }}
 />
 
-<div>
+<div class="list" class:has-selection={anySelected}>
   {#each groups as g, gi (gi)}
     {@const active = g.items.filter((e) => !e.done)}
     {@const summaryKey = active.length ? summaryCacheKey(g.label, active) : null}
@@ -423,21 +426,24 @@
             data-eid={e.id}
             onclick={() => onSelect(selectedId === e.id ? null : e.id)}
           >
-            <Tooltip label={e.done ? "Mark not done" : "Mark done"} side="bottom">
-              <button
-                class="star"
-                class:done={e.done || completing.has(e.id)}
-                title={e.done ? "Mark not done" : "Mark done"}
-                onclick={(ev) => clickDone(e, ev)}
-              >
+            <button
+              type="button"
+              class="select-check"
+              class:checked={selectedIds.has(e.id)}
+              title={selectedIds.has(e.id) ? "Deselect" : "Select"}
+              onclick={(ev) => {
+                ev.stopPropagation();
+                onToggleSelect(e.id);
+              }}
+            >
+              {#if selectedIds.has(e.id)}
                 <Icon d={DONE_D} size={11} strokeWidth={2.6} />
-              </button>
-            </Tooltip>
+              {/if}
+            </button>
             <PriorityIndicator priority={e.priority} />
             <span
               class="avatar-wrap"
               class:ringed={!!e.accountTag}
-              class:show-check={anySelected}
               title={e.accountTag ? "account" : undefined}
               style:--ring={e.accountTag ? `var(--tag-${e.accountTag}-fg)` : undefined}
             >
@@ -453,20 +459,6 @@
               {#if e.unread}
                 <span class="unread-dot" title="Unread"></span>
               {/if}
-              <button
-                type="button"
-                class="select-check"
-                class:checked={selectedIds.has(e.id)}
-                title={selectedIds.has(e.id) ? "Deselect" : "Select"}
-                onclick={(ev) => {
-                  ev.stopPropagation();
-                  onToggleSelect(e.id);
-                }}
-              >
-                {#if selectedIds.has(e.id)}
-                  <Icon d={DONE_D} size={11} strokeWidth={2.6} />
-                {/if}
-              </button>
             </span>
             <span class="from" class:unread={e.unread}>{e.from}</span>
             <!-- Wrapper stays `display:contents` at wide widths (conv/subject-wrap
@@ -511,9 +503,17 @@
                 <Icon d="M21 12.5l-8.4 8.4a5 5 0 01-7-7l8.4-8.4a3.5 3.5 0 015 5l-7.9 7.9" size={12} />
               </span>
             {/if}
-            <span class="right" style:width={selectedId === e.id ? "190px" : "118px"}>
+            <span class="right" style:width={selectedId === e.id ? "190px" : "128px"}>
               <span class="time">{selectedId === e.id ? selectedDate(e) : e.time}</span>
               <div class="actions">
+                <button
+                  class="action-btn done-btn"
+                  class:is-done={e.done || completing.has(e.id)}
+                  title={e.done ? "Mark not done" : "Mark done"}
+                  onclick={(ev) => clickDone(e, ev)}
+                >
+                  <Icon d={DONE_D} size={15} strokeWidth={e.done || completing.has(e.id) ? 2.2 : 1.6} />
+                </button>
                 {#each activeActions as def (def.key)}
                   {@const active = def.key === "pin" && e.pinned}
                   <button
@@ -753,6 +753,16 @@
   .summary-block.is-error {
     color: var(--state-danger);
   }
+  /* --rail: x-offset where "from" starts on a row = row padding(16) +
+     avatar(26) + gap(14), plus the select-check(16) + gap(14) while a
+     selection is active. The narrow-width subject line and the expanded
+     preview line up under it. */
+  .list {
+    --rail: 56px;
+  }
+  .list.has-selection {
+    --rail: 86px;
+  }
   .selected-card {
     margin: 0 -16px 8px;
     background: var(--surface-card);
@@ -793,8 +803,12 @@
     border-color: transparent !important;
     box-shadow: none !important;
   }
-  /* Todo-style checkbox: empty light-gray box, green when done. */
-  .star {
+  /* Multi-select checkbox (bulk actions): empty light-gray circle, filled
+     inverse when the row is selected — same language as the bulk bar's
+     master check. Not rendered at all (no reserved space) until a
+     selection is active; then every row shows one. */
+  .select-check {
+    display: none;
     width: 16px;
     height: 16px;
     flex-shrink: 0;
@@ -804,7 +818,6 @@
     padding: 0;
     cursor: pointer;
     color: transparent;
-    display: flex;
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
@@ -813,14 +826,16 @@
       border-color 100ms,
       color 100ms;
   }
-  .star:hover {
-    border-color: var(--text-tertiary);
-    color: var(--text-tertiary);
+  .has-selection .select-check {
+    display: flex;
   }
-  .star.done {
-    background: var(--tag-mint-fg);
-    border-color: var(--tag-mint-fg);
-    color: #fff;
+  .select-check:hover {
+    border-color: var(--text-tertiary);
+  }
+  .select-check.checked {
+    background: var(--surface-inverse);
+    border-color: var(--surface-inverse);
+    color: var(--text-inverse);
   }
   /* Done animation: strike sweeps across the text, then the row fades out. */
   .row.completing {
@@ -831,7 +846,7 @@
   .row.completing::after {
     content: "";
     position: absolute;
-    left: 44px;
+    left: calc(var(--rail) - 42px);
     right: 16px;
     top: 50%;
     height: 1.5px;
@@ -895,35 +910,6 @@
     box-shadow:
       0 0 0 1.5px var(--surface-card),
       0 0 0 3px var(--ring);
-  }
-  /* Gmail-style overlay: the checkbox covers the avatar on hover, or on
-     every row once any row is checked — no layout shift, no avatar swap. */
-  .select-check {
-    position: absolute;
-    inset: 0;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    border: none;
-    padding: 0;
-    background: var(--surface-card);
-    box-shadow: 0 0 0 1.5px var(--border-default);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: transparent;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 100ms;
-  }
-  .row:hover .select-check,
-  .avatar-wrap.show-check .select-check {
-    opacity: 1;
-  }
-  .select-check.checked {
-    background: var(--surface-inverse);
-    box-shadow: none;
-    color: var(--text-inverse);
   }
   .from {
     width: 200px;
@@ -1007,7 +993,7 @@
     .snippet {
       display: none;
     }
-    /* Row wraps to 2 lines: star/avatar/from/badges/time stay on line 1,
+    /* Row wraps to 2 lines: check/avatar/from/badges/time stay on line 1,
        .row-bottom (conv + subject) is line 2. Earlier attempts tried to
        force the break with an implicit width-overflow wrap (line 1's items
        just running out of room) *and* an explicit flex-basis:100% break at
@@ -1037,16 +1023,15 @@
     .right {
       margin-left: auto;
     }
-    /* 86px = row padding(16) + .star(16) + gap(14) + avatar(26) + gap(14)
-       — the exact x-offset where "from" starts on line 1, so the subject
-       on line 2 lines up under it instead of under the checkbox. */
+    /* --rail = the exact x-offset where "from" starts on line 1, so the
+       subject on line 2 lines up under it instead of under the avatar. */
     .row-bottom {
       display: flex;
       align-items: center;
       gap: 6px;
       order: 2;
       flex-basis: 100%;
-      margin-left: 86px;
+      margin-left: var(--rail);
     }
     .subject-wrap {
       max-width: none;
@@ -1240,11 +1225,17 @@
   .action-btn.pin-active:hover {
     color: var(--blue-600, var(--tag-sky-fg));
   }
-  /* Left = 86px, the row's avatar rail (16 pad + 16 star + 14 gap + 26
-     avatar + 14 gap) — lines the expanded body up under the sender name
-     instead of resetting to the row's outer edge. */
+  /* "Mark done": Superhuman-style bare checkmark, first in the rail.
+     Reads green once the item is done (schedule view), or while the
+     strike-through animation plays. */
+  .action-btn.done-btn.is-done,
+  .action-btn.done-btn.is-done:hover {
+    color: var(--tag-mint-fg);
+  }
+  /* Left = --rail, the row's avatar rail — lines the expanded body up
+     under the sender name instead of resetting to the row's outer edge. */
   .preview {
-    padding: var(--space-3) 16px 12px 86px;
+    padding: var(--space-3) 16px 12px var(--rail);
   }
   .preview-to {
     font-family: var(--font-body);

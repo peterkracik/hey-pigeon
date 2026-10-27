@@ -25,3 +25,11 @@ a:hover {
   color: var(--accent-interactive-hover);
   text-decoration: underline;
 }
+
+/* Hide scrollbars app-wide; scrolling (wheel, trackpad, keys, touch) still works. */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}

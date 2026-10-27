@@ -265,6 +265,18 @@
     if (f.startsWith("label:")) return f as ipc.ThreadFilter;
     return FOLDER_FILTERS[f] ?? null;
   }
+  // "Remind me later" = snooze: a thread scheduled for a future instant is
+  // hidden from the inbox until then (the backend's inbox query and unread
+  // badge apply the same rule; this covers the optimistic window right after
+  // scheduling, rows merged in from list_scheduled, and browser mock mode).
+  // It stays in Scheduled, All mail and Need reply.
+  const isSnoozed = (scheduledAt: number | null | undefined): boolean =>
+    scheduledAt !== null && scheduledAt !== undefined && scheduledAt > Date.now();
+  // Folder key for a thread merged in from outside the active folder page
+  // (list_scheduled / list_needs_reply): never "inbox" for a thread the
+  // inbox must not show.
+  const liveFolderFor = (t: ipc.BackendThread): string =>
+    !t.is_inbox || t.is_archived ? "archive" : isSnoozed(t.scheduled_at) ? "scheduled" : "inbox";
   // Last fetched rows per folder — shown instantly on folder switch while
   // the refetch runs.
   const folderCache = new Map<string, Email[]>();
@@ -348,16 +360,17 @@
     // (inbox + starred, say) must render in the open view.
     for (const t of folderThreads) push(t, f);
     for (const t of threads) push(t, "inbox");
-    // Scheduled threads that left the inbox window (archived, or beyond the
-    // list_threads page limit) must still feed the calendar view. Ones no
-    // longer in the inbox must not leak into the inbox folder view.
+    // Scheduled threads that left the inbox window (archived, snoozed until
+    // a future date, or beyond the list_threads page limit) must still feed
+    // the calendar view. Ones the inbox must not show (archived, snoozed)
+    // must not leak into the inbox folder view.
     for (const t of scheduled) {
-      if (!seen.has(t.id)) push(t, !t.is_inbox || t.is_archived ? "archive" : "inbox");
+      if (!seen.has(t.id)) push(t, liveFolderFor(t));
     }
     // Same for flagged threads — the Need reply view must keep showing a
-    // thread after it is archived or scrolls past the inbox page.
+    // thread after it is archived, snoozed, or scrolled past the inbox page.
     for (const t of needsReply) {
-      if (!seen.has(t.id)) push(t, !t.is_inbox || t.is_archived ? "archive" : "inbox");
+      if (!seen.has(t.id)) push(t, liveFolderFor(t));
     }
     emailsData = rows;
     folderCache.set(f, rows.filter((e) => f === "all" || e.folder === f));
@@ -466,6 +479,9 @@
               .sort((a, b) => (b.lastMsgAt ?? 0) - (a.lastMsgAt ?? 0))
           : emailsData
               .filter((e) => (folder === "all" ? true : e.folder === folder))
+              // Snoozed ("remind me later") threads stay out of the inbox
+              // until their date; All mail still lists them.
+              .filter((e) => folder !== "inbox" || !isSnoozed(e.scheduledAt))
               .filter((e) => inboxFilter === "all" || e.unread)
               .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter));
     const mapped = base
@@ -701,6 +717,12 @@
     emailsData = emailsData.map((e) =>
       e.id === id ? { ...e, scheduledAt: scheduledAt ?? undefined, followUp: isFollowUp || undefined } : e,
     );
+    // A future schedule snoozes the thread out of the inbox: the row leaves
+    // the list right away, so drop the selection like archive does rather
+    // than keep a preview of a row that is no longer there.
+    if (selectedId === id && view === "mail" && folder === "inbox" && isSnoozed(scheduledAt)) {
+      selectedId = null;
+    }
     const confirm = () =>
       scheduledAt === null
         ? toast("success", "Schedule removed", em.subject)

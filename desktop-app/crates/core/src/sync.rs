@@ -32,6 +32,7 @@ pub async fn backfill<M: MailProvider, S: Store>(
     }
 
     let mut total = 0usize;
+    let mut upserted: Vec<ThreadId> = Vec::new();
     let mut page_token: Option<String> = None;
     loop {
         let page = provider
@@ -42,6 +43,7 @@ pub async fn backfill<M: MailProvider, S: Store>(
             for m in messages {
                 store.upsert_message(m)?;
             }
+            upserted.push(thread.id.clone());
             total += 1;
         }
         match page.next_page_token {
@@ -49,8 +51,48 @@ pub async fn backfill<M: MailProvider, S: Store>(
             None => break,
         }
     }
+    // A backfill can be the recovery path for an expired history feed, so
+    // replies that arrived meanwhile must settle follow-ups here too.
+    settle_follow_ups(store, account_id, &upserted)?;
     log::info!("backfill({account_id}): {total} threads");
     Ok(total)
+}
+
+/// "Remind me if no reply": a follow-up reminder is satisfied the moment
+/// someone else writes in the thread after it was armed. Checks each given
+/// thread and clears both the schedule and the marker (locally and in the
+/// cross-device map) when an inbound message newer than `follow_up_since`
+/// exists. Inbound = any message without SENT; the thread's own
+/// `follow_up_since` instant guards against re-upserted old mail (backfill,
+/// metadata refetch) counting as a reply. Returns how many were cleared.
+pub fn settle_follow_ups<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    thread_ids: &[ThreadId],
+) -> Result<usize, StoreError> {
+    let mut cleared = 0usize;
+    for thread_id in thread_ids {
+        let Some(thread) = store.get_thread(thread_id)? else {
+            continue;
+        };
+        let Some(since) = thread.follow_up_since else {
+            continue;
+        };
+        let replied = store
+            .list_messages(thread_id)?
+            .iter()
+            .any(|m| m.date > since && !m.label_ids.iter().any(|l| l == "SENT"));
+        if !replied {
+            continue;
+        }
+        store.set_schedule(thread_id, None)?;
+        store.set_follow_up(thread_id, None)?;
+        crate::devsync::record_reminder(store, account_id, thread_id, None)?;
+        crate::devsync::record_follow_up(store, account_id, thread_id, None)?;
+        log::info!("follow-up({thread_id}): reply arrived, reminder cleared");
+        cleared += 1;
+    }
+    Ok(cleared)
 }
 
 /// M2 delta loop: apply the provider's history feed since the stored
@@ -76,6 +118,7 @@ pub async fn delta_sync<M: MailProvider, S: Store>(
 
     let mut changes = 0usize;
     let mut touched: Vec<ThreadId> = Vec::new();
+    let mut added: Vec<ThreadId> = Vec::new();
     let mut page_token: Option<String> = None;
     // Checkpoint = newest history id actually applied; never regresses even
     // if a trailing page reports nothing newer.
@@ -95,6 +138,9 @@ pub async fn delta_sync<M: MailProvider, S: Store>(
         };
         for change in &page.changes {
             apply_change(store, change, &mut touched)?;
+            if let HistoryChange::MessageAdded { thread, .. } = change {
+                added.push(thread.id.clone());
+            }
             changes += 1;
         }
         if newer_history_id(&page.latest_history_id, &latest) {
@@ -111,6 +157,9 @@ pub async fn delta_sync<M: MailProvider, S: Store>(
     for thread_id in &touched {
         refresh_thread(store, thread_id)?;
     }
+    added.sort();
+    added.dedup();
+    settle_follow_ups(store, account_id, &added)?;
     if latest != start {
         store.set_history_id(account_id, &latest)?;
     }
@@ -306,6 +355,93 @@ mod tests {
             .all(|w| w[0].last_msg_at >= w[1].last_msg_at));
     }
 
+    /// A follow-up ("remind me if no reply") clears itself only when an
+    /// inbound message newer than the arming instant exists — old mail
+    /// re-upserted by a backfill, and the user's own sent mail, don't count.
+    #[test]
+    fn follow_up_clears_only_on_a_newer_inbound_message() {
+        let store = MemStore::default();
+        let acc = "a1".to_string();
+        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
+        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 1, 100) else {
+            unreachable!()
+        };
+        store.upsert_thread(&thread).unwrap();
+        // The thread's existing (older) inbound message, plus my own reply.
+        for m in &messages {
+            store.upsert_message(m).unwrap();
+        }
+        let mine = crate::domain::Message {
+            id: format!("{}:sent", thread.id),
+            from_addr: "me@example.com".to_string(),
+            date: 140,
+            label_ids: vec!["SENT".to_string()],
+            ..messages[0].clone()
+        };
+        store.upsert_message(&mine).unwrap();
+        // Armed at t=150 with a reminder a week out.
+        store.set_schedule(&thread.id, Some(9_999)).unwrap();
+        store.set_follow_up(&thread.id, Some(150)).unwrap();
+        crate::devsync::record_reminder(&store, &acc, &thread.id, Some(9_999)).unwrap();
+        crate::devsync::record_follow_up(&store, &acc, &thread.id, Some(150)).unwrap();
+
+        // Nothing inbound after arming → stays.
+        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+        let t = store.get_thread(&thread.id).unwrap().unwrap();
+        assert_eq!(t.scheduled_at, Some(9_999));
+        assert_eq!(t.follow_up_since, Some(150));
+
+        // Another message from me after arming still isn't a reply.
+        let mine2 = crate::domain::Message {
+            id: format!("{}:sent2", thread.id),
+            date: 160,
+            ..mine.clone()
+        };
+        store.upsert_message(&mine2).unwrap();
+        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+
+        // They reply → schedule and marker go, locally and in the sync map.
+        let reply = crate::domain::Message {
+            id: format!("{}:reply", thread.id),
+            date: 200,
+            label_ids: vec!["INBOX".to_string(), "UNREAD".to_string()],
+            ..messages[0].clone()
+        };
+        store.upsert_message(&reply).unwrap();
+        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 1);
+        let t = store.get_thread(&thread.id).unwrap().unwrap();
+        assert_eq!(t.scheduled_at, None);
+        assert_eq!(t.follow_up_since, None);
+        let entries = store.sync_entries(&acc).unwrap();
+        let tomb = |key: &str| entries.iter().find(|e| e.key == key).map(|e| e.value.is_none());
+        assert_eq!(tomb(&crate::devsync::reminder_key(&thread.id)), Some(true));
+        assert_eq!(tomb(&crate::devsync::follow_up_key(&thread.id)), Some(true));
+        // Idempotent: a second pass has nothing left to clear.
+        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+    }
+
+    /// A plain reminder (no follow-up marker) is never touched by replies.
+    #[test]
+    fn plain_reminder_survives_replies() {
+        let store = MemStore::default();
+        let acc = "a1".to_string();
+        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
+        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 2, 100) else {
+            unreachable!()
+        };
+        store.upsert_thread(&thread).unwrap();
+        store.upsert_message(&messages[0]).unwrap();
+        store.set_schedule(&thread.id, Some(500)).unwrap();
+        let reply = crate::domain::Message {
+            id: format!("{}:reply", thread.id),
+            date: 200,
+            ..messages[0].clone()
+        };
+        store.upsert_message(&reply).unwrap();
+        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+        assert_eq!(store.get_thread(&thread.id).unwrap().unwrap().scheduled_at, Some(500));
+    }
+
     fn new_thread_change(account_id: &str, i: usize, date: i64) -> HistoryChange {
         let tid = format!("{account_id}:new{i}");
         let thread = crate::domain::Thread {
@@ -322,6 +458,7 @@ mod tests {
             last_from_addr: "new@example.com".to_string(),
             scheduled_at: None,
             needs_reply: false,
+            follow_up_since: None,
             labels: vec!["INBOX".to_string(), "UNREAD".to_string()],
             has_attachment: false,
             priority: None,

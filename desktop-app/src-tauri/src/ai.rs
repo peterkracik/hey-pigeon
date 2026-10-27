@@ -35,6 +35,22 @@ pub struct SummaryItem {
 /// separate emails — different framing needs a different system prompt.
 const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, recapping an email conversation so they can skip reading every message. Talk directly to them, warm and casual — e.g. \"Sarah's asking for the invoice, and Priya already sent the draft.\" Return at most 3 short lines covering who said what and where things currently stand. Plain text only: no markdown, no headers, no bullet characters, no preamble.";
 
+/// Draft replies land straight in the reply editor, so the output must be
+/// the reply body and nothing else. The transcript labels the user's own
+/// messages "Me"; the model writes as that person.
+const DRAFT_REPLY_SYSTEM_PROMPT: &str = "You are drafting an email reply on behalf of the user, who appears as \"Me\" in the conversation transcript. Write the reply to the latest message from the other participant(s): answer their questions, respond to their requests, and keep the user's established tone from any earlier \"Me\" messages. Be concise and natural. Never invent facts, dates, or commitments the conversation does not support — put a short placeholder in square brackets where the user must fill something in. If the user provided notes, build the reply around them. Return ONLY the reply body as plain text: no subject line, no markdown, no explanation, no surrounding quotes, and no signature block.";
+
+/// Prompt body for `ai_draft_reply` — pure, unit-tested like the others.
+fn build_draft_reply_prompt(subject: &str, history: &str, notes: Option<&str>) -> String {
+    let mut out = format!("Subject: {subject}\n\nConversation so far (oldest first):\n{history}");
+    if let Some(n) = notes.map(str::trim).filter(|n| !n.is_empty()) {
+        out.push_str("\n\nNotes from the user for this reply:\n");
+        out.push_str(n);
+    }
+    out.push_str("\n\nWrite the reply.");
+    out
+}
+
 /// One message's contribution to a thread summary — sender + trimmed body
 /// text only (never HTML), same privacy posture as `SummaryItem`.
 #[derive(serde::Deserialize)]
@@ -373,9 +389,76 @@ pub async fn ai_summarize_thread(
     }
 }
 
+/// Draft a reply to the open thread into the reply editor. Runs only on an
+/// explicit click (DESIGN.md AI privacy rules: content leaves the machine on
+/// user action only) and never sends — the user edits and sends themselves.
+/// `history` is the plain-text transcript the frontend already builds for
+/// the AI edit popover; `notes` is whatever the user typed before clicking.
+#[tauri::command]
+pub async fn ai_draft_reply(
+    state: State<'_, AiState>,
+    provider_id: String,
+    subject: String,
+    history: String,
+    notes: Option<String>,
+) -> Result<String, String> {
+    if history.trim().is_empty() {
+        return Err("nothing to reply to".to_string());
+    }
+    match provider_id.as_str() {
+        "openai" => {
+            let key = state
+                .secrets
+                .get(&key_secret_key("openai"))
+                .map_err(estr)?
+                .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
+            let model = state
+                .secrets
+                .get(&model_secret_key("openai"))
+                .map_err(estr)?
+                .unwrap_or_else(|| {
+                    OpenAiProvider::model_catalog()
+                        .into_iter()
+                        .next()
+                        .map(|m| m.id)
+                        .unwrap_or_default()
+                });
+            let req = CompletionRequest {
+                model,
+                messages: vec![
+                    ChatMessage {
+                        role: ChatRole::System,
+                        content: DRAFT_REPLY_SYSTEM_PROMPT.to_string(),
+                    },
+                    ChatMessage {
+                        role: ChatRole::User,
+                        content: build_draft_reply_prompt(&subject, &history, notes.as_deref()),
+                    },
+                ],
+            };
+            OpenAiProvider::new(key)
+                .complete(req)
+                .await
+                .map(|s| s.trim().to_string())
+                .map_err(estr)
+        }
+        other => Err(format!("unknown AI provider {other}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_draft_reply_prompt_includes_subject_history_and_notes() {
+        let p = build_draft_reply_prompt("Invoice #42", "Sarah: Can you send it?", Some("say Friday"));
+        assert!(p.starts_with("Subject: Invoice #42"));
+        assert!(p.contains("Sarah: Can you send it?"));
+        assert!(p.contains("Notes from the user for this reply:\nsay Friday"));
+        let bare = build_draft_reply_prompt("Hi", "Sam: Hello", Some("   "));
+        assert!(!bare.contains("Notes from the user"));
+    }
 
     #[test]
     fn build_summary_prompt_includes_each_item() {

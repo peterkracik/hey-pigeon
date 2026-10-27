@@ -408,6 +408,16 @@ pub trait Store {
     /// unknown thread (the caller retries once the thread is backfilled).
     fn set_needs_reply(&self, thread_id: &ThreadId, needs_reply: bool) -> Result<bool, StoreError>;
 
+    /// Set or clear a thread's "follow up if no reply" marker (epoch ms of
+    /// when it was armed). Same contract as `set_schedule`: local metadata,
+    /// never sent to the mail provider, synced between the user's devices
+    /// via `SyncTransport`. Ok(false) = unknown thread.
+    fn set_follow_up(
+        &self,
+        thread_id: &ThreadId,
+        follow_up_since: Option<i64>,
+    ) -> Result<bool, StoreError>;
+
     // ---- cross-device sync map (DESIGN.md "Cross-device sync") ----
     // Default impls keep pre-sync adapters compiling; the SQLite adapter
     // and MemStore implement all of them.

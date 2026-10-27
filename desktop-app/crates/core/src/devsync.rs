@@ -11,7 +11,9 @@
 //! idempotent, so a crash mid-sync is harmless.
 //!
 //! Keys are namespaced strings: `reminder:<thread_id>` → epoch ms,
-//! `needs_reply:<thread_id>` → `true` (a tombstone or `false` clears).
+//! `needs_reply:<thread_id>` → `true` (a tombstone or `false` clears),
+//! `follow_up:<thread_id>` → epoch ms the follow-up was armed (tombstone
+//! clears; always paired with a `reminder:` entry for the same thread).
 // ponytail: tombstones are never garbage-collected. They cost ~80 bytes
 // each and a personal mailbox produces a few hundred a year; GC needs a
 // rule that survives a replica being offline longer than the GC window
@@ -29,6 +31,7 @@ const FILE_PREFIX: &str = "state-";
 const FILE_SUFFIX: &str = ".json";
 const REMINDER_PREFIX: &str = "reminder:";
 const NEEDS_REPLY_PREFIX: &str = "needs_reply:";
+const FOLLOW_UP_PREFIX: &str = "follow_up:";
 /// sync_meta keys.
 const META_FILE_ID: &str = "file_id";
 const META_UPLOADED_FP: &str = "uploaded_fp";
@@ -69,6 +72,14 @@ pub fn needs_reply_key(thread_id: &ThreadId) -> String {
 
 fn needs_reply_thread(key: &str) -> Option<&str> {
     key.strip_prefix(NEEDS_REPLY_PREFIX)
+}
+
+pub fn follow_up_key(thread_id: &ThreadId) -> String {
+    format!("{FOLLOW_UP_PREFIX}{thread_id}")
+}
+
+fn follow_up_thread(key: &str) -> Option<&str> {
+    key.strip_prefix(FOLLOW_UP_PREFIX)
 }
 
 fn file_name(device: &str) -> String {
@@ -151,6 +162,22 @@ pub fn record_needs_reply<S: Store>(
         account_id,
         &needs_reply_key(thread_id),
         needs_reply.then(|| true.into()),
+    )
+}
+
+/// Convenience for the "follow up if no reply" key family. Clearing writes
+/// a tombstone, like reminders.
+pub fn record_follow_up<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    thread_id: &ThreadId,
+    follow_up_since: Option<i64>,
+) -> Result<(), StoreError> {
+    record_local(
+        store,
+        account_id,
+        &follow_up_key(thread_id),
+        follow_up_since.map(Into::into),
     )
 }
 
@@ -272,7 +299,7 @@ async fn upload_or_create<T: SyncTransport>(
 
 /// Project the per-thread entries onto their local thread columns:
 /// `reminder:*` → `threads.scheduled_at`, `needs_reply:*` →
-/// `threads.needs_reply`. Keys that changed in this merge are applied
+/// `threads.needs_reply`, `follow_up:*` → `threads.follow_up_since`. Keys that changed in this merge are applied
 /// whatever their value (a tombstone clears the local flag); every live
 /// entry is additionally re-checked so a flag set on another device lands
 /// once the thread itself arrives here via backfill. Returns how many
@@ -317,6 +344,20 @@ fn apply_entries<S: Store>(
             if store.set_needs_reply(&thread.id, want)? {
                 applied += 1;
             }
+        } else if let Some(thread_id) = follow_up_thread(&entry.key) {
+            let want: Option<i64> = entry.value.as_ref().and_then(|v| v.as_i64());
+            if !changed && want.is_none() {
+                continue;
+            }
+            let Some(thread) = store.get_thread(&thread_id.to_string())? else {
+                continue; // not backfilled yet — retried on the next round
+            };
+            if thread.follow_up_since == want {
+                continue;
+            }
+            if store.set_follow_up(&thread.id, want)? {
+                applied += 1;
+            }
         }
     }
     Ok(applied)
@@ -344,6 +385,7 @@ mod tests {
             last_from_addr: "".into(),
             scheduled_at: None,
             needs_reply: false,
+            follow_up_since: None,
             labels: vec!["INBOX".into()],
             has_attachment: false,
             priority: None,

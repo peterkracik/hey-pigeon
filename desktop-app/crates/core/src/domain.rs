@@ -68,6 +68,13 @@ pub struct Thread {
     /// travels between devices through the cross-device sync map).
     #[serde(default)]
     pub needs_reply: bool,
+    /// Local-only "follow up if no reply" marker: when set, `scheduled_at`
+    /// is a follow-up reminder that clears itself once someone else writes
+    /// in this thread after this instant (epoch ms). Same contract as
+    /// `scheduled_at`: never synced to Gmail, preserved across provider
+    /// re-upserts, travels between devices through the sync map.
+    #[serde(default)]
+    pub follow_up_since: Option<i64>,
 }
 
 /// AI-assigned urgency (Jev triage). Ordered spam→high for sorting — Spam

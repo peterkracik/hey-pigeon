@@ -307,6 +307,10 @@ pub async fn sync_now(
 /// Set or clear a thread's "remind me" schedule (epoch ms). Never sent to
 /// Gmail (no outbox, no provider call) — it reaches the user's other
 /// devices through the cross-device sync map instead (DESIGN.md).
+///
+/// `follow_up = true` arms the schedule as "remind me if no reply": the
+/// sync loop clears it on its own once someone else writes in the thread
+/// (`sync::settle_follow_ups`). Clearing the schedule clears the marker.
 #[tauri::command]
 pub async fn set_schedule(
     app: AppHandle,
@@ -314,6 +318,7 @@ pub async fn set_schedule(
     account_id: AccountId,
     thread_id: ThreadId,
     scheduled_at: Option<i64>,
+    follow_up: Option<bool>,
 ) -> Result<(), String> {
     let _ = account_id; // command shape mirrors mutate; the thread knows its account
     let thread = state
@@ -327,6 +332,18 @@ pub async fn set_schedule(
         .map_err(estr)?;
     devsync::record_reminder(&state.store, &thread.account_id, &thread_id, scheduled_at)
         .map_err(estr)?;
+    let follow_up_since = match (scheduled_at, follow_up.unwrap_or(false)) {
+        (Some(_), true) => Some(now_ms()),
+        _ => None,
+    };
+    if follow_up_since != thread.follow_up_since {
+        state
+            .store
+            .set_follow_up(&thread_id, follow_up_since)
+            .map_err(estr)?;
+        devsync::record_follow_up(&state.store, &thread.account_id, &thread_id, follow_up_since)
+            .map_err(estr)?;
+    }
     let _ = app.emit(THREADS_UPDATED, ());
     // Push straight away — one small upload — so a second device sees the
     // reminder on its next poll instead of after ours.
@@ -756,10 +773,7 @@ fn notify_due_reminders(handle: &AppHandle) {
             return;
         }
     };
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let now_ms = now_ms();
     let mut notified = state.notified_reminders.lock().unwrap();
     // Drop bookkeeping for threads no longer scheduled (cleared reminder).
     let still_scheduled: std::collections::HashSet<&ThreadId> =
@@ -775,11 +789,22 @@ fn notify_due_reminders(handle: &AppHandle) {
         if notified.get(&thread.id) == Some(&due_at) {
             continue; // already notified for this exact schedule
         }
-        send_reminder_notification(
-            handle,
-            format!("Reminder: {}", thread.subject),
-            &thread.from_summary,
-        );
+        // A follow-up that is still scheduled at its due time is, by
+        // construction, one nobody answered — say so instead of a bare
+        // "Reminder".
+        if thread.follow_up_since.is_some() {
+            send_reminder_notification(
+                handle,
+                format!("Follow up: {}", thread.subject),
+                &format!("No reply from {}", thread.from_summary),
+            );
+        } else {
+            send_reminder_notification(
+                handle,
+                format!("Reminder: {}", thread.subject),
+                &thread.from_summary,
+            );
+        }
         notified.insert(thread.id.clone(), due_at);
     }
 }

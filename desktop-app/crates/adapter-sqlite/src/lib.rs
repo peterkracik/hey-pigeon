@@ -202,6 +202,11 @@ const MIGRATIONS: &[&str] = &[
     // writes go through `set_needs_reply` only and reach other devices via
     // the cross-device sync map (`needs_reply:<thread_id>` keys).
     "ALTER TABLE threads ADD COLUMN needs_reply INTEGER NOT NULL DEFAULT 0;",
+    // "Remind me if no reply": epoch ms the follow-up was armed, NULL when
+    // the schedule is a plain reminder. Local-only like scheduled_at —
+    // `upsert_thread` never touches it; writes go through `set_follow_up`
+    // and the cross-device sync map (`follow_up:<thread_id>` keys).
+    "ALTER TABLE threads ADD COLUMN follow_up_since INTEGER;",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -472,11 +477,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
             .and_then(|s| Priority::parse(&s)),
         triage_label_ids: serde_json::from_str(&r.get::<_, String>(15)?).unwrap_or_default(),
         needs_reply: r.get(16)?,
+        follow_up_since: r.get(17)?,
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply, follow_up_since";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -1144,6 +1150,21 @@ impl Store for SqliteStore {
         Ok(n > 0)
     }
 
+    /// Never synced to Gmail — `upsert_thread` leaves the column alone.
+    fn set_follow_up(
+        &self,
+        thread_id: &ThreadId,
+        follow_up_since: Option<i64>,
+    ) -> Result<bool, StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET follow_up_since = ?2 WHERE id = ?1",
+                params![thread_id, follow_up_since],
+            )
+        })?;
+        Ok(n > 0)
+    }
+
     fn sync_device_id(&self) -> Result<String, StoreError> {
         self.with(|c| {
             // 64 random bits from SQLite itself — no rand dependency here.
@@ -1564,6 +1585,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn follow_up_since_persists_and_survives_sync_reupsert() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.upsert_account(&sample_account("a1")).unwrap();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 1)
+            .unwrap()[0]
+            .id
+            .clone();
+        let t = store.get_thread(&id).unwrap().unwrap();
+        assert_eq!(t.follow_up_since, None);
+        // Armed after the thread's newest message — otherwise the backfill's
+        // own follow-up settling (core) would rightly treat that message as
+        // the awaited reply.
+        let since = t.last_msg_at + 1;
+        assert!(store.set_follow_up(&id, Some(since)).unwrap());
+        assert_eq!(store.get_thread(&id).unwrap().unwrap().follow_up_since, Some(since));
+        // Provider re-upsert must not clobber it (local-only column).
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        assert_eq!(store.get_thread(&id).unwrap().unwrap().follow_up_since, Some(since));
+        assert!(store.set_follow_up(&id, None).unwrap());
+        assert_eq!(store.get_thread(&id).unwrap().unwrap().follow_up_since, None);
+        assert!(!store.set_follow_up(&"nope".to_string(), Some(1)).unwrap());
+    }
+
+    #[tokio::test]
     async fn needs_reply_survives_sync_reupsert_and_feeds_its_view() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
@@ -1641,6 +1693,7 @@ mod tests {
             last_from_addr: "someone@example.com".to_string(),
             scheduled_at: None,
             needs_reply: false,
+            follow_up_since: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -1737,6 +1790,7 @@ mod tests {
             last_from_addr: "someone@example.com".to_string(),
             scheduled_at: None,
             needs_reply: false,
+            follow_up_since: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -2261,6 +2315,7 @@ mod tests {
             last_from_addr: from.to_string(),
             scheduled_at: None,
             needs_reply: false,
+            follow_up_since: None,
             labels: vec!["INBOX".to_string()],
             has_attachment: false,
             priority: None,

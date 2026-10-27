@@ -38,6 +38,9 @@ export interface BackendThread {
   triage_label_ids: string[];
   /** Local-only "needs reply" flag. Never synced to Gmail. */
   needs_reply: boolean;
+  /** Local-only "remind me if no reply" marker (epoch ms it was armed);
+   *  null when `scheduled_at` is a plain reminder. Never synced to Gmail. */
+  follow_up_since: number | null;
 }
 
 /** One app-local Jev triage category (Settings-managed, not a Gmail label). */
@@ -161,7 +164,10 @@ export const setSchedule = (
   accountId: string,
   threadId: string,
   scheduledAt: number | null,
-) => invoke<void>("set_schedule", { accountId, threadId, scheduledAt });
+  /** true = "remind me if no reply": the schedule clears itself once
+   *  someone else writes in the thread. */
+  followUp = false,
+) => invoke<void>("set_schedule", { accountId, threadId, scheduledAt, followUp });
 /** Set/clear the local "needs reply" flag. */
 export const setNeedsReply = (
   accountId: string,
@@ -266,6 +272,16 @@ export const summarizeThread = (
 ) => invoke<string>("ai_summarize_thread", { providerId, subject, items });
 
 // ------------------------------------------------------------ AI triage (Jev)
+
+/** Draft a reply to the open thread — explicit click only, never auto-run.
+ *  `history` is the same plain-text transcript the AI edit popover gets;
+ *  `notes` is whatever the user already typed into the reply. */
+export const aiDraftReply = (
+  providerId: string,
+  subject: string,
+  history: string,
+  notes?: string,
+) => invoke<string>("ai_draft_reply", { providerId, subject, history, notes });
 
 export interface TriageStatus {
   configured: boolean;
@@ -373,6 +389,7 @@ export function threadToEmail(t: BackendThread): Email {
     msgCount: t.msg_count,
     lastMsgAt: t.last_msg_at,
     scheduledAt: t.scheduled_at ?? undefined,
+    followUp: t.follow_up_since !== null && t.scheduled_at !== null ? true : undefined,
     needsReply: t.needs_reply || undefined,
     attachment: t.has_attachment,
   };

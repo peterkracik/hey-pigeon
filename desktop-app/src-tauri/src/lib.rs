@@ -98,6 +98,7 @@ pub fn run() {
             ai::ai_edit_text,
             ai::ai_summarize_group,
             ai::ai_summarize_thread,
+            ai::ai_draft_reply,
             autolabel::autolabel_status,
             autolabel::set_jev_key,
             autolabel::remove_jev_key,

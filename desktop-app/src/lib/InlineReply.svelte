@@ -4,6 +4,7 @@
   import Icon from "./ds/Icon.svelte";
   import AiEditPopover from "./AiEditPopover.svelte";
   import { toast } from "./toast.svelte";
+  import * as ipc from "./ipc";
   import type { ThreadMsg } from "./data";
 
   export interface ReplySendData {
@@ -12,16 +13,22 @@
     /** Rich body when formatting was applied — the MIME html part. */
     bodyHtml?: string;
     attachments?: { filename: string; mime_type: string; size: number; data_b64: string }[];
+    /** "Remind me if no reply" chosen in the editor: epoch ms to remind at.
+     *  The owner arms it only once the send commits. */
+    followUpAt?: number;
   }
 
   let {
     toName,
+    subject,
     onCancel,
     onSend,
     signature,
     history,
   }: {
     toName: string;
+    /** Thread subject — context for the AI draft. */
+    subject?: string;
     onCancel: () => void;
     onSend: (data: ReplySendData) => void;
     signature?: string;
@@ -74,6 +81,73 @@
   }
   let attachments: ReplyAttachment[] = $state([]);
   let fileInput: HTMLInputElement | undefined = $state();
+
+  // ------------------------------------------- "remind me if no reply"
+  // Superhuman-style follow-up chosen before sending. Stored as a day
+  // count; resolved to a 09:00 timestamp at send time (same convention as
+  // the inbox remind presets).
+  const FOLLOW_UP_OPTIONS: { label: string; days: number }[] = [
+    { label: "2 days", days: 2 },
+    { label: "3 days", days: 3 },
+    { label: "1 week", days: 7 },
+    { label: "2 weeks", days: 14 },
+  ];
+  const FOLLOW_UP_D = "M9 14l-4-4 4-4M5 10h9a5 5 0 010 10h-2";
+  let followUpDays: number | null = $state(null);
+  let fuOpen = $state(false);
+  let fuRoot: HTMLDivElement | undefined = $state();
+  const followUpLabel = $derived(FOLLOW_UP_OPTIONS.find((o) => o.days === followUpDays)?.label ?? null);
+
+  function followUpAt(days: number): number {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    d.setHours(9, 0, 0, 0);
+    return d.getTime();
+  }
+
+  // ------------------------------------------------------- AI draft reply
+  // Explicit click only (DESIGN.md: content leaves the machine on user
+  // action). Whatever the user already typed becomes notes for the model;
+  // in that case the draft is held for review before it replaces the text.
+  const DRAFT_D = "M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6zM4 20l1-4 2 2-3 2z";
+  let drafting = $state(false);
+  let draftPreview: string | null = $state(null);
+
+  /** Editor text minus the prefilled signature — what the user actually wrote. */
+  function userNotes(): string {
+    const text = (bodyEl?.innerText ?? "").trim();
+    const sig = signature?.trim();
+    if (sig && text.endsWith(sig)) return text.slice(0, text.length - sig.length).trim();
+    return text;
+  }
+
+  function applyDraft(draft: string) {
+    setBody(textToHtml(signature ? `${draft}\n\n${signature}` : draft));
+    draftPreview = null;
+  }
+
+  async function draftWithAi() {
+    if (!ipc.isTauri) {
+      toast("info", "Connect an AI provider", "Add an API key in Settings to use AI actions");
+      return;
+    }
+    if (!historyText) {
+      toast("info", "Nothing to reply to", "The conversation has no readable messages yet");
+      return;
+    }
+    if (drafting) return;
+    const notes = userNotes();
+    drafting = true;
+    try {
+      const draft = await ipc.aiDraftReply("openai", subject ?? "", historyText, notes || undefined);
+      if (notes) draftPreview = draft;
+      else applyDraft(draft);
+    } catch (e) {
+      toast("danger", "Could not draft reply", String(e));
+    } finally {
+      drafting = false;
+    }
+  }
 
   const MAX_ATTACH_BYTES = 18 * 1024 * 1024;
   const fmtSize = (n: number) =>
@@ -241,6 +315,7 @@
   function onDocMousedown(ev: MouseEvent) {
     const t = ev.target as Node;
     if (showFormat && aaRoot && !aaRoot.contains(t)) showFormat = false;
+    if (fuOpen && fuRoot && !fuRoot.contains(t)) fuOpen = false;
     if (selPos && selRoot && !selRoot.contains(t) && t !== bodyEl) selPos = null;
     if (linkPos && linkRoot && !linkRoot.contains(t)) closeLink();
   }
@@ -261,6 +336,7 @@
       body: bodyEl?.innerText ?? body.replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, ""),
       bodyHtml: formatted ? bodyEl!.innerHTML : undefined,
       attachments: attachments.length ? attachments : undefined,
+      followUpAt: followUpDays !== null ? followUpAt(followUpDays) : undefined,
     });
     sent = true;
     sentFlashTimer = setTimeout(() => {
@@ -353,6 +429,17 @@
         {/each}
       </div>
     {/if}
+    {#if draftPreview !== null}
+      {@const d = draftPreview}
+      <div class="draft-review">
+        <div class="draft-hint">AI draft, written around your notes — review before it replaces them</div>
+        <div class="draft-preview">{d}</div>
+        <div class="draft-actions">
+          <button class="draft-badge" onclick={() => (draftPreview = null)}>Discard</button>
+          <button class="draft-go" onclick={() => applyDraft(d)}>Use draft</button>
+        </div>
+      </div>
+    {/if}
     <div class="actions">
       <button class="send" onclick={send}>
         <Icon d="M4 20l1-4L17 4l3 3L8 19l-4 1z" size={14} />
@@ -364,6 +451,48 @@
       <div class="vr"></div>
       <IconButton size="sm" label="Send later">
         <Icon d="M12 7v5l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" size={14} />
+      </IconButton>
+      <div bind:this={fuRoot} class="fu-root">
+        <button
+          class="fu"
+          class:on={followUpDays !== null}
+          title="Remind me if no reply"
+          onclick={() => (fuOpen = !fuOpen)}
+        >
+          <Icon d={FOLLOW_UP_D} size={14} />
+          {#if followUpLabel}<span class="fu-text">Follow up in {followUpLabel}</span>{/if}
+        </button>
+        {#if fuOpen}
+          <div class="fu-popup">
+            <div class="fu-hint">Remind me if no reply in…</div>
+            {#each FOLLOW_UP_OPTIONS as o (o.days)}
+              <button
+                class="fu-item"
+                class:on={followUpDays === o.days}
+                onclick={() => {
+                  followUpDays = o.days;
+                  fuOpen = false;
+                }}
+              >
+                {o.label}
+              </button>
+            {/each}
+            {#if followUpDays !== null}
+              <button
+                class="fu-item off"
+                onclick={() => {
+                  followUpDays = null;
+                  fuOpen = false;
+                }}
+              >
+                Don't remind me
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <IconButton size="sm" label={drafting ? "Drafting…" : "Draft reply with AI"} disabled={drafting} onclick={draftWithAi}>
+        <Icon d={DRAFT_D} size={14} />
       </IconButton>
       <AiEditPopover getTarget={aiGetTarget} onApply={aiApply} history={historyText} />
       <input
@@ -561,6 +690,136 @@
     height: 20px;
     background: var(--border-subtle);
     margin: 0 4px;
+  }
+  /* "Remind me if no reply" chooser — same popup shape as the formatting menu. */
+  .fu-root {
+    position: relative;
+  }
+  .fu {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border-radius: var(--radius-pill);
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .fu:hover {
+    color: var(--text-primary);
+  }
+  .fu.on {
+    color: var(--tag-lavender-fg);
+    background: var(--tag-lavender-bg);
+    padding: 5px 10px 5px 8px;
+  }
+  .fu-text {
+    white-space: nowrap;
+  }
+  .fu-popup {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 190px;
+    padding: 6px;
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    z-index: 10;
+    box-sizing: border-box;
+  }
+  .fu-hint {
+    padding: 4px 8px 6px;
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+  }
+  .fu-item {
+    border: none;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+    padding: 7px 8px;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .fu-item:hover {
+    background: var(--surface-hover);
+  }
+  .fu-item.on {
+    color: var(--tag-lavender-fg);
+  }
+  .fu-item.off {
+    color: var(--text-tertiary);
+    border-top: 1px solid var(--border-subtle);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    margin-top: 4px;
+  }
+  /* AI draft held for review (only when the user had typed notes). */
+  .draft-review {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+  }
+  .draft-hint {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .draft-preview {
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    background: var(--bg-canvas);
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+  }
+  .draft-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .draft-badge {
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-canvas);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .draft-go {
+    border: none;
+    background: var(--surface-inverse);
+    color: var(--text-inverse);
+    cursor: pointer;
+    padding: 6px 14px;
+    border-radius: var(--radius-pill);
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 700;
   }
   .aa-root {
     position: relative;

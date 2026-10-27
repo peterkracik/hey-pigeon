@@ -158,9 +158,33 @@ enum MailView: Hashable {
         }
     }
 
+    /// What the Inbox tab's title menu offers (Scheduled and Need reply are tabs).
     static let folders: [MailView] = [
-        .inbox, .scheduled, .needReply, .starred, .drafts, .sent, .archive, .all, .spam, .trash,
+        .inbox, .starred, .drafts, .sent, .archive, .all, .spam, .trash,
     ]
+}
+
+/// The bottom bar — the desktop rail, one to one: Inbox · Scheduled · Need reply · Search.
+enum MainTab: Hashable {
+    case inbox, scheduled, needReply, search
+
+    var title: String {
+        switch self {
+        case .inbox: "Inbox"
+        case .scheduled: "Scheduled"
+        case .needReply: "Need reply"
+        case .search: "Search"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .inbox: "tray"
+        case .scheduled: "clock"
+        case .needReply: "arrowshape.turn.up.left"
+        case .search: "magnifyingglass"
+        }
+    }
 }
 
 struct SendDraft: Hashable {

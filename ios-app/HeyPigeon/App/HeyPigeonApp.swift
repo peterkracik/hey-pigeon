@@ -56,13 +56,29 @@ struct HeyPigeonApp: App {
     }
 }
 
-/// Root navigation: the inbox stack plus the app-wide sheets and the toast.
+/// Root navigation: the four-tab bar (Inbox · Scheduled · Need reply ·
+/// Search — the desktop rail) plus the app-wide sheets and the toast.
 struct RootView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
-        InboxView()
+        TabView(selection: $model.tab) {
+            MailListScreen(tab: .inbox)
+                .tabItem { Label(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage) }
+                .badge(model.counts["inbox"] ?? 0)
+                .tag(MainTab.inbox)
+            MailListScreen(tab: .scheduled)
+                .tabItem { Label(MainTab.scheduled.title, systemImage: MainTab.scheduled.systemImage) }
+                .tag(MainTab.scheduled)
+            MailListScreen(tab: .needReply)
+                .tabItem { Label(MainTab.needReply.title, systemImage: MainTab.needReply.systemImage) }
+                .badge(model.needReplyCount)
+                .tag(MainTab.needReply)
+            SearchScreen()
+                .tabItem { Label(MainTab.search.title, systemImage: MainTab.search.systemImage) }
+                .tag(MainTab.search)
+        }
             .sheet(isPresented: $model.showAccounts) { AccountsSheet() }
             .sheet(isPresented: $model.showSettings) { SettingsView() }
             .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
@@ -105,7 +121,7 @@ struct ToastView: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(Theme.card, in: Capsule())
             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-            .padding(.bottom, 24)
+            .padding(.bottom, 60) // clears the tab bar
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .task(id: toast.id) {
                 try? await Task.sleep(for: .seconds(5))

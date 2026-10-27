@@ -69,33 +69,40 @@ Archiving is checking something off. The keyboard map becomes a gesture map.
 
 ### Information architecture
 
-Three levels, no tab bar, no hamburger:
+A four-tab bar at the bottom — **the desktop rail, one to one** — and a
+navigation stack above it:
 
 ```text
-Inbox (root)  ──push──►  Thread  ──sheet──►  Reply / Compose
-  │
-  ├─ title tap ─► Views menu (Inbox · Scheduled · Need reply · Starred · Drafts ·
-  │               Sent · Archive · All mail · Spam · Trash · ── Labels…)
-  ├─ avatar tap ─► Accounts sheet (All · account A · account B · + Add · Settings)
-  ├─ pull down ──► Search (same FTS5 engine, same operators as desktop)
-  └─ compose ───► Compose sheet
+┌──────────────────────────────────────────────────────────┐
+│ [accounts chip]      Inbox ⌄ (title = folder menu)   [✎] │
+│   thread rows …  ──push──►  Thread  ──sheet──►  Reply    │
+├──────────────────────────────────────────────────────────┤
+│   Inbox  ·  Scheduled  ·  Need reply  ·  Search          │  ← tab bar
+└──────────────────────────────────────────────────────────┘
 ```
 
-- **Root is the Inbox**, unified across accounts by default (desktop's `0`).
-  The large title names the current view; tapping it opens the views menu —
-  this is the sidebar, as a menu. It is the native `.toolbarTitleMenu`
-  affordance, so it costs no chrome.
+- **Tabs = the rail.** Inbox, Scheduled (reminders), Need reply and Search
+  are the four things the desktop rail has, so they are the four tabs. The
+  Inbox tab carries an unread badge; Need reply carries its count.
+- **Folders and labels live behind the Inbox title.** Tapping the title
+  opens Starred · Drafts · Sent · Archive · All mail · Spam · Trash, then the
+  Gmail labels — the sidebar as a menu (`.toolbarTitleMenu`), costing no
+  chrome. The title reads the chosen folder's name.
 - **Accounts live behind the avatar chip** top-left: stacked account dots,
   tap to filter to one account (desktop's `1`/`2`), with "Add account" and
-  "Settings" at the bottom of the same sheet. Long-press cycles accounts.
-- **Search is the pull-down field** under the title. Results replace the list
-  in place; the query syntax is Gmail's, exactly as on desktop.
+  "Settings" at the bottom of the same sheet. The filter applies across all
+  four tabs.
+- **Search is a tab**, with the field always up. Results use the same rows
+  and gestures; the query syntax is Gmail's, exactly as on desktop.
 - **Triage chips** (Jev labels + priority) appear as one horizontally
   scrolling row under the title *only when Jev is configured*. Unconfigured
   users never see them — clean by default, everything reachable when wanted.
 - **Compose** is the only persistent button (top-right pencil). Floating
   buttons were rejected: they cover the last row, which is where the user is
   looking when they finish triaging.
+- **The thread view hides the tab bar** and shows its own bottom toolbar
+  (archive · remind · need reply · reply · more) in the same place: one bar
+  at the bottom at a time.
 
 ### Rows and groups
 
@@ -130,10 +137,10 @@ Same anatomy as desktop, one line shorter:
 | `enter` open | tap | |
 | `esc` back | back / edge swipe | |
 | `j`/`k` | scroll | After archiving from inside a thread: pop back (default) or advance to the next thread (setting) |
-| `/` search | pull down | |
+| `/` search | Search tab | |
 | `cmd+k` palette | long-press a row | Context menu with preview: Archive, Read/Unread, Star, Remind me…, Need reply, Labels…, Trash |
 | `0`/`1`/`2` accounts | avatar chip | |
-| `g i` / `g a` | title menu | |
+| `g i` / `g a` | Inbox tab · title menu | Scheduled and Need reply are tabs |
 | `?` | — | Not needed; gestures are discoverable |
 
 Multi-select: the native List edit mode (Edit button, or two-finger drag
@@ -164,9 +171,9 @@ first line · time), tap to expand — same as desktop.
   (`messages.attachments.get`, cached) and opens Quick Look. Never auto-open.
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
-- **Bottom toolbar** (the only toolbar in the app): Archive · Remind ·
-  Need reply · **Reply** · More (Star, Labels, Mark unread, Forward,
-  Summarize, Trash).
+- **Bottom toolbar** replaces the tab bar while a thread is open: Archive ·
+  Remind · Need reply · **Reply** · More (Star, Labels, Mark unread,
+  Forward, Summarize, Trash).
 - Thread-level swipe between adjacent threads is deliberately **not** in v1
   (it fights the system back-swipe).
 
@@ -184,10 +191,10 @@ outbox, with the same retry semantics as desktop.
 
 ### Scheduled, Need reply, Labels
 
-Scheduled groups by due date: Overdue · Today · Tomorrow · This week ·
-Later. Need reply is a plain list. Labels are the same rows filtered by
-`label:<id>`, reachable from the title menu; label management (rename,
-colour, delete) stays in Settings.
+Scheduled (its own tab) groups by due date: Overdue · Today · Tomorrow ·
+This week · Later. Need reply (its own tab) is a plain list. Labels are the
+same rows filtered by `label:<id>`, reachable from the Inbox title menu;
+label management (rename, colour, delete) stays in Settings.
 
 ### Settings
 

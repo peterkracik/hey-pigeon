@@ -1,29 +1,37 @@
-// The root screen: an inbox that reads like a todo list. No tab bar, no
-// toolbar rows — the title is the view switcher, the avatar chip is the
-// account switcher, search is the pull-down field, compose is the one button.
+// The list screens behind the tab bar. One screen type serves Inbox,
+// Scheduled and Need reply (the Inbox tab also carries the folder/label
+// menu on its title); Search is its own screen. No toolbar rows: the title
+// is the folder switcher, the avatar chip is the account switcher, compose
+// is the one button.
 
 import SwiftUI
 
-struct InboxView: View {
+struct MailListScreen: View {
+    let tab: MainTab
     @Environment(AppModel.self) private var model
     @State private var path: [ThreadRow] = []
 
+    private var isActive: Bool { model.tab == tab }
+
     var body: some View {
-        @Bindable var model = model
         NavigationStack(path: $path) {
             Group {
                 if !model.hasLoadedOnce {
                     SkeletonList()
-                } else if model.groupedRows.isEmpty {
-                    EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt)
+                } else if isActive && model.groupedRows.isEmpty {
+                    EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt)
+                } else if isActive {
+                    ThreadList(path: $path)
                 } else {
-                    threadList
+                    Color.clear
                 }
             }
             .background(Theme.canvas)
-            .navigationTitle(model.view.title)
+            .navigationTitle(tab == .inbox ? model.folder.title : tab.title)
             .navigationBarTitleDisplayMode(.large)
-            .toolbarTitleMenu { ViewsMenu() }
+            .toolbarTitleMenu {
+                if tab == .inbox { FoldersMenu() }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { model.showAccounts = true } label: { AccountChip() }
@@ -34,16 +42,55 @@ struct InboxView: View {
                         .accessibilityLabel("Compose")
                 }
             }
-            .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .automatic),
-                        prompt: "Search · from: to: label: is:unread has:attachment")
             .refreshable { await model.sync() }
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }
             }
         }
     }
+}
 
-    private var threadList: some View {
+/// Search tab: the field is always up; results use the same rows and
+/// gestures. Operators are Gmail's, exactly as on desktop.
+struct SearchScreen: View {
+    @Environment(AppModel.self) private var model
+    @State private var path: [ThreadRow] = []
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationStack(path: $path) {
+            Group {
+                if model.isSearching && model.groupedRows.isEmpty {
+                    EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
+                } else if model.isSearching {
+                    ThreadList(path: $path)
+                } else {
+                    ContentUnavailableView {
+                        Label("Search your mail", systemImage: "magnifyingglass")
+                            .font(Theme.display(22, relativeTo: .title2))
+                    } description: {
+                        Text("Instant, local, every account. Try  from:priya  ·  has:attachment  ·  is:unread  ·  label:invoices")
+                    }
+                }
+            }
+            .background(Theme.canvas)
+            .navigationTitle("Search")
+            .navigationBarTitleDisplayMode(.large)
+            .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Search · from: to: label: is:unread has:attachment")
+            .navigationDestination(for: ThreadRow.self) { row in
+                ThreadView(row: row) { path.removeLast() }
+            }
+        }
+    }
+}
+
+/// The grouped list with the gesture map. Shared by every tab.
+struct ThreadList: View {
+    @Binding var path: [ThreadRow]
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
         List {
             if model.triageLevelsPresent && !model.isSearching {
                 TriageChips().listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
@@ -75,11 +122,11 @@ struct InboxView: View {
                                 }
                                 .tint(Theme.navy500)
                                 Menu {
-                                    rowMenu(row)
+                                    RowMenu(row: row)
                                 } label: { Label("More", systemImage: "ellipsis") }
                                 .tint(Theme.navy400)
                             }
-                            .contextMenu { rowMenu(row) }
+                            .contextMenu { RowMenu(row: row) }
                             .onAppear { model.loadMoreIfNeeded(current: row) }
                     }
                 } header: {
@@ -94,10 +141,14 @@ struct InboxView: View {
         .scrollContentBackground(.hidden)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
     }
+}
 
-    /// The full action set — the command palette's row actions, on a long press.
-    @ViewBuilder
-    private func rowMenu(_ row: ThreadRow) -> some View {
+/// The full action set — the command palette's row actions, on a long press.
+struct RowMenu: View {
+    let row: ThreadRow
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
         if row.isArchived {
             Button { model.unarchive(row) } label: { Label("Move to inbox", systemImage: "tray.and.arrow.down") }
         } else {
@@ -152,14 +203,14 @@ struct AccountChip: View {
     }
 }
 
-/// The sidebar, as the title's menu.
-struct ViewsMenu: View {
+/// Folders and labels, as the Inbox title's menu (the desktop sidebar).
+struct FoldersMenu: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         ForEach(MailView.folders, id: \.self) { v in
             Button {
-                model.view = v
+                model.folder = v
             } label: {
                 let n = model.counts[v.countKey] ?? 0
                 Label(n > 0 ? "\(v.title)  \(n)" : v.title, systemImage: v.systemImage)
@@ -168,7 +219,7 @@ struct ViewsMenu: View {
         if !model.labels.isEmpty {
             Divider()
             ForEach(model.labels) { l in
-                Button { model.view = .label(id: l.id, name: l.name) } label: { Label(l.name, systemImage: "tag") }
+                Button { model.folder = .label(id: l.id, name: l.name) } label: { Label(l.name, systemImage: "tag") }
             }
         }
     }

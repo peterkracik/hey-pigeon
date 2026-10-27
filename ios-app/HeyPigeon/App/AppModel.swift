@@ -31,7 +31,19 @@ final class AppModel {
 
     /// nil = unified across accounts (desktop's `0`).
     var selectedAccountId: String? { didSet { reload() } }
-    var view: MailView = .inbox { didSet { reload() } }
+    /// Bottom bar selection.
+    var tab: MainTab = .inbox { didSet { reload() } }
+    /// Folder/label the Inbox tab shows (its title menu); the other tabs
+    /// have fixed views.
+    var folder: MailView = .inbox { didSet { reload() } }
+    /// What the list currently shows, derived from tab + folder.
+    var view: MailView {
+        switch tab {
+        case .inbox, .search: folder
+        case .scheduled: .scheduled
+        case .needReply: .needReply
+        }
+    }
 
     private(set) var rows: [ThreadRow] = []
     private(set) var hasMore = true
@@ -48,6 +60,9 @@ final class AppModel {
     var composeDraft: SendDraft?
     var showAccounts = false
     var showSettings = false
+    /// Scheduled / Need reply counts for the tab badges.
+    var scheduledCount: Int { (try? engine.threads(in: .scheduled, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
+    var needReplyCount: Int { (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
     var disconnectedAccountId: String?
 
     var currentAccount: MailAccount? { accounts.first { $0.id == selectedAccountId } }

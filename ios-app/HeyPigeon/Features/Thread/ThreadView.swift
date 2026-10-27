@@ -39,6 +39,7 @@ struct ThreadView: View {
         }
         .background(Theme.canvas)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItemGroup(placement: .bottomBar) {
                 Button { model.archive(current); onClose() } label: { Label("Archive", systemImage: "checkmark") }

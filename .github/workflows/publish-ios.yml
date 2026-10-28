@@ -131,20 +131,25 @@ jobs:
           echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "Version ${version} (${GITHUB_RUN_NUMBER})"
 
-      - name: Write Local.xcconfig (team + Google iOS OAuth client)
+      - name: Write Local.xcconfig (team + Google iOS OAuth client + relay)
         env:
           CLIENT_ID: ${{ secrets.HEYPIGEON_IOS_OAUTH_CLIENT_ID }}
+          RELAY_URL: ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
         run: |
           set -euo pipefail
           test -n "$CLIENT_ID" || { echo "HEYPIGEON_IOS_OAUTH_CLIENT_ID is not set" >&2; exit 1; }
           # com.googleusercontent.apps.<id> — the reversed client id Google uses as the redirect scheme.
           reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
+          # xcconfig treats "//" as the start of a comment, so a URL must be
+          # written as https:/$()/host — Xcode resolves the empty $() away.
+          relay_xc="$(printf '%s' "$RELAY_URL" | sed 's#://#:/$()/#g')"
           cat > ios-app/Config/Local.xcconfig <<EOF
           DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_IOS_CLIENT_ID = ${CLIENT_ID}
           GOOGLE_IOS_REVERSED_CLIENT_ID = ${reversed}
-          HEYPIGEON_RELAY_URL = ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
+          HEYPIGEON_RELAY_URL = ${relay_xc}
           EOF
+          if [[ -n "$RELAY_URL" ]]; then echo "Relay URL baked in."; else echo "::notice::HEYPIGEON_RELAY_URL is not set: push will show 'Not available in this build'."; fi
 
       - name: Build Rust core for iOS (device slice) + Swift bindings
         env:

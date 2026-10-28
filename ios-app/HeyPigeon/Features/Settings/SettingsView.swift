@@ -2,7 +2,8 @@
 // (name, colour, sync, signature, reconnect, remove), AI (OpenAI key,
 // model, auto-summarize), Triage (Jev key, auto-triage, reanalyze, the
 // labels), Inbox (pinned list, swipe actions — the desktop's hover actions),
-// About. Account removal and anything that deletes asks once.
+// About. Account removal and anything that deletes asks once. Same sheet
+// look as the sidebar (Theme's menuList / menuCard / menuSheet).
 
 import SwiftUI
 
@@ -37,12 +38,14 @@ struct SettingsView: View {
                 } footer: {
                     Text("Control how messages are grouped and what each swipe does. A short swipe arms the first action, a longer one the second.")
                 }
+                .menuCard()
                 Section("Appearance") {
                     Picker("Appearance", selection: $appearance) {
                         ForEach(Appearance.allCases) { a in Text(a.title).tag(a.rawValue) }
                     }
                     .pickerStyle(.segmented)
                 }
+                .menuCard()
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")
                     Link("heypigeon.app", destination: URL(string: "https://heypigeon.app")!)
@@ -52,9 +55,16 @@ struct SettingsView: View {
                 } footer: {
                     Text("No server, no analytics. Your mail stays between your device and your Google account. Updates arrive through TestFlight and the App Store.")
                 }
+                .menuCard()
             }
+            .menuList()
             .navigationTitle("Settings")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { Keyboard.dismiss(); dismiss() } } }
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .close) { Keyboard.dismiss(); dismiss() }
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .confirmationDialog("Remove \(removing?.email ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove account", role: .destructive) {
@@ -65,6 +75,7 @@ struct SettingsView: View {
                 Text("Removes the local copy of its mail and signs it out on this device. Nothing changes in Gmail.")
             }
         }
+        .menuSheet()
     }
 
     // MARK: Accounts
@@ -80,6 +91,7 @@ struct SettingsView: View {
         } footer: {
             Text("Connected mailboxes shown in the sidebar.")
         }
+        .menuCard()
     }
 
     private func swipePicker(_ title: String, _ index: Int) -> some View {
@@ -255,6 +267,7 @@ private struct AISection: View {
         } footer: {
             Text("Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
         }
+        .menuCard()
         .task { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
     }
@@ -371,6 +384,7 @@ private struct TriageSection: View {
         } footer: {
             Text("Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
         }
+        .menuCard()
         .task { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
     }
@@ -441,6 +455,7 @@ private struct NotificationsSection: View {
         } footer: {
             Text("Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way.")
         }
+        .menuCard()
         .onAppear { push.refreshStatus() }
     }
 

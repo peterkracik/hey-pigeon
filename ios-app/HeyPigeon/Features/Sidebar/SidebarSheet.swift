@@ -18,9 +18,7 @@ struct SidebarSheet: View {
                     }
                 }
         }
-        .presentationBackground(Theme.canvas)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .menuSheet()
     }
 
     private var list: some View {
@@ -33,7 +31,7 @@ struct SidebarSheet: View {
                                disconnected: model.accountStates[a.id]?.isConnected == false)
                 }
             }
-            .listRowBackground(Theme.card)
+            .menuCard()
             // The desktop sidebar's folders, in its order (Archive is "done"
             // in this app's vocabulary; Scheduled and Need reply are tabs).
             Section {
@@ -47,7 +45,7 @@ struct SidebarSheet: View {
                 folderRow(.spam)
                 folderRow(.trash)
             }
-            .listRowBackground(Theme.card)
+            .menuCard()
             if !model.labels.isEmpty {
                 Section {
                     ForEach(model.labels) { l in
@@ -56,7 +54,7 @@ struct SidebarSheet: View {
                         }
                     }
                 }
-                .listRowBackground(Theme.card)
+                .menuCard()
             }
             Section {
                 // The consent sheet needs a window to present over; closing
@@ -69,16 +67,9 @@ struct SidebarSheet: View {
                 } label: { Label("Add Google account", systemImage: "plus.circle") }
                 Button { dismiss(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
-            .listRowBackground(Theme.card)
+            .menuCard()
         }
-        .listStyle(.insetGrouped)
-        .listSectionSpacing(16)
-        // The inset-grouped default leaves a wide gutter in a sheet; keep
-        // the cards close to the edges like the inbox rows.
-        .contentMargins(.horizontal, 12, for: .scrollContent)
-        .contentMargins(.top, 4, for: .scrollContent)
-        .scrollContentBackground(.hidden)
-        .background(Theme.canvas)
+        .menuList()
         .foregroundStyle(Theme.textPrimary)
     }
 

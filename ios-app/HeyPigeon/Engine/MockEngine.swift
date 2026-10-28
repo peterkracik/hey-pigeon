@@ -8,8 +8,10 @@ import Foundation
 final class MockEngine: MailEngine {
     var onThreadsUpdated: (() -> Void)?
     var onAccountDisconnected: ((String) -> Void)?
+    var onPrefsUpdated: (() -> Void)?
 
     private var accountList: [MailAccount]
+    private var prefStore: [String: Any] = [:]
     private var rows: [String: ThreadRow]
     private var bodies: [String: [MessageItem]] = [:]
     private var triage: [TriageLabelItem] = [
@@ -166,6 +168,9 @@ final class MockEngine: MailEngine {
                                      color: color ?? a.color, avatarURL: a.avatarURL, signature: signature ?? a.signature)
         onThreadsUpdated?()
     }
+
+    func prefs() throws -> [String: Any] { prefStore }
+    func setPref(_ name: String, _ value: Any?) throws { prefStore[name] = value }
 
     func removeAccount(id: String) throws {
         accountList.removeAll { $0.id == id }

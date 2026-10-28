@@ -379,6 +379,40 @@ final class AppModel {
         summarySheet = SummaryPresentation(id: group.title, title: group.title)
     }
 
+    /// The top-right sparkle: one summary of everything the list shows
+    /// right now (folder, account, label filter), active rows only.
+    private var viewKey: String { "view:\(view.countKey):\(selectedAccountId ?? "all"):\(triageFilterId ?? "")" }
+
+    private var viewTitle: String {
+        var t = tab == .inbox ? folder.title : tab.title
+        if let f = triageFilterId, let l = triageLabels.first(where: { $0.id == f }) { t += " · \(l.name)" }
+        if let a = currentAccount { t += " · \(a.displayName)" }
+        return t
+    }
+
+    func openViewSummary() {
+        let rows = groupedRows.flatMap(\.active).prefix(40)
+        let key = rows.map(\.id).joined(separator: ",")
+        let storeKey = viewKey
+        if groupSummaries[storeKey]?.cacheKey != key {
+            let items = rows.map { (from: $0.fromSummary, subject: $0.subject, snippet: $0.snippet) }
+            if items.isEmpty {
+                groupSummaries[storeKey] = GroupSummary(cacheKey: key, text: "Nothing active here.")
+            } else {
+                groupSummaries[storeKey] = GroupSummary(cacheKey: key, generating: true)
+                Task {
+                    do {
+                        let text = try await engine.aiSummarizeGroup(items: items)
+                        groupSummaries[storeKey] = GroupSummary(cacheKey: key, text: text)
+                    } catch {
+                        groupSummaries[storeKey] = GroupSummary(cacheKey: key, error: error.localizedDescription)
+                    }
+                }
+            }
+        }
+        summarySheet = SummaryPresentation(id: storeKey, title: viewTitle)
+    }
+
     private func threadKey(_ row: ThreadRow) -> String { "thread:\(row.id)" }
 
     func threadSummary(_ row: ThreadRow, messages: [MessageItem]) -> GroupSummary? {

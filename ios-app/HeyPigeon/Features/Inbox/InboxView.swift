@@ -40,6 +40,12 @@ struct MailListScreen: View {
                 // The context the screen was missing: folder, unread count,
                 // and which account — tap to switch account (desktop 0/1/2).
                 ToolbarItem(placement: .principal) { ListTitle(tab: tab) }
+                if model.aiConfigured {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { model.openViewSummary() } label: { Image(systemName: "sparkles") }
+                            .accessibilityLabel("Summarize this view")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { model.composeDraft = SendDraft() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("Compose")
@@ -259,8 +265,8 @@ struct ThreadList: View {
     }
 }
 
-/// Day-group label in the desktop's small grey style, with the AI
-/// "Summarize N active" toggle on the right when a provider is connected.
+/// Day-group label in the desktop's small grey style. The AI summary of
+/// the whole view is the sparkle in the top bar.
 struct GroupHeader: View {
     let group: RowGroup
     @Environment(AppModel.self) private var model
@@ -272,15 +278,6 @@ struct GroupHeader: View {
                 .foregroundStyle(group.isPinned ? Theme.textSecondary : Theme.textTertiary)
                 .textCase(nil)
             Spacer()
-            if model.aiConfigured, !group.active.isEmpty {
-                Button { model.openSummary(group) } label: {
-                    Image(systemName: "sparkles").font(.caption.weight(.semibold))
-                        .foregroundStyle(model.summary(for: group)?.text == nil ? Theme.textTertiary : Theme.accent)
-                        .frame(width: 28, height: 22)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Summary of \(group.title)")
-            }
         }
         .padding(.horizontal, 4)
     }

@@ -108,7 +108,10 @@ floating "splits" pill above the tab bar. Here that maps to:
   with more than one account — the account's dot and name. Tapping it
   switches account (All · each). Search stays in the bottom-right circle,
   where iOS 26's own Mail keeps it.
-- **Compose** is the top-right circle.
+- **Compose** is the top-right circle; with an AI provider connected a
+  sparkle sits next to it and summarizes the current view (folder ·
+  label filter · account) in a sheet. A thread has the same sparkle in
+  its top bar.
 - **Triage chips** (Jev labels + priority) appear inline on rows, not as a
   filter bar; a priority filter can join the account pill later.
 - **The thread view hides the tab bar** and shows two floating glass bars in

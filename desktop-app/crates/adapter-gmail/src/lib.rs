@@ -583,11 +583,15 @@ fn decode_entities(s: &str) -> String {
     out
 }
 
+/// Lossy on purpose: a legacy-charset body (ISO-8859-2 Slovak mail, say)
+/// is better shown with a few replacement characters than dropped — a
+/// `None` here falls back to the one-line snippet for good, since the
+/// thread's bodies are never refetched once any message has one.
 fn decode_body(data: &str) -> Option<String> {
     base64::engine::general_purpose::URL_SAFE
         .decode(data)
         .ok()
-        .and_then(|b| String::from_utf8(b).ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
 /// Depth-first search for the first part matching `mime`.
@@ -1122,6 +1126,20 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_body_keeps_non_utf8_bodies() {
+        let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE.encode(b);
+        assert_eq!(
+            decode_body(&b64("Ahoj,\n\nďakujem".as_bytes())).as_deref(),
+            Some("Ahoj,\n\nďakujem")
+        );
+        // ISO-8859-2 "ď" is a lone 0xEF byte: not UTF-8, but the body (and
+        // its line breaks) must survive instead of collapsing to the snippet.
+        let latin2 = decode_body(&b64(b"Ahoj,\n\n\xEFakujem")).unwrap();
+        assert_eq!(latin2, "Ahoj,\n\n\u{FFFD}akujem");
+        assert!(decode_body("not*base64!").is_none());
+    }
 
     #[test]
     fn mime_message_shape() {

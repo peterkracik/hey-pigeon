@@ -276,10 +276,7 @@ pub async fn get_thread(
         return Ok(None);
     };
     let mut messages = state.store.list_messages(&thread_id).map_err(estr)?;
-    let missing_bodies = messages
-        .iter()
-        .all(|m| m.body_html.is_none() && m.body_text.is_none());
-    if missing_bodies {
+    if heypigeon_core::sync::needs_bodies(&messages) {
         let backend = state.backend.read().await;
         let (has_attachment, fetched) =
             with_provider!(&*backend, p => p.fetch_bodies(&thread.account_id, &thread_id).await)

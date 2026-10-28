@@ -232,6 +232,20 @@ fn update_labels<S: Store>(
     store.upsert_message(&m)
 }
 
+/// True when at least one message of an opened thread has no body yet, so
+/// the thread needs a full (`format=full`) refetch before it renders.
+///
+/// Bodies arrive lazily, and only for the whole thread at once: a thread
+/// opened earlier has them, but a reply that lands afterwards through
+/// backfill or delta is metadata-tier (no body). Checking "all messages
+/// lack a body" misses exactly that reply, which then renders from Gmail's
+/// snippet — one line, ~200 chars, no paragraph breaks.
+pub fn needs_bodies(messages: &[Message]) -> bool {
+    messages
+        .iter()
+        .any(|m| m.body_html.is_none() && m.body_text.is_none())
+}
+
 /// Union of Gmail label ids over a thread's messages — the thread-level
 /// `labels` field the folder queries run on.
 pub fn thread_labels_union(messages: &[Message]) -> Vec<String> {
@@ -527,6 +541,21 @@ mod tests {
             store.get_thread(&thread.id).unwrap().unwrap().scheduled_at,
             Some(500)
         );
+    }
+
+    #[test]
+    fn needs_bodies_when_any_message_is_metadata_tier() {
+        let mut opened = sender_msg("a@x.com", "me@example.com", 1, &["INBOX"]);
+        opened.body_text = Some("hello\n\nbye".to_string());
+        let mut html = sender_msg("a@x.com", "me@example.com", 2, &["INBOX"]);
+        html.body_html = Some("<p>hi</p>".to_string());
+        let later_reply = sender_msg("a@x.com", "me@example.com", 3, &["INBOX"]);
+
+        assert!(!needs_bodies(&[]));
+        assert!(!needs_bodies(&[opened.clone(), html.clone()]));
+        // A reply synced after the thread was first opened has no body yet.
+        assert!(needs_bodies(&[opened, html, later_reply.clone()]));
+        assert!(needs_bodies(&[later_reply]));
     }
 
     #[test]

@@ -8,11 +8,12 @@ use std::sync::Arc;
 use heypigeon_adapter_jev::{ClassifyInput, JevClassifier};
 use heypigeon_adapter_openai::OpenAiProvider;
 use heypigeon_core::devsync;
+use heypigeon_core::domain::now_ms;
 use heypigeon_core::ports::{
     AiProvider, ChatMessage, ChatRole, CompletionRequest, SecretStore, Store,
 };
 
-use crate::engine::{Engine, ACCOUNT_COLORS};
+use crate::engine::{Engine, ACCOUNT_COLORS, BACKFILL_DAYS};
 use crate::types::*;
 
 const AI_PROVIDER: &str = "openai";
@@ -513,7 +514,15 @@ impl Engine {
         let Some(api_key) = self.secrets.get(JEV_KEY)? else {
             return Ok(0);
         };
-        let pending = self.store.list_threads_needing_triage(TRIAGE_BATCH)?;
+        // Only mail inside the sync window: the archive walk brings in years
+        // of old threads, and classifying those would cost an AI call each.
+        let cutoff = now_ms() - i64::from(BACKFILL_DAYS) * 86_400_000;
+        let pending: Vec<_> = self
+            .store
+            .list_threads_needing_triage(TRIAGE_BATCH)?
+            .into_iter()
+            .filter(|t| t.last_msg_at >= cutoff)
+            .collect();
         if pending.is_empty() {
             return Ok(0);
         }

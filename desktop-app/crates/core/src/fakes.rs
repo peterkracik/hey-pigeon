@@ -881,6 +881,30 @@ impl MailProvider for FakeProvider {
         })
     }
 
+    async fn list_before(
+        &self,
+        _account_id: &AccountId,
+        before_ms: i64,
+        page_token: Option<String>,
+    ) -> Result<ThreadPage, MailError> {
+        let older: Vec<_> = self
+            .threads
+            .iter()
+            .filter(|(t, _)| t.last_msg_at < before_ms)
+            .cloned()
+            .collect();
+        let start: usize = page_token
+            .as_deref()
+            .map(|t| t.parse().unwrap_or(0))
+            .unwrap_or(0);
+        let end = (start + self.page_size).min(older.len());
+        let next = (end < older.len()).then(|| end.to_string());
+        Ok(ThreadPage {
+            threads: older[start..end].to_vec(),
+            next_page_token: next,
+        })
+    }
+
     async fn list_history(
         &self,
         _account_id: &AccountId,

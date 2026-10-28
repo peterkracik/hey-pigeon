@@ -88,6 +88,25 @@ pub trait MailProvider {
         page_token: Option<String>,
     ) -> impl std::future::Future<Output = Result<ThreadPage, MailError>> + Send;
 
+    /// Threads with mail from before `before_ms` (epoch ms), newest first —
+    /// the archive walk behind `sync::backfill_older`, which pages it after
+    /// the `list_recent` window. Default: nothing older, so providers
+    /// without it keep compiling (the walk just finishes at once).
+    fn list_before(
+        &self,
+        account_id: &AccountId,
+        before_ms: i64,
+        page_token: Option<String>,
+    ) -> impl std::future::Future<Output = Result<ThreadPage, MailError>> + Send {
+        let _ = (account_id, before_ms, page_token);
+        async {
+            Ok(ThreadPage {
+                threads: Vec::new(),
+                next_page_token: None,
+            })
+        }
+    }
+
     /// The account's labels (Gmail `users.labels.list`), user-created only
     /// — system labels are folders, not sidebar labels. Default: none, so
     /// providers without label support keep compiling (DESIGN.md: new

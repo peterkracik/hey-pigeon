@@ -200,6 +200,7 @@ struct ThreadList: View {
                                 }
                                 .onTapGesture {
                                     Keyboard.dismiss()
+                                    if model.view == .drafts { model.openDraft(row); return }
                                     model.markRead(row)
                                     path.append(row)
                                 }

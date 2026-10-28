@@ -131,6 +131,18 @@ final class MockEngine: MailEngine {
             .map { $0 }
     }
 
+    func draft(threadId: String) async throws -> SendDraft? {
+        guard let row = rows[threadId] else { return nil }
+        var d = SendDraft()
+        d.to = [row.lastFromAddress]
+        d.subject = row.subject
+        d.bodyText = row.snippet
+        d.fromAccountId = row.accountId
+        d.draftKey = "mock\(threadId)"
+        d.draftSaved = true
+        return d
+    }
+
     func thread(id: String) async throws -> ThreadDetail? {
         guard let row = rows[id] else { return nil }
         if bodies[id] == nil {

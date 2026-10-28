@@ -35,6 +35,8 @@ struct ComposeView: View {
     @State private var savedFrom: String?
     /// Sent or discarded: leaving must not save a draft.
     @State private var finished = false
+    /// Known addresses for the recipient fields' autocomplete.
+    @State private var people: [PersonSuggestion] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -80,15 +82,15 @@ struct ComposeView: View {
                     VStack(spacing: 0) {
                         if model.accounts.count > 1 { fromRow }
                         fieldRow("To") {
-                            RecipientField(addresses: $to, focused: $focus, field: .to)
+                            RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
                             if !showCc {
                                 Button("Cc/Bcc") { showCc = true; focus = .cc }
                                     .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                             }
                         }
                         if showCc {
-                            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc) }
-                            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc) }
+                            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
+                            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
                         }
                         fieldRow("Subject") {
                             TextField("", text: $draft.subject).focused($focus, equals: .subject)
@@ -119,6 +121,7 @@ struct ComposeView: View {
                         .accessibilityLabel("Close and save draft")
                 }
             }
+            .task { people = model.searchPeople() }
             .onAppear {
                 if fromId.isEmpty {
                     fromId = model.selectedAccountId ?? model.accounts.first?.id ?? ""

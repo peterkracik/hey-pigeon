@@ -125,6 +125,8 @@ final class AppModel {
 
     /// Scheduled / Need reply counts for the sidebar and the title.
     var scheduledCount: Int { scheduledThreads(accountId: selectedAccountId).count }
+    /// Drafts are read, so the unread map has none: the sidebar shows how many there are.
+    var draftsCount: Int { (try? engine.threads(in: .drafts, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
     var needReplyCount: Int { (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
     /// Reminders due today — the Scheduled tab's badge. The app icon badge
     /// adds the unified count (NewMailNotifier.refreshBadge).
@@ -597,6 +599,19 @@ final class AppModel {
         Task {
             do { try await engine.perform(.saveDraft(draft), accountId: accountId) }
             catch { show("Couldn't save draft: \(error.localizedDescription)") }
+        }
+    }
+
+    /// A Drafts row opens in the composer, not the thread view. The draft
+    /// is read from Gmail (full recipients, body, attachments).
+    func openDraft(_ row: ThreadRow) {
+        Task {
+            do {
+                if let d = try await engine.draft(threadId: row.id) { composeDraft = d }
+                else { show("This draft is no longer there") }
+            } catch {
+                show("Couldn't open draft: \(error.localizedDescription)")
+            }
         }
     }
 

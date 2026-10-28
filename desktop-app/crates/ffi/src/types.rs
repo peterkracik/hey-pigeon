@@ -218,6 +218,33 @@ impl From<OutAttachment> for domain::OutAttachment {
     }
 }
 
+impl From<domain::OutAttachment> for OutAttachment {
+    fn from(a: domain::OutAttachment) -> Self {
+        Self {
+            filename: a.filename,
+            mime_type: a.mime_type,
+            data_b64: a.data_b64,
+        }
+    }
+}
+
+/// A saved Gmail draft, reopened in the composer. `message_id` is the
+/// composer key: saving or deleting under it targets this draft.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DraftContent {
+    pub message_id: String,
+    pub account_id: String,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub bcc: Vec<String>,
+    pub subject: String,
+    pub body_text: Option<String>,
+    pub body_html: Option<String>,
+    pub attachments: Vec<OutAttachment>,
+    /// The thread it replies to; None for a stand-alone draft.
+    pub reply_to_thread: Option<String>,
+}
+
 /// A local, optimistic change queued for Gmail (outbox pattern) — the same
 /// set as `BackendMutation` in `ipc.ts`.
 #[derive(Debug, Clone, uniffi::Enum)]

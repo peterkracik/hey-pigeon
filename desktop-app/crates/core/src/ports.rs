@@ -145,6 +145,18 @@ pub trait MailProvider {
         thread_id: &ThreadId,
     ) -> impl std::future::Future<Output = Result<(bool, Vec<Message>), MailError>> + Send;
 
+    /// A saved draft's full content (recipients, subject, bodies,
+    /// attachments) so the composer can reopen it. Default errors, like
+    /// `update_label`: no silent empty draft.
+    fn get_draft(
+        &self,
+        account_id: &AccountId,
+        message_id: &MessageId,
+    ) -> impl std::future::Future<Output = Result<DraftContent, MailError>> + Send {
+        let _ = (account_id, message_id);
+        async { Err(MailError::Provider("drafts not supported".into())) }
+    }
+
     /// Apply one local mutation remotely (used by the outbox drain).
     fn apply(
         &self,

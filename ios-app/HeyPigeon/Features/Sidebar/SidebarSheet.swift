@@ -39,7 +39,7 @@ struct SidebarSheet: View {
             Section {
                 folderRow(.starred)
                 folderRow(.sent)
-                folderRow(.drafts)
+                folderRow(.drafts, count: model.draftsCount)
                 folderRow(.archive)
                 tabRow(.scheduled, count: model.scheduledCount)
                 tabRow(.needReply, count: model.needReplyCount)
@@ -89,8 +89,8 @@ struct SidebarSheet: View {
         dismiss()
     }
 
-    private func folderRow(_ view: MailView, title: String? = nil) -> some View {
-        let n = model.counts[view.countKey] ?? 0
+    private func folderRow(_ view: MailView, title: String? = nil, count: Int? = nil) -> some View {
+        let n = count ?? model.counts[view.countKey] ?? 0
         return Button { go(view) } label: {
             HStack {
                 Label(title ?? view.title, systemImage: view.systemImage)

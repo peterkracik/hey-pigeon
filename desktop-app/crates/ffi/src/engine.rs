@@ -281,6 +281,48 @@ impl Engine {
         }))
     }
 
+    /// The thread's Gmail draft (its newest DRAFT message), fetched from
+    /// Gmail for the composer. None when the thread holds no draft.
+    pub async fn load_draft(&self, thread_id: String) -> Result<Option<DraftContent>, EngineError> {
+        let Some(thread) = self.store.get_thread(&thread_id)? else {
+            return Ok(None);
+        };
+        let messages = self.store.list_messages(&thread_id)?;
+        let is_draft = |m: &domain::Message| m.label_ids.iter().any(|l| l == "DRAFT");
+        let Some(message) = messages.iter().rev().find(|m| is_draft(m)) else {
+            return Ok(None);
+        };
+        let fetched = {
+            let provider = self.provider.read().await;
+            provider.get_draft(&thread.account_id, &message.id).await
+        };
+        let d = match fetched {
+            Ok(d) => d,
+            Err(MailError::AuthExpired) => {
+                self.mark_disconnected(&thread.account_id);
+                return Err(MailError::AuthExpired.into());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        // A reply draft sits in the thread it answers; a new message is alone.
+        let reply_to_thread = messages
+            .iter()
+            .any(|m| !is_draft(m))
+            .then(|| thread_id.clone());
+        Ok(Some(DraftContent {
+            message_id: d.message_id,
+            account_id: thread.account_id,
+            to: d.to,
+            cc: d.cc,
+            bcc: d.bcc,
+            subject: d.subject,
+            body_text: d.body_text,
+            body_html: d.body_html,
+            attachments: d.attachments.into_iter().map(Into::into).collect(),
+            reply_to_thread,
+        }))
+    }
+
     // ------------------------------------------------------------ writes
 
     /// Apply a mutation locally now (the row changes before this returns),

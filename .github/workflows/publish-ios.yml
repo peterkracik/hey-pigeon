@@ -24,7 +24,8 @@ name: publish-ios
 # One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
 # in App Store Connect; create the ASC API key; export the distribution
 # certificate as .p12; for EAS, create an expo.dev project and a token.
-# Provisioning profiles are created on the fly by Xcode cloud signing.
+# The App Store provisioning profile is created/refreshed by fastlane sigh
+# through the ASC key on every run (manual signing; no device needed).
 
 on:
   push:
@@ -55,6 +56,8 @@ concurrency:
 env:
   SCHEME: HeyPigeon
   BUNDLE_ID: app.heypigeon.ios
+  # Name of the App Store provisioning profile sigh creates/refreshes.
+  PROFILE_NAME: HeyPigeon AppStore
   ARCHIVE: ios-app/build/HeyPigeon.xcarchive
   EXPORT_DIR: ios-app/build/export
 
@@ -152,6 +155,10 @@ jobs:
           security list-keychain -d user -s "$keychain" login.keychain-db
           rm -f "$RUNNER_TEMP/dist.p12"
           security find-identity -v -p codesigning "$keychain"
+          # SHA-1 of the imported identity: what xcodebuild signs with (manual signing).
+          sha="$(security find-identity -v -p codesigning "$keychain" | awk 'NR==1 {print $2}')"
+          test -n "$sha" || { echo "no code-signing identity in the imported .p12" >&2; exit 1; }
+          echo "CERT_SHA=$sha" >> "$GITHUB_ENV"
 
       - name: Install App Store Connect API key
         env:
@@ -183,6 +190,32 @@ jobs:
           echo "App Store Connect key installed ($form, $(wc -c < "$key") bytes)"
           echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
 
+      # Automatic signing would archive with a *development* profile, which
+      # needs a registered device. Manual signing with an App Store profile
+      # needs none: fastlane's `sigh` creates/refreshes it through the App
+      # Store Connect key and installs it for xcodebuild.
+      - name: Fetch App Store provisioning profile
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          LC_ALL: en_US.UTF-8
+          LANG: en_US.UTF-8
+        run: |
+          set -euo pipefail
+          python3 - "$ASC_KEY_PATH" "${{ secrets.ASC_API_KEY_ID }}" "${{ secrets.ASC_API_ISSUER_ID }}" > "$RUNNER_TEMP/asc.json" <<'PY'
+          import json, sys
+          json.dump({"key_id": sys.argv[2], "issuer_id": sys.argv[3], "key": open(sys.argv[1]).read(), "in_house": False}, sys.stdout)
+          PY
+          chmod 600 "$RUNNER_TEMP/asc.json"
+          fastlane sigh \
+            --api_key_path "$RUNNER_TEMP/asc.json" \
+            --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+            --app_identifier "$BUNDLE_ID" \
+            --provisioning_name "$PROFILE_NAME" \
+            --force \
+            --output_path "$RUNNER_TEMP/profiles" \
+            --filename "AppStore.mobileprovision"
+          rm -f "$RUNNER_TEMP/asc.json"
+
       - name: Archive
         working-directory: ios-app
         run: |
@@ -193,12 +226,10 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$GITHUB_WORKSPACE/$ARCHIVE" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
+            CODE_SIGN_IDENTITY="$CERT_SHA" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}"
 
@@ -211,7 +242,11 @@ jobs:
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
             <key>destination</key><string>export</string>
-            <key>signingStyle</key><string>automatic</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>$CERT_SHA</string>
+            <key>provisioningProfiles</key><dict>
+              <key>$BUNDLE_ID</key><string>$PROFILE_NAME</string>
+            </dict>
             <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
             <key>uploadSymbols</key><true/>
             <key>manageAppVersionAndBuildNumber</key><false/>
@@ -220,11 +255,7 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath "$ARCHIVE" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
-            -exportPath "$EXPORT_DIR" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}"
+            -exportPath "$EXPORT_DIR"
           ls -la "$EXPORT_DIR"
           echo "IPA=$(ls "$EXPORT_DIR"/*.ipa | head -1)" >> "$GITHUB_ENV"
 

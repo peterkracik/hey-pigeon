@@ -60,9 +60,10 @@ GitHub environment `ios` (synced there from Doppler):
 2. **Signing**: an *Apple Distribution* certificate as `.p12`
    (`IOS_DISTRIBUTION_CERTIFICATE_P12` base64 + its password). The certificate
    is per team, so reuse the one EAS already manages for the other apps:
-   `eas credentials -p ios` → Distribution Certificate → Download. Provisioning
-   profiles are created by Xcode cloud signing at build time, nothing to
-   upload.
+   `eas credentials -p ios` → Distribution Certificate → Download. The App
+   Store provisioning profile is created and refreshed by fastlane `sigh`
+   through the API key on every run (manual signing, no device needed);
+   nothing to upload.
 3. **Google**: the iOS OAuth client id in `HEYPIGEON_IOS_OAUTH_CLIENT_ID`
    (same idea as the baked-in desktop client).
 4. **Expo** (default uploader only): a project on expo.dev

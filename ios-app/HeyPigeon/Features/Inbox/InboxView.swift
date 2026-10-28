@@ -1,6 +1,7 @@
 // The list screens behind the tab bar. No title: two glass circles on top
-// (sidebar, compose), the list starts right under them, and the account
-// filter floats above the tab bar as a glass pill. One screen type serves
+// (sidebar, compose), the list starts right under them, and the label
+// filter floats above the tab bar as a glass pill. Accounts live in the
+// sidebar. One screen type serves
 // Inbox, Scheduled and Need reply; Search is its own screen.
 
 import SwiftUI
@@ -42,7 +43,7 @@ struct MailListScreen: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if model.accounts.count > 1 { AccountSplitBar() }
+                if tab == .inbox && !model.labels.isEmpty { LabelSplitBar() }
             }
             .refreshable { await model.sync() }
             .navigationDestination(for: ThreadRow.self) { row in
@@ -87,16 +88,17 @@ struct SearchScreen: View {
     }
 }
 
-/// Floating account filter (desktop 0/1/2) above the tab bar.
-struct AccountSplitBar: View {
+/// Floating label filter above the tab bar: Inbox, then the Gmail labels
+/// (Superhuman's "splits"). Accounts switch in the sidebar.
+struct LabelSplitBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
-                segment(nil, title: "All", count: model.accounts.count, dot: nil)
-                ForEach(model.accounts) { a in
-                    segment(a.id, title: a.displayName, count: nil, dot: Theme.tagForeground(a.color))
+                segment(.inbox, title: "Inbox")
+                ForEach(model.labels) { l in
+                    segment(.label(id: l.id, name: l.name), title: l.name)
                 }
             }
             .padding(4)
@@ -106,16 +108,17 @@ struct AccountSplitBar: View {
         .padding(.bottom, 6)
     }
 
-    private func segment(_ id: String?, title: String, count: Int?, dot: Color?) -> some View {
-        let on = model.selectedAccountId == id
+    private func segment(_ view: MailView, title: String) -> some View {
+        let on = model.tab == .inbox && model.folder == view
+        let count = model.counts[view.countKey] ?? 0
         return Button {
-            model.selectedAccountId = id
+            model.tab = .inbox
+            model.folder = view
             Haptics.light()
         } label: {
             HStack(spacing: 6) {
-                if let dot { Circle().fill(dot).frame(width: 8, height: 8) }
                 Text(title).font(.subheadline.weight(on ? .bold : .medium))
-                if let count { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
+                if count > 0 { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
             }
             .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, 14).padding(.vertical, 8)
@@ -138,35 +141,31 @@ struct ThreadList: View {
             ForEach(model.groupedRows, id: \.title) { group in
                 Section {
                     ForEach(group.rows) { row in
-                        ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                model.markRead(row)
-                                path.append(row)
-                            }
-                            .listRowInsets(EdgeInsets(top: 7, leading: 20, bottom: 7, trailing: 20))
+                        SwipeableRow(
+                            leading: [
+                                SwipeAction(title: row.isRead ? "Unread" : "Read",
+                                            systemImage: row.isRead ? "envelope.badge" : "envelope.open",
+                                            tint: Theme.navy500) { model.toggleRead(row) },
+                                SwipeAction(title: "Archive", systemImage: "checkmark", tint: Theme.accent) { model.archive(row) },
+                            ],
+                            trailing: [
+                                SwipeAction(title: "Remind", systemImage: "clock", tint: Theme.navy700) { model.pendingRemind = row },
+                                SwipeAction(title: row.needsReply ? "No reply needed" : "Need reply",
+                                            systemImage: "arrowshape.turn.up.left",
+                                            tint: Color(hex: 0x2A6BAE)) { model.toggleNeedsReply(row) },
+                            ]
+                        ) {
+                            ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil)
+                                .padding(.horizontal, 20).padding(.vertical, 7)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    model.markRead(row)
+                                    path.append(row)
+                                }
+                        }
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                             .listRowBackground(Theme.canvas)
                             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                Button { model.archive(row) } label: { Label("Archive", systemImage: "checkmark") }
-                                    .tint(Theme.accent)
-                                Button { model.toggleRead(row) } label: {
-                                    Label(row.isRead ? "Unread" : "Read", systemImage: row.isRead ? "envelope.badge" : "envelope.open")
-                                }
-                                .tint(Theme.navy500)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button { model.pendingRemind = row } label: { Label("Remind", systemImage: "clock") }
-                                    .tint(Theme.navy700)
-                                Button { model.toggleNeedsReply(row) } label: {
-                                    Label("Need reply", systemImage: "arrowshape.turn.up.left")
-                                }
-                                .tint(Theme.navy500)
-                                Menu {
-                                    RowMenu(row: row)
-                                } label: { Label("More", systemImage: "ellipsis") }
-                                .tint(Theme.navy400)
-                            }
                             .contextMenu { RowMenu(row: row) }
                             .onAppear { model.loadMoreIfNeeded(current: row) }
                     }

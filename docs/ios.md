@@ -81,7 +81,7 @@ floating "splits" pill above the tab bar. Here that maps to:
 │   two lines of snippet…                                  │
 │ ─────────────────────────────────────────────────────────│
 │   …                                                      │
-│        ( All 2 · ● Personal · ● Work )                   │  ← account filter pill
+│        ( Inbox 2 · Invoices · Travel · Newsletters )     │  ← label filter pill
 │   (  Inbox  ·  Scheduled  ·  Need reply  )   (🔍)        │  ← tab bar + search
 └──────────────────────────────────────────────────────────┘
 ```
@@ -93,9 +93,10 @@ floating "splits" pill above the tab bar. Here that maps to:
   (All / each account) nested under Inbox, then Starred · Drafts · Sent ·
   Done · Scheduled · Need reply · All mail · Spam · Trash, the Gmail labels,
   Add account and Settings. Picking a folder shows it in the Inbox tab.
-- **The account filter** (desktop `0`/`1`/`2`) is the floating pill above
-  the tab bar: All · Personal · Work, with the account dots. It applies
-  across all tabs and only appears with more than one account.
+- **The label filter** is the floating pill above the tab bar: Inbox, then
+  the Gmail labels (Superhuman's "splits"); one tap switches the list.
+  Accounts (desktop `0`/`1`/`2`) switch in the sidebar, nested under Inbox,
+  and the choice applies across all tabs.
 - **Compose** is the top-right circle. Nothing else lives in the top bar.
 - **Triage chips** (Jev labels + priority) appear inline on rows, not as a
   filter bar; a priority filter can join the account pill later.
@@ -142,21 +143,29 @@ than drawing its own chrome:
 
 ### Gestures (the keyboard map, translated)
 
+Swipes have **two tiers in each direction**: a short drag arms the first
+action, a longer one the second. Each threshold ticks with a haptic and the
+revealed colour and icon change, so what happens on release is never a
+guess. Letting go before the first threshold does nothing.
+
 | Desktop | iOS | Notes |
 | --- | --- | --- |
-| `e` archive | **swipe right, full** | The "check off" moment: accent fill, haptic, row slides out. Undo toast for 5 s. |
-| `u` read/unread | swipe right, short | |
-| `h` remind me | **swipe left, first action** | Opens the Remind sheet (below) |
-| `n` need reply | swipe left, second action | Toggles; row gets the ↩︎ badge |
-| `#` trash, star, labels | swipe left, "…" | Also all in the long-press menu |
+| `u` read/unread | **swipe right, short** | grey |
+| `e` archive | **swipe right, long** | accent pink: the "check off" moment, row slides out, Undo toast for 5 s |
+| `h` remind me | **swipe left, short** | opens the Remind sheet |
+| `n` need reply | **swipe left, long** | blue; toggles, row gets the ↩︎ mark |
+| `#` trash, star, labels | long-press menu | also in the thread's More menu |
 | `enter` open | tap | |
-| `esc` back | back / edge swipe | |
-| `j`/`k` | scroll | After archiving from inside a thread: pop back (default) or advance to the next thread (setting) |
+| `esc` back | back / edge swipe | After archiving from inside a thread: pop back (default) or advance to the next thread (setting) |
+| `j`/`k` | scroll | |
 | `/` search | Search tab | |
 | `cmd+k` palette | long-press a row | Context menu with preview: Archive, Read/Unread, Star, Remind me…, Need reply, Labels…, Trash |
-| `0`/`1`/`2` accounts | avatar chip | |
-| `g i` / `g a` | Inbox tab · title menu | Scheduled and Need reply are tabs |
+| `0`/`1`/`2` accounts | sidebar | |
+| `g i` / `g a` | sidebar · label pill | Scheduled and Need reply are tabs |
 | `?` | — | Not needed; gestures are discoverable |
+
+The tier map lives in one place (`SwipeableRow` call in `InboxView`) so it
+can become a Settings page later.
 
 Multi-select: the native List edit mode (Edit button, or two-finger drag
 down the rows) shows a bottom bar with Archive · Read · Remind · Trash.

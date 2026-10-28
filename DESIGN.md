@@ -335,8 +335,10 @@ is tiny — a few KB:
 | Reminders (`threads.scheduled_at`) — "remind me later" is also a snooze: the inbox query and unread badge skip the thread while `scheduled_at` is in the future; it stays in Scheduled / All mail and resurfaces (with a notification) once due | SQLite, per thread, per account | **yes** — the one that hurts |
 | Need reply flag (`threads.needs_reply`) | SQLite, per thread, per account | yes — same path as reminders (`needs_reply:<thread_id>` keys) |
 | Follow-up marker (`threads.follow_up_since`) — "remind me if no reply", cleared by the sync loop once someone else writes in the thread | SQLite, per thread, per account | yes — same path (`follow_up:<thread_id>` keys) |
-| Prefs: hidden sidebar folders, account color, signature, AI provider + model | localStorage / SQLite | yes |
-| OAuth refresh tokens, AI API key | OS keychain | **no** — each device logs in on its own; AI key pasted per device (or iCloud Keychain, below) |
+| Account name, color, signature | SQLite `accounts` | yes — `account:<field>` keys on the account's own file |
+| Jev triage labels, manual per-thread label edits | SQLite `triage_labels` / `threads` | yes — `triage_label:<id>` (app-wide, random ids) and `thread_triage:<thread_id>` keys; Jev's own results stay local, every device can reclassify |
+| Prefs: hidden sidebar folders, label colours, hover actions, pinned list, auto-summarize, AI model, triage on/off | SQLite `prefs` (localStorage is only the first paint) | yes — `pref:<name>` keys, app-wide |
+| OAuth refresh tokens, AI / Jev API keys | OS keychain | **no** — each device logs in on its own; keys pasted per device (or iCloud Keychain, below); Settings says so |
 
 ### Decision: Google Drive `appDataFolder`, one per connected account
 
@@ -352,9 +354,14 @@ target.
   Setup doc gains one step: enable the Drive API in the GCP project. The folder
   is per OAuth client, so every device must use the same client ID — already true.
 - **Per account, no "anchor" account**: reminders for account A's threads live in
-  A's app data folder. Global prefs are written to *every* account's folder and
-  merged on read. A device with a subset of accounts gets exactly the data it
-  needs, and there is no "which account owns sync" question.
+  A's app data folder, as do A's own settings (name, colour, signature). App-wide
+  state (triage labels, prefs) rides the *first* account's folder — the
+  lexicographically smallest account id, so every device with the same accounts
+  picks the same one without coordination. Remove that account and the next one
+  takes over: the local labels and prefs are re-recorded under its file on the
+  next round (`devsync::seed_app_wide`, the same step that adopts labels and
+  prefs predating their sync keys). A device holding only a subset of the
+  accounts keeps its own app-wide state — the accepted limit of "no server".
 - **One file per device — no write races**: Drive v3 has no `If-Match`
   conditional update, so a single shared file would lose updates. Each device
   writes only its own `state-<device-id>.json`: a map of key → `{value, ts,

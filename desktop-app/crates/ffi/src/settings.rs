@@ -3,18 +3,55 @@
 //! `src-tauri/src/ai.rs` + `autolabel.rs` + `mail::update_account` one to
 //! one so the phone's Settings screen is the desktop's.
 
+use std::sync::Arc;
+
 use heypigeon_adapter_jev::{ClassifyInput, JevClassifier};
 use heypigeon_adapter_openai::OpenAiProvider;
-use heypigeon_core::ports::{AiProvider, ChatMessage, ChatRole, CompletionRequest, Store};
+use heypigeon_core::devsync;
+use heypigeon_core::ports::{
+    AiProvider, ChatMessage, ChatRole, CompletionRequest, SecretStore, Store,
+};
 
 use crate::engine::{Engine, ACCOUNT_COLORS};
 use crate::types::*;
 
 const AI_PROVIDER: &str = "openai";
 const AI_KEY: &str = "ai.openai.api_key";
-const AI_MODEL: &str = "ai.openai.model";
 const JEV_KEY: &str = "triage.jev.api_key";
-const TRIAGE_ENABLED: &str = "triage.enabled";
+/// The selected model and the triage switch are synced preferences
+/// (`pref:ai.model`, `pref:triage.enabled`), not secrets: the keys stay
+/// per device, these choices follow the user. Both lived in the secret
+/// store before settings synced — `migrate_legacy_prefs` moves them once.
+const AI_MODEL_PREF: &str = "ai.model";
+const TRIAGE_ENABLED_PREF: &str = "triage.enabled";
+const LEGACY_AI_MODEL_SECRET: &str = "ai.openai.model";
+const LEGACY_TRIAGE_ENABLED_SECRET: &str = "triage.enabled";
+
+/// One-time move of the two prefs that used to sit in the secret store.
+/// Called from `Engine::open`; a pref already set wins over the legacy
+/// value (it may have arrived from another device).
+pub(crate) fn migrate_legacy_prefs(store: &impl Store, secrets: &dyn SecretStore) {
+    let moves: [(&str, &str, fn(String) -> serde_json::Value); 2] = [
+        (
+            AI_MODEL_PREF,
+            LEGACY_AI_MODEL_SECRET,
+            serde_json::Value::String,
+        ),
+        (TRIAGE_ENABLED_PREF, LEGACY_TRIAGE_ENABLED_SECRET, |raw| {
+            serde_json::Value::Bool(raw == "true")
+        }),
+    ];
+    for (pref, secret, convert) in moves {
+        if let (Ok(None), Ok(Some(raw))) = (store.get_pref(pref), secrets.get(secret)) {
+            match store.set_pref(pref, Some(&convert(raw))) {
+                Ok(()) => {
+                    let _ = secrets.delete(secret);
+                }
+                Err(e) => log::warn!("settings: could not migrate {pref}: {e}"),
+            }
+        }
+    }
+}
 
 /// Threads classified per sync round. Bounded so one large inbox cannot
 /// turn a refresh into a multi-minute Jev round; the next round continues.
@@ -80,7 +117,7 @@ impl Engine {
     /// Update per-account settings: display name, colour (one of the five
     /// tags), signature. `None` leaves a field unchanged.
     pub fn update_account(
-        &self,
+        self: &Arc<Self>,
         account_id: String,
         display_name: Option<String>,
         color: Option<String>,
@@ -97,20 +134,37 @@ impl Engine {
             .into_iter()
             .find(|a| a.id == account_id)
             .ok_or_else(|| EngineError::Invalid(format!("unknown account {account_id}")))?;
+        // Every field that actually changed is recorded for the user's
+        // other devices (`account:<field>` keys on this account's file).
+        let mut changed: Vec<(&str, String)> = Vec::new();
         if let Some(n) = display_name {
             let n = n.trim().to_string();
-            if !n.is_empty() {
-                account.display_name = n;
+            if !n.is_empty() && n != account.display_name {
+                account.display_name = n.clone();
+                changed.push((devsync::ACCOUNT_FIELD_DISPLAY_NAME, n));
             }
         }
         if let Some(c) = color {
-            account.color = c;
+            if c != account.color {
+                account.color = c.clone();
+                changed.push((devsync::ACCOUNT_FIELD_COLOR, c));
+            }
         }
         if let Some(s) = signature {
-            account.signature = s;
+            if s != account.signature {
+                account.signature = s.clone();
+                changed.push((devsync::ACCOUNT_FIELD_SIGNATURE, s));
+            }
+        }
+        if changed.is_empty() {
+            return Ok(());
         }
         self.store.upsert_account(&account)?;
+        for (field, value) in &changed {
+            devsync::record_account_field(&self.store, &account_id, field, value)?;
+        }
         self.notify_threads_updated();
+        self.push_devsync_later(account_id);
         Ok(())
     }
 
@@ -121,7 +175,7 @@ impl Engine {
         Ok(AiStatus {
             configured,
             provider_id: configured.then(|| AI_PROVIDER.to_string()),
-            model: self.secrets.get(AI_MODEL)?,
+            model: self.stored_model()?,
         })
     }
 
@@ -157,16 +211,26 @@ impl Engine {
         Ok(())
     }
 
+    /// Forget this device's key. The model choice stays: it is a synced
+    /// preference shared with the user's other devices, which keep their
+    /// own keys.
     pub fn remove_ai_key(&self, provider_id: String) -> Result<(), EngineError> {
         check_provider(&provider_id)?;
         self.secrets.delete(AI_KEY)?;
-        self.secrets.delete(AI_MODEL)?;
         Ok(())
     }
 
-    pub fn set_ai_model(&self, provider_id: String, model: String) -> Result<(), EngineError> {
+    /// Persist the selected model and push it to the user's other devices.
+    pub fn set_ai_model(
+        self: &Arc<Self>,
+        provider_id: String,
+        model: String,
+    ) -> Result<(), EngineError> {
         check_provider(&provider_id)?;
-        self.secrets.set(AI_MODEL, &model)?;
+        let value = serde_json::Value::String(model);
+        self.store.set_pref(AI_MODEL_PREF, Some(&value))?;
+        devsync::record_pref(&self.store, AI_MODEL_PREF, Some(value))?;
+        self.push_app_wide_later();
         Ok(())
     }
 
@@ -280,52 +344,89 @@ impl Engine {
         Ok(())
     }
 
-    pub fn set_autolabel_enabled(&self, enabled: bool) -> Result<(), EngineError> {
-        self.secrets
-            .set(TRIAGE_ENABLED, if enabled { "true" } else { "false" })?;
+    /// The on/off switch is a synced preference, pushed to the user's
+    /// other devices.
+    pub fn set_autolabel_enabled(self: &Arc<Self>, enabled: bool) -> Result<(), EngineError> {
+        let value = serde_json::Value::Bool(enabled);
+        self.store.set_pref(TRIAGE_ENABLED_PREF, Some(&value))?;
+        devsync::record_pref(&self.store, TRIAGE_ENABLED_PREF, Some(value))?;
+        self.push_app_wide_later();
         Ok(())
     }
 
-    pub fn create_triage_label(&self, name: String) -> Result<TriageLabel, EngineError> {
+    /// Labels are app-wide and sync by id (`triage_label:<id>` on the
+    /// first account's file); the store mints a random id so two devices
+    /// never collide.
+    pub fn create_triage_label(self: &Arc<Self>, name: String) -> Result<TriageLabel, EngineError> {
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(EngineError::Invalid("label name cannot be empty".into()));
         }
-        Ok(self.store.create_triage_label(&name)?.into())
+        let label = self.store.create_triage_label(&name)?;
+        devsync::record_triage_label(&self.store, &label.id, Some(&label.name))?;
+        self.push_app_wide_later();
+        Ok(label.into())
     }
 
-    pub fn rename_triage_label(&self, id: String, new_name: String) -> Result<(), EngineError> {
+    pub fn rename_triage_label(
+        self: &Arc<Self>,
+        id: String,
+        new_name: String,
+    ) -> Result<(), EngineError> {
         let new_name = new_name.trim().to_string();
         if new_name.is_empty() {
             return Err(EngineError::Invalid("label name cannot be empty".into()));
         }
         self.store.rename_triage_label(&id, &new_name)?;
+        devsync::record_triage_label(&self.store, &id, Some(&new_name))?;
+        self.push_app_wide_later();
         Ok(())
     }
 
     /// Deleting a label changes what is on screen (its chips disappear).
-    pub fn delete_triage_label(&self, id: String) -> Result<(), EngineError> {
+    /// The tombstone removes it on the user's other devices too.
+    pub fn delete_triage_label(self: &Arc<Self>, id: String) -> Result<(), EngineError> {
         self.store.delete_triage_label(&id)?;
+        devsync::record_triage_label(&self.store, &id, None)?;
         self.notify_threads_updated();
+        self.push_app_wide_later();
         Ok(())
     }
 
     /// Settings "Reanalyze all emails": every thread becomes stale and the
-    /// next sync rounds reclassify the mailbox gradually.
-    pub fn reanalyze_all_triage(&self) -> Result<(), EngineError> {
+    /// next sync rounds reclassify the mailbox gradually. Manual label pins
+    /// are lifted here and, through their tombstones, on every device.
+    pub fn reanalyze_all_triage(self: &Arc<Self>) -> Result<(), EngineError> {
         self.store.reset_triage()?;
+        devsync::record_reset_triage(&self.store)?;
+        for account in self.store.list_accounts()? {
+            self.push_devsync_later(account.id);
+        }
         Ok(())
     }
 
-    /// Manual label edit from the thread view. Sticky until "Reanalyze".
+    /// Manual label edit from the thread view. Sticky until "Reanalyze";
+    /// the pin travels to the user's other devices (`thread_triage:<id>`
+    /// on the thread's account file). Jev's own results stay local.
     pub fn set_manual_triage_labels(
-        &self,
+        self: &Arc<Self>,
         thread_id: String,
         label_ids: Vec<String>,
     ) -> Result<(), EngineError> {
+        let thread = self
+            .store
+            .get_thread(&thread_id)?
+            .ok_or_else(|| EngineError::Invalid(format!("unknown thread {thread_id}")))?;
         self.store
             .set_manual_triage_labels(&thread_id, &label_ids)?;
+        devsync::record_thread_triage(
+            &self.store,
+            &thread.account_id,
+            &thread_id,
+            Some(&label_ids),
+        )?;
         self.notify_threads_updated();
+        self.push_devsync_later(thread.account_id);
         Ok(())
     }
 }
@@ -333,14 +434,26 @@ impl Engine {
 // Internals — not exported.
 impl Engine {
     fn triage_enabled(&self) -> Result<bool, EngineError> {
-        Ok(self.secrets.get(TRIAGE_ENABLED)?.as_deref() == Some("true"))
+        Ok(self
+            .store
+            .get_pref(TRIAGE_ENABLED_PREF)?
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
+    }
+
+    /// The stored model preference, if any.
+    fn stored_model(&self) -> Result<Option<String>, EngineError> {
+        Ok(self
+            .store
+            .get_pref(AI_MODEL_PREF)?
+            .and_then(|v| v.as_str().map(str::to_string)))
     }
 
     async fn openai_complete(&self, system: &str, user: String) -> Result<String, EngineError> {
         let key = self.secrets.get(AI_KEY)?.ok_or_else(|| {
             EngineError::Invalid("connect an AI provider in Settings first".into())
         })?;
-        let model = self.secrets.get(AI_MODEL)?.unwrap_or_else(|| {
+        let model = self.stored_model()?.unwrap_or_else(|| {
             OpenAiProvider::model_catalog()
                 .into_iter()
                 .next()
@@ -482,8 +595,83 @@ mod tests {
         assert!(e.ai_models("other".into()).is_err());
         e.set_ai_model("openai".into(), "gpt-x".into()).unwrap();
         assert_eq!(e.ai_status().unwrap().model.as_deref(), Some("gpt-x"));
+        // Removing this device's key keeps the (synced) model choice.
         e.remove_ai_key("openai".into()).unwrap();
-        assert!(e.ai_status().unwrap().model.is_none());
+        assert_eq!(e.ai_status().unwrap().model.as_deref(), Some("gpt-x"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_secret_store_prefs_migrate_once() {
+        let (e, dir) = open("migrate");
+        e.secrets.set(LEGACY_AI_MODEL_SECRET, "gpt-old").unwrap();
+        e.secrets.set(LEGACY_TRIAGE_ENABLED_SECRET, "true").unwrap();
+        migrate_legacy_prefs(&e.store, &*e.secrets);
+        assert_eq!(e.ai_status().unwrap().model.as_deref(), Some("gpt-old"));
+        assert!(e.triage_status().unwrap().enabled);
+        assert_eq!(e.secrets.get(LEGACY_AI_MODEL_SECRET).unwrap(), None);
+        assert_eq!(e.secrets.get(LEGACY_TRIAGE_ENABLED_SECRET).unwrap(), None);
+        // A pref already set (synced in from elsewhere) wins over a
+        // lingering legacy value.
+        e.set_ai_model("openai".into(), "gpt-new".into()).unwrap();
+        e.secrets.set(LEGACY_AI_MODEL_SECRET, "gpt-old").unwrap();
+        migrate_legacy_prefs(&e.store, &*e.secrets);
+        assert_eq!(e.ai_status().unwrap().model.as_deref(), Some("gpt-new"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every settings edit lands in the sync map so the next round carries
+    /// it to the user's other devices; prefs come back as JSON text.
+    #[test]
+    fn settings_edits_are_recorded_for_sync() {
+        let (e, dir) = open("record");
+        e.store
+            .upsert_account(&heypigeon_core::domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        let acc = "me@x.com".to_string();
+        e.update_account(acc.clone(), Some("Peter".into()), None, None)
+            .unwrap();
+        let label = e.create_triage_label("Bills".into()).unwrap();
+        e.set_ai_model("openai".into(), "gpt-x".into()).unwrap();
+        e.set_autolabel_enabled(true).unwrap();
+        e.set_pref("swipe_actions".into(), Some("[\"done\",\"delete\"]".into()))
+            .unwrap();
+        assert!(e.set_pref("bad:name".into(), None).is_err());
+        assert!(e
+            .set_pref("pin_list".into(), Some("not json".into()))
+            .is_err());
+
+        let keys: Vec<String> = e
+            .store
+            .sync_entries(&acc)
+            .unwrap()
+            .into_iter()
+            .filter(|en| en.value.is_some())
+            .map(|en| en.key)
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "account:display_name".to_string(),
+                "pref:ai.model".to_string(),
+                "pref:swipe_actions".to_string(),
+                "pref:triage.enabled".to_string(),
+                format!("triage_label:{}", label.id),
+            ]
+        );
+        let prefs = e.get_prefs().unwrap();
+        assert_eq!(prefs["swipe_actions"], "[\"done\",\"delete\"]");
+        assert_eq!(prefs["triage.enabled"], "true");
+        e.set_pref("swipe_actions".into(), None).unwrap();
+        assert!(!e.get_prefs().unwrap().contains_key("swipe_actions"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

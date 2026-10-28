@@ -1,7 +1,7 @@
 // Observable app state: the one object the views read. Owns the engine,
-// the current view/account, the loaded rows, sync state, the preferences
-// the desktop keeps in localStorage, and the undo toast. All mutations go
-// through here so optimistic UI + undo live in one place.
+// the current view/account, the loaded rows, sync state, the synced
+// preferences (engine-backed, like the desktop's), and the undo toast. All
+// mutations go through here so optimistic UI + undo live in one place.
 
 import BackgroundTasks
 import Foundation
@@ -107,22 +107,80 @@ final class AppModel {
     var disconnectedAccountId: String?
     var currentAccount: MailAccount? { accounts.first { $0.id == selectedAccountId } }
 
-    // MARK: Preferences (the desktop keeps these in localStorage)
+    // MARK: Preferences — engine-backed and synced between devices
+    // (DESIGN.md "Cross-device sync": `pref:<name>` keys in the same Drive
+    // channel as reminders; the desktop reads the same names). UserDefaults
+    // only seeds a value the engine has never seen, once, for installs that
+    // predate the sync.
+
+    private enum PrefName {
+        static let pinList = "pin_list"
+        static let autoSummarize = "auto_summarize"
+        /// Separate from the desktop's `hover_actions`: the gesture sets differ.
+        static let swipeActions = "swipe_actions"
+    }
 
     /// Group pinned messages at the top of the inbox.
-    var pinListEnabled: Bool {
-        didSet { UserDefaults.standard.set(pinListEnabled, forKey: "pinListEnabled") }
+    var pinListEnabled = true {
+        didSet { savePref(PrefName.pinList, pinListEnabled) }
     }
     /// Generate AI summaries without a click.
-    var autoSummarize: Bool {
-        didSet { UserDefaults.standard.set(autoSummarize, forKey: "autoSummarize") }
+    var autoSummarize = false {
+        didSet { savePref(PrefName.autoSummarize, autoSummarize) }
     }
     /// Swipe tiers: right short, right long, left short, left long — the
     /// desktop's "Hover actions", translated to the phone's gesture.
-    var swipeActions: [RowAction] {
-        didSet { UserDefaults.standard.set(swipeActions.map(\.rawValue), forKey: "swipeActions") }
+    var swipeActions: [RowAction] = AppModel.defaultSwipeActions {
+        didSet { savePref(PrefName.swipeActions, swipeActions.map(\.rawValue)) }
     }
     static let defaultSwipeActions: [RowAction] = [.read, .done, .remind, .needReply]
+    /// Bumped when another device changed a synced setting; views that
+    /// cache engine status (Settings' AI and Triage sections) reload on it.
+    private(set) var prefsVersion = 0
+    /// True while prefs are being adopted from the engine, so the didSets
+    /// above do not write them straight back.
+    private var adoptingPrefs = false
+
+    private func savePref(_ name: String, _ value: Any) {
+        guard !adoptingPrefs else { return }
+        do { try engine.setPref(name, value) } catch { show("Couldn't save setting: \(error.localizedDescription)") }
+    }
+
+    /// Read the synced prefs; a name the engine has never seen but
+    /// UserDefaults has (a pre-sync install) is migrated in, once.
+    private func loadPrefs() {
+        var prefs = (try? engine.prefs()) ?? [:]
+        let defaults = UserDefaults.standard
+        let legacy: [(name: String, key: String, value: Any?)] = [
+            (PrefName.pinList, "pinListEnabled", defaults.object(forKey: "pinListEnabled") as? Bool),
+            (PrefName.autoSummarize, "autoSummarize", defaults.object(forKey: "autoSummarize") as? Bool),
+            (PrefName.swipeActions, "swipeActions", defaults.stringArray(forKey: "swipeActions")),
+        ]
+        for item in legacy where prefs[item.name] == nil {
+            guard let value = item.value else { continue }
+            guard (try? engine.setPref(item.name, value)) != nil else { continue }
+            prefs[item.name] = value
+            defaults.removeObject(forKey: item.key)
+        }
+        adoptingPrefs = true
+        if let v = prefs[PrefName.pinList] as? Bool { pinListEnabled = v }
+        if let v = prefs[PrefName.autoSummarize] as? Bool { autoSummarize = v }
+        if let raw = prefs[PrefName.swipeActions] as? [String] {
+            let actions = raw.compactMap(RowAction.init(rawValue:))
+            if actions.count == 4 { swipeActions = actions }
+        }
+        adoptingPrefs = false
+    }
+
+    /// Another device changed a synced setting: re-read the prefs, the
+    /// accounts (name, colour, signature), the triage labels and the AI
+    /// model, and tell the views that cache engine status.
+    private func adoptRemoteSettings() {
+        loadPrefs()
+        reloadAccounts()
+        reload()
+        prefsVersion += 1
+    }
 
     private(set) var groupSummaries: [String: GroupSummary] = [:]
     /// The summary sheet, when one is open (slides up like compose).
@@ -130,16 +188,13 @@ final class AppModel {
 
     init(engine: MailEngine) {
         self.engine = engine
-        let d = UserDefaults.standard
-        pinListEnabled = d.object(forKey: "pinListEnabled") as? Bool ?? true
-        autoSummarize = d.bool(forKey: "autoSummarize")
-        let stored = (d.stringArray(forKey: "swipeActions") ?? []).compactMap(RowAction.init(rawValue:))
-        swipeActions = stored.count == 4 ? stored : Self.defaultSwipeActions
         engine.onThreadsUpdated = { [weak self] in self?.reload() }
         engine.onAccountDisconnected = { [weak self] id in
             self?.disconnectedAccountId = id
             self?.reloadAccounts()
         }
+        engine.onPrefsUpdated = { [weak self] in self?.adoptRemoteSettings() }
+        loadPrefs()
         reloadAccounts()
         reload()
     }

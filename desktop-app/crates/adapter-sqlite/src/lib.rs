@@ -207,6 +207,40 @@ const MIGRATIONS: &[&str] = &[
     // `upsert_thread` never touches it; writes go through `set_follow_up`
     // and the cross-device sync map (`follow_up:<thread_id>` keys).
     "ALTER TABLE threads ADD COLUMN follow_up_since INTEGER;",
+    // v15 — settings sync (DESIGN.md "Cross-device sync", issue #17).
+    // `prefs` holds the app-wide JSON preferences that travel between
+    // devices (`pref:<name>` keys); the two that used to live in the secret
+    // store (`ai.openai.model`, `triage.enabled`) migrate in at startup.
+    // Triage label ids become random 128-bit hex instead of AUTOINCREMENT:
+    // labels now sync by id, and two installs both minting "1" would merge
+    // one device's "Bills" into the other's "Work". Existing rows get fresh
+    // ids and every thread's `triage_label_ids` array is rewritten to
+    // match. The UNIQUE(name) constraint goes too — a label created with
+    // the same name on two devices before they ever synced must survive
+    // the merge as two rows (the user deletes one); `create_triage_label`
+    // keeps rejecting duplicates for local creation.
+    "
+    CREATE TABLE prefs (
+        name  TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    CREATE TABLE triage_labels_v15 (
+        id   TEXT PRIMARY KEY,
+        name TEXT COLLATE NOCASE NOT NULL
+    );
+    CREATE TEMP TABLE triage_id_map AS
+      SELECT CAST(id AS TEXT) AS old_id, lower(hex(randomblob(16))) AS new_id, name
+      FROM triage_labels;
+    INSERT INTO triage_labels_v15 (id, name) SELECT new_id, name FROM triage_id_map;
+    UPDATE threads SET triage_label_ids =
+        (SELECT json_group_array(COALESCE(
+            (SELECT m.new_id FROM triage_id_map m WHERE m.old_id = je.value), je.value))
+         FROM json_each(threads.triage_label_ids) je)
+     WHERE triage_label_ids <> '[]';
+    DROP TABLE triage_id_map;
+    DROP TABLE triage_labels;
+    ALTER TABLE triage_labels_v15 RENAME TO triage_labels;
+    ",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -725,9 +759,8 @@ impl Store for SqliteStore {
             let mut stmt =
                 c.prepare("SELECT id, name FROM triage_labels ORDER BY name COLLATE NOCASE")?;
             let rows = stmt.query_map([], |r| {
-                let id: i64 = r.get(0)?;
                 Ok(TriageLabel {
-                    id: id.to_string(),
+                    id: r.get(0)?,
                     name: r.get(1)?,
                 })
             })?;
@@ -736,21 +769,114 @@ impl Store for SqliteStore {
     }
 
     fn create_triage_label(&self, name: &str) -> Result<TriageLabel, StoreError> {
-        self.with(|c| {
-            c.execute(
-                "INSERT INTO triage_labels (name) VALUES (?1)",
+        let exists = self.with(|c| {
+            c.query_row(
+                "SELECT 1 FROM triage_labels WHERE name = ?1",
                 params![name],
+                |_| Ok(()),
+            )
+            .optional()
+        })?;
+        if exists.is_some() {
+            return Err(StoreError(format!("triage label '{name}' already exists")));
+        }
+        self.with(|c| {
+            // Random id, not a counter: labels sync between devices by id
+            // (see the v15 migration note).
+            let id: String = c.query_row(
+                "INSERT INTO triage_labels (id, name) VALUES (lower(hex(randomblob(16))), ?1)
+                 RETURNING id",
+                params![name],
+                |r| r.get(0),
             )?;
-            let id = c.last_insert_rowid();
             // A new label may match mail already synced, not just future
             // mail — make every thread stale so the poller (bounded by its
             // own per-tick cap) gradually reclassifies existing inboxes too.
             c.execute("UPDATE threads SET triage_msg_count = NULL", [])?;
             Ok(TriageLabel {
-                id: id.to_string(),
+                id,
                 name: name.to_string(),
             })
         })
+    }
+
+    /// Cross-device apply: insert under the remote id or rename in place.
+    /// A brand-new row invalidates triage like `create_triage_label`.
+    fn upsert_triage_label(&self, label: &TriageLabel) -> Result<(), StoreError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            let existed = tx
+                .query_row(
+                    "SELECT 1 FROM triage_labels WHERE id = ?1",
+                    params![label.id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            tx.execute(
+                "INSERT INTO triage_labels (id, name) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+                params![label.id, label.name],
+            )?;
+            if !existed {
+                tx.execute("UPDATE threads SET triage_msg_count = NULL", [])?;
+            }
+            tx.commit()
+        })
+    }
+
+    fn clear_manual_triage_labels(&self, thread_id: &ThreadId) -> Result<bool, StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET triage_labels_manual = 0, triage_msg_count = NULL WHERE id = ?1",
+                params![thread_id],
+            )
+        })?;
+        Ok(n > 0)
+    }
+
+    fn get_pref(&self, name: &str) -> Result<Option<serde_json::Value>, StoreError> {
+        let raw: Option<String> = self.with(|c| {
+            c.query_row(
+                "SELECT value FROM prefs WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .optional()
+        })?;
+        raw.map(|v| serde_json::from_str(&v).map_err(err))
+            .transpose()
+    }
+
+    fn set_pref(&self, name: &str, value: Option<&serde_json::Value>) -> Result<(), StoreError> {
+        match value {
+            Some(v) => {
+                let raw = serde_json::to_string(v).map_err(err)?;
+                self.with(|c| {
+                    c.execute(
+                        "INSERT INTO prefs (name, value) VALUES (?1, ?2)
+                         ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+                        params![name, raw],
+                    )
+                    .map(|_| ())
+                })
+            }
+            None => self.with(|c| {
+                c.execute("DELETE FROM prefs WHERE name = ?1", params![name])
+                    .map(|_| ())
+            }),
+        }
+    }
+
+    fn list_prefs(&self) -> Result<Vec<(String, serde_json::Value)>, StoreError> {
+        let rows: Vec<(String, String)> = self.with(|c| {
+            let mut stmt = c.prepare("SELECT name, value FROM prefs ORDER BY name")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect()
+        })?;
+        rows.into_iter()
+            .map(|(n, v)| Ok((n, serde_json::from_str(&v).map_err(err)?)))
+            .collect()
     }
 
     /// Same invalidation `create_triage_label` does, exposed directly for
@@ -768,13 +894,10 @@ impl Store for SqliteStore {
     }
 
     fn rename_triage_label(&self, id: &str, new_name: &str) -> Result<(), StoreError> {
-        let id_num: i64 = id
-            .parse()
-            .map_err(|_| StoreError(format!("invalid triage label id {id}")))?;
         let n = self.with(|c| {
             c.execute(
                 "UPDATE triage_labels SET name = ?2 WHERE id = ?1",
-                params![id_num, new_name],
+                params![id, new_name],
             )
         })?;
         if n == 0 {
@@ -786,12 +909,9 @@ impl Store for SqliteStore {
     /// Remove a triage category locally: drop the row AND strip the id from
     /// every thread's `triage_label_ids` JSON array — mirrors `delete_label`.
     fn delete_triage_label(&self, id: &str) -> Result<(), StoreError> {
-        let id_num: i64 = id
-            .parse()
-            .map_err(|_| StoreError(format!("invalid triage label id {id}")))?;
         self.with(|c| {
             let tx = c.unchecked_transaction()?;
-            tx.execute("DELETE FROM triage_labels WHERE id = ?1", params![id_num])?;
+            tx.execute("DELETE FROM triage_labels WHERE id = ?1", params![id])?;
             tx.execute(
                 "UPDATE threads SET triage_label_ids =
                     (SELECT json_group_array(value) FROM json_each(threads.triage_label_ids)
@@ -2140,6 +2260,205 @@ mod tests {
         let s = store();
         s.create_triage_label("Bills").unwrap();
         assert!(s.create_triage_label("bills").is_err());
+    }
+
+    #[test]
+    fn triage_label_ids_are_random_hex_not_a_counter() {
+        let s = store();
+        let a = s.create_triage_label("Bills").unwrap();
+        let b = s.create_triage_label("Work").unwrap();
+        assert_ne!(a.id, b.id);
+        for id in [&a.id, &b.id] {
+            assert_eq!(id.len(), 32, "{id}");
+            assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
+        }
+        // A second store never mints the same id (the whole point).
+        let other = store();
+        assert_ne!(other.create_triage_label("Bills").unwrap().id, a.id);
+    }
+
+    #[test]
+    fn upsert_triage_label_inserts_by_remote_id_then_renames() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        s.set_thread_triage(&"t1".to_string(), &[], Priority::Low, 1)
+            .unwrap();
+        assert!(s.list_threads_needing_triage(10).unwrap().is_empty());
+        let remote = TriageLabel {
+            id: "remote-id".to_string(),
+            name: "Bills".to_string(),
+        };
+        s.upsert_triage_label(&remote).unwrap();
+        assert_eq!(s.list_triage_labels().unwrap(), vec![remote.clone()]);
+        assert_eq!(
+            s.list_threads_needing_triage(10).unwrap().len(),
+            1,
+            "a new label makes existing mail stale"
+        );
+        s.set_thread_triage(&"t1".to_string(), &[], Priority::Low, 1)
+            .unwrap();
+        s.upsert_triage_label(&TriageLabel {
+            id: "remote-id".to_string(),
+            name: "Receipts".to_string(),
+        })
+        .unwrap();
+        assert_eq!(s.list_triage_labels().unwrap()[0].name, "Receipts");
+        assert!(
+            s.list_threads_needing_triage(10).unwrap().is_empty(),
+            "a rename does not invalidate"
+        );
+        // Same name under a second id (created on another device before
+        // the first sync) is allowed to coexist.
+        s.upsert_triage_label(&TriageLabel {
+            id: "other-id".to_string(),
+            name: "receipts".to_string(),
+        })
+        .unwrap();
+        assert_eq!(s.list_triage_labels().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn clear_manual_triage_labels_lifts_pin_and_marks_stale() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        let bills = s.create_triage_label("Bills").unwrap();
+        let work = s.create_triage_label("Work").unwrap();
+        s.set_manual_triage_labels(&"t1".to_string(), std::slice::from_ref(&work.id))
+            .unwrap();
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&bills.id),
+            Priority::Low,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids,
+            vec![work.id.clone()]
+        );
+        assert!(s.clear_manual_triage_labels(&"t1".to_string()).unwrap());
+        assert!(!s.clear_manual_triage_labels(&"nope".to_string()).unwrap());
+        assert_eq!(
+            s.list_threads_needing_triage(10).unwrap().len(),
+            1,
+            "stale again so Jev takes a fresh pass"
+        );
+        s.set_thread_triage(
+            &"t1".to_string(),
+            std::slice::from_ref(&bills.id),
+            Priority::Low,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids,
+            vec![bills.id]
+        );
+    }
+
+    #[test]
+    fn prefs_round_trip_as_json() {
+        let s = store();
+        assert_eq!(s.get_pref("pin_list").unwrap(), None);
+        assert!(s.list_prefs().unwrap().is_empty());
+        s.set_pref("pin_list", Some(&serde_json::json!(true)))
+            .unwrap();
+        s.set_pref("hover_actions", Some(&serde_json::json!(["pin", "remind"])))
+            .unwrap();
+        s.set_pref("pin_list", Some(&serde_json::json!(false)))
+            .unwrap();
+        assert_eq!(
+            s.get_pref("pin_list").unwrap(),
+            Some(serde_json::json!(false))
+        );
+        assert_eq!(
+            s.list_prefs().unwrap(),
+            vec![
+                (
+                    "hover_actions".to_string(),
+                    serde_json::json!(["pin", "remind"])
+                ),
+                ("pin_list".to_string(), serde_json::json!(false)),
+            ]
+        );
+        s.set_pref("pin_list", None).unwrap();
+        assert_eq!(s.get_pref("pin_list").unwrap(), None);
+        assert_eq!(s.list_prefs().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn v15_migration_remaps_counter_label_ids_on_rows_and_threads() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v15-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v14.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let _ = SqliteStore::init_to(conn, 14).unwrap(); // pre-v15 schema
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (id, email, display_name, color, history_id)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky', 'hist-1')",
+                [],
+            )
+            .unwrap();
+            conn.execute_batch(
+                "INSERT INTO triage_labels (id, name) VALUES (1, 'Bills'), (2, 'Work');
+                 INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                                      is_inbox, is_archived, msg_count, from_summary, last_from_addr,
+                                      labels, has_attachment, triage_label_ids, triage_labels_manual)
+                 VALUES ('t1', 'a1', 'Old row', 'snip', 1000, 1, 1, 0, 1, 'Someone',
+                         'someone@x.com', '[]', 0, '[\"2\",\"1\"]', 1),
+                        ('t2', 'a1', 'Other', 'snip', 900, 1, 1, 0, 1, 'Someone',
+                         'someone@x.com', '[]', 0, '[]', 0);",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v15
+        let labels = s.list_triage_labels().unwrap();
+        let by_name = |n: &str| labels.iter().find(|l| l.name == n).unwrap().id.clone();
+        assert_eq!(labels.len(), 2);
+        assert!(labels.iter().all(|l| l.id.len() == 32), "{labels:?}");
+        let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t1.triage_label_ids, vec![by_name("Work"), by_name("Bills")]);
+        assert!(s
+            .get_thread(&"t2".to_string())
+            .unwrap()
+            .unwrap()
+            .triage_label_ids
+            .is_empty());
+        // The manual pin survived the rewrite.
+        s.set_thread_triage(&"t1".to_string(), &[], Priority::Low, 1)
+            .unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids
+                .len(),
+            2
+        );
+        // New labels after the upgrade get the same shape of id and can be
+        // deleted by it (strip-from-threads still works on TEXT ids).
+        let new = s.create_triage_label("New").unwrap();
+        assert_eq!(new.id.len(), 32);
+        s.delete_triage_label(&by_name("Work")).unwrap();
+        assert_eq!(
+            s.get_thread(&"t1".to_string())
+                .unwrap()
+                .unwrap()
+                .triage_label_ids,
+            vec![by_name("Bills")]
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

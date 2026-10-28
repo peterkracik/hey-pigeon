@@ -11,12 +11,13 @@
 use std::sync::Mutex;
 
 use heypigeon_adapter_jev::{ClassifyInput, JevClassifier};
+use heypigeon_core::devsync;
 use heypigeon_core::domain::{ThreadId, TriageLabel};
 use heypigeon_core::ports::Store;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::mail::{MailState, THREADS_UPDATED};
+use crate::mail::{spawn_app_wide_push, spawn_devsync_push, MailState, THREADS_UPDATED};
 
 /// Threads classified per poll tick. Bounded so one slow/large inbox can't
 /// turn a 30s tick into a multi-minute Jev round; the next tick picks up
@@ -27,8 +28,21 @@ fn key_secret_key() -> &'static str {
     "triage.jev.api_key"
 }
 
-fn enabled_secret_key() -> &'static str {
+/// The on/off switch is a synced preference (`pref:triage.enabled`), not a
+/// secret. It lived in the secret store before settings synced; `init`
+/// moves it over once.
+const ENABLED_PREF: &str = "triage.enabled";
+
+fn legacy_enabled_secret_key() -> &'static str {
     "triage.enabled"
+}
+
+fn autolabel_enabled(store: &impl Store) -> Result<bool, String> {
+    Ok(store
+        .get_pref(ENABLED_PREF)
+        .map_err(estr)?
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
 }
 
 fn estr(e: impl std::fmt::Display) -> String {
@@ -51,6 +65,20 @@ pub fn init(app: &tauri::App) {
         classifying: Mutex::new(false),
         last_error: Mutex::new(None),
     });
+    // One-time move of the on/off flag out of the secret store (where it
+    // never belonged) into the synced prefs. Runs after `mail::init`.
+    let mail = app.state::<MailState>();
+    if let (Ok(None), Ok(Some(raw))) = (
+        mail.store.get_pref(ENABLED_PREF),
+        mail.secrets.get(legacy_enabled_secret_key()),
+    ) {
+        let enabled = serde_json::Value::Bool(raw == "true");
+        if let Err(e) = mail.store.set_pref(ENABLED_PREF, Some(&enabled)) {
+            log::warn!("triage: could not migrate the enabled flag: {e}");
+        } else {
+            let _ = mail.secrets.delete(legacy_enabled_secret_key());
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -66,12 +94,7 @@ pub fn autolabel_status(
     astate: State<'_, AutolabelState>,
 ) -> Result<TriageStatus, String> {
     let configured = matches!(mail.secrets.get(key_secret_key()), Ok(Some(_)));
-    let enabled = mail
-        .secrets
-        .get(enabled_secret_key())
-        .map_err(estr)?
-        .as_deref()
-        == Some("true");
+    let enabled = autolabel_enabled(&mail.store)?;
     Ok(TriageStatus {
         configured,
         enabled,
@@ -99,14 +122,21 @@ pub fn remove_jev_key(mail: State<'_, MailState>) -> Result<(), String> {
     mail.secrets.delete(key_secret_key()).map_err(estr)
 }
 
-/// Small local preference, not a secret \u2014 reuses `SecretStore`'s generic
-/// key/value shape rather than a new SQLite migration for one flag (mirrors
-/// `ai::set_ai_model`).
+/// Small preference, not a secret — stored with the other synced prefs and
+/// pushed to the user's other devices (mirrors `ai::set_ai_model`).
 #[tauri::command]
-pub fn set_autolabel_enabled(mail: State<'_, MailState>, enabled: bool) -> Result<(), String> {
-    mail.secrets
-        .set(enabled_secret_key(), if enabled { "true" } else { "false" })
-        .map_err(estr)
+pub fn set_autolabel_enabled(
+    app: AppHandle,
+    mail: State<'_, MailState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let value = serde_json::Value::Bool(enabled);
+    mail.store
+        .set_pref(ENABLED_PREF, Some(&value))
+        .map_err(estr)?;
+    devsync::record_pref(&mail.store, ENABLED_PREF, Some(value)).map_err(estr)?;
+    spawn_app_wide_push(app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -114,8 +144,12 @@ pub fn list_triage_labels(mail: State<'_, MailState>) -> Result<Vec<TriageLabel>
     mail.store.list_triage_labels().map_err(estr)
 }
 
+/// Labels are app-wide and sync by id (`triage_label:<id>` on the first
+/// account's file) — the store mints a random id so two devices never
+/// collide.
 #[tauri::command]
 pub fn create_triage_label(
+    app: AppHandle,
     mail: State<'_, MailState>,
     name: String,
 ) -> Result<TriageLabel, String> {
@@ -123,11 +157,15 @@ pub fn create_triage_label(
     if name.is_empty() {
         return Err("label name cannot be empty".to_string());
     }
-    mail.store.create_triage_label(&name).map_err(estr)
+    let label = mail.store.create_triage_label(&name).map_err(estr)?;
+    devsync::record_triage_label(&mail.store, &label.id, Some(&label.name)).map_err(estr)?;
+    spawn_app_wide_push(app);
+    Ok(label)
 }
 
 #[tauri::command]
 pub fn rename_triage_label(
+    app: AppHandle,
     mail: State<'_, MailState>,
     id: String,
     new_name: String,
@@ -136,11 +174,17 @@ pub fn rename_triage_label(
     if new_name.is_empty() {
         return Err("label name cannot be empty".to_string());
     }
-    mail.store.rename_triage_label(&id, &new_name).map_err(estr)
+    mail.store
+        .rename_triage_label(&id, &new_name)
+        .map_err(estr)?;
+    devsync::record_triage_label(&mail.store, &id, Some(&new_name)).map_err(estr)?;
+    spawn_app_wide_push(app);
+    Ok(())
 }
 
 /// Deleting a label changes what's already rendered (its chips disappear
 /// from every thread that had it) — worth a refresh, unlike create/rename.
+/// The tombstone removes it on the user's other devices too.
 #[tauri::command]
 pub fn delete_triage_label(
     app: AppHandle,
@@ -148,23 +192,34 @@ pub fn delete_triage_label(
     id: String,
 ) -> Result<(), String> {
     mail.store.delete_triage_label(&id).map_err(estr)?;
+    devsync::record_triage_label(&mail.store, &id, None).map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
+    spawn_app_wide_push(app);
     Ok(())
 }
 
 /// Settings "Reanalyze all emails": force every thread stale so the next
 /// poll ticks reclassify the whole mailbox, gradually (bounded by
 /// `TRIAGE_BATCH` per tick). Doesn't clear existing labels/priority — old
-/// values stay visible until each thread's turn comes up.
+/// values stay visible until each thread's turn comes up. Manual label
+/// pins are lifted here and, through their tombstones, on every other
+/// device.
 #[tauri::command]
-pub fn reanalyze_all_triage(mail: State<'_, MailState>) -> Result<(), String> {
-    mail.store.reset_triage().map_err(estr)
+pub fn reanalyze_all_triage(app: AppHandle, mail: State<'_, MailState>) -> Result<(), String> {
+    mail.store.reset_triage().map_err(estr)?;
+    devsync::record_reset_triage(&mail.store).map_err(estr)?;
+    for account in mail.store.list_accounts().map_err(estr)? {
+        spawn_devsync_push(app.clone(), account.id);
+    }
+    Ok(())
 }
 
 /// User-driven label edit (footer "+" menu / badge × in the UI). Sticky:
 /// pins these labels so the next auto-classification leaves them alone
 /// (only "Reanalyze all emails" lifts the pin) — Peter's decision: manual
 /// edits are not fed back into future Jev requests, just persisted as-is.
+/// The pin travels to the user's other devices (`thread_triage:<id>` on
+/// the thread's account file); Jev's own results stay local.
 #[tauri::command]
 pub fn set_manual_triage_labels(
     app: AppHandle,
@@ -172,10 +227,23 @@ pub fn set_manual_triage_labels(
     thread_id: ThreadId,
     label_ids: Vec<String>,
 ) -> Result<(), String> {
+    let thread = mail
+        .store
+        .get_thread(&thread_id)
+        .map_err(estr)?
+        .ok_or_else(|| format!("unknown thread {thread_id}"))?;
     mail.store
         .set_manual_triage_labels(&thread_id, &label_ids)
         .map_err(estr)?;
+    devsync::record_thread_triage(
+        &mail.store,
+        &thread.account_id,
+        &thread_id,
+        Some(&label_ids),
+    )
+    .map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
+    spawn_devsync_push(app, thread.account_id);
     Ok(())
 }
 
@@ -210,13 +278,7 @@ pub async fn classify_pending(app: &AppHandle) {
 
 async fn classify_pending_inner(app: &AppHandle) -> Result<usize, String> {
     let mail = app.state::<MailState>();
-    let enabled = mail
-        .secrets
-        .get(enabled_secret_key())
-        .map_err(estr)?
-        .as_deref()
-        == Some("true");
-    if !enabled {
+    if !autolabel_enabled(&mail.store)? {
         return Ok(0);
     }
     let Some(api_key) = mail.secrets.get(key_secret_key()).map_err(estr)? else {

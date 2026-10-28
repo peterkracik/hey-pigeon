@@ -17,7 +17,7 @@ terraform {
   #   terraform init -migrate-state \
   #     -backend-config="bucket=<state_bucket output>" -backend-config="prefix=bootstrap"
   # and uncomment:
-  # backend "gcs" {}
+  backend "gcs" {}
 }
 
 provider "google" {

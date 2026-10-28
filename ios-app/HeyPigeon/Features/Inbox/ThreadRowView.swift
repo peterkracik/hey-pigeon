@@ -18,6 +18,13 @@ struct ThreadRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
+                // Unified view: the account dot sits at the text's left edge
+                // and only the sender moves right; subject and snippet below
+                // stay aligned with the dot.
+                if showAccountDot, let a = account {
+                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 8, height: 8)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                }
                 Text(row.fromSummary)
                     .font(Theme.sender(!row.isRead))
                     .foregroundStyle(tone)
@@ -27,9 +34,6 @@ struct ThreadRowView: View {
                 }
                 Spacer(minLength: 8)
                 trailingMarks
-                if showAccountDot, let a = account {
-                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
-                }
                 Text(timeText)
                     .font(.footnote)
                     .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)

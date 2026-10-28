@@ -231,9 +231,10 @@ struct ThreadList: View {
                                     path.append(row)
                                 }
                         }
+                        .padding(.bottom, 1) // the gap between rows, canvas showing through
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                         .listRowBackground(Color.clear)
-                        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                        .listRowSeparator(.hidden)
                         .contextMenu { RowMenu(row: row) }
                         .onAppear { model.loadMoreIfNeeded(current: row) }
                     }

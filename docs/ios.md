@@ -102,8 +102,10 @@ floating "splits" pill above the tab bar. Here that maps to:
 - **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
   Last 7 days · Older. Scheduled buckets by due date; Need reply has no
   Pinned group.
-- **Rows:** unread rows sit on the card surface in primary text with the
-  dot; read rows sink into the canvas in the secondary tone.
+- **Rows:** flat, edge to edge, one colour. Unread is a bar on the left
+  edge (white on dark, the accent on light) and the bold sender. In the
+  unified view the sender's first letter takes the account colour — no
+  dot, no avatar.
 - **The title** sits between the two circles: folder, unread count and —
   with more than one account — the account's dot and name. Tapping it
   switches account (All · each). Search stays in the bottom-right circle,
@@ -307,7 +309,7 @@ Not an M1 goal, but the structure above does not have to change for it.
 | Reminder notifications | Posted from the poll loop | **Local notifications**, scheduled ahead from `list_scheduled()` on every sync (next 7 days, replaced wholesale each time). Works fully offline, no server. Follow-ups cancel on the next sync that sees a reply. |
 | Mail HTML | Sandboxed iframe, CSP | `WKWebView` with scripts off, CSP meta, remote images blocked, links to Safari VC. Same sanitized HTML. |
 | Attachments | Disk LRU cache | Same core logic; cache in the app container, relative paths. |
-| Cross-device state | Drive `appDataFolder` | Identical — the same adapter runs; reminders and flags set on the phone show on the Mac within a poll. |
+| Cross-device state | Drive `appDataFolder` | Identical — the same adapter runs; reminders, flags, account name/colour/signature, triage labels and prefs (`pref:<name>`: pinned list, auto-summarize, swipe actions, AI model, triage switch) set on the phone show on the Mac within a poll, and back. `AppModel` prefs are engine-backed (`prefs()` / `setPref`); UserDefaults only seeds a pre-sync install's values once. API keys stay in each device's keychain. |
 | Distribution | Signed DMG via CI | Personal: Xcode run on device / TestFlight. The App Store is not a goal. |
 | Bring-your-own OAuth | `~/.config/heypigeon/oauth.json` or CI-baked | `ios-app/Config/Local.xcconfig` (git-ignored) with the iOS client id; the reversed id becomes the URL scheme in Info.plist. |
 

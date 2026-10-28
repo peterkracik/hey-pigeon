@@ -32,6 +32,11 @@ pub trait EngineListener: Send + Sync {
     fn on_threads_updated(&self);
     /// Fires once per transition of an account into the disconnected state.
     fn on_account_disconnected(&self, account_id: String);
+    /// A sync round applied settings written on another device: account
+    /// name/colour/signature, triage labels, prefs (`get_prefs`), the AI
+    /// model or the triage switch. Re-read them. Never fires for this
+    /// device's own edits, so it cannot race the optimistic UI.
+    fn on_prefs_updated(&self);
 }
 
 #[derive(Default)]
@@ -82,6 +87,7 @@ impl Engine {
             client_secret: oauth.client_secret,
         };
         let provider = GmailProvider::new(oauth_client.clone(), Arc::clone(&secrets));
+        crate::settings::migrate_legacy_prefs(&store, &*secrets);
 
         let disconnected: HashSet<AccountId> = store
             .list_accounts()?
@@ -339,6 +345,46 @@ impl Engine {
         Ok(())
     }
 
+    /// App-wide preferences (pinned list, swipe actions, auto-summarize…)
+    /// as `name → JSON text`. The store is the truth and the values travel
+    /// between the user's devices (`pref:<name>` keys on the first
+    /// account's file); the shell keeps nothing of its own beyond a
+    /// one-time migration of what it stored before. Missing = never set.
+    pub fn get_prefs(&self) -> Result<HashMap<String, String>, EngineError> {
+        self.store
+            .list_prefs()?
+            .into_iter()
+            .map(|(name, value)| {
+                serde_json::to_string(&value)
+                    .map(|v| (name, v))
+                    .map_err(|e| EngineError::Store(e.to_string()))
+            })
+            .collect()
+    }
+
+    /// Set (`value_json` = JSON text) or clear (`None`) one preference and
+    /// push it to the user's other devices. Never a secret: API keys and
+    /// tokens stay in this device's keychain.
+    pub fn set_pref(
+        self: &Arc<Self>,
+        name: String,
+        value_json: Option<String>,
+    ) -> Result<(), EngineError> {
+        let name = name.trim().to_string();
+        if name.is_empty() || name.contains(':') {
+            return Err(EngineError::Invalid(format!("invalid pref name {name:?}")));
+        }
+        let value: Option<serde_json::Value> = value_json
+            .map(|v| serde_json::from_str::<serde_json::Value>(&v))
+            .transpose()
+            .map_err(|e| EngineError::Invalid(format!("pref {name} is not JSON: {e}")))?
+            .filter(|v| !v.is_null());
+        self.store.set_pref(&name, value.as_ref())?;
+        devsync::record_pref(&self.store, &name, value)?;
+        self.push_app_wide_later();
+        Ok(())
+    }
+
     /// Forget an account: its rows, its labels and its refresh token. If
     /// push is on, the relay registration and the Gmail watch go first
     /// (best effort — the lease expires on its own within 7 days anyway).
@@ -502,6 +548,13 @@ impl Engine {
 
 // Internals — not exported.
 impl Engine {
+    pub(crate) fn notify_prefs_updated(&self) {
+        let listener = self.listener.lock().unwrap().clone();
+        if let Some(l) = listener {
+            l.on_prefs_updated();
+        }
+    }
+
     pub(crate) fn notify_threads_updated(&self) {
         if let Some(l) = self.listener.lock().unwrap().clone() {
             l.on_threads_updated();
@@ -611,19 +664,35 @@ impl Engine {
         if auth_expired {
             self.mark_disconnected(account_id);
         }
-        result.unwrap_or(false)
+        let applied = result.unwrap_or_default();
+        if applied.settings > 0 {
+            self.notify_prefs_updated();
+        }
+        applied.any()
     }
 
     /// One small upload so a second device sees a reminder/flag on its next
     /// poll instead of after ours. Runs on the engine's runtime.
-    fn push_devsync_later(self: &Arc<Self>, account_id: AccountId) {
+    pub(crate) fn push_devsync_later(self: &Arc<Self>, account_id: AccountId) {
         let engine = Arc::clone(self);
         // Outside a runtime (plain sync call from Swift) there is nothing
         // to spawn on; the next sync round pushes it instead.
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                engine.devsync_account(&account_id).await;
+                if engine.devsync_account(&account_id).await {
+                    engine.notify_threads_updated();
+                }
             });
+        }
+    }
+
+    /// `push_devsync_later` for the account whose file carries the
+    /// app-wide keys (triage labels, prefs) — `devsync::app_wide_account`.
+    pub(crate) fn push_app_wide_later(self: &Arc<Self>) {
+        match devsync::app_wide_account(&self.store) {
+            Ok(Some(account_id)) => self.push_devsync_later(account_id),
+            Ok(None) => {}
+            Err(e) => log::warn!("devsync: cannot pick the app-wide account: {e}"),
         }
     }
 }

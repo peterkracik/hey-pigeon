@@ -92,6 +92,8 @@ pub fn run() {
             mail::remove_account,
             mail::update_label,
             mail::delete_label,
+            mail::get_prefs,
+            mail::set_pref,
             ai::ai_status,
             ai::ai_models,
             ai::set_ai_key,

@@ -8,6 +8,7 @@ import HeyPigeonCore
 final class RustEngine: MailEngine {
     var onThreadsUpdated: (() -> Void)?
     var onAccountDisconnected: ((String) -> Void)?
+    var onPrefsUpdated: (() -> Void)?
 
     private let engine: Engine
     private var listener: Listener?
@@ -34,6 +35,9 @@ final class RustEngine: MailEngine {
         }
         func onAccountDisconnected(accountId: String) {
             Task { @MainActor [weak owner] in owner?.onAccountDisconnected?(accountId) }
+        }
+        func onPrefsUpdated() {
+            Task { @MainActor [weak owner] in owner?.onPrefsUpdated?() }
         }
     }
 
@@ -120,6 +124,29 @@ final class RustEngine: MailEngine {
     func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws {
         try engine.updateAccount(accountId: id, displayName: displayName, color: color?.rawValue, signature: signature)
     }
+
+    // MARK: Prefs — JSON text over the FFI (Engine::get_prefs / set_pref)
+
+    func prefs() throws -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (name, json) in try engine.getPrefs() {
+            guard let data = json.data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+            else { continue }
+            out[name] = value
+        }
+        return out
+    }
+
+    func setPref(_ name: String, _ value: Any?) throws {
+        var json: String?
+        if let value {
+            let data = try JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed)
+            json = String(decoding: data, as: UTF8.self)
+        }
+        try engine.setPref(name: name, valueJson: json)
+    }
+
 
     func removeAccount(id: String) async throws {
         try await engine.removeAccount(accountId: id)

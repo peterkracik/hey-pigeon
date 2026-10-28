@@ -6,9 +6,14 @@
 use std::sync::Arc;
 
 use heypigeon_adapter_openai::OpenAiProvider;
-use heypigeon_core::ports::{AiProvider, ChatMessage, ChatRole, CompletionRequest, SecretStore};
+use heypigeon_core::devsync;
+use heypigeon_core::ports::{
+    AiProvider, ChatMessage, ChatRole, CompletionRequest, SecretStore, Store,
+};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
+
+use crate::mail::{spawn_app_wide_push, MailState};
 
 /// Kept terse and blunt on purpose — a chatty assistant reply would land
 /// straight in the compose body otherwise (no post-processing beyond trim).
@@ -16,8 +21,10 @@ const EDIT_SYSTEM_PROMPT: &str = "You are an email writing assistant. You may be
 
 /// Group summaries render in a fixed-height collapsible block in the inbox
 /// list (never a scrolling essay), so brevity is enforced in the prompt
-/// itself rather than truncated after the fact.
-const SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, giving them a quick heads-up on their active (not yet done) emails. Talk directly to them, warm and casual — e.g. \"You've got an invoice from...\" or \"Sarah followed up on...\" — first or second person, never a detached report. Return at most 3 short lines, one per notable item or theme; merge similar emails into one line. Plain text only: no markdown, no headers, no bullet characters, no preamble. If nothing is worth calling out, say so in one friendly line (e.g. \"Nothing urgent here.\").";
+/// itself rather than truncated after the fact. The output is a tiny
+/// markdown subset (`- ` bullets, `**bold**`) that `SummaryText.svelte`
+/// renders — the prompt and the renderer must agree on exactly that subset.
+const SUMMARY_SYSTEM_PROMPT: &str = "You write a factual digest of the user's active (not yet done) emails. Informational only: state what each email is and what it contains, in a neutral third-person tone. No greetings, no opinions, no advice, no questions, no chit-chat.\n\nFormat rules:\n- Return 1 to 4 bullet points, each on its own line starting with \"- \".\n- One bullet per notable email or theme; merge similar emails into one bullet (e.g. \"3 newsletters\").\n- Keep each bullet to one short sentence or fragment.\n- Wrap the key facts in **double asterisks** for bold: sender or company names, amounts, dates, deadlines, order or invoice numbers.\n- Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.\n- If nothing is notable, return a single bullet: \"- Nothing notable.\"";
 
 /// One email's contribution to a group summary — subject + snippet only,
 /// never the full body (same privacy posture as Jev triage in
@@ -33,7 +40,8 @@ pub struct SummaryItem {
 /// Thread summaries render in the same fixed-height block as group
 /// summaries, but recap turns in ONE conversation rather than digest many
 /// separate emails — different framing needs a different system prompt.
-const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, recapping an email conversation so they can skip reading every message. Talk directly to them, warm and casual — e.g. \"Sarah's asking for the invoice, and Priya already sent the draft.\" Return at most 3 short lines covering who said what and where things currently stand. Plain text only: no markdown, no headers, no bullet characters, no preamble.";
+/// Same markdown subset as `SUMMARY_SYSTEM_PROMPT`.
+const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You write a factual recap of one email conversation so the reader does not have to read every message. Informational only: who said what, what was asked, what was agreed, and the current state. Neutral, report-style tone; refer to the user (labelled \"Me\" in the transcript) as \"you\". No greetings, no opinions, no advice, no questions, no chit-chat.\n\nFormat rules:\n- Return 1 to 4 bullet points, each on its own line starting with \"- \".\n- Keep each bullet to one short sentence or fragment.\n- The last bullet states the current status or open item (e.g. **Waiting on** a reply, a **deadline**, a **decision**).\n- Wrap the key facts in **double asterisks** for bold: people's names, amounts, dates, deadlines, decisions.\n- Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.";
 
 /// Draft replies land straight in the reply editor, so the output must be
 /// the reply body and nothing else. The transcript labels the user's own
@@ -87,6 +95,22 @@ pub struct AiState {
 
 pub fn init(app: &tauri::App, secrets: Arc<dyn SecretStore + Send + Sync>) {
     app.manage(AiState { secrets });
+    // One-time move of the selected model out of the secret store into the
+    // synced prefs. Runs after `mail::init`.
+    let mail = app.state::<MailState>();
+    if let (Ok(None), Ok(Some(model))) = (
+        mail.store.get_pref(MODEL_PREF),
+        mail.secrets.get(&legacy_model_secret_key("openai")),
+    ) {
+        if let Err(e) = mail
+            .store
+            .set_pref(MODEL_PREF, Some(&serde_json::Value::String(model)))
+        {
+            log::warn!("ai: could not migrate the selected model: {e}");
+        } else {
+            let _ = mail.secrets.delete(&legacy_model_secret_key("openai"));
+        }
+    }
 }
 
 fn estr(e: impl std::fmt::Display) -> String {
@@ -97,8 +121,33 @@ fn key_secret_key(provider_id: &str) -> String {
     format!("ai.{provider_id}.api_key")
 }
 
-fn model_secret_key(provider_id: &str) -> String {
+/// The selected model is a synced preference (`pref:ai.model`), not a
+/// secret: the key stays per device, the model choice follows the user.
+const MODEL_PREF: &str = "ai.model";
+
+fn legacy_model_secret_key(provider_id: &str) -> String {
     format!("ai.{provider_id}.model")
+}
+
+/// Stored model preference, if any (never the provider default — callers
+/// decide what "unset" means for them).
+fn stored_model(store: &impl Store) -> Result<Option<String>, String> {
+    Ok(store
+        .get_pref(MODEL_PREF)
+        .map_err(estr)?
+        .and_then(|v| v.as_str().map(str::to_string)))
+}
+
+/// Model to run completions with: the preference, else the first
+/// (recommended) entry of the provider's catalog.
+fn selected_model(store: &impl Store) -> Result<String, String> {
+    Ok(stored_model(store)?.unwrap_or_else(|| {
+        OpenAiProvider::model_catalog()
+            .into_iter()
+            .next()
+            .map(|m| m.id)
+            .unwrap_or_default()
+    }))
 }
 
 /// One entry in an `AiProvider::models()` list, over the wire.
@@ -118,14 +167,14 @@ pub struct AiStatus {
 /// Whether an AI provider is configured, and which model is selected —
 /// never returns the stored key itself.
 #[tauri::command]
-pub fn ai_status(state: State<'_, AiState>) -> Result<AiStatus, String> {
+pub fn ai_status(
+    state: State<'_, AiState>,
+    mail: State<'_, MailState>,
+) -> Result<AiStatus, String> {
     // Only "openai" exists today; check it explicitly rather than a loop
     // over a provider registry that doesn't exist yet either.
     let configured = matches!(state.secrets.get(&key_secret_key("openai")), Ok(Some(_)));
-    let model = state
-        .secrets
-        .get(&model_secret_key("openai"))
-        .map_err(estr)?;
+    let model = stored_model(&mail.store)?;
     Ok(AiStatus {
         configured,
         provider_id: configured.then(|| "openai".to_string()),
@@ -175,37 +224,39 @@ pub async fn set_ai_key(
     }
 }
 
+/// Forget this device's key. The model choice is left alone: it is a
+/// synced preference shared with the user's other devices, which keep
+/// their own keys.
 #[tauri::command]
 pub fn remove_ai_key(state: State<'_, AiState>, provider_id: String) -> Result<(), String> {
     match provider_id.as_str() {
-        "openai" => {
-            state
-                .secrets
-                .delete(&key_secret_key("openai"))
-                .map_err(estr)?;
-            state
-                .secrets
-                .delete(&model_secret_key("openai"))
-                .map_err(estr)
-        }
+        "openai" => state
+            .secrets
+            .delete(&key_secret_key("openai"))
+            .map_err(estr),
         other => Err(format!("unknown AI provider {other}")),
     }
 }
 
-/// Persist the selected model (a small local preference, not a secret —
-/// reuses the SecretStore's generic key/value shape rather than a new
-/// SQLite migration for one string).
+/// Persist the selected model (a small preference, not a secret) and push
+/// it to the user's other devices.
 #[tauri::command]
 pub fn set_ai_model(
-    state: State<'_, AiState>,
+    app: AppHandle,
+    mail: State<'_, MailState>,
     provider_id: String,
     model: String,
 ) -> Result<(), String> {
     match provider_id.as_str() {
-        "openai" => state
-            .secrets
-            .set(&model_secret_key("openai"), &model)
-            .map_err(estr),
+        "openai" => {
+            let value = serde_json::Value::String(model);
+            mail.store
+                .set_pref(MODEL_PREF, Some(&value))
+                .map_err(estr)?;
+            devsync::record_pref(&mail.store, MODEL_PREF, Some(value)).map_err(estr)?;
+            spawn_app_wide_push(app);
+            Ok(())
+        }
         other => Err(format!("unknown AI provider {other}")),
     }
 }
@@ -218,6 +269,7 @@ pub fn set_ai_model(
 #[tauri::command]
 pub async fn ai_edit_text(
     state: State<'_, AiState>,
+    mail: State<'_, MailState>,
     provider_id: String,
     instruction: String,
     text: String,
@@ -238,17 +290,7 @@ pub async fn ai_edit_text(
                 .get(&key_secret_key("openai"))
                 .map_err(estr)?
                 .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
-            let model = state
-                .secrets
-                .get(&model_secret_key("openai"))
-                .map_err(estr)?
-                .unwrap_or_else(|| {
-                    OpenAiProvider::model_catalog()
-                        .into_iter()
-                        .next()
-                        .map(|m| m.id)
-                        .unwrap_or_default()
-                });
+            let model = selected_model(&mail.store)?;
             let mut user_content = String::new();
             if let Some(h) = history.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
                 user_content.push_str("Conversation so far (oldest first):\n");
@@ -287,6 +329,7 @@ pub async fn ai_edit_text(
 #[tauri::command]
 pub async fn ai_summarize_group(
     state: State<'_, AiState>,
+    mail: State<'_, MailState>,
     provider_id: String,
     items: Vec<SummaryItem>,
 ) -> Result<String, String> {
@@ -300,17 +343,7 @@ pub async fn ai_summarize_group(
                 .get(&key_secret_key("openai"))
                 .map_err(estr)?
                 .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
-            let model = state
-                .secrets
-                .get(&model_secret_key("openai"))
-                .map_err(estr)?
-                .unwrap_or_else(|| {
-                    OpenAiProvider::model_catalog()
-                        .into_iter()
-                        .next()
-                        .map(|m| m.id)
-                        .unwrap_or_default()
-                });
+            let model = selected_model(&mail.store)?;
             let req = CompletionRequest {
                 model,
                 messages: vec![
@@ -341,6 +374,7 @@ pub async fn ai_summarize_group(
 #[tauri::command]
 pub async fn ai_summarize_thread(
     state: State<'_, AiState>,
+    mail: State<'_, MailState>,
     provider_id: String,
     subject: String,
     items: Vec<ThreadSummaryItem>,
@@ -355,17 +389,7 @@ pub async fn ai_summarize_thread(
                 .get(&key_secret_key("openai"))
                 .map_err(estr)?
                 .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
-            let model = state
-                .secrets
-                .get(&model_secret_key("openai"))
-                .map_err(estr)?
-                .unwrap_or_else(|| {
-                    OpenAiProvider::model_catalog()
-                        .into_iter()
-                        .next()
-                        .map(|m| m.id)
-                        .unwrap_or_default()
-                });
+            let model = selected_model(&mail.store)?;
             let req = CompletionRequest {
                 model,
                 messages: vec![
@@ -397,6 +421,7 @@ pub async fn ai_summarize_thread(
 #[tauri::command]
 pub async fn ai_draft_reply(
     state: State<'_, AiState>,
+    mail: State<'_, MailState>,
     provider_id: String,
     subject: String,
     history: String,
@@ -412,17 +437,7 @@ pub async fn ai_draft_reply(
                 .get(&key_secret_key("openai"))
                 .map_err(estr)?
                 .ok_or_else(|| "connect an AI provider in Settings first".to_string())?;
-            let model = state
-                .secrets
-                .get(&model_secret_key("openai"))
-                .map_err(estr)?
-                .unwrap_or_else(|| {
-                    OpenAiProvider::model_catalog()
-                        .into_iter()
-                        .next()
-                        .map(|m| m.id)
-                        .unwrap_or_default()
-                });
+            let model = selected_model(&mail.store)?;
             let req = CompletionRequest {
                 model,
                 messages: vec![
@@ -449,6 +464,17 @@ pub async fn ai_draft_reply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The prompts and `SummaryText.svelte` share one tiny markdown subset
+    /// ("- " bullets + **bold**); pin that both prompts still ask for it.
+    #[test]
+    fn summary_prompts_ask_for_the_rendered_markdown_subset() {
+        for prompt in [SUMMARY_SYSTEM_PROMPT, THREAD_SUMMARY_SYSTEM_PROMPT] {
+            assert!(prompt.contains("starting with \"- \""));
+            assert!(prompt.contains("**bold**"));
+            assert!(prompt.contains("No headers, no other markdown"));
+        }
+    }
 
     #[test]
     fn build_draft_reply_prompt_includes_subject_history_and_notes() {

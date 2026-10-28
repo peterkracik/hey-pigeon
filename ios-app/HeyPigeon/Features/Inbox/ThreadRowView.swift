@@ -15,19 +15,23 @@ struct ThreadRowView: View {
 
     private var tone: Color { Theme.textPrimary }
 
+    private var senderText: Text {
+        let name = row.fromSummary
+        guard showAccountDot, let a = account, let first = name.first else {
+            return Text(name).foregroundStyle(tone)
+        }
+        return Text(String(first)).foregroundStyle(Theme.tagForeground(a.color))
+            + Text(name.dropFirst()).foregroundStyle(tone)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // Unified view: the account dot sits at the text's left edge
-                // and only the sender moves right; subject and snippet below
-                // stay aligned with the dot.
-                if showAccountDot, let a = account {
-                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 8, height: 8)
-                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                }
-                Text(row.fromSummary)
+                // Unified view: the sender's first letter takes the account
+                // colour. Nothing is added to the row; the mark sits where the
+                // eye lands first.
+                senderText
                     .font(Theme.sender(!row.isRead))
-                    .foregroundStyle(tone)
                     .lineLimit(1)
                 if row.isConversation {
                     Text("\(row.messageCount)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
@@ -47,7 +51,6 @@ struct ThreadRowView: View {
                     .foregroundStyle(tone)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if let p = row.priority { PriorityIndicator(priority: p) }
                 ForEach(triageNames, id: \.self) { name in
                     Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
                 }
@@ -82,7 +85,7 @@ struct ThreadRowView: View {
         HStack(spacing: 6) {
             if row.scheduledAt != nil { mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
             if row.needsReply { mark("arrowshape.turn.up.left") }
-            if row.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(Theme.pin) }
+            if row.isPinned { mark("pin.fill") }
             if row.isDone && model.view != .archive { mark("checkmark") }
         }
     }

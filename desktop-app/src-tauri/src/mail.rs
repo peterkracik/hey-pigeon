@@ -25,6 +25,11 @@ const DELTA_POLL_SECS: u64 = 30;
 /// Focus-triggered delta syncs at most this often.
 const FOCUS_SYNC_MIN_SECS: u64 = 5;
 pub(crate) const THREADS_UPDATED: &str = "threads_updated";
+/// Emitted when a cross-device sync round changed settings here — account
+/// fields, triage labels or prefs written on another device. The webview
+/// re-reads prefs on it (never on `threads_updated`, which fires on every
+/// local edit and would race the optimistic UI). Payload: none.
+pub(crate) const PREFS_UPDATED: &str = "prefs_updated";
 /// Emitted once per transition into the disconnected state, payload
 /// `{ account_id }` — the webview turns it into a toast with a Reconnect
 /// action. Never repeated on every failing poll.
@@ -55,6 +60,11 @@ pub struct MailState {
     last_focus_sync: std::sync::Mutex<std::time::Instant>,
     /// Accounts with a delta sync in flight (focus + interval can overlap).
     syncing: std::sync::Mutex<std::collections::HashSet<AccountId>>,
+    /// Accounts with an edit-triggered devsync push in flight → whether
+    /// another was requested meanwhile. A burst of edits (five prefs
+    /// migrating on first launch, a label renamed twice) becomes one or two
+    /// rounds instead of one per edit.
+    pushing: std::sync::Mutex<std::collections::HashMap<AccountId, bool>>,
     /// thread_id -> scheduled_at already notified, so a due "remind me"
     /// fires once per poll cadence, not on every tick until dismissed.
     /// Re-notifies on reschedule (a changed scheduled_at won't match).
@@ -370,10 +380,7 @@ pub async fn set_schedule(
     let _ = app.emit(THREADS_UPDATED, ());
     // Push straight away — one small upload — so a second device sees the
     // reminder on its next poll instead of after ours.
-    let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        devsync_account(&handle, &thread.account_id).await;
-    });
+    spawn_devsync_push(app, thread.account_id);
     Ok(())
 }
 
@@ -401,10 +408,44 @@ pub async fn set_needs_reply(
     devsync::record_needs_reply(&state.store, &thread.account_id, &thread_id, needs_reply)
         .map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
-    let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        devsync_account(&handle, &thread.account_id).await;
-    });
+    spawn_devsync_push(app, thread.account_id);
+    Ok(())
+}
+
+/// App-wide preferences (pinned list, hover actions, AI model…), as
+/// `{ name: json }`. The store is the truth in live mode; the webview keeps
+/// localStorage only as its first paint and migrates old values in through
+/// `set_pref`. Synced between devices like reminders (`pref:<name>` keys).
+#[tauri::command]
+pub fn get_prefs(
+    state: State<'_, MailState>,
+) -> Result<std::collections::HashMap<String, serde_json::Value>, String> {
+    Ok(state
+        .store
+        .list_prefs()
+        .map_err(estr)?
+        .into_iter()
+        .collect())
+}
+
+/// Set (`value` non-null) or clear (`null`) one preference, and push it to
+/// the user's other devices. Never a secret: keys and tokens stay in the
+/// OS keychain of each device (`SecretStore`).
+#[tauri::command]
+pub fn set_pref(
+    app: AppHandle,
+    state: State<'_, MailState>,
+    name: String,
+    value: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() || name.contains(':') {
+        return Err(format!("invalid pref name {name:?}"));
+    }
+    let value = value.filter(|v| !v.is_null());
+    state.store.set_pref(&name, value.as_ref()).map_err(estr)?;
+    devsync::record_pref(&state.store, &name, value).map_err(estr)?;
+    spawn_app_wide_push(app);
     Ok(())
 }
 
@@ -511,20 +552,38 @@ pub async fn update_account(
         .into_iter()
         .find(|a| a.id == account_id)
         .ok_or_else(|| format!("unknown account {account_id}"))?;
+    // (field key, new value) for every field that actually changed — those
+    // are recorded for the user's other devices (`account:<field>` keys on
+    // this account's own file).
+    let mut changed: Vec<(&str, String)> = Vec::new();
     if let Some(n) = display_name {
         let n = n.trim().to_string();
-        if !n.is_empty() {
-            account.display_name = n;
+        if !n.is_empty() && n != account.display_name {
+            account.display_name = n.clone();
+            changed.push((devsync::ACCOUNT_FIELD_DISPLAY_NAME, n));
         }
     }
     if let Some(c) = color {
-        account.color = c;
+        if c != account.color {
+            account.color = c.clone();
+            changed.push((devsync::ACCOUNT_FIELD_COLOR, c));
+        }
     }
     if let Some(s) = signature {
-        account.signature = s;
+        if s != account.signature {
+            account.signature = s.clone();
+            changed.push((devsync::ACCOUNT_FIELD_SIGNATURE, s));
+        }
+    }
+    if changed.is_empty() {
+        return Ok(());
     }
     state.store.upsert_account(&account).map_err(estr)?;
+    for (field, value) in &changed {
+        devsync::record_account_field(&state.store, &account_id, field, value).map_err(estr)?;
+    }
     let _ = app.emit(THREADS_UPDATED, ());
+    spawn_devsync_push(app, account_id);
     Ok(())
 }
 
@@ -716,26 +775,28 @@ async fn connect_gmail(
     let avatar_url = provider.fetch_profile_photo(&email).await;
 
     let existing = state.store.list_accounts().map_err(estr)?;
-    // Re-connecting an existing account must keep its color stable.
-    let color = existing
-        .iter()
-        .find(|a| a.id == email)
-        .map(|a| a.color.clone())
-        .unwrap_or_else(|| {
-            ACCOUNT_COLORS
-                [existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count() % ACCOUNT_COLORS.len()]
-            .to_string()
-        });
+    // Re-connecting an existing account must keep its settings (color,
+    // name, signature) stable — they are the user's, and synced.
+    let known = existing.iter().find(|a| a.id == email);
+    let color = known.map(|a| a.color.clone()).unwrap_or_else(|| {
+        ACCOUNT_COLORS
+            [existing.iter().filter(|a| a.id != FAKE_ACCOUNT_ID).count() % ACCOUNT_COLORS.len()]
+        .to_string()
+    });
+    let display_name = known
+        .map(|a| a.display_name.clone())
+        .unwrap_or_else(|| email.split('@').next().unwrap_or(&email).to_string());
+    let signature = known.map(|a| a.signature.clone()).unwrap_or_default();
     state
         .store
         .upsert_account(&Account {
             id: email.clone(),
             email: email.clone(),
-            display_name: email.split('@').next().unwrap_or(&email).to_string(),
+            display_name,
             color,
             history_id: None,
             avatar_url,
-            signature: String::new(),
+            signature,
         })
         .map_err(estr)?;
     // Real mail replaces the dev fake account.
@@ -786,10 +847,55 @@ async fn delta_account(handle: AppHandle, account_id: AccountId) -> bool {
     changed || synced
 }
 
+/// Run one cross-device round for `account_id` off the command path (after
+/// a local edit) so the user's other devices see it on their next poll
+/// instead of after ours. Anything the round pulled in gets announced.
+/// Coalesced per account: a push requested while one runs makes it run
+/// once more afterwards (the later round carries every edit so far).
+pub(crate) fn spawn_devsync_push(handle: AppHandle, account_id: AccountId) {
+    {
+        let state = handle.state::<MailState>();
+        let mut pushing = state.pushing.lock().unwrap();
+        if let Some(rerun) = pushing.get_mut(&account_id) {
+            *rerun = true;
+            return;
+        }
+        pushing.insert(account_id.clone(), false);
+    }
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if devsync_account(&handle, &account_id).await {
+                let _ = handle.emit(THREADS_UPDATED, ());
+            }
+            let state = handle.state::<MailState>();
+            let mut pushing = state.pushing.lock().unwrap();
+            match pushing.get_mut(&account_id) {
+                Some(rerun) if *rerun => *rerun = false,
+                _ => {
+                    pushing.remove(&account_id);
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// `spawn_devsync_push` for the account whose file carries the app-wide
+/// keys (triage labels, prefs) — see `devsync::app_wide_account`.
+pub(crate) fn spawn_app_wide_push(handle: AppHandle) {
+    let first = devsync::app_wide_account(&handle.state::<MailState>().store);
+    match first {
+        Ok(Some(account_id)) => spawn_devsync_push(handle, account_id),
+        Ok(None) => {}
+        Err(e) => log::warn!("devsync: cannot pick the app-wide account: {e}"),
+    }
+}
+
 /// One cross-device sync round for one account (Gmail backend only — the
 /// dev fake has no cloud behind it). Records the outcome for Settings and
-/// logs a failure once per distinct cause. Returns whether local rows
-/// changed (a reminder set/cleared on another device).
+/// logs a failure once per distinct cause. Returns whether anything local
+/// changed (a reminder set/cleared, a label or pref edited on another
+/// device); settings changes additionally raise `PREFS_UPDATED`.
 async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
     let state = handle.state::<MailState>();
     let result = {
@@ -843,7 +949,11 @@ async fn devsync_account(handle: &AppHandle, account_id: &AccountId) -> bool {
     if auth_expired {
         mark_disconnected(handle, account_id);
     }
-    result.unwrap_or(false)
+    let applied = result.unwrap_or_default();
+    if applied.settings > 0 {
+        let _ = handle.emit(PREFS_UPDATED, ());
+    }
+    applied.any()
 }
 
 /// Delta-sync every account in parallel; emit `threads_updated` when any
@@ -1081,6 +1191,7 @@ pub fn init(
         backend: RwLock::new(backend),
         last_focus_sync: std::sync::Mutex::new(std::time::Instant::now()),
         syncing: std::sync::Mutex::new(std::collections::HashSet::new()),
+        pushing: std::sync::Mutex::new(std::collections::HashMap::new()),
         notified_reminders: std::sync::Mutex::new(std::collections::HashMap::new()),
         sync_status: std::sync::Mutex::new(std::collections::HashMap::new()),
         disconnected: std::sync::Mutex::new(disconnected),

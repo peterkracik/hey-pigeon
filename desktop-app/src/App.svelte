@@ -27,8 +27,6 @@
     sidebarWidth = w;
     localStorage.setItem("sidebarWidth", String(w));
   }
-  // Frontend-only sidebar prefs (persisted like sidebarWidth): hidden
-  // folder/label keys + per-label color overrides.
   function readJson<T>(key: string, fallback: T): T {
     try {
       return JSON.parse(localStorage.getItem(key) ?? "") as T;
@@ -36,23 +34,45 @@
       return fallback;
     }
   }
+  // Synced prefs (DESIGN.md "Cross-device sync"): hidden sidebar entries,
+  // label colours, hover actions, pinned list, auto-summarize. In live
+  // mode the backend's prefs table is the truth and travels between the
+  // user's devices; localStorage is only the first paint (and the whole
+  // store in browser dev mode). Old installs migrate their localStorage
+  // value into the backend on first launch (loadPrefs). View filters
+  // (sort order, unread-only…) stay local on purpose — transient state.
+  const SYNCED_PREFS = {
+    sidebarHidden: "sidebar_hidden",
+    sidebarLabelColors: "label_colors",
+    hoverActions: "hover_actions",
+    pinListEnabled: "pin_list",
+    autoSummarize: "auto_summarize",
+  } as const satisfies Record<string, ipc.PrefName>;
+  function savePref(localKey: keyof typeof SYNCED_PREFS, value: unknown) {
+    localStorage.setItem(localKey, JSON.stringify(value));
+    if (!ipc.isTauri) return;
+    ipc.setPref(SYNCED_PREFS[localKey], value).catch((e) => {
+      console.error("set pref failed", e);
+      toast("danger", "Could not save setting", String(e));
+    });
+  }
   let hiddenSidebar: string[] = $state(readJson("sidebarHidden", []));
   let labelColors: Record<string, string> = $state(readJson("sidebarLabelColors", {}));
   function hideSidebarItem(key: string) {
     if (!hiddenSidebar.includes(key)) {
       hiddenSidebar = [...hiddenSidebar, key];
-      localStorage.setItem("sidebarHidden", JSON.stringify(hiddenSidebar));
+      savePref("sidebarHidden", hiddenSidebar);
     }
     // Hiding the active view must not leave it open behind a hidden entry.
     if (folder === key) selectFolder("inbox");
   }
   function unhideSidebarItem(key: string) {
     hiddenSidebar = hiddenSidebar.filter((k) => k !== key);
-    localStorage.setItem("sidebarHidden", JSON.stringify(hiddenSidebar));
+    savePref("sidebarHidden", hiddenSidebar);
   }
   function setLabelColor(key: string, tag: string) {
     labelColors = { ...labelColors, [key]: tag };
-    localStorage.setItem("sidebarLabelColors", JSON.stringify(labelColors));
+    savePref("sidebarLabelColors", labelColors);
   }
   // Schedule view filter: everything, or hide completed reminders (the
   // still-outstanding ones are what matter — isolating only-done made no
@@ -213,12 +233,12 @@
   let hoverActions: string[] = $state(readJson("hoverActions", ["delete", "pin", "remind"]));
   function setHoverActions(next: string[]) {
     hoverActions = next;
-    localStorage.setItem("hoverActions", JSON.stringify(hoverActions));
+    savePref("hoverActions", hoverActions);
   }
   let pinListEnabled = $state(readJson("pinListEnabled", true));
   function setPinListEnabled(v: boolean) {
     pinListEnabled = v;
-    localStorage.setItem("pinListEnabled", JSON.stringify(pinListEnabled));
+    savePref("pinListEnabled", pinListEnabled);
   }
   // Opt-in: generate AI summaries (inbox groups + open thread) as soon as
   // they're viewable instead of waiting for an explicit "Summarize" click.
@@ -227,7 +247,50 @@
   let autoSummarize = $state(readJson("autoSummarize", false));
   function setAutoSummarize(v: boolean) {
     autoSummarize = v;
-    localStorage.setItem("autoSummarize", JSON.stringify(autoSummarize));
+    savePref("autoSummarize", autoSummarize);
+  }
+  const isStringArray = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
+  // Adopt the backend's values (startup, and whenever another device
+  // changed one); mirror them into localStorage for the next first paint.
+  function applyPrefs(prefs: Record<string, unknown>) {
+    const hidden = prefs.sidebar_hidden;
+    if (isStringArray(hidden)) {
+      hiddenSidebar = hidden;
+      // Hidden on another device while open here: same rule as hideSidebarItem.
+      if (hiddenSidebar.includes(folder)) selectFolder("inbox");
+    }
+    const colors = prefs.label_colors;
+    if (colors && typeof colors === "object" && !Array.isArray(colors)) {
+      labelColors = Object.fromEntries(
+        Object.entries(colors as Record<string, unknown>).filter((kv): kv is [string, string] => typeof kv[1] === "string"),
+      );
+    }
+    const hover = prefs.hover_actions;
+    if (isStringArray(hover)) hoverActions = hover;
+    if (typeof prefs.pin_list === "boolean") pinListEnabled = prefs.pin_list;
+    if (typeof prefs.auto_summarize === "boolean") autoSummarize = prefs.auto_summarize;
+    for (const [localKey, name] of Object.entries(SYNCED_PREFS)) {
+      if (name in prefs) localStorage.setItem(localKey, JSON.stringify(prefs[name]));
+    }
+  }
+  // Read the synced prefs; a name the backend has never seen but this
+  // install has in localStorage (pre-sync build) is migrated in, once.
+  async function loadPrefs() {
+    const prefs = await ipc.getPrefs();
+    for (const [localKey, name] of Object.entries(SYNCED_PREFS)) {
+      if (name in prefs) continue;
+      const raw = localStorage.getItem(localKey);
+      if (raw === null) continue;
+      try {
+        const value: unknown = JSON.parse(raw);
+        await ipc.setPref(name, value);
+        prefs[name] = value;
+      } catch {
+        // unreadable leftover — the default stands
+      }
+    }
+    applyPrefs(prefs);
   }
   let liveAccounts: Account[] = $state([]);
   // Accounts whose Google grant stopped working (backend `connection_status`).
@@ -451,6 +514,21 @@
         toast("danger", "Refresh failed", String(e));
       });
     }).then((u) => (unsub = u));
+    return () => unsub?.();
+  });
+
+  // Synced prefs: load once, then follow changes made on other devices.
+  // Not re-read on threads_updated — that fires on every local edit and
+  // would race the optimistic state above.
+  $effect(() => {
+    if (!ipc.isTauri) return;
+    const load = () =>
+      loadPrefs().catch((e) => {
+        console.error("prefs load failed", e);
+      });
+    load();
+    let unsub: (() => void) | undefined;
+    ipc.onPrefsUpdated(load).then((u) => (unsub = u));
     return () => unsub?.();
   });
 
@@ -2505,7 +2583,7 @@
     align-items: flex-end;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     z-index: 200;
   }
 </style>

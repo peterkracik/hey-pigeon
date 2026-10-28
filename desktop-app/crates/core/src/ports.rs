@@ -368,6 +368,49 @@ pub trait Store {
         Err(StoreError("triage not supported by this store".into()))
     }
 
+    /// Cross-device apply: insert a label that arrived from another device
+    /// under its own id, or rename the local one with that id. Ids are
+    /// random per label (never a local counter) precisely so two devices
+    /// creating labels independently cannot collide. A new row invalidates
+    /// every thread's triage version like `create_triage_label`. No
+    /// name-uniqueness check here: two devices may each have created a
+    /// "Bills" before ever syncing, and both must survive the merge (the
+    /// user deletes one) rather than one silently losing its threads.
+    fn upsert_triage_label(&self, label: &TriageLabel) -> Result<(), StoreError> {
+        let _ = label;
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    /// Lift one thread's manual label pin (another device ran "Reanalyze
+    /// all") and mark it stale so Jev takes a fresh pass here as well. Its
+    /// labels stay put until that pass lands. Ok(false) = unknown thread.
+    fn clear_manual_triage_labels(&self, thread_id: &ThreadId) -> Result<bool, StoreError> {
+        let _ = thread_id;
+        Err(StoreError("triage not supported by this store".into()))
+    }
+
+    // ---- app-wide preferences ----
+    // Small named JSON values (pinned list, hover actions, AI model…). Not
+    // per account; they reach the user's other devices through the sync
+    // map (`pref:<name>` keys). Secrets never go here — see `SecretStore`.
+    // Default impls keep pre-prefs adapters compiling.
+
+    fn get_pref(&self, name: &str) -> Result<Option<serde_json::Value>, StoreError> {
+        let _ = name;
+        Ok(None)
+    }
+
+    /// Set (`Some`) or remove (`None`) one preference.
+    fn set_pref(&self, name: &str, value: Option<&serde_json::Value>) -> Result<(), StoreError> {
+        let _ = (name, value);
+        Err(StoreError("prefs not supported by this store".into()))
+    }
+
+    /// Every stored preference, sorted by name.
+    fn list_prefs(&self) -> Result<Vec<(String, serde_json::Value)>, StoreError> {
+        Ok(Vec::new())
+    }
+
     /// Threads whose triage is missing or stale: never classified, or a
     /// message arrived since (`msg_count` grew), or a label was added/
     /// removed/renamed since (`create_triage_label` bumps everyone stale).

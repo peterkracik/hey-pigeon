@@ -29,12 +29,12 @@
   <div class="body">
     <div class="title">{title}</div>
     {#if description}
-      <div class="desc">{description}</div>
-    {/if}
-    {#if actionLabel && onAction}
-      <button class="action" onclick={onAction}>{actionLabel}</button>
+      <div class="desc" title={description}>{description}</div>
     {/if}
   </div>
+  {#if actionLabel && onAction}
+    <button class="action" onclick={onAction}>{actionLabel}</button>
+  {/if}
   {#if onClose}
     <button class="close" aria-label="Dismiss" onclick={onClose}>
       <svg width="12" height="12" viewBox="0 0 10 10">
@@ -45,27 +45,30 @@
 </div>
 
 <style>
+  /* Compact single-row layout: several stacked toasts (e.g. archiving a few
+     emails in a row) must not eat the inbox. Description is clamped to one
+     line; hover shows the full text via the title attribute. */
   .toast {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 13px 16px;
-    width: 320px;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px 8px 12px;
+    width: 340px;
     box-sizing: border-box;
     background: var(--surface-inverse);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-lg);
     font-family: var(--font-body);
     box-shadow: var(--shadow-lg);
   }
   .icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     color: var(--text-inverse);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     flex-shrink: 0;
   }
   .body {
@@ -73,15 +76,19 @@
     min-width: 0;
   }
   .title {
-    font-size: var(--text-small);
+    font-size: 12px;
     font-weight: 700;
+    line-height: 1.3;
     color: var(--text-inverse);
   }
   .desc {
-    font-size: var(--text-small);
+    font-size: 12px;
+    line-height: 1.3;
     color: var(--navy-300);
-    margin-top: 2px;
-    overflow-wrap: break-word;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .action {
     border: none;
@@ -89,11 +96,11 @@
     cursor: pointer;
     color: var(--text-primary);
     font-family: var(--font-body);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
-    padding: 5px 12px;
-    margin-top: 8px;
+    padding: 4px 10px;
     border-radius: var(--radius-pill);
+    flex-shrink: 0;
   }
   .action:hover {
     background: var(--navy-200);
@@ -103,6 +110,9 @@
     background: transparent;
     cursor: pointer;
     color: var(--navy-400);
-    padding: 0;
+    padding: 4px;
+    margin: -4px;
+    display: flex;
+    flex-shrink: 0;
   }
 </style>

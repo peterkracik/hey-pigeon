@@ -160,6 +160,9 @@ private struct AccountRow: View {
                 }
             }
         }
+        // Renamed or re-signed on another device while this row is open.
+        .onChange(of: account.displayName) { _, v in name = v }
+        .onChange(of: account.signature) { _, v in if v != signature { signature = v } }
     }
 
     private var syncLine: String {
@@ -168,7 +171,7 @@ private struct AccountRow: View {
         switch s.syncState {
         case "pending": return "Syncing…"
         case "ok": return "On\(last)"
-        case "auth_expired": return "Sign in again to sync reminders"
+        case "auth_expired": return "Sign in again to sync reminders and settings"
         default: return (s.syncDetail ?? "Sync failed") + last
         }
     }
@@ -250,9 +253,10 @@ private struct AISection: View {
         } header: {
             Text("AI")
         } footer: {
-            Text("Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize.")
+            Text("Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
         }
         .task { load() }
+        .onChange(of: model.prefsVersion) { _, _ in load() }
     }
 
     private var modelLabel: String {
@@ -365,9 +369,10 @@ private struct TriageSection: View {
         } header: {
             Text("Triage")
         } footer: {
-            Text("Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. Swipe a label left to remove it.")
+            Text("Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
         }
         .task { load() }
+        .onChange(of: model.prefsVersion) { _, _ in load() }
     }
 
     private func load() { status = try? model.engine.triageStatus() }

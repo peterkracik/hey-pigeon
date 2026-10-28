@@ -303,6 +303,11 @@ struct OAuthStart: Hashable {
 protocol MailEngine: AnyObject {
     var onThreadsUpdated: (() -> Void)? { get set }
     var onAccountDisconnected: ((String) -> Void)? { get set }
+    /// A sync round applied settings written on another device: account
+    /// name/colour/signature, triage labels, prefs, the AI model or the
+    /// triage switch. Re-read them. Never fires for this device's own
+    /// edits, so it cannot race the optimistic UI.
+    var onPrefsUpdated: (() -> Void)? { get set }
 
     func accounts() throws -> [MailAccount]
     func accountStates() throws -> [AccountState]
@@ -322,6 +327,13 @@ protocol MailEngine: AnyObject {
     func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws
     /// Async: with push on, the engine first forgets the device at the relay and stops the Gmail watch.
     func removeAccount(id: String) async throws
+    /// App-wide preferences synced between the user's devices (`pref:<name>`
+    /// keys in the same Drive channel as reminders): the engine's store is
+    /// the truth. Values are JSON-compatible — Bool, String, [String].
+    /// Missing = never set.
+    func prefs() throws -> [String: Any]
+    /// Set (`value` non-nil) or clear (`nil`) one preference.
+    func setPref(_ name: String, _ value: Any?) throws
     func syncAll() async throws -> Bool
     /// One account only (a silent push names the mailbox that changed).
     func syncNow(accountId: String) async throws -> Bool

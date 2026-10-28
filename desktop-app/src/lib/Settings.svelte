@@ -59,15 +59,27 @@
   let confirmingRemoveAi = $state(false);
 
   // Runs once when Settings mounts (the modal creates/destroys this
-  // component per open, so this is effectively "fetch on open").
+  // component per open, so this is effectively "fetch on open"), and again
+  // whenever another device changed a synced setting while it is open.
   if (ipc.isTauri) {
     ipc
       .aiModels(AI_PROVIDER)
       .then((m) => (aiModelOptions = m))
       .catch(() => {});
+  }
+  function loadSyncedStatus() {
+    if (!ipc.isTauri) return;
     ipc
       .aiStatus()
       .then((s) => (aiStatus = s))
+      .catch(() => {});
+    ipc
+      .autolabelStatus()
+      .then((s) => (triageStatus = s))
+      .catch(() => {});
+    ipc
+      .listTriageLabels()
+      .then((l) => (triageLabels = l))
       .catch(() => {});
   }
 
@@ -139,9 +151,11 @@
     aiError = null;
     try {
       await ipc.setAiKey(AI_PROVIDER, key);
-      // Default to the first (cheapest) model on first connect.
+      // Default to the first (cheapest) model on first connect — unless a
+      // model is already chosen (it syncs between devices; a key pasted on
+      // a second device must not reset the choice made on the first).
       const defaultModel = aiModelOptions[0]?.id;
-      if (defaultModel) await ipc.setAiModel(AI_PROVIDER, defaultModel);
+      if (defaultModel && !(await ipc.aiStatus()).model) await ipc.setAiModel(AI_PROVIDER, defaultModel);
       aiStatus = await ipc.aiStatus();
       aiKeyInput = "";
     } catch (e) {
@@ -187,16 +201,13 @@
   let newLabelInput = $state("");
   let labelError: string | null = $state(null);
 
-  if (ipc.isTauri) {
-    ipc
-      .autolabelStatus()
-      .then((s) => (triageStatus = s))
-      .catch(() => {});
-    ipc
-      .listTriageLabels()
-      .then((l) => (triageLabels = l))
-      .catch(() => {});
-  }
+  loadSyncedStatus();
+  $effect(() => {
+    if (!ipc.isTauri) return;
+    let unsub: (() => void) | undefined;
+    ipc.onPrefsUpdated(loadSyncedStatus).then((u) => (unsub = u));
+    return () => unsub?.();
+  });
 
   const triageConfigured = $derived(triageStatus?.configured ?? false);
   const triageEnabled = $derived(triageStatus?.enabled ?? false);
@@ -399,7 +410,7 @@
               {@const sync = syncLine(a.id)}
               <div class="sub-row">
                 <span class="sub-label">Sync</span>
-                <span class="sub-static" title="Reminders sync between your devices via this account's hidden Google Drive app folder.">
+                <span class="sub-static" title="Reminders, flags, account settings, triage labels and preferences sync between your devices via this account's hidden Google Drive app folder. API keys never do.">
                   <span class:warn={sync.warn}>{sync.text}</span>
                   {#if lastSyncLine(a.id)}
                     <span class="sub-muted"> · {lastSyncLine(a.id)}</span>
@@ -432,6 +443,7 @@
       <p>
         Bring your own API key. Email content is sent to the provider only on an explicit AI action \u2014 drafting and
         editing always run on your click; summaries run on your click too, unless you turn on auto-summarize below.
+        The key stays on this device (paste it on each one); the model you pick follows you to your other devices.
       </p>
     </div>
     <div class="group-body">
@@ -500,7 +512,8 @@
         Jev sorts new mail into your own labels below and flags a priority automatically, in the background — subject and
         snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not
         part of Hey Pigeon — see <a href="https://jevtypesafeai.com" rel="noopener noreferrer">jevtypesafeai.com</a> for
-        what it is and how it works.
+        what it is and how it works. The key stays on this device (paste it on each one); your labels and the on/off
+        switch sync to your other devices.
       </p>
     </div>
     <div class="group-body">

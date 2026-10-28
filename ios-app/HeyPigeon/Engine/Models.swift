@@ -369,6 +369,8 @@ protocol MailEngine: AnyObject {
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func search(_ query: String, limit: Int) throws -> [ThreadRow]
     func thread(id: String) async throws -> ThreadDetail?
+    /// One thread's row from the store (no network), whatever list it is in.
+    func threadRow(id: String) throws -> ThreadRow?
 
     func perform(_ action: MailAction, accountId: String) async throws
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws

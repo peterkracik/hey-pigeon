@@ -22,7 +22,12 @@ struct ThreadView: View {
     @State private var replyChoice: ReplyKind?
     @State private var unfolded = false
 
-    private var current: ThreadRow { model.rows.first { $0.id == row.id } ?? detail?.thread ?? row }
+    /// Live from the store (AppModel.openThread), never the copy this view
+    /// was opened with: that one goes stale with the first action.
+    private var current: ThreadRow {
+        if let open = model.openThread, open.id == row.id { return open }
+        return model.rows.first { $0.id == row.id } ?? detail?.thread ?? row
+    }
 
     private var participants: String {
         guard let msgs = detail?.messages else { return row.fromSummary }
@@ -127,6 +132,8 @@ struct ThreadView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { bottomBars }
+        .onAppear { model.showThread(row) }
+        .onDisappear { model.hideThread(row) }
         .task(id: row.id) {
             do {
                 detail = try await model.engine.thread(id: row.id)

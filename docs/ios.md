@@ -231,11 +231,16 @@ Full-screen sheet. From-account picker at the top, defaulting to the account
 that received the thread. Recipient field with People-API suggestions (the
 core already does the lookups). Plain text in v1 — rich text and inline
 images follow once the desktop composer's HTML path is proven on the phone.
-Above the keyboard: a one-row **AI bar** when a provider is configured
-("Draft reply", "Shorter", "Friendlier", "Formal", free instruction) — the
-desktop `Cmd+J` popover, as an input accessory. Attachments via the Photos
-picker and the Files picker; 25 MB guard. Send is optimistic through the
-outbox, with the same retry semantics as desktop.
+The sparkle in the footer (when a provider is configured) opens the AI
+sheet — the desktop `Cmd+J` popover with a second mode: **Edit** (tone and
+edit presets, a free instruction, against the selection or the whole body)
+and **Write** (a brief, or notes for a reply, that the AI turns into the
+whole message; the sheet opens there when the body is empty). Attachments
+via the Photos picker and the Files picker; 25 MB guard. **Send waits 5 s**
+in the toast with Undo — the desktop's deferred commit — and only then goes
+through the outbox, with the same retry semantics as desktop; Undo reopens
+the composer with the draft. Backgrounding the app inside the window sends
+at once rather than risk losing the message.
 
 ### Scheduled, Need reply, Labels
 

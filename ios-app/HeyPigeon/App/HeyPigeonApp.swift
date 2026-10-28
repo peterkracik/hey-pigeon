@@ -32,6 +32,7 @@ struct HeyPigeonApp: App {
                 // Refocusing the app is the strongest "is there new mail?" signal.
                 Task { await model.sync() }
             case .background:
+                model.flushPendingSends()
                 AppModel.scheduleBackgroundRefresh()
             default:
                 break

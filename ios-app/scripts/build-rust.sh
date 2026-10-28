@@ -7,7 +7,11 @@
 #
 # One-time setup:
 #   rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-set -euo pipefail
+#
+# No `set -u`: macOS ships bash 3.2, where expanding an empty array under -u
+# aborts with "unbound variable" (the device-only and simulator-only paths
+# below leave one of the target arrays empty on purpose).
+set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CARGO_DIR="$ROOT/desktop-app"

@@ -61,7 +61,10 @@ jobs:
     needs: relay-test
     environment:
       name: infra
-      url: https://console.cloud.google.com/run?project=${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+      # `secrets` is not an allowed context here (GitHub rejects the whole
+      # workflow), so this stays a plain `vars` lookup; empty if the value
+      # was synced as a secret, which only costs the link's project filter.
+      url: https://console.cloud.google.com/run?project=${{ vars.GCP_PROJECT_ID }}
     # Format + validate always run. Auth, plan and apply need the GitHub
     # variables that exist only after terraform/bootstrap has been applied
     # once (terraform/README.md), and an OIDC identity fork PRs don't have:

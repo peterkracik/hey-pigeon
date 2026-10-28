@@ -207,7 +207,7 @@ reminder* row when one is set. Times respect the user's locale and a
 Pushed onto the stack. The top bar holds the back circle, the other people's
 names and the AI + More circles; the subject sits in the content with one
 line of the list's chips (priority, Jev labels and a "+" to edit them, the
-reminder and need-reply badges) and the message count. Messages are the inbox's rows — sender · time, one
+reminder and need-reply badges as coloured pills) and the message count. Messages are the inbox's rows — sender · time, one
 snippet line, the unread bar on the left edge, 1 pt gaps: latest expanded on
 the card surface, older ones collapsed on the canvas, tap to expand. Past four
 messages the middle folds into one "N earlier messages" row; a run of unread
@@ -226,13 +226,15 @@ messages before the last two stays visible.
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
 - **Two floating bars** replace the tab bar while a thread is open: the
-  Reply pill, and under it, as one glass bar,
-  the triage bar: Archive · Remind · Need reply · Star · Collapse all. Labels,
-  Mark unread, Forward and Trash live in the top-right More menu.
+  Reply pill and the AI circle, and under it, as one glass bar,
+  the triage bar: Done · Remind · Need reply · Pin · Delete. A set toggle
+  shows a filled icon in its state colour (done mint, reminder lavender,
+  need reply sky, pin amber). Labels, Mark unread and Forward live in the
+  top-right More menu.
 - **Reply pill** works like Superhuman's: tapping it runs the default (Reply
   all when others are on the latest message, else Reply), the chevron picks
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
-  the thread), and the AI draft spark sits inside it. There are no action
+  the thread), and the AI draft is its own circle beside it. There are no action
   links under the bodies: an open message's ••• or a long press on any
   message replies to or forwards that one.
 - Thread-level swipe between adjacent threads is deliberately **not** in v1

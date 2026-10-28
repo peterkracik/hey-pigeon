@@ -37,6 +37,9 @@ struct MailListScreen: View {
                     Button { model.showSidebar = true } label: { Image(systemName: "line.3.horizontal") }
                         .accessibilityLabel("Folders and accounts")
                 }
+                // The context the screen was missing: folder, unread count,
+                // and which account — tap to switch account (desktop 0/1/2).
+                ToolbarItem(placement: .principal) { ListTitle(tab: tab) }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { model.composeDraft = SendDraft() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("Compose")
@@ -50,6 +53,65 @@ struct MailListScreen: View {
                 ThreadView(row: row) { path.removeLast() }
             }
         }
+    }
+}
+
+/// Folder title + unread count in the top bar, with the account next to it
+/// when there is more than one. Tapping opens the account switcher.
+struct ListTitle: View {
+    let tab: MainTab
+    @Environment(AppModel.self) private var model
+
+    private var title: String { tab == .inbox ? model.folder.title : tab.title }
+    private var count: Int {
+        switch tab {
+        case .inbox: model.counts[model.folder.countKey] ?? 0
+        case .scheduled: model.scheduledCount
+        case .needReply: model.needReplyCount
+        case .search: 0
+        }
+    }
+
+    var body: some View {
+        Menu {
+            Button {
+                model.selectedAccountId = nil
+            } label: {
+                Label("All accounts", systemImage: model.selectedAccountId == nil ? "checkmark" : "circle.grid.2x2")
+            }
+            ForEach(model.accounts) { a in
+                Button {
+                    model.selectedAccountId = a.id
+                    Haptics.light()
+                } label: {
+                    Label(a.displayName, systemImage: a.id == model.selectedAccountId ? "checkmark" : "circle.fill")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title).font(Theme.display(17, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
+                if count > 0 {
+                    Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                }
+                if model.accounts.count > 1 {
+                    if let a = model.currentAccount {
+                        Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
+                        Text(a.displayName).font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    } else {
+                        HStack(spacing: -2) {
+                            ForEach(model.accounts.prefix(3)) { a in
+                                Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
+                            }
+                        }
+                        Text("All").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                    }
+                    Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+        }
+        .disabled(model.accounts.count < 2)
+        .accessibilityLabel("\(title), \(count) unread. Switch account")
     }
 }
 
@@ -170,6 +232,7 @@ struct ThreadList: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .contentMargins(.top, 0, for: .scrollContent)
         .scrollDismissesKeyboard(.immediately)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
     }

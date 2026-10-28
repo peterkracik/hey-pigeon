@@ -104,7 +104,11 @@ floating "splits" pill above the tab bar. Here that maps to:
   Pinned group.
 - **Rows:** unread rows sit on the card surface in primary text with the
   dot; read rows sink into the canvas in the secondary tone.
-- **Compose** is the top-right circle. Nothing else lives in the top bar.
+- **The title** sits between the two circles: folder, unread count and —
+  with more than one account — the account's dot and name. Tapping it
+  switches account (All · each). Search stays in the bottom-right circle,
+  where iOS 26's own Mail keeps it.
+- **Compose** is the top-right circle.
 - **Triage chips** (Jev labels + priority) appear inline on rows, not as a
   filter bar; a priority filter can join the account pill later.
 - **The thread view hides the tab bar** and shows two floating glass bars in

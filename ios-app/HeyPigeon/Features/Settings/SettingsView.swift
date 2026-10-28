@@ -10,6 +10,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var removing: MailAccount?
+    @AppStorage("appearance") private var appearance = Appearance.system.rawValue
 
     var body: some View {
         @Bindable var model = model
@@ -34,6 +35,12 @@ struct SettingsView: View {
                     Text("Inbox")
                 } footer: {
                     Text("Control how messages are grouped and what each swipe does. A short swipe arms the first action, a longer one the second.")
+                }
+                Section("Appearance") {
+                    Picker("Appearance", selection: $appearance) {
+                        ForEach(Appearance.allCases) { a in Text(a.title).tag(a.rawValue) }
+                    }
+                    .pickerStyle(.segmented)
                 }
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")

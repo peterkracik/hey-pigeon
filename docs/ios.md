@@ -252,6 +252,8 @@ The desktop's sections, same order, same wording:
   bottom pill and the chips on rows; a thread's labels can be edited by hand
   (sticky until Reanalyze).
 - **Inbox** — Pinned list; Swipe actions (the four tiers).
+- **Appearance** — System · Light · Dark (iOS only; the desktop follows
+  the system).
 - **About** — version, links. Updates come through TestFlight / App Store.
 
 ### Compose

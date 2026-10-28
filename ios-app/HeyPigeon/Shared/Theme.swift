@@ -96,6 +96,20 @@ extension Color {
     }
 }
 
+/// Settings › Appearance: follow the system, or force light / dark.
+enum Appearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var scheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 /// The keyboard does not always go away on its own when a sheet closes or
 /// a tab switches; this resigns whatever has focus.
 @MainActor

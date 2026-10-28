@@ -60,6 +60,7 @@ struct HeyPigeonApp: App {
 /// Search — the desktop rail) plus the app-wide sheets and the toast.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @AppStorage("appearance") private var appearance = Appearance.system.rawValue
 
     var body: some View {
         @Bindable var model = model
@@ -83,6 +84,7 @@ struct RootView: View {
         }
         // Liquid Glass tab bar shrinks away while reading, back on scroll up.
         .tabBarMinimizeBehavior(.onScrollDown)
+            .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
             .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
             .sheet(item: $model.pendingRemind, onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }

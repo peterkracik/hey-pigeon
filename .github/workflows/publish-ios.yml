@@ -28,6 +28,10 @@ name: publish-ios
 on:
   push:
     tags: ["ios-v*"]
+    # TEMPORARY while the iOS scaffold gets its first compiles: a manual
+    # dispatch is only possible once this file is on main, so branch pushes
+    # run the build (no upload) instead. Remove before merging.
+    branches: ["claude/confident-lovelace-krjff8"]
   workflow_dispatch:
     inputs:
       uploader:
@@ -208,7 +212,7 @@ jobs:
       # project description to attach the submission to; it is written here at
       # run time so the repo carries nothing Expo-specific.
       - name: Submit to App Store Connect via EAS Submit
-        if: ${{ github.event_name == 'push' || inputs.uploader == 'eas' }}
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.uploader == 'eas' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |

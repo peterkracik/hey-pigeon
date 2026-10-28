@@ -2,7 +2,7 @@
 // (sidebar, compose), the list starts right under them, and the Jev label
 // filter floats above the tab bar as a glass pill. Accounts live in the
 // sidebar. One screen type serves Inbox, Scheduled and Need reply; Search
-// is its own screen.
+// is its own screen (Features/Search).
 
 import SwiftUI
 
@@ -127,42 +127,6 @@ struct ListTitle: View {
     }
 }
 
-/// Search tab: the field is the tab bar's search slot; results use the
-/// same rows and gestures. Operators are Gmail's, exactly as on desktop.
-struct SearchScreen: View {
-    @Environment(AppModel.self) private var model
-    @State private var path: [ThreadRow] = []
-
-    var body: some View {
-        @Bindable var model = model
-        NavigationStack(path: $path) {
-            Group {
-                if model.isSearching && model.groupedRows.isEmpty {
-                    EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
-                } else if model.isSearching {
-                    ThreadList(path: $path)
-                } else {
-                    ContentUnavailableView {
-                        Label("Search your mail", systemImage: "magnifyingglass")
-                            .font(Theme.display(22, relativeTo: .title2))
-                    } description: {
-                        Text("Instant, local, every account. Try  from:priya  ·  has:attachment  ·  is:unread  ·  label:invoices")
-                    }
-                }
-            }
-            .background(Theme.canvas)
-            .navigationTitle("Search")
-            .toolbarTitleDisplayMode(.inline)
-            .toolbar(removing: .title)
-            .searchable(text: $model.searchText, prompt: "from: to: label: is:unread has:attachment")
-            .navigationDestination(for: ThreadRow.self) { row in
-                ThreadView(row: row) { path.removeLast() }
-            }
-            .onChange(of: path) { _, p in if !p.isEmpty { Keyboard.dismiss() } }
-        }
-    }
-}
-
 /// Floating filter above the tab bar: the folder title (no filter), then
 /// the Jev triage labels from Settings — the desktop's label tabs under the
 /// folder title. Accounts switch in the sidebar.
@@ -218,7 +182,8 @@ struct ThreadList: View {
                             trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
                             background: Theme.card
                         ) {
-                            ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil)
+                            ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
+                                          highlight: model.tab == .search ? model.searchTerms : [])
                                 .padding(.horizontal, 16).padding(.vertical, 7)
                                 .contentShape(Rectangle())
                                 // Unread marker: a bar on the left edge, flush with the screen.
@@ -380,7 +345,7 @@ struct EmptyState: View {
                 .font(Theme.display(22, relativeTo: .title2))
         } description: {
             if searching {
-                Text("Try from:, to:, label:, is:unread or has:attachment.")
+                Text("Try other words or remove a filter.")
             } else if let lastSyncAt {
                 Text("Up to date as of \(Formatters.rowTime(lastSyncAt)).")
             } else {

@@ -104,9 +104,28 @@ final class MockEngine: MailEngine {
     }
 
     func search(_ query: String, limit: Int) throws -> [ThreadRow] {
-        let q = query.lowercased()
-        return rows.values
-            .filter { $0.subject.lowercased().contains(q) || $0.fromSummary.lowercased().contains(q) || $0.snippet.lowercased().contains(q) }
+        // The core's operators (core/src/search.rs); mock rows carry no
+        // recipients, so `to:` matches nothing.
+        var list = Array(rows.values)
+        var words: [String] = []
+        for token in query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init) {
+            if token.hasPrefix("from:"), token.count > 5 {
+                let v = token.dropFirst(5)
+                list = list.filter { $0.lastFromAddress.lowercased().contains(v) }
+            } else if token.hasPrefix("to:"), token.count > 3 {
+                list = []
+            } else if token.hasPrefix("account:"), token.count > 8 {
+                let v = token.dropFirst(8)
+                list = list.filter { $0.accountId.lowercased().contains(v) }
+            } else if token == "is:unread" {
+                list = list.filter { !$0.isRead }
+            } else {
+                words.append(token)
+            }
+        }
+        let q = words.joined(separator: " ")
+        return list
+            .filter { q.isEmpty || $0.subject.lowercased().contains(q) || $0.fromSummary.lowercased().contains(q) || $0.snippet.lowercased().contains(q) }
             .sorted { $0.lastMessageAt > $1.lastMessageAt }
             .prefix(limit)
             .map { $0 }

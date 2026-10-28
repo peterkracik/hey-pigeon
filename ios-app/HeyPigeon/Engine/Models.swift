@@ -207,6 +207,48 @@ enum MailView: Hashable {
     ]
 }
 
+/// A person the Search tab filters on (From / To): `address` goes into the
+/// query, `name` is what the filter button shows.
+struct SearchPerson: Hashable, Codable {
+    let name: String
+    let address: String
+}
+
+/// A From / To picker entry: the person and the account they last wrote to.
+struct PersonSuggestion: Identifiable {
+    let person: SearchPerson
+    let accountId: String
+    var id: String { person.address }
+}
+
+/// The Search tab's filter buttons. They compose into the core's operators
+/// (core/src/search.rs: from:, to:, is:unread, account:) so the field only
+/// holds the words the user typed.
+struct SearchFilters: Hashable, Codable {
+    var from: SearchPerson?
+    var to: SearchPerson?
+    var unreadOnly = false
+    var accountId: String?
+
+    var isEmpty: Bool { from == nil && to == nil && !unreadOnly && accountId == nil }
+
+    var operators: [String] {
+        var ops: [String] = []
+        if let from { ops.append("from:\(from.address)") }
+        if let to { ops.append("to:\(to.address)") }
+        if unreadOnly { ops.append("is:unread") }
+        if let accountId { ops.append("account:\(accountId)") }
+        return ops
+    }
+}
+
+/// One entry of the Search tab's "Recent" list (kept on this device).
+struct RecentSearch: Hashable, Codable, Identifiable {
+    var text: String
+    var filters: SearchFilters
+    var id: RecentSearch { self }
+}
+
 /// The bottom bar — the desktop rail, one to one: Inbox · Scheduled · Need reply · Search.
 enum MainTab: Hashable {
     case inbox, scheduled, needReply, search

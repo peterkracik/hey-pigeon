@@ -35,9 +35,7 @@ on:
     # not apply to tag pushes.
     tags: ["ios-v*"]
     # Pushes to main only build, as a compile check, when the iOS app changed.
-    # TEMPORARY: the push-relay PR branch is listed so its Swift changes get
-    # compiled before merge (no pull_request trigger here). Remove at merge.
-    branches: ["main", "claude/charming-euler-zspu0k"]
+    branches: ["main"]
     paths: ["ios-app/**", ".github/workflows/publish-ios.yml"]
   workflow_dispatch:
     inputs:

@@ -48,8 +48,10 @@ few hundred pushes a day does not approach.
    project — its client id is `google_client_ids`. No new scopes: `users.watch`
    works with the `gmail.modify` the app already asks for.
 3. **Apple**: an APNs auth key (Developer → Keys → Apple Push Notifications
-   service): the `.p8` file, its Key ID, and your Team ID. Enable the Push
-   Notifications capability on the App ID `app.heypigeon.ios`.
+   service): the `.p8` file, its Key ID, and your Team ID. The Push
+   Notifications capability on the App ID `app.heypigeon.ios` is enabled by
+   the `publish-ios` workflow through the App Store Connect key; for local
+   device builds enable it once under developer.apple.com → Identifiers.
 4. Locally: `terraform` ≥ 1.9, `gcloud`, and
    `gcloud auth application-default login` as a project owner.
 

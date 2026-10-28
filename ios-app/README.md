@@ -76,9 +76,11 @@ not merge them under one id. No wildcard App ID is needed: automatic
 signing registers the explicit App ID on the first archive.
 
 **Capabilities.** One: **Push Notifications** (`aps-environment` in the
-entitlements XcodeGen writes from `project.yml`; enable it on the App ID
-`app.heypigeon.ios` in the developer portal so the provisioning profile
-carries it). It serves the optional relay only — the app runs fine with the
+entitlements XcodeGen writes from `project.yml`). `publish-ios` enables it
+on the App ID `app.heypigeon.ios` through the App Store Connect key
+(`fastlane produce enable_services`) before fetching the profile, so no
+portal click is needed; for a local device build, enable it once under
+developer.apple.com → Identifiers. It serves the optional relay only — the app runs fine with the
 relay off, using background refresh and local notifications, which are
 Info.plist / permission matters. The Keychain is the app's own, the OAuth
 redirect is a URL scheme. Add App Groups + Keychain Sharing with the first

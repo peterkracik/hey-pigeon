@@ -207,6 +207,16 @@ jobs:
           json.dump({"key_id": sys.argv[2], "issuer_id": sys.argv[3], "key": open(sys.argv[1]).read(), "in_house": False}, sys.stdout)
           PY
           chmod 600 "$RUNNER_TEMP/asc.json"
+          # The App ID must carry Push Notifications (issue #16: aps-environment
+          # in the entitlements) or the profile sigh creates lacks it and the
+          # archive fails before compiling. Idempotent; done through the same
+          # API key, so no portal click is needed.
+          fastlane produce enable_services \
+            --push-notification \
+            --api_key_path "$RUNNER_TEMP/asc.json" \
+            --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+            --app_identifier "$BUNDLE_ID" \
+            || { echo "::error::Could not enable Push Notifications on App ID $BUNDLE_ID through the API. Enable it once by hand: developer.apple.com → Identifiers → $BUNDLE_ID → Push Notifications." >&2; rm -f "$RUNNER_TEMP/asc.json"; exit 1; }
           fastlane sigh \
             --api_key_path "$RUNNER_TEMP/asc.json" \
             --team_id "${{ secrets.APPLE_TEAM_ID }}" \

@@ -204,13 +204,14 @@ reminder* row when one is set. Times respect the user's locale and a
 
 ### Thread view
 
-Pushed onto the stack. The top bar holds the back circle, a glass pill with
-the participants and a More circle; the subject sits in the content with one
-meta line (priority, Jev labels, message count, account), then a status line
-(reminder, need reply). Messages are the inbox's rows — sender · time, one
+Pushed onto the stack. The top bar holds the back circle, the other people's
+names and the AI + More circles; the subject sits in the content with one
+line of the list's chips (priority, Jev labels and a "+" to edit them, the
+reminder and need-reply badges) and the message count. Messages are the inbox's rows — sender · time, one
 snippet line, the unread bar on the left edge, 1 pt gaps: latest expanded on
 the card surface, older ones collapsed on the canvas, tap to expand. Past four
-messages the read middle folds into one "N earlier messages" row.
+messages the middle folds into one "N earlier messages" row; a run of unread
+messages before the last two stays visible.
 
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
@@ -225,7 +226,7 @@ messages the read middle folds into one "N earlier messages" row.
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
 - **Two floating bars** replace the tab bar while a thread is open: the
-  Reply pill next to a new-message circle, and under it
+  Reply pill, and under it, as one glass bar,
   the triage bar: Archive · Remind · Need reply · Star · Collapse all. Labels,
   Mark unread, Forward and Trash live in the top-right More menu.
 - **Reply pill** works like Superhuman's: tapping it runs the default (Reply

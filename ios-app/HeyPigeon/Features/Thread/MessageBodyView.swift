@@ -285,18 +285,32 @@ private struct HTMLView: UIViewRepresentable {
               var c = [], bqs = body.querySelectorAll("blockquote");
               var o = body.querySelector('div[id="mail-editor-reference-message-container"]'); if (o) c.push(o);
               var g = body.querySelector("div.gmail_quote"); if (g) c.push(g);
-              if (bqs.length) c.push(bqs[bqs.length - 1]);
+              if (bqs.length) {
+                // The last blockquote is the innermost of a nested history;
+                // fold from the outermost one around it.
+                var bq = bqs[bqs.length - 1], up;
+                while ((up = bq.parentElement && bq.parentElement.closest("blockquote"))) bq = up;
+                c.push(bq);
+              }
               var q = null;
               for (var i = 0; i < c.length; i++) { if (trailing(c[i])) { q = c[i]; break; } }
               if (!q) return;
               var qt = q.innerText.trim(), bt = body.innerText.trim();
               if (!qt || bt.length <= qt.length) return;
               window.__pigeonQuote = true;
-              // Gmail puts "On … wrote:" in .gmail_attr just before a bare blockquote.
-              var attr = q.previousElementSibling;
-              if (\#(hide ? "true" : "false")) {
-                q.style.display = "none";
-                if (attr && attr.classList.contains("gmail_attr")) attr.style.display = "none";
+              if (!\#(hide ? "true" : "false")) return;
+              q.style.display = "none";
+              // The "On … wrote:" line just before the quote (.gmail_attr, a
+              // <div>, or bare text with <br>s) folds with it.
+              for (var p = q.previousSibling; p; p = p.previousSibling) {
+                var t = (p.textContent || "").trim();
+                if (p.nodeType === 1 && /^br$/i.test(p.tagName)) continue;
+                if (!t) continue;
+                if (t.length < 400 && /wrote:$|napísal\(a\):$|napísal:$|schrieb:$|a écrit :$/i.test(t)) {
+                  if (p.nodeType === 1) p.style.display = "none";
+                  else { var s = document.createElement("span"); s.style.display = "none"; p.parentNode.replaceChild(s, p); s.appendChild(p); }
+                }
+                break;
               }
             })();
             """#

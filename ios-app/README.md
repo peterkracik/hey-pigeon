@@ -23,7 +23,7 @@ ios-app/
 2. Rust targets: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`.
 3. OAuth client: in the same Google Cloud project as the desktop client
    (see [docs/google-oauth-setup.md](../docs/google-oauth-setup.md)), add a
-   second credential of type **iOS**, bundle id `app.heypigeon`. Copy the
+   second credential of type **iOS**, bundle id `app.heypigeon.ios`. Copy the
    client id and its reversed form (Google shows both) into
    `Config/Local.xcconfig` (start from `Local.xcconfig.example`).
 4. `scripts/build-rust.sh` once by hand (it also runs as a pre-build phase).
@@ -52,7 +52,7 @@ git tag ios-v0.1.0 && git push origin ios-v0.1.0
 
 One-time setup, then the secrets listed at the top of the workflow:
 
-1. **App Store Connect**: an app record for bundle id `app.heypigeon`
+1. **App Store Connect**: an app record for bundle id `app.heypigeon.ios`
    (its numeric Apple ID is `ASC_APP_ID`), and an API key with the App
    Manager role (`ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, the `.p8` as base64
    in `ASC_API_KEY_P8`).
@@ -64,6 +64,12 @@ One-time setup, then the secrets listed at the top of the workflow:
    (same idea as the baked-in desktop client).
 4. **Expo** (default uploader only): a project on expo.dev
    (`EXPO_PROJECT_ID`) and an access token (`EXPO_TOKEN`).
+
+**Bundle ids, deliberately two.** iOS is `app.heypigeon.ios`; the Mac app
+stays `app.heypigeon`. They are separate products in App Store Connect
+(separate listings, metadata and review), which is the intended setup — do
+not merge them under one id. No wildcard App ID is needed: automatic
+signing registers the explicit App ID on the first archive.
 
 The upload lands in TestFlight; releasing to the App Store is still the
 "Submit for review" click in App Store Connect — or a later `fastlane

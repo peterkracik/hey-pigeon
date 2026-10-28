@@ -21,12 +21,6 @@ variable "state_bucket_name" {
   default     = ""
 }
 
-variable "create_secret_sync_account" {
-  description = "Create a `secret-sync` service account for an external secret manager (Doppler) to push the APNs key into Secret Manager. Its key is minted by hand (gcloud), never by Terraform."
-  type        = bool
-  default     = false
-}
-
 locals {
   state_bucket = var.state_bucket_name != "" ? var.state_bucket_name : "${var.project_id}-tfstate"
 }

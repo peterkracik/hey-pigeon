@@ -24,8 +24,3 @@ output "relay_build_sa_email" {
 output "project_number" {
   value = local.project_number
 }
-
-output "secret_sync_sa_email" {
-  description = "Set when create_secret_sync_account = true; goes into the root stack's apns_secret_writers."
-  value       = var.create_secret_sync_account ? google_service_account.secret_sync[0].email : null
-}

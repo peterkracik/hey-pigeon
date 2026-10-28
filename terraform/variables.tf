@@ -30,12 +30,6 @@ variable "google_client_ids" {
   type        = list(string)
 }
 
-variable "apns_secret_writers" {
-  description = "IAM members allowed to add versions to the apns-key secret, e.g. a Doppler sync service account: [\"serviceAccount:secret-sync@<project>.iam.gserviceaccount.com\"]. Empty = the key is uploaded by hand with gcloud."
-  type        = list(string)
-  default     = []
-}
-
 variable "node_runtime" {
   description = "Cloud Run functions runtime. Node 20 is end-of-life; 22 is the floor."
   type        = string

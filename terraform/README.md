@@ -76,9 +76,10 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init -backend-config=backend.hcl
 terraform apply
 
-# 4. The APNs key — the only secret, and it never touches Terraform
+# 4. The APNs key — the only secret, and it never touches Terraform.
+#    By hand, or from whatever secret manager you use, as a new version of
+#    the `apns-key` secret Terraform created (raw PEM, -----BEGIN PRIVATE KEY-----).
 gcloud secrets versions add apns-key --data-file=AuthKey_<KEYID>.p8 --project <PROJECT_ID>
-#    …or let Doppler sync it: see "Syncing the key from Doppler" below.
 
 # 5. The relay URL for the app
 terraform output register_token_url
@@ -90,25 +91,6 @@ step 3's apply: `terraform import google_firestore_database.default "(default)"`
 The 60-second `time_sleep` in `functions.tf` exists for this first apply: IAM
 bindings take a moment to propagate and the function create would otherwise
 race them.
-
-### Syncing the key from Doppler
-
-Terraform owns the secret *container* `apns-key`; Doppler only adds versions.
-
-1. `terraform -chdir=terraform/bootstrap apply -var create_secret_sync_account=true`
-   creates `secret-sync@<project>.iam.gserviceaccount.com`.
-2. In `terraform.tfvars`: `apns_secret_writers = ["serviceAccount:<that email>"]`,
-   then `terraform apply` — it gets `roles/secretmanager.admin` on `apns-key`
-   only.
-3. A key for Doppler, by hand (a key is a credential, so not Terraform):
-   `gcloud iam service-accounts keys create doppler-sync.json --iam-account secret-sync@<project>.iam.gserviceaccount.com`,
-   paste it into Doppler's GCP Secret Manager integration, delete the file.
-4. In the Doppler sync, map the Doppler secret holding the raw `.p8` PEM to the
-   **existing** Secret Manager secret named `apns-key`. The function reads
-   `versions/latest` and expects the PEM text as-is (`-----BEGIN PRIVATE KEY-----`).
-
-If Doppler created its own `apns-key` secret before Terraform ran, adopt it
-instead of fighting it: `terraform import google_secret_manager_secret.apns_key projects/<PROJECT_ID>/secrets/apns-key`.
 
 ## CI (`.github/workflows/deploy-relay.yml`)
 

@@ -5,5 +5,3 @@ apns_key_id       = "ABC123DEFG"
 apns_team_id      = "TEAM123456"
 apns_topic        = "app.heypigeon.ios"
 google_client_ids = ["1234567890-abc.apps.googleusercontent.com"] # the iOS OAuth client only
-# Doppler → Secret Manager sync identity (bootstrap output secret_sync_sa_email), or leave empty and upload with gcloud
-# apns_secret_writers = ["serviceAccount:secret-sync@heypigeon-123456.iam.gserviceaccount.com"]

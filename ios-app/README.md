@@ -36,6 +36,39 @@ Fonts: drop `Manrope-Medium.ttf`, `Manrope-Bold.ttf`, `Manrope-ExtraBold.ttf`
 into `HeyPigeon/Resources/Fonts/` for the brand typeface; without them SwiftUI
 silently falls back to the system font.
 
+## Publishing (CI)
+
+`.github/workflows/publish-ios.yml` builds, signs and uploads the app to App
+Store Connect (TestFlight) on every `ios-v*` tag, or by hand from the Actions
+tab. The build is plain `xcodebuild` on a macOS runner — Expo's EAS Build
+cannot compile a native Xcode + Rust project — and the upload goes through
+**EAS Submit** (expo.dev), which accepts any signed IPA. `uploader: xcrun`
+does the same upload with Apple's `altool` and no Expo account; `none` just
+produces the IPA as a workflow artifact.
+
+```sh
+git tag ios-v0.1.0 && git push origin ios-v0.1.0
+```
+
+One-time setup, then the secrets listed at the top of the workflow:
+
+1. **App Store Connect**: an app record for bundle id `app.heypigeon.ios`
+   (its numeric Apple ID is `ASC_APP_ID`), and an API key with the App
+   Manager role (`ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, the `.p8` as base64
+   in `ASC_API_KEY_P8`).
+2. **Signing**: an *Apple Distribution* certificate exported as `.p12`
+   (`IOS_DISTRIBUTION_CERTIFICATE_P12` base64 + its password). Provisioning
+   profiles are created by Xcode cloud signing at build time, nothing to
+   upload.
+3. **Google**: the iOS OAuth client id in `HEYPIGEON_IOS_OAUTH_CLIENT_ID`
+   (same idea as the baked-in desktop client).
+4. **Expo** (default uploader only): a project on expo.dev
+   (`EXPO_PROJECT_ID`) and an access token (`EXPO_TOKEN`).
+
+The upload lands in TestFlight; releasing to the App Store is still the
+"Submit for review" click in App Store Connect — or a later `fastlane
+deliver` step, if that ever becomes a chore.
+
 ## Where things live
 
 | Concern | Place |

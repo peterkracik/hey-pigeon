@@ -1226,7 +1226,10 @@ impl Store for SqliteStore {
             }
             // Nothing changes locally for outgoing mail (no local Sent write
             // — the sent thread lands via the next delta sync).
-            Mutation::Send { .. } => return Ok(()),
+            // Drafts land in the Drafts folder via the next delta sync too.
+            Mutation::Send { .. } | Mutation::SaveDraft { .. } | Mutation::DeleteDraft { .. } => {
+                return Ok(())
+            }
             // Star is sugar over a STARRED label flip; both leave flags alone.
             Mutation::Star { thread_id, starred } => {
                 return self.flip_label(thread_id, "STARRED", *starred);

@@ -141,7 +141,7 @@ final class MockEngine: MailEngine {
         case .star(let id, let starred): update(id) { $0.isStarred = starred }
         case .modifyLabel(let id, let label, let add):
             update(id) { $0.labels = add ? Array(Set($0.labels + [label])) : $0.labels.filter { $0 != label } }
-        case .send: try? await Task.sleep(for: .milliseconds(300))
+        case .send, .saveDraft, .deleteDraft: try? await Task.sleep(for: .milliseconds(300))
         }
         onThreadsUpdated?()
     }

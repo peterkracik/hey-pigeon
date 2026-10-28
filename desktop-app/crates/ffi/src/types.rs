@@ -257,6 +257,23 @@ pub enum Mutation {
         /// Reply threading: thread to attach the message to.
         reply_to_thread: Option<String>,
     },
+    /// Create/update the Gmail draft of an open composer; `key` is the
+    /// composer's stable id.
+    SaveDraft {
+        key: String,
+        to: Vec<String>,
+        cc: Vec<String>,
+        bcc: Vec<String>,
+        subject: String,
+        body_text: String,
+        body_html: Option<String>,
+        attachments: Vec<OutAttachment>,
+        reply_to_thread: Option<String>,
+    },
+    /// Delete the draft saved under `key`; a no-op when there is none.
+    DeleteDraft {
+        key: String,
+    },
 }
 
 impl From<Mutation> for domain::Mutation {
@@ -295,6 +312,28 @@ impl From<Mutation> for domain::Mutation {
                 attachments: attachments.into_iter().map(Into::into).collect(),
                 reply_to_thread,
             },
+            Mutation::SaveDraft {
+                key,
+                to,
+                cc,
+                bcc,
+                subject,
+                body_text,
+                body_html,
+                attachments,
+                reply_to_thread,
+            } => Self::SaveDraft {
+                key,
+                to,
+                cc,
+                bcc,
+                subject,
+                body_text,
+                body_html,
+                attachments: attachments.into_iter().map(Into::into).collect(),
+                reply_to_thread,
+            },
+            Mutation::DeleteDraft { key } => Self::DeleteDraft { key },
         }
     }
 }

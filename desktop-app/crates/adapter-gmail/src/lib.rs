@@ -42,6 +42,9 @@ pub struct GmailProvider {
     photo_cache: Mutex<HashMap<(AccountId, String), Option<String>>>,
     /// Accounts whose People-API search cache was warmed this session.
     photo_warmed: Mutex<std::collections::HashSet<AccountId>>,
+    /// (account, composer draft key) → Gmail draft id, so repeated saves
+    /// update one draft without waiting on Gmail's search index.
+    draft_ids: Mutex<HashMap<(AccountId, String), String>>,
 }
 
 impl GmailProvider {
@@ -53,6 +56,7 @@ impl GmailProvider {
             tokens: Mutex::new(HashMap::new()),
             photo_cache: Mutex::new(HashMap::new()),
             photo_warmed: Mutex::new(std::collections::HashSet::new()),
+            draft_ids: Mutex::new(HashMap::new()),
         }
     }
 
@@ -251,6 +255,27 @@ impl GmailProvider {
         metadata: &serde_json::Value,
         rfc822: &str,
     ) -> Result<(), MailError> {
+        self.upload_rfc822(
+            account_id,
+            reqwest::Method::POST,
+            &format!("{UPLOAD_API}/messages/send?uploadType=multipart"),
+            metadata,
+            rfc822,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Multipart/related upload to any media endpoint (send, drafts),
+    /// returning the response body.
+    async fn upload_rfc822(
+        &self,
+        account_id: &AccountId,
+        method: reqwest::Method,
+        url: &str,
+        metadata: &serde_json::Value,
+        rfc822: &str,
+    ) -> Result<serde_json::Value, MailError> {
         // '-' is not in the base64 alphabet and the inner MIME uses distinct
         // boundary strings, so this outer boundary cannot be forged.
         const B: &str = "hp_rel_7MA4YWxkTrZu0gW";
@@ -260,7 +285,7 @@ impl GmailProvider {
         );
         let resp = self
             .http
-            .post(format!("{UPLOAD_API}/messages/send?uploadType=multipart"))
+            .request(method, url)
             .bearer_auth(token)
             .header(
                 "Content-Type",
@@ -270,7 +295,95 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp).await.map(|_| ())
+        Self::check(resp)
+            .await?
+            .json()
+            .await
+            .map_err(|e| MailError::Provider(e.to_string()))
+    }
+
+    /// The Gmail draft saved under a composer key: the id cached from an
+    /// earlier save, else a search on the Message-ID the draft carries
+    /// (after a restart).
+    async fn find_draft(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+    ) -> Result<Option<String>, MailError> {
+        let cache_key = (account_id.clone(), key.to_string());
+        if let Some(id) = self.draft_ids.lock().await.get(&cache_key) {
+            return Ok(Some(id.clone()));
+        }
+        let mut url = url::Url::parse(&format!("{API}/drafts")).expect("static url");
+        url.query_pairs_mut()
+            .append_pair("q", &format!("rfc822msgid:{}", draft_message_id(key)))
+            .append_pair("maxResults", "1");
+        let list: serde_json::Value = self.get_json(account_id, url.as_str()).await?;
+        Ok(list["drafts"][0]["id"].as_str().map(str::to_string))
+    }
+
+    /// drafts.create / drafts.update with the composer's current content.
+    async fn save_draft(
+        &self,
+        account_id: &AccountId,
+        key: &str,
+        rfc822: &str,
+        reply_to_thread: Option<&ThreadId>,
+    ) -> Result<(), MailError> {
+        let existing = self.find_draft(account_id, key).await?;
+        let mut message = serde_json::json!({});
+        if let Some(tid) = reply_to_thread {
+            message["threadId"] = serde_json::json!(tid);
+        }
+        let (method, url) = match &existing {
+            Some(id) => (
+                reqwest::Method::PUT,
+                format!("{UPLOAD_API}/drafts/{id}?uploadType=multipart"),
+            ),
+            None => (
+                reqwest::Method::POST,
+                format!("{UPLOAD_API}/drafts?uploadType=multipart"),
+            ),
+        };
+        let meta = serde_json::json!({ "message": message });
+        let saved = match self
+            .upload_rfc822(account_id, method, &url, &meta, rfc822)
+            .await
+        {
+            // Deleted elsewhere (e.g. in Gmail) since the last save: start over.
+            Err(e) if existing.is_some() && is_not_found(&e) => {
+                self.draft_ids
+                    .lock()
+                    .await
+                    .remove(&(account_id.clone(), key.to_string()));
+                let url = format!("{UPLOAD_API}/drafts?uploadType=multipart");
+                self.upload_rfc822(account_id, reqwest::Method::POST, &url, &meta, rfc822)
+                    .await?
+            }
+            r => r?,
+        };
+        if let Some(id) = saved["id"].as_str() {
+            self.draft_ids
+                .lock()
+                .await
+                .insert((account_id.clone(), key.to_string()), id.to_string());
+        }
+        Ok(())
+    }
+
+    async fn delete_draft(&self, account_id: &AccountId, key: &str) -> Result<(), MailError> {
+        let Some(id) = self.find_draft(account_id, key).await? else {
+            return Ok(());
+        };
+        match self.delete(account_id, &format!("{API}/drafts/{id}")).await {
+            Err(e) if !is_not_found(&e) => return Err(e),
+            _ => {}
+        }
+        self.draft_ids
+            .lock()
+            .await
+            .remove(&(account_id.clone(), key.to_string()));
+        Ok(())
     }
 
     async fn patch_json(
@@ -1037,6 +1150,35 @@ impl MailProvider for GmailProvider {
             }
             return self.post_upload_rfc822(account_id, &meta, &mime).await;
         }
+        if let Mutation::SaveDraft {
+            key,
+            to,
+            cc,
+            bcc,
+            subject,
+            body_text,
+            body_html,
+            attachments,
+            reply_to_thread,
+        } = mutation
+        {
+            let mut mime = format!("Message-ID: {}\r\n", draft_message_id(key));
+            mime.push_str(&build_mime(
+                to,
+                cc,
+                bcc,
+                subject,
+                body_text,
+                body_html.as_deref(),
+                attachments,
+            ));
+            return self
+                .save_draft(account_id, key, &mime, reply_to_thread.as_ref())
+                .await;
+        }
+        if let Mutation::DeleteDraft { key } = mutation {
+            return self.delete_draft(account_id, key).await;
+        }
         if let Mutation::Trash { thread_id } = mutation {
             return self
                 .post_json(
@@ -1047,7 +1189,7 @@ impl MailProvider for GmailProvider {
                 .await;
         }
         let (thread_id, body) =
-            modify_body(mutation).expect("Send/Trash handled above; rest are label flips");
+            modify_body(mutation).expect("Send/Trash/drafts handled above; rest are label flips");
         self.post_json(
             account_id,
             &format!("{API}/threads/{thread_id}/modify"),
@@ -1079,8 +1221,18 @@ impl MailProvider for GmailProvider {
     }
 }
 
+/// Message-ID a saved draft carries, so it can be found again by its
+/// composer key (`rfc822msgid:` search) after the id cache is gone.
+fn draft_message_id(key: &str) -> String {
+    let key: String = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    format!("<draft-{key}@heypigeon.app>")
+}
+
 /// `threads.modify` request body for the label-flip mutations. `None` for
-/// Send/Trash, which use dedicated endpoints.
+/// Send/Trash/drafts, which use dedicated endpoints.
 fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
     Some(match mutation {
         Mutation::Archive { thread_id } => (
@@ -1119,13 +1271,28 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
             };
             (thread_id, serde_json::json!({ key: [label_id] }))
         }
-        Mutation::Trash { .. } | Mutation::Send { .. } => return None,
+        Mutation::Trash { .. }
+        | Mutation::Send { .. }
+        | Mutation::SaveDraft { .. }
+        | Mutation::DeleteDraft { .. } => return None,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draft_message_id_is_stable_and_header_safe() {
+        assert_eq!(
+            draft_message_id("6F9619FF-8B86-D011"),
+            "<draft-6F9619FF-8B86-D011@heypigeon.app>"
+        );
+        assert_eq!(
+            draft_message_id("a>\r\nBcc: x"),
+            "<draft-aBccx@heypigeon.app>"
+        );
+    }
 
     #[test]
     fn decode_body_keeps_non_utf8_bodies() {

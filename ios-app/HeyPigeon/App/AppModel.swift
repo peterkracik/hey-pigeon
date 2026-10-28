@@ -478,7 +478,22 @@ final class AppModel {
             try await engine.perform(.send(pending.draft), accountId: pending.accountId)
             Haptics.success()
             show("Sent")
+            if pending.draft.draftSaved { deleteDraft(pending.draft.draftKey, from: pending.accountId) }
         } catch { show("Couldn't send: \(error.localizedDescription)") }
+    }
+
+    // MARK: Drafts — the composer's Gmail draft
+
+    /// Create or update the composer's Gmail draft (queued like any change).
+    func saveDraft(_ draft: SendDraft, from accountId: String) {
+        Task {
+            do { try await engine.perform(.saveDraft(draft), accountId: accountId) }
+            catch { show("Couldn't save draft: \(error.localizedDescription)") }
+        }
+    }
+
+    func deleteDraft(_ key: String, from accountId: String) {
+        Task { try? await engine.perform(.deleteDraft(key: key), accountId: accountId) }
     }
 
     /// Leaving the app inside the undo window: commit now rather than risk

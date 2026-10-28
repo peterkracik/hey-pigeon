@@ -252,7 +252,11 @@ via the Photos picker and the Files picker; 25 MB guard. **Send waits 5 s**
 in the toast with Undo — the desktop's deferred commit — and only then goes
 through the outbox, with the same retry semantics as desktop; Undo reopens
 the composer with the draft. Backgrounding the app inside the window sends
-at once rather than risk losing the message.
+at once rather than risk losing the message. The composer has no Cancel:
+its **X** (or a swipe down, or leaving the app) saves the message as a
+Gmail draft — created on the first save, updated after that, skipped while
+nothing changed — and the trash next to Send discards it, deleting that
+draft. A send deletes it too once it commits.
 
 ### Scheduled, Need reply, Labels
 

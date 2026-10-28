@@ -282,6 +282,10 @@ struct SendDraft: Hashable {
     var fromAccountId: String?
     /// Plain-text transcript of the thread being replied to (AI context).
     var history: String?
+    /// The composer's id: its Gmail draft is saved and deleted under it.
+    var draftKey = UUID().uuidString
+    /// A Gmail draft was saved for it (a send or a discard deletes it).
+    var draftSaved = false
 }
 
 /// Optimistic changes queued for Gmail — same set as the desktop IPC.
@@ -293,6 +297,8 @@ enum MailAction: Hashable {
     case star(threadId: String, starred: Bool)
     case modifyLabel(threadId: String, labelId: String, add: Bool)
     case send(SendDraft)
+    case saveDraft(SendDraft)
+    case deleteDraft(key: String)
 }
 
 struct OAuthStart: Hashable {

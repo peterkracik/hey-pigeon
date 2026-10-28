@@ -16,14 +16,26 @@
   <a class="brand" href="/">
     <svg width="28" height="28" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style="border-radius:6px;display:block">
   <defs>
-    <linearGradient id="hp-bg-nav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FAF8F4"/><stop offset="1" stop-color="#ECE8E0"/></linearGradient>
-    <linearGradient id="hp-bird-nav" x1="0.15" y1="0" x2="0.85" y2="1"><stop offset="0" stop-color="#5CB4FF"/><stop offset="1" stop-color="#3D5BFF"/></linearGradient>
+    <linearGradient id="hp-tile-nav" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
+    <mask id="hp-gap-nav" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="490" cy="378" r="206" fill="#000"/>
+    </mask>
   </defs>
-  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-bg-nav)"/>
-  <path d="M760 455 L872 492 Q884 497 872 503 L752 545 Z" fill="#FFB224" stroke="#FFB224" stroke-width="20" stroke-linejoin="round"/>
-  <path d="M496 236 C 682 236 800 356 800 512 C 800 668 682 788 496 788 C 440 788 392 778 348 758 L 236 806 Q 212 815 218 790 L 246 690 C 210 640 192 580 192 512 C 192 356 310 236 496 236 Z" fill="url(#hp-bird-nav)"/>
-  <circle cx="640" cy="440" r="40" fill="#0F1630"/>
-  <circle cx="654" cy="426" r="13" fill="#fff"/>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile-nav)"/>
+  <g transform="translate(40 30) rotate(-14 512 540)" fill="#EE4D9B">
+    <g mask="url(#hp-gap-nav)">
+      <g stroke="#EE4D9B" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M430 700 L410 810"/>
+        <path d="M555 700 L585 805"/>
+        <path d="M372 585 L300 655"/>
+        <path d="M605 580 L715 480 L728 340"/>
+      </g>
+      <rect x="345" y="485" width="290" height="255" rx="115"/>
+    </g>
+    <circle cx="490" cy="378" r="180"/>
+    <rect x="362" y="300" width="262" height="176" rx="88" fill="#FFFFFF"/>
+  </g>
 </svg>
     <span>Hey Pigeon</span>
   </a>
@@ -38,14 +50,26 @@
   <div class="app-icon-wrap">
     <svg width="72" height="72" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style="border-radius:15px;display:block">
   <defs>
-    <linearGradient id="hp-bg-hero" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FAF8F4"/><stop offset="1" stop-color="#ECE8E0"/></linearGradient>
-    <linearGradient id="hp-bird-hero" x1="0.15" y1="0" x2="0.85" y2="1"><stop offset="0" stop-color="#5CB4FF"/><stop offset="1" stop-color="#3D5BFF"/></linearGradient>
+    <linearGradient id="hp-tile-hero" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
+    <mask id="hp-gap-hero" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="490" cy="378" r="206" fill="#000"/>
+    </mask>
   </defs>
-  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-bg-hero)"/>
-  <path d="M760 455 L872 492 Q884 497 872 503 L752 545 Z" fill="#FFB224" stroke="#FFB224" stroke-width="20" stroke-linejoin="round"/>
-  <path d="M496 236 C 682 236 800 356 800 512 C 800 668 682 788 496 788 C 440 788 392 778 348 758 L 236 806 Q 212 815 218 790 L 246 690 C 210 640 192 580 192 512 C 192 356 310 236 496 236 Z" fill="url(#hp-bird-hero)"/>
-  <circle cx="640" cy="440" r="40" fill="#0F1630"/>
-  <circle cx="654" cy="426" r="13" fill="#fff"/>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile-hero)"/>
+  <g transform="translate(40 30) rotate(-14 512 540)" fill="#EE4D9B">
+    <g mask="url(#hp-gap-hero)">
+      <g stroke="#EE4D9B" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M430 700 L410 810"/>
+        <path d="M555 700 L585 805"/>
+        <path d="M372 585 L300 655"/>
+        <path d="M605 580 L715 480 L728 340"/>
+      </g>
+      <rect x="345" y="485" width="290" height="255" rx="115"/>
+    </g>
+    <circle cx="490" cy="378" r="180"/>
+    <rect x="362" y="300" width="262" height="176" rx="88" fill="#FFFFFF"/>
+  </g>
 </svg>
   </div>
   <span class="eyebrow">A personal project, not a product. Testing purposes only.</span>

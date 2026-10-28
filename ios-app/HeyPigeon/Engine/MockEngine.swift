@@ -163,6 +163,8 @@ final class MockEngine: MailEngine {
         return ThreadDetail(thread: row, messages: bodies[id] ?? [])
     }
 
+    func threadRow(id: String) throws -> ThreadRow? { rows[id] }
+
     func perform(_ action: MailAction, accountId: String) async throws {
         switch action {
         case .archive(let id): update(id) { $0.isArchived = true }

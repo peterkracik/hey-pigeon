@@ -135,6 +135,10 @@ final class RustEngine: MailEngine {
         return s.string
     }
 
+    func threadRow(id: String) throws -> ThreadRow? {
+        try engine.getThreadRow(threadId: id).map { ThreadRow($0) }
+    }
+
     func perform(_ action: MailAction, accountId: String) async throws {
         try await engine.mutate(accountId: accountId, mutation: action.mutation)
     }

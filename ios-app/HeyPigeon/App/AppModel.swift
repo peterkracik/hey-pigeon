@@ -110,6 +110,13 @@ final class AppModel {
         didSet { AppModel.saveRecentSearches(recentSearches) }
     }
 
+    /// The thread on screen, re-read from the store on every change so its
+    /// header badges and triage bar follow each action. The lists can't
+    /// serve it: an action can take it out of the list it was opened from
+    /// (a reminder hides it from the inbox, clearing Need reply drops it
+    /// from that tab), and the stale copy made the next toggle undo the last.
+    private(set) var openThread: ThreadRow?
+
     var toast: Toast?
     var pendingRemind: ThreadRow?
     var composeDraft: SendDraft?
@@ -261,6 +268,7 @@ final class AppModel {
         hasMore = rows.count == Self.pageSize
         counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? [:]
         hasLoadedOnce = true
+        refreshOpenThread()
         if isSearching { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }
         // Anything that changes the list can change the icon badge: a read,
@@ -421,6 +429,20 @@ final class AppModel {
         return nil
     }
 
+    func showThread(_ row: ThreadRow) {
+        if openThread?.id != row.id { openThread = row }
+        refreshOpenThread()
+    }
+
+    func hideThread(_ row: ThreadRow) {
+        if openThread?.id == row.id { openThread = nil }
+    }
+
+    private func refreshOpenThread() {
+        guard let id = openThread?.id, let fresh = try? engine.threadRow(id: id) else { return }
+        if fresh != openThread { openThread = fresh }
+    }
+
     // MARK: Actions — the desktop's set, same names (optimistic; the
     // engine applies locally before returning)
 
@@ -466,6 +488,7 @@ final class AppModel {
         Haptics.light()
         do {
             try engine.setNeedsReply(threadId: row.id, !row.needsReply)
+            refreshOpenThread()
             show(row.needsReply ? "Removed from Need reply" : "Marked Need reply")
         } catch { show(error.localizedDescription) }
     }
@@ -503,7 +526,10 @@ final class AppModel {
 
     /// Manual Jev label edit — sticky until "Reanalyze all emails".
     func setTriageLabels(_ row: ThreadRow, _ ids: [String]) {
-        do { try engine.setManualTriageLabels(threadId: row.id, ids: ids) } catch { show(error.localizedDescription) }
+        do {
+            try engine.setManualTriageLabels(threadId: row.id, ids: ids)
+            refreshOpenThread()
+        } catch { show(error.localizedDescription) }
     }
 
     /// Swipe tiers and the Settings picker dispatch through here.

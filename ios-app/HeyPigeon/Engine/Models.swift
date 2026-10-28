@@ -372,6 +372,8 @@ protocol MailEngine: AnyObject {
     /// The thread's saved Gmail draft, ready for the composer (keyed so its
     /// saves update that draft). Nil when the thread holds none.
     func draft(threadId: String) async throws -> SendDraft?
+    /// One thread's row from the store (no network), whatever list it is in.
+    func threadRow(id: String) throws -> ThreadRow?
 
     func perform(_ action: MailAction, accountId: String) async throws
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws

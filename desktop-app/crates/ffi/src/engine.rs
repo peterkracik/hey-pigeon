@@ -235,6 +235,12 @@ impl Engine {
             .collect())
     }
 
+    /// One thread's row from the store, no network: the open thread view
+    /// re-reads it on every change, whichever list it was opened from.
+    pub fn get_thread_row(&self, thread_id: String) -> Result<Option<MailThread>, EngineError> {
+        Ok(self.store.get_thread(&thread_id)?.map(Into::into))
+    }
+
     /// Thread + messages. Bodies are fetched from Gmail on first open (the
     /// only network read in the UI path) and cached; later opens are local.
     pub async fn get_thread(

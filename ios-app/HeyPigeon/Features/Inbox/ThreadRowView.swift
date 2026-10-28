@@ -51,7 +51,7 @@ struct ThreadRowView: View {
                     Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
                 }
                 ForEach(triageNames, id: \.self) { name in
-                    Chip(text: name, background: Theme.navy100, foreground: Theme.textSecondary)
+                    Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
                 }
                 if row.hasAttachment {
                     Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)

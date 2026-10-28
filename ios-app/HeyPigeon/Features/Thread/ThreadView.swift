@@ -139,7 +139,7 @@ struct ThreadView: View {
                     Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
                 }
                 ForEach(names) { l in
-                    Chip(text: l.name, systemImage: "sparkles", background: Theme.navy100, foreground: Theme.textSecondary)
+                    Chip(text: l.name, systemImage: "sparkles", background: Theme.sunken, foreground: Theme.textSecondary)
                 }
                 if !model.triageLabels.isEmpty {
                     Menu {
@@ -154,7 +154,7 @@ struct ThreadView: View {
                     } label: {
                         Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(Theme.textTertiary)
                             .frame(width: 24, height: 22)
-                            .background(Theme.navy100, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                     .accessibilityLabel("Edit labels")
                 }
@@ -191,7 +191,7 @@ struct ThreadView: View {
                     .font(.footnote).foregroundStyle(Theme.textSecondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.navy50, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
         }
     }

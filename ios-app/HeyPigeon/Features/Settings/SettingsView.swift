@@ -412,5 +412,5 @@ private func mark(_ text: String) -> some View {
         .font(.system(size: 12, weight: .bold))
         .foregroundStyle(Theme.textSecondary)
         .frame(width: 32, height: 32)
-        .background(Theme.navy100, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 }

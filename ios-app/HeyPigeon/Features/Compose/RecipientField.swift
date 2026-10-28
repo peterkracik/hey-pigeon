@@ -22,7 +22,7 @@ struct RecipientField<Field: Hashable>: View {
                 }
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(Theme.navy100, in: Capsule())
+                .background(Theme.sunken, in: Capsule())
             }
             TextField(addresses.isEmpty ? "Email address" : "", text: $text)
                 .textContentType(.emailAddress).keyboardType(.emailAddress)

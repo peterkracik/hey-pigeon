@@ -143,7 +143,7 @@ struct ComposeView: View {
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Theme.navy100, in: Capsule())
+                .background(Theme.sunken, in: Capsule())
             }
         }
     }
@@ -174,7 +174,7 @@ struct ComposeView: View {
                 }
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Theme.navy100, in: Capsule())
+                .background(Theme.sunken, in: Capsule())
             }
         }
         .padding(.horizontal, 16).padding(.top, 10)

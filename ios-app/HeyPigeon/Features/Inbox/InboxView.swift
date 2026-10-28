@@ -144,7 +144,7 @@ struct ThreadList: View {
                             .foregroundStyle(s.error == nil ? Theme.textSecondary : .red)
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Theme.navy50, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .padding(.horizontal, 20).padding(.vertical, 4)
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Theme.canvas)
@@ -300,9 +300,9 @@ struct SkeletonList: View {
         List {
             ForEach(0..<8, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 8) {
-                    RoundedRectangle(cornerRadius: 4).fill(Theme.navy100).frame(width: 140, height: 12)
-                    RoundedRectangle(cornerRadius: 4).fill(Theme.navy100).frame(height: 10)
-                    RoundedRectangle(cornerRadius: 4).fill(Theme.navy100).frame(width: 220, height: 10)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(width: 140, height: 12)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(height: 10)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(width: 220, height: 10)
                 }
                 .padding(.vertical, 8)
                 .listRowBackground(Theme.canvas)

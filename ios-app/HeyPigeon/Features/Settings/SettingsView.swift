@@ -19,6 +19,7 @@ struct SettingsView: View {
                 accountsSection
                 AISection()
                 TriageSection()
+                NotificationsSection()
                 Section {
                     Toggle(isOn: $model.pinListEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -57,7 +58,7 @@ struct SettingsView: View {
             .scrollDismissesKeyboard(.interactively)
             .confirmationDialog("Remove \(removing?.email ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove account", role: .destructive) {
-                    if let a = removing { model.removeAccount(a) }
+                    if let a = removing { Task { await model.removeAccount(a) } }
                     removing = nil
                 }
             } message: {
@@ -416,6 +417,60 @@ private struct TriageSection: View {
             model.reloadAccounts()
             model.reload()
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+// MARK: Notifications (the optional push relay — relay/README.md)
+
+private struct NotificationsSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var url = ""
+
+    var body: some View {
+        let push = model.push
+        Section {
+            Toggle(isOn: Binding(get: { push.enabled }, set: { on in Task { await push.setEnabled(on) } })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("New mail (push)")
+                    Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .disabled(push.busy || (!push.enabled && !push.canEnable))
+            TextField("Relay URL (https://…)", text: $url)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .keyboardType(.URL)
+                .onSubmit { commitURL() }
+                .onChange(of: url) { _, v in push.relayURL = v }
+            if push.enabled, let status = push.status, !status.accounts.isEmpty {
+                ForEach(status.accounts) { a in
+                    LabeledContent(a.id) {
+                        Text(a.watchExpiresAt.map { "watch until \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "no watch yet")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                    .font(.footnote)
+                }
+            }
+            if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(.red) }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text("Optional. Needs a relay you host (relay/README.md in the repo). The relay only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Reminders stay local and work without it.")
+        }
+        .onAppear { url = push.relayURL; push.refreshStatus() }
+    }
+
+    private var statusLine: String {
+        let push = model.push
+        if push.busy { return "Working…" }
+        if !push.enabled { return push.canEnable ? "Off" : "Enter the relay URL first" }
+        if push.status?.enabled == true { return "On · registered" }
+        return push.deviceToken == nil ? "Waiting for the system token…" : "On · not registered yet"
+    }
+
+    private func commitURL() {
+        let push = model.push
+        push.relayURL = url.trimmingCharacters(in: .whitespaces)
+        if push.enabled { Task { await push.accountsChanged() } }
     }
 }
 

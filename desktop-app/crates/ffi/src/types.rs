@@ -361,6 +361,24 @@ pub struct AccountStatus {
     pub last_sync_at: Option<i64>,
 }
 
+/// State of the optional iOS push relay (push.rs). `enabled` means a device
+/// token is registered with a relay and the engine renews Gmail watches.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PushStatus {
+    pub enabled: bool,
+    pub relay_url: Option<String>,
+    /// Pub/Sub topic the relay reported; what `users.watch` points at.
+    pub topic: Option<String>,
+    pub accounts: Vec<PushAccountStatus>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PushAccountStatus {
+    pub account_id: String,
+    /// Epoch ms when Gmail stops publishing unless renewed; None = no watch.
+    pub watch_expires_at_ms: Option<i64>,
+}
+
 /// Whether an AI provider is configured and which model is selected — the
 /// stored key itself is never returned.
 #[derive(Debug, Clone, uniffi::Record)]

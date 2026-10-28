@@ -1,7 +1,9 @@
 # Google OAuth client setup (~5 minutes)
 
 Hey Pigeon is client-only: you bring your own Google OAuth client ID. Nothing is
-shared, nothing runs on a server, and Google never sees a third party.
+shared, nothing runs on a server, and Google never sees a third party. (The one
+optional exception, the iOS push relay, lives in this same project and is set
+up separately with Terraform — see [../terraform/README.md](../terraform/README.md).)
 
 ## Steps
 
@@ -57,3 +59,7 @@ Never commit these. The file lives outside the repo on purpose.
   folder used for cross-device sync of reminders. Accounts connected before
   this scope existed show "re-connect the account to enable sync" under
   Settings → Accounts → Sync; remove and add the account once to fix it.
+
+No extra scope is needed for iOS push: Gmail `users.watch` works with
+`gmail.modify`; the Pub/Sub topic's IAM (granted by Terraform) is what lets
+Gmail publish.

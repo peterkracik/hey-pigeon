@@ -3,6 +3,7 @@
 
 pub mod drive;
 pub mod oauth;
+pub mod push;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use heypigeon_core::domain::*;
 use heypigeon_core::ports::{
-    HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage,
+    HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage, WatchState,
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
@@ -217,6 +218,30 @@ impl GmailProvider {
         Self::check(resp).await.map(|_| ())
     }
 
+    /// `post_json` for the few endpoints whose response body matters
+    /// (`users.watch` returns the lease it created).
+    async fn post_json_returning<T: serde::de::DeserializeOwned>(
+        &self,
+        account_id: &AccountId,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, MailError> {
+        let token = self.access_token(account_id).await?;
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| MailError::Network(e.to_string()))?;
+        Self::check(resp)
+            .await?
+            .json::<T>()
+            .await
+            .map_err(|e| MailError::Provider(e.to_string()))
+    }
+
     /// Media upload: multipart/related with JSON metadata + a raw rfc822
     /// message. Required for sends with attachments (35 MB cap; the plain
     /// JSON endpoint only takes small payloads).
@@ -370,6 +395,28 @@ struct WireLabel {
 struct WireProfile {
     email_address: String,
     history_id: String,
+}
+
+/// `users.watch` response. Both fields arrive as strings (`expiration` is
+/// epoch milliseconds), unlike the Pub/Sub message, where `historyId` is
+/// a number — the relay handles that side.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireWatch {
+    history_id: String,
+    expiration: String,
+}
+
+impl WireWatch {
+    fn into_state(self) -> Result<WatchState, MailError> {
+        let expiration_ms = self.expiration.parse::<i64>().map_err(|_| {
+            MailError::Provider(format!("watch: bad expiration {:?}", self.expiration))
+        })?;
+        Ok(WatchState {
+            history_id: self.history_id,
+            expiration_ms,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -1004,6 +1051,28 @@ impl MailProvider for GmailProvider {
         )
         .await
     }
+
+    /// `users.watch`: Gmail publishes `{emailAddress, historyId}` to the
+    /// Pub/Sub topic on every INBOX change for up to 7 days. Needs only the
+    /// `gmail.modify` scope the grant already has; the topic must let
+    /// `gmail-api-push@system.gserviceaccount.com` publish (terraform/).
+    async fn watch(&self, account_id: &AccountId, topic: &str) -> Result<WatchState, MailError> {
+        let body = serde_json::json!({
+            "topicName": topic,
+            "labelIds": ["INBOX"],
+            "labelFilterBehavior": "INCLUDE",
+        });
+        let wire: WireWatch = self
+            .post_json_returning(account_id, &format!("{API}/watch"), &body)
+            .await?;
+        wire.into_state()
+    }
+
+    /// `users.stop`: end the lease early (push turned off, account removed).
+    async fn stop_watch(&self, account_id: &AccountId) -> Result<(), MailError> {
+        self.post_json(account_id, &format!("{API}/stop"), &serde_json::json!({}))
+            .await
+    }
 }
 
 /// `threads.modify` request body for the label-flip mutations. `None` for
@@ -1231,6 +1300,22 @@ mod tests {
         assert_eq!(list.next_page_token.as_deref(), Some("tok"));
         // checkpoint = newest record id, NOT the (possibly ahead) top-level id
         assert_eq!(history_checkpoint(&list, "999"), "1002");
+    }
+
+    #[test]
+    fn wire_watch_maps_fields() {
+        let json = serde_json::json!({ "historyId": "24680", "expiration": "1761234567890" });
+        let wire: WireWatch = serde_json::from_value(json).unwrap();
+        let state = wire.into_state().unwrap();
+        assert_eq!(state.history_id, "24680");
+        assert_eq!(state.expiration_ms, 1_761_234_567_890);
+    }
+
+    #[test]
+    fn wire_watch_rejects_bad_expiration() {
+        let json = serde_json::json!({ "historyId": "1", "expiration": "soon" });
+        let wire: WireWatch = serde_json::from_value(json).unwrap();
+        assert!(matches!(wire.into_state(), Err(MailError::Provider(_))));
     }
 
     #[test]

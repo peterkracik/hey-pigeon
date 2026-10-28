@@ -172,7 +172,7 @@ final class MockEngine: MailEngine {
     func prefs() throws -> [String: Any] { prefStore }
     func setPref(_ name: String, _ value: Any?) throws { prefStore[name] = value }
 
-    func removeAccount(id: String) throws {
+    func removeAccount(id: String) async throws {
         accountList.removeAll { $0.id == id }
         rows = rows.filter { $0.value.accountId != id }
         onThreadsUpdated?()
@@ -181,6 +181,35 @@ final class MockEngine: MailEngine {
     func syncAll() async throws -> Bool {
         try? await Task.sleep(for: .milliseconds(600))
         return false
+    }
+
+    func syncNow(accountId: String) async throws -> Bool {
+        try await syncAll()
+    }
+
+    // MARK: Push relay (pretend)
+
+    private var pushRelayURL: String?
+    private var pushWatchExpiry: Date?
+
+    func registerPushToken(relayURL: String, deviceToken: String, environment: String) async throws {
+        try? await Task.sleep(for: .milliseconds(400))
+        pushRelayURL = relayURL
+        pushWatchExpiry = Date().addingTimeInterval(7 * 86_400)
+    }
+
+    func disablePush() async throws {
+        pushRelayURL = nil
+        pushWatchExpiry = nil
+    }
+
+    func pushStatus() throws -> PushState {
+        PushState(
+            enabled: pushRelayURL != nil,
+            relayURL: pushRelayURL,
+            topic: pushRelayURL == nil ? nil : "projects/mock/topics/gmail-push",
+            accounts: accountList.map { PushAccountState(id: $0.id, watchExpiresAt: pushWatchExpiry) }
+        )
     }
 
     func beginOAuth(loginHint: String?) throws -> OAuthStart {

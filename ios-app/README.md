@@ -75,14 +75,29 @@ stays `app.heypigeon`. They are separate products in App Store Connect
 not merge them under one id. No wildcard App ID is needed: automatic
 signing registers the explicit App ID on the first archive.
 
-**Capabilities.** iOS-M1 needs none beyond a plain App ID: background
-refresh and local notifications are Info.plist / permission matters, the
-Keychain is the app's own, the OAuth redirect is a URL scheme. Add App
-Groups + Keychain Sharing with the first extension (widget, share sheet),
-Push Notifications only if the optional relay ever ships, iCloud KVS only
-for the optional secret sync. `HeyPigeon/PrivacyInfo.xcprivacy` declares the
-required-reason APIs (UserDefaults, SQLite file stats, monotonic clock); App
-Store Connect rejects uploads without it.
+**Capabilities.** One: **Push Notifications** (`aps-environment` in the
+entitlements XcodeGen writes from `project.yml`). `publish-ios` enables it
+on the App ID `app.heypigeon.ios` through the App Store Connect key
+(`fastlane produce enable_services`) before fetching the profile, so no
+portal click is needed; for a local device build, enable it once under
+developer.apple.com → Identifiers. It serves the optional relay only — the app runs fine with the
+relay off, using background refresh and local notifications, which are
+Info.plist / permission matters. The Keychain is the app's own, the OAuth
+redirect is a URL scheme. Add App Groups + Keychain Sharing with the first
+extension (widget, share sheet), iCloud KVS only for the optional secret
+sync. `HeyPigeon/PrivacyInfo.xcprivacy` declares the required-reason APIs
+(UserDefaults, SQLite file stats, monotonic clock); App Store Connect rejects
+uploads without it.
+
+**Push relay (optional).** `../relay/README.md` and `../terraform/README.md`.
+The app side: `Shared/PushController.swift` (the toggle, the relay URL, the
+APNs token → `Engine.registerPushToken`), `App/AppDelegate.swift` (token and
+silent-push callbacks), `Shared/NewMailNotifier.swift` (one delta sync for the
+account named in the push, a local notification per new unread thread, badge).
+`HEYPIGEON_RELAY_URL` in `Config/Local.xcconfig` (or the GitHub variable of
+the same name for CI builds) pre-fills the relay URL; Settings → Notifications
+overrides it. Xcode builds register `sandbox` tokens, TestFlight / App Store
+builds `production` ones; the relay routes per token.
 
 The upload lands in TestFlight; releasing to the App Store is still the
 "Submit for review" click in App Store Connect — or a later `fastlane

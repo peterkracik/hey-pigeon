@@ -1,0 +1,7 @@
+# cp terraform.tfvars.example terraform.tfvars   (git-ignored; CI passes the same as TF_VAR_* from repository variables)
+project_id        = "heypigeon-123456"
+region            = "europe-west1"
+apns_key_id       = "ABC123DEFG"
+apns_team_id      = "TEAM123456"
+apns_topic        = "app.heypigeon.ios"
+google_client_ids = ["1234567890-abc.apps.googleusercontent.com"] # the iOS OAuth client only

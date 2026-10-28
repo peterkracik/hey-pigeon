@@ -4,6 +4,8 @@ import SwiftUI
 struct HeyPigeonApp: App {
     @State private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
+    // APNs tokens and silent pushes arrive through UIKit (AppDelegate.swift).
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         let engine = Self.makeEngine()
@@ -19,6 +21,8 @@ struct HeyPigeonApp: App {
                 .tint(Theme.textPrimary)
                 .task {
                     await ReminderScheduler.requestPermission()
+                    // With push on, iOS may have rotated the token since last launch.
+                    model.push.requestRegistration()
                     await model.sync()
                 }
         }

@@ -102,7 +102,7 @@ Per account:
 
 ### Push notifications (new-mail latency)
 
-Three tiers — still no server:
+Three tiers — the first two need no server, the third is the one optional one:
 
 1. **v1 — polling**: `history.list` every ~30s + immediately on app focus/wake.
    One cheap request per account; empty response when nothing new. For a mail client
@@ -114,10 +114,16 @@ Three tiers — still no server:
    there. Costs: topic setup in the onboarding doc, `watch` renewal every 7 days
    (piggyback on the sync loop), Pub/Sub scope. Slot behind a `PushChannel` port
    with the poller as default adapter.
-3. **iOS (M4+) — the one true server case**: a suspended iOS app can't hold a
+3. **iOS — the one true server case**: a suspended iOS app can't hold a
    streaming pull; real iOS notifications need APNs, i.e. a tiny relay
    (watch → Pub/Sub → relay → APNs). That relay sees only "account X has history Y"
    metadata, never mail content. Optional, self-hostable, only for iOS users.
+   **Built** (issue #16): two Cloud Run functions in the OAuth client's own
+   Google Cloud project, everything created by Terraform — `relay/README.md`
+   and `terraform/README.md`. The core owns the watch lease (`core::push`,
+   renewed daily from the sync round); the iOS shell owns the toggle. Note
+   for tier 2: `users.watch` itself needs no Pub/Sub scope — only consuming
+   the topic from the desktop would.
 
 Desktop notification itself: OS notification via Tauri plugin, from the sync loop
 diff (new INBOX message → notify sender + subject; respect per-account mute).

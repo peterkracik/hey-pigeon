@@ -1,0 +1,166 @@
+name: deploy-relay
+
+# The iOS push relay (relay/) and its Google Cloud resources (terraform/).
+# Pull requests: relay tests + terraform fmt/validate/plan, plan posted as a
+# comment. Pushes to main: terraform apply, which also ships the function
+# code (the zip hash is part of the source object name).
+#
+# Auth is Workload Identity Federation (terraform/bootstrap/wif.tf): the
+# workflow's OIDC token is exchanged for the relay-deployer service account,
+# no key file. Configuration lives in the GitHub environment "infra",
+# synced there from Doppler. None of these values is sensitive, and each
+# is read as a variable first and a secret second, so it does not matter
+# whether the sync writes Actions variables or Actions secrets:
+#   GCP_PROJECT_ID, TF_STATE_BUCKET, GCP_WORKLOAD_IDENTITY_PROVIDER,
+#   GCP_DEPLOYER_SA, APNS_KEY_ID, APNS_TEAM_ID, HEYPIGEON_IOS_OAUTH_CLIENT_ID
+# A job only sees an environment's values when it names the environment,
+# so the terraform job does. Protection rules on that environment (required
+# reviewers, main-only deployment branches) gate the apply.
+# Setup: terraform/README.md.
+
+on:
+  push:
+    branches: [main]
+    paths: ["relay/**", "terraform/**", ".github/workflows/deploy-relay.yml"]
+  pull_request:
+    paths: ["relay/**", "terraform/**", ".github/workflows/deploy-relay.yml"]
+
+concurrency:
+  group: terraform-relay
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "0"
+
+jobs:
+  relay-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: relay-test
+    environment:
+      name: infra
+      # `secrets` is not an allowed context here (GitHub rejects the whole
+      # workflow), so this stays a plain `vars` lookup; empty if the value
+      # was synced as a secret, which only costs the link's project filter.
+      url: https://console.cloud.google.com/run?project=${{ vars.GCP_PROJECT_ID }}
+    # Format + validate always run. Auth, plan and apply need the GitHub
+    # variables that exist only after terraform/bootstrap has been applied
+    # once (terraform/README.md), and an OIDC identity fork PRs don't have:
+    # without them a PR is still green (plan skipped, with a notice) and a
+    # push to main fails loudly instead of silently not deploying.
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+      TF_VAR_apns_key_id: ${{ vars.APNS_KEY_ID || secrets.APNS_KEY_ID }}
+      TF_VAR_apns_team_id: ${{ vars.APNS_TEAM_ID || secrets.APNS_TEAM_ID }}
+      TF_VAR_google_client_ids: '["${{ vars.HEYPIGEON_IOS_OAUTH_CLIENT_ID || secrets.HEYPIGEON_IOS_OAUTH_CLIENT_ID }}"]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Format
+        run: terraform fmt -check -recursive -diff
+
+      - name: Validate (no backend, no credentials)
+        run: |
+          terraform init -backend=false
+          terraform validate
+          terraform -chdir=bootstrap init -backend=false
+          terraform -chdir=bootstrap validate
+
+      - name: Is Google Cloud configured for CI?
+        id: gcp
+        env:
+          WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SA: ${{ vars.GCP_DEPLOYER_SA || secrets.GCP_DEPLOYER_SA }}
+          BUCKET: ${{ vars.TF_STATE_BUCKET || secrets.TF_STATE_BUCKET }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+          SAME_REPO: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [[ -n "$WIF" && -n "$SA" && -n "$BUCKET" && -n "$PROJECT" && "$SAME_REPO" == "true" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              echo "::error::terraform apply needs GCP_PROJECT_ID, TF_STATE_BUCKET, GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_DEPLOYER_SA in the GitHub environment 'infra' (variables or secrets) — apply terraform/bootstrap first (terraform/README.md)."
+              exit 1
+            fi
+            echo "::notice::Google Cloud is not configured for CI yet (values missing on the 'infra' environment, or a fork PR). Skipping terraform plan; fmt and validate passed."
+          fi
+
+      - name: Authenticate to Google Cloud
+        if: steps.gcp.outputs.ready == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA || secrets.GCP_DEPLOYER_SA }}
+
+      - name: Init (GCS backend)
+        if: steps.gcp.outputs.ready == 'true'
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET || secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=relay"
+
+      - name: Plan
+        if: steps.gcp.outputs.ready == 'true' && github.event_name == 'pull_request'
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan -no-color -lock-timeout=120s -out=tfplan 2>&1 | tee plan.txt
+          echo "lines=$(wc -l < plan.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Comment plan on the PR
+        if: steps.plan.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.readFileSync('terraform/plan.txt', 'utf8');
+            const max = 60000;
+            if (plan.length > max) plan = plan.slice(0, max) + '\n… (truncated)';
+            const marker = '<!-- terraform-relay-plan -->';
+            const body = `${marker}\n### Terraform plan (relay)\n\n<details><summary>${process.env.PLAN_LINES} lines</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n\n</details>`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const mine = comments.data.find(c => c.body && c.body.startsWith(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+        env:
+          PLAN_LINES: ${{ steps.plan.outputs.lines }}
+
+      - name: Apply
+        if: steps.gcp.outputs.ready == 'true' && github.event_name == 'push'
+        run: terraform apply -auto-approve -lock-timeout=120s

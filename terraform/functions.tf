@@ -108,7 +108,12 @@ resource "google_cloudfunctions2_function" "on_mail_change" {
     service_account_email = local.relay_fn_sa
   }
 
-  depends_on = [time_sleep.iam_propagation]
+  # After register-token, not alongside it: gen2 functions stage their source
+  # in a Google-managed bucket (gcf-v2-sources-<project number>-<region>)
+  # created on first use, and two functions racing to create it on a fresh
+  # project end with a 409 for one of them. Sequential = one creates, the
+  # other reuses.
+  depends_on = [time_sleep.iam_propagation, google_cloudfunctions2_function.register_token]
 }
 
 # The trigger identity must be allowed to invoke the service it targets.

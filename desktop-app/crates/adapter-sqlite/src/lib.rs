@@ -4,6 +4,7 @@
 // ponytail: one global connection lock; a dedicated writer thread + read pool
 // only if profiling ever shows contention (M1 is one account, tiny writes).
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -249,7 +250,16 @@ const MIGRATIONS: &[&str] = &[
     // recovery as v8: clearing the checkpoint forces a full backfill
     // (idempotent upserts) on next startup, which rewrites every row.
     "UPDATE accounts SET history_id = NULL;",
+    // v17 — the v16 backfill only reaches the sync window (30 days), so
+    // older replied threads kept naming the user. This step is a marker:
+    // `init_to` follows it with `heal_list_senders`, a Rust pass that
+    // re-derives every cached thread's `from_summary` / `last_from_addr`
+    // from its stored messages, no network needed.
+    "SELECT 1;",
 ];
+
+/// Schema version whose upgrade re-derives every thread's list sender.
+const HEAL_LIST_SENDERS_AT: usize = 17;
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
 /// compile-time system-label constants may be interpolated — user label ids
@@ -322,6 +332,57 @@ fn err(e: impl std::fmt::Display) -> StoreError {
     StoreError(e.to_string())
 }
 
+/// One-time v17 heal: rewrite every thread's `from_summary` /
+/// `last_from_addr` with `sync::list_sender` over its stored messages, so
+/// a thread the user replied to names the other party however old it is.
+/// Threads without cached messages are left for the next provider upsert.
+fn heal_list_senders(conn: &Connection) -> rusqlite::Result<()> {
+    let emails: HashMap<String, String> = conn
+        .prepare("SELECT id, email FROM accounts")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let threads: Vec<(String, String)> = conn
+        .prepare("SELECT id, account_id FROM threads")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut messages = conn.prepare(
+        "SELECT from_addr, to_addrs, label_ids FROM messages WHERE thread_id = ?1 ORDER BY date",
+    )?;
+    let mut update =
+        conn.prepare("UPDATE threads SET from_summary = ?1, last_from_addr = ?2 WHERE id = ?3")?;
+    let mut healed = 0usize;
+    for (thread_id, account_id) in &threads {
+        let msgs: Vec<Message> = messages
+            .query_map(params![thread_id], |r| {
+                let to_addrs: String = r.get(1)?;
+                let label_ids: String = r.get(2)?;
+                Ok(Message {
+                    id: String::new(),
+                    thread_id: thread_id.clone(),
+                    account_id: account_id.clone(),
+                    from_addr: r.get(0)?,
+                    to_addrs: serde_json::from_str(&to_addrs).unwrap_or_default(),
+                    date: 0,
+                    snippet: String::new(),
+                    body_html: None,
+                    body_text: None,
+                    label_ids: serde_json::from_str(&label_ids).unwrap_or_default(),
+                    is_read: true,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        if msgs.is_empty() {
+            continue;
+        }
+        let own_email = emails.get(account_id).unwrap_or(account_id);
+        let sender = heypigeon_core::sync::list_sender(&msgs, own_email);
+        update.execute(params![sender.name, sender.addr, thread_id])?;
+        healed += 1;
+    }
+    log::info!("v17: re-derived list sender on {healed} threads");
+    Ok(())
+}
+
 impl SqliteStore {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let conn = Connection::open(path).map_err(err)?;
@@ -355,6 +416,9 @@ impl SqliteStore {
             .skip(version as usize)
         {
             conn.execute_batch(migration).map_err(err)?;
+            if i + 1 == HEAL_LIST_SENDERS_AT {
+                heal_list_senders(&conn).map_err(err)?;
+            }
             conn.pragma_update(None, "user_version", i as i64 + 1)
                 .map_err(err)?;
         }
@@ -2619,6 +2683,100 @@ mod tests {
         assert!(
             s.list_accounts().unwrap()[0].history_id.is_none(),
             "v16 forces a one-time backfill so every row re-derives its sender"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// v17 rewrites the cached sender of every thread from its stored
+    /// messages — including threads far older than the sync window, which
+    /// the v16 backfill never touches.
+    #[test]
+    fn v17_migration_rederives_list_sender_from_cached_messages() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v17-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v16.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let _ = SqliteStore::init_to(conn, 16).unwrap(); // pre-v17 schema
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (id, email, display_name, color)
+                 VALUES ('me@example.com', 'me@example.com', 'Me', 'sky')",
+                [],
+            )
+            .unwrap();
+            // Two threads the user replied to, cached under the old rule
+            // (newest sender = the user), plus one with no cached messages.
+            for (id, summary) in [("t1", "Me"), ("t2", "Me"), ("t3", "Someone")] {
+                conn.execute(
+                    "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                                          is_inbox, is_archived, msg_count, from_summary, last_from_addr)
+                     VALUES (?1, 'me@example.com', 'S', '', 1000, 1, 1, 0, 2, ?2, 'me@example.com')",
+                    params![id, summary],
+                )
+                .unwrap();
+            }
+            let mut insert = conn
+                .prepare(
+                    "INSERT INTO messages (id, thread_id, account_id, from_addr, to_addrs, date,
+                                           snippet, label_ids, is_read)
+                     VALUES (?1, ?2, 'me@example.com', ?3, ?4, ?5, '', ?6, 1)",
+                )
+                .unwrap();
+            insert
+                .execute(params![
+                    "t1-m1",
+                    "t1",
+                    "Priya Nair <priya@acme.co>",
+                    "[\"me@example.com\"]",
+                    1,
+                    "[\"INBOX\"]"
+                ])
+                .unwrap();
+            insert
+                .execute(params![
+                    "t1-m2",
+                    "t1",
+                    "Me <me@example.com>",
+                    "[\"priya@acme.co\"]",
+                    2,
+                    "[\"SENT\"]"
+                ])
+                .unwrap();
+            // t2: the reply came from a send-as alias and is still a draft.
+            insert
+                .execute(params![
+                    "t2-m1",
+                    "t2",
+                    "Sam Lee <sam@acme.co>",
+                    "[\"me@example.com\"]",
+                    1,
+                    "[\"INBOX\"]"
+                ])
+                .unwrap();
+            insert
+                .execute(params![
+                    "t2-m2",
+                    "t2",
+                    "Alias <alias@example.com>",
+                    "[\"sam@acme.co\"]",
+                    2,
+                    "[\"DRAFT\"]"
+                ])
+                .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
+        assert_eq!(t1.from_summary, "Priya Nair");
+        assert_eq!(t1.last_from_addr, "priya@acme.co");
+        let t2 = s.get_thread(&"t2".to_string()).unwrap().unwrap();
+        assert_eq!(t2.from_summary, "Sam Lee");
+        assert_eq!(t2.last_from_addr, "sam@acme.co");
+        let t3 = s.get_thread(&"t3".to_string()).unwrap().unwrap();
+        assert_eq!(
+            t3.from_summary, "Someone",
+            "no cached messages: left for the next provider upsert"
         );
         let _ = std::fs::remove_file(&path);
     }

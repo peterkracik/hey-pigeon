@@ -97,7 +97,7 @@ Pull requests touching `relay/**` or `terraform/**` run the relay tests,
 comment). Pushes to `main` run `apply`. Auth is Workload Identity Federation —
 no key file anywhere.
 
-The `terraform` job runs in the GitHub **environment `infrastructure`**
+The `terraform` job runs in the GitHub **environment `infra`**
 (Settings → Environments → New environment). Put these as its **environment
 variables** (none are secret). Protection rules on that environment — required
 reviewers, deployment branches limited to `main` — gate every apply.

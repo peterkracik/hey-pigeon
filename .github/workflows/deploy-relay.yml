@@ -7,9 +7,14 @@ name: deploy-relay
 #
 # Auth is Workload Identity Federation (terraform/bootstrap/wif.tf): the
 # workflow's OIDC token is exchanged for the relay-deployer service account,
-# no key file. Repository variables (not secrets — none of these are):
+# no key file. Configuration lives in the GitHub environment "infrastructure"
+# (Settings → Environments → infrastructure → Environment variables; none of
+# these are secrets):
 #   GCP_PROJECT_ID, TF_STATE_BUCKET, GCP_WORKLOAD_IDENTITY_PROVIDER,
 #   GCP_DEPLOYER_SA, APNS_KEY_ID, APNS_TEAM_ID, HEYPIGEON_IOS_OAUTH_CLIENT_ID
+# A job only sees environment variables when it names the environment, so
+# the terraform job does. Protection rules on that environment (required
+# reviewers, main-only deployment branches) gate the apply.
 # Setup: terraform/README.md.
 
 on:
@@ -53,6 +58,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: relay-test
+    environment:
+      name: infrastructure
+      url: https://console.cloud.google.com/run?project=${{ vars.GCP_PROJECT_ID }}
     # Format + validate always run. Auth, plan and apply need the GitHub
     # variables that exist only after terraform/bootstrap has been applied
     # once (terraform/README.md), and an OIDC identity fork PRs don't have:
@@ -98,10 +106,10 @@ jobs:
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
             if [[ "${{ github.event_name }}" == "push" ]]; then
-              echo "::error::terraform apply needs GCP_PROJECT_ID, TF_STATE_BUCKET, GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_DEPLOYER_SA as repository variables — apply terraform/bootstrap first (terraform/README.md)."
+              echo "::error::terraform apply needs GCP_PROJECT_ID, TF_STATE_BUCKET, GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_DEPLOYER_SA as variables of the GitHub environment 'infrastructure' — apply terraform/bootstrap first (terraform/README.md)."
               exit 1
             fi
-            echo "::notice::Google Cloud is not configured for CI yet (repository variables missing, or a fork PR). Skipping terraform plan; fmt and validate passed."
+            echo "::notice::Google Cloud is not configured for CI yet (variables missing on the 'infrastructure' environment, or a fork PR). Skipping terraform plan; fmt and validate passed."
           fi
 
       - name: Authenticate to Google Cloud

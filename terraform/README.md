@@ -97,8 +97,10 @@ Pull requests touching `relay/**` or `terraform/**` run the relay tests,
 comment). Pushes to `main` run `apply`. Auth is Workload Identity Federation —
 no key file anywhere.
 
-Set these **repository variables** (Settings → Secrets and variables → Actions
-→ Variables; none are secret):
+The `terraform` job runs in the GitHub **environment `infrastructure`**
+(Settings → Environments → New environment). Put these as its **environment
+variables** (none are secret). Protection rules on that environment — required
+reviewers, deployment branches limited to `main` — gate every apply.
 
 | Variable | Value |
 | --- | --- |
@@ -111,6 +113,11 @@ Set these **repository variables** (Settings → Secrets and variables → Actio
 
 Everything else about the deploy (region, runtime, topic name) is in the
 Terraform files.
+
+Why environment variables rather than repository variables: a job only sees
+environment variables when it names the environment, which keeps the Google
+Cloud configuration scoped to this one job, and the environment is where
+GitHub attaches approval rules and deployment history.
 
 ## Day-to-day
 

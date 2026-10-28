@@ -20,6 +20,8 @@ name: publish-ios
 #   HEYPIGEON_IOS_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" (…apps.googleusercontent.com)
 #   EXPO_TOKEN                         expo.dev access token (uploader: eas only)
 #   EXPO_PROJECT_ID                    EAS project id the submission is recorded under (uploader: eas only)
+# Optional variable (same "ios" environment, not a secret):
+#   HEYPIGEON_RELAY_URL                push relay register-token URL (terraform output); pre-fills Settings → Notifications
 #
 # One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
 # in App Store Connect; create the ASC API key; export the distribution

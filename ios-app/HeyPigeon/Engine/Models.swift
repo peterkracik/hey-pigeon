@@ -273,6 +273,9 @@ struct SendDraft: Hashable {
     var bodyText: String = ""
     /// Rich body when formatting was applied — the MIME html part.
     var bodyHTML: String?
+    /// The editor's attributed body as it was sent, so a send that is undone
+    /// reopens the composer with its formatting intact. Never serialized.
+    var bodyRich: AttributedString?
     var attachments: [DraftAttachment] = []
     var replyToThreadId: String?
     /// Account that received the thread (replies go out from it).

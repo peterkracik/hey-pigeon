@@ -1,8 +1,9 @@
 // Compose / reply / forward — the desktop Composer, one to one: From chip,
 // To / Cc / Bcc with recipient chips, Subject, a rich-text body, attachment
-// chips, and the footer with Send · Discard · AI · Attach · Aa. Sends
-// through the outbox like everything else (text part always, html part when
-// formatting was applied).
+// chips, and the footer with Send · Discard · AI · Attach · Aa. Send hands
+// the draft to the model, which holds it for the undo window before it goes
+// to the outbox (text part always, html part when formatting was applied);
+// an undone send reopens this view prefilled.
 
 import PhotosUI
 import SwiftUI
@@ -41,8 +42,11 @@ struct ComposeView: View {
         _bcc = State(initialValue: draft.bcc)
         _showCc = State(initialValue: !draft.cc.isEmpty || !draft.bcc.isEmpty)
         _fromId = State(initialValue: draft.fromAccountId ?? "")
-        _body_ = State(initialValue: AttributedString(draft.bodyText))
+        _body_ = State(initialValue: draft.bodyRich ?? AttributedString(draft.bodyText))
         _attachments = State(initialValue: draft.attachments)
+        // A forward or a restored (undone) send arrives with a body the user
+        // owns: switching From must not replace it with a signature.
+        _pristine = State(initialValue: draft.bodyText.isEmpty)
     }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
@@ -111,9 +115,9 @@ struct ComposeView: View {
                 Task { await addPhotos(items); photos = [] }
             }
             .sheet(isPresented: $showAI) {
-                AIEditSheet(text: selectedText ?? plainBody, hasSelection: selectedText != nil, history: draft.history) { result in
-                    applyAI(result)
-                }
+                AIEditSheet(text: selectedText ?? bodyWithoutSignature, hasSelection: selectedText != nil,
+                            subject: draft.subject, history: draft.history,
+                            onApply: applyAI, onWrite: replaceBody)
                 .presentationDetents([.medium, .large])
             }
             .alert("Link", isPresented: $askLink) {
@@ -204,6 +208,7 @@ struct ComposeView: View {
                     Label("Send", systemImage: "paperplane.fill")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(Theme.onPrimary)
+                        .frame(height: 22) // the icon buttons' content height, so the pill matches the circles
                         .padding(.horizontal, 6)
                 }
                 .buttonStyle(.glassProminent)
@@ -216,7 +221,7 @@ struct ComposeView: View {
                 if model.aiConfigured {
                     Button { showAI = true } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
                         .buttonStyle(.glass)
-                        .accessibilityLabel("Edit with AI")
+                        .accessibilityLabel("Write or edit with AI")
                 }
                 Menu {
                     Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
@@ -284,14 +289,33 @@ struct ComposeView: View {
         return text.isEmpty ? nil : text
     }
 
+    /// The From account's signature, when the body still ends with it.
+    private var signatureSuffix: String? {
+        guard let sig = fromAccount?.signature, !sig.isEmpty, plainBody.hasSuffix(sig) else { return nil }
+        return sig
+    }
+
+    /// What the AI works on when nothing is selected: the body minus the
+    /// signature, which `replaceBody` puts back.
+    private var bodyWithoutSignature: String {
+        guard let sig = signatureSuffix else { return plainBody }
+        return String(plainBody.dropLast(sig.count))
+    }
+
     private func applyAI(_ result: String) {
         if case .ranges(let set) = selection.indices(in: body_), let first = set.ranges.first {
             body_.transform(updating: &selection) { text in
                 text.replaceSubrange(first, with: AttributedString(result))
             }
         } else {
-            body_ = AttributedString(result)
+            replaceBody(with: result)
         }
+    }
+
+    /// New body text (an AI draft or a whole-body edit), signature kept.
+    private func replaceBody(with text: String) {
+        body_ = AttributedString(signatureSuffix.map { "\(text)\n\n\($0)" } ?? text)
+        pristine = false
     }
 
     private func switchFrom(_ next: MailAccount) {
@@ -349,11 +373,12 @@ struct ComposeView: View {
         d.bcc = bcc
         d.bodyText = plainBody
         d.bodyHTML = RichText.html(body_)
+        d.bodyRich = body_
         d.attachments = attachments
         let from = fromId
         Keyboard.dismiss()
         dismiss()
-        Task { await model.send(d, from: from) }
+        model.send(d, from: from)
     }
 
     private func close() {

@@ -234,6 +234,10 @@ final class MockEngine: MailEngine {
     func setAIModel(_ model: String) throws { aiModel = model }
     func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
         try? await Task.sleep(for: .milliseconds(500))
+        if instruction.hasPrefix(AIEditSheet.writePrefix) {
+            // Compose from a brief (AIEditSheet's Write mode).
+            return "Hi,\n\n\(text)\n\nLet me know if [detail] works for you.\n\nThanks"
+        }
         return "\(text)\n\n(\(instruction.lowercased()))"
     }
     func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String {

@@ -412,12 +412,60 @@ final class AppModel {
         }
     }
 
-    func send(_ draft: SendDraft, from accountId: String) async {
+    // MARK: Send — deferred, with an undo window (desktop `sendCompose`)
+
+    /// How long a send waits in the toast before it commits. Same window
+    /// as the toast itself, so Undo is available exactly while it shows.
+    static let sendUndoWindow: Duration = .seconds(5)
+
+    private struct PendingSend {
+        let draft: SendDraft
+        let accountId: String
+        var task: Task<Void, Never>?
+    }
+    private var pendingSends: [UUID: PendingSend] = [:]
+
+    /// The draft does not touch the outbox until the undo window runs out:
+    /// the toast's Undo cancels it and reopens the composer prefilled, with
+    /// no backend call to take back.
+    func send(_ draft: SendDraft, from accountId: String) {
+        var d = draft
+        d.fromAccountId = accountId
+        let id = UUID()
+        pendingSends[id] = PendingSend(draft: d, accountId: accountId)
+        pendingSends[id]?.task = Task { [weak self] in
+            try? await Task.sleep(for: Self.sendUndoWindow)
+            guard !Task.isCancelled else { return }
+            await self?.commitSend(id)
+        }
+        let n = d.to.count + d.cc.count + d.bcc.count
+        let first = d.to.first ?? d.cc.first ?? d.bcc.first ?? ""
+        show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")") { [weak self] in
+            // A send that already committed must not reopen the composer
+            // (that is how duplicates get sent).
+            guard let self, let pending = self.pendingSends.removeValue(forKey: id) else { return }
+            pending.task?.cancel()
+            Keyboard.dismiss()
+            self.composeDraft = pending.draft
+        }
+    }
+
+    private func commitSend(_ id: UUID) async {
+        guard let pending = pendingSends.removeValue(forKey: id) else { return } // undone
         do {
-            try await engine.perform(.send(draft), accountId: accountId)
+            try await engine.perform(.send(pending.draft), accountId: pending.accountId)
             Haptics.success()
             show("Sent")
         } catch { show("Couldn't send: \(error.localizedDescription)") }
+    }
+
+    /// Leaving the app inside the undo window: commit now rather than risk
+    /// iOS ending the process with the message never sent.
+    func flushPendingSends() {
+        for (id, pending) in pendingSends {
+            pending.task?.cancel()
+            Task { await commitSend(id) }
+        }
     }
 
     private func perform(_ action: MailAction, on row: ThreadRow, toast text: String? = nil, undo: (() -> Void)? = nil) {

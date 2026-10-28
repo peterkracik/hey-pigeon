@@ -118,6 +118,8 @@ struct Chip: View {
     var systemImage: String? = nil
     let background: Color
     let foreground: Color
+    /// Pill shape for state badges (reminder, need reply).
+    var capsule = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -125,8 +127,8 @@ struct Chip: View {
             if !text.isEmpty { Text(text).font(.caption.weight(.semibold)).lineLimit(1) }
         }
         .foregroundStyle(foreground)
-        .padding(.horizontal, 7).padding(.vertical, 2)
-        .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.horizontal, capsule ? 9 : 7).padding(.vertical, 2)
+        .background(background, in: RoundedRectangle(cornerRadius: capsule ? 100 : 6, style: .continuous))
     }
 }
 

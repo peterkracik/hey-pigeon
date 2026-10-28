@@ -4,7 +4,7 @@
 // rows (latest expanded, the middle of long threads folded), and two
 // floating glass bars at the bottom: the Reply button — tap for the default
 // action, chevron for Reply · Reply all · Forward, as in Superhuman — with
-// the AI draft inside, and one triage bar in the desktop's words:
+// the AI draft circle beside it, and one triage bar in the desktop's words:
 // Done · Remind · Need reply · Pin · Delete.
 
 import SwiftUI
@@ -71,10 +71,10 @@ struct ThreadView: View {
             .padding(.bottom, 150)
         }
         .background(Theme.canvas)
-        // Same setup as the inbox's top bar, where the principal item shows.
+        // The names are the principal item. No .toolbar(removing: .title)
+        // here: a plain-text principal counts as the title and went with it.
         .navigationTitle(participants)
         .toolbarTitleDisplayMode(.inline)
-        .toolbar(removing: .title)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -196,11 +196,12 @@ struct ThreadView: View {
             }
             if let at = current.scheduledAt {
                 Chip(text: Formatters.reminder(at), systemImage: current.isFollowUp ? "clock.arrow.circlepath" : "clock",
-                     background: Theme.sunken, foreground: Theme.textSecondary)
+                     background: Theme.tagBackground(Self.remindTone), foreground: Theme.tagForeground(Self.remindTone), capsule: true)
                     .accessibilityLabel(current.isFollowUp ? "Follow up \(Formatters.reminder(at)) if no reply" : "Reminder \(Formatters.reminder(at))")
             }
             if current.needsReply {
-                Chip(text: "Need reply", systemImage: "arrowshape.turn.up.left", background: Theme.sunken, foreground: Theme.textSecondary)
+                Chip(text: "Need reply", systemImage: "arrowshape.turn.up.left",
+                     background: Theme.tagBackground(Self.replyTone), foreground: Theme.tagForeground(Self.replyTone), capsule: true)
             }
             Spacer(minLength: 4)
             let count = detail?.messages.count ?? row.messageCount
@@ -214,16 +215,39 @@ struct ThreadView: View {
     // MARK: Bottom bars
 
     /// The Reply pill, then the triage actions as one glass bar.
+    /// State colours, shared by the header badges and the active bar buttons.
+    private static let remindTone = AccountColor.lavender
+    private static let replyTone = AccountColor.sky
+    private static let doneTone = AccountColor.mint
+
     private var bottomBars: some View {
         VStack(spacing: 10) {
-            replyPill
+            HStack(spacing: 10) {
+                replyPill
+                if model.aiConfigured {
+                    Button { Task { await draftReply() } } label: {
+                        Image(systemName: "sparkles").font(.title3).foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                            .background(Theme.accent.opacity(drafting ? 0.4 : 0.9), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(detail == nil || drafting)
+                    .accessibilityLabel("Draft a reply with AI")
+                }
+            }
+            // Each toggle shows its state: filled icon in the state's colour.
             HStack(spacing: 0) {
-                bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "arrow.uturn.backward" : "checkmark") {
+                bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
+                    tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil) {
                     model.toggleDone(current); onClose()
                 }
-                bar("Remind me", "clock") { model.pendingRemind = current }
+                bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
+                    tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone)) {
+                    model.pendingRemind = current
+                }
                 bar(current.needsReply ? "Clear need reply" : "Need reply",
-                    current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left") {
+                    current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left",
+                    tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil) {
                     model.toggleNeedsReply(current)
                 }
                 bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil) {
@@ -239,7 +263,7 @@ struct ThreadView: View {
 
     /// Superhuman's reply button: the chevron picks Reply · Reply all ·
     /// Forward (kept for this thread), the label runs it on the latest
-    /// message, the sparkle drafts the reply with AI.
+    /// message. The AI draft is its own circle next to it.
     private var replyPill: some View {
         HStack(spacing: 0) {
             Menu {
@@ -267,17 +291,6 @@ struct ThreadView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if model.aiConfigured {
-                Button { Task { await draftReply() } } label: {
-                    Image(systemName: "sparkles").foregroundStyle(.white)
-                        .frame(width: 38, height: 38)
-                        .background(Theme.accent.opacity(drafting ? 0.4 : 0.85), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(detail == nil || drafting)
-                .accessibilityLabel("Draft a reply with AI")
-                .padding(.trailing, 5)
-            }
         }
         .foregroundStyle(Theme.textPrimary)
         .frame(height: 48)

@@ -102,8 +102,10 @@ floating "splits" pill above the tab bar. Here that maps to:
 - **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
   Last 7 days · Older. Scheduled buckets by due date; Need reply has no
   Pinned group.
-- **Rows:** unread rows sit on the card surface in primary text with the
-  dot; read rows sink into the canvas in the secondary tone.
+- **Rows:** flat, edge to edge, one colour. Unread is a bar on the left
+  edge (white on dark, the accent on light) and the bold sender. In the
+  unified view the sender's first letter takes the account colour — no
+  dot, no avatar.
 - **The title** sits between the two circles: folder, unread count and —
   with more than one account — the account's dot and name. Tapping it
   switches account (All · each). Search stays in the bottom-right circle,

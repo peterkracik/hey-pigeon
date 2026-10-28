@@ -11,3 +11,12 @@ ios-app/HeyPigeonCore/*.xcframework
 ios-app/Config/Local.xcconfig
 ios-app/build
 *.xcuserstate
+# Terraform (terraform/, terraform/bootstrap/)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform/backend.hcl
+terraform/**/*.tfvars
+!terraform/**/*.tfvars.example
+terraform/.build/

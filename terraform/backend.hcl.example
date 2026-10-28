@@ -1,0 +1,4 @@
+# cp backend.hcl.example backend.hcl   (git-ignored)
+# bucket = the `state_bucket` output of terraform/bootstrap
+bucket = "my-project-tfstate"
+prefix = "relay"

@@ -11,6 +11,7 @@ struct SidebarSheet: View {
     var body: some View {
         NavigationStack {
             list
+                .toolbarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(role: .close) { dismiss() }

@@ -27,6 +27,8 @@ enum Theme {
     /// Sunken blocks (summaries, chips, inputs): the desktop's --surface-sunken.
     static let sunken = Color(light: navy100, dark: Color(hex: 0x2C2F37))
     static let textPrimary = Color(light: Color(hex: 0x0D0D10), dark: navy50)
+    /// Text on a textPrimary-tinted surface (the Send pill).
+    static let onPrimary = Color(light: .white, dark: Color(hex: 0x1A1C22))
     static let textSecondary = Color(light: Color(hex: 0x4E5057), dark: navy400)
     static let textTertiary = Color(light: Color(hex: 0x8E9096), dark: navy500)
     static let separator = Color(light: Color(hex: 0xE4E4E7), dark: Color(hex: 0x33363E))

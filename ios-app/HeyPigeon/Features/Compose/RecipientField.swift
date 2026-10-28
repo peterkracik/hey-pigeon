@@ -29,7 +29,8 @@ struct RecipientField<Field: Hashable>: View {
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                 .submitLabel(.next)
                 .focused(focused, equals: field)
-                .frame(minWidth: 120)
+                .foregroundStyle(Theme.textPrimary)
+                .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
                 .onChange(of: text) { _, t in
                     if t.hasSuffix(",") || t.hasSuffix(" ") { commit() }
                 }

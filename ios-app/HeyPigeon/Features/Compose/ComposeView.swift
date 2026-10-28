@@ -71,8 +71,10 @@ struct ComposeView: View {
                         }
                         TextEditor(text: $body_, selection: $selection)
                             .font(.body)
+                            .foregroundStyle(Theme.textPrimary)
+                            .scrollContentBackground(.hidden)
                             .scrollDisabled(true)
-                            .frame(minHeight: 240)
+                            .frame(minHeight: 280)
                             .padding(.horizontal, 12)
                             .padding(.top, 6)
                             .focused($focus, equals: .body)
@@ -157,6 +159,7 @@ struct ComposeView: View {
                     .padding(.top, 2)
                 content()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16).padding(.vertical, 9)
             Divider().padding(.leading, 16)
         }
@@ -198,7 +201,10 @@ struct ComposeView: View {
             }
             HStack(spacing: 10) {
                 Button { send() } label: {
-                    Label("Send", systemImage: "paperplane.fill").font(.subheadline.weight(.bold)).padding(.horizontal, 6)
+                    Label("Send", systemImage: "paperplane.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Theme.onPrimary)
+                        .padding(.horizontal, 6)
                 }
                 .buttonStyle(.glassProminent)
                 .tint(Theme.textPrimary)
@@ -384,28 +390,36 @@ enum RichText {
     }
 }
 
-/// Wrapping row of chips (attachments, recipients).
+/// Wrapping row of chips (attachments, recipients). Each subview is
+/// measured against the width left on its line, so a flexible input
+/// (the recipient field) fills the rest of the line instead of wrapping.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
+        let width = proposal.width ?? 360
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
         for v in subviews {
-            let s = v.sizeThatFits(.unspecified)
-            if x + s.width > width, x > 0 { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            var s = v.sizeThatFits(ProposedViewSize(width: width - x, height: nil))
+            if x > 0, x + s.width > width {
+                x = 0; y += rowHeight + spacing; rowHeight = 0
+                s = v.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            }
             x += s.width + spacing
             rowHeight = max(rowHeight, s.height)
         }
-        return CGSize(width: width == .infinity ? x : width, height: y + rowHeight)
+        return CGSize(width: width, height: y + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for v in subviews {
-            let s = v.sizeThatFits(.unspecified)
-            if x + s.width > bounds.maxX, x > bounds.minX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
-            v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
+            var s = v.sizeThatFits(ProposedViewSize(width: bounds.maxX - x, height: nil))
+            if x > bounds.minX, x + s.width > bounds.maxX {
+                x = bounds.minX; y += rowHeight + spacing; rowHeight = 0
+                s = v.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            }
+            v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: min(s.width, bounds.maxX - x), height: s.height))
             x += s.width + spacing
             rowHeight = max(rowHeight, s.height)
         }

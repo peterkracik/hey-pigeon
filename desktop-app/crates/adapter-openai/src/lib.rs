@@ -24,14 +24,23 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(api_key: String) -> Self {
-        Self { http: reqwest::Client::new(), api_key }
+        Self {
+            http: reqwest::Client::new(),
+            api_key,
+        }
     }
 
     /// Same list as `AiProvider::models()`, without needing an instance —
     /// the settings UI's model picker doesn't have a key yet the first
     /// time it needs this.
     pub fn model_catalog() -> Vec<ModelInfo> {
-        MODELS.iter().map(|(id, label)| ModelInfo { id: id.to_string(), label: label.to_string() }).collect()
+        MODELS
+            .iter()
+            .map(|(id, label)| ModelInfo {
+                id: id.to_string(),
+                label: label.to_string(),
+            })
+            .collect()
     }
 }
 
@@ -63,7 +72,10 @@ fn build_body(req: &CompletionRequest) -> WireRequest<'_> {
         messages: req
             .messages
             .iter()
-            .map(|m| WireMessage { role: role_str(m.role), content: &m.content })
+            .map(|m| WireMessage {
+                role: role_str(m.role),
+                content: &m.content,
+            })
             .collect(),
     }
 }
@@ -99,8 +111,13 @@ fn parse_completion(json: &str) -> Result<String, AiError> {
 fn map_status_error(status: u16, body: &str) -> AiError {
     match status {
         401 | 403 => AiError::AuthInvalid,
-        429 => AiError::RateLimited { retry_after_secs: None },
-        _ => AiError::Provider(format!("HTTP {status}: {}", body.chars().take(200).collect::<String>())),
+        429 => AiError::RateLimited {
+            retry_after_secs: None,
+        },
+        _ => AiError::Provider(format!(
+            "HTTP {status}: {}",
+            body.chars().take(200).collect::<String>()
+        )),
     }
 }
 
@@ -124,7 +141,10 @@ impl AiProvider for OpenAiProvider {
             .await
             .map_err(|e| AiError::Network(e.to_string()))?;
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| AiError::Network(e.to_string()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| AiError::Network(e.to_string()))?;
         if !status.is_success() {
             return Err(map_status_error(status.as_u16(), &text));
         }
@@ -162,8 +182,14 @@ mod tests {
         let req = CompletionRequest {
             model: "gpt-4o-mini".to_string(),
             messages: vec![
-                ChatMessage { role: ChatRole::System, content: "be terse".to_string() },
-                ChatMessage { role: ChatRole::User, content: "hi".to_string() },
+                ChatMessage {
+                    role: ChatRole::System,
+                    content: "be terse".to_string(),
+                },
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: "hi".to_string(),
+                },
             ],
         };
         let body = build_body(&req);
@@ -187,15 +213,24 @@ mod tests {
 
     #[test]
     fn parse_completion_errors_on_garbage() {
-        assert!(matches!(parse_completion("not json"), Err(AiError::Provider(_))));
+        assert!(matches!(
+            parse_completion("not json"),
+            Err(AiError::Provider(_))
+        ));
     }
 
     #[test]
     fn map_status_error_distinguishes_auth_and_rate_limit() {
         assert!(matches!(map_status_error(401, ""), AiError::AuthInvalid));
         assert!(matches!(map_status_error(403, ""), AiError::AuthInvalid));
-        assert!(matches!(map_status_error(429, ""), AiError::RateLimited { .. }));
-        assert!(matches!(map_status_error(500, "boom"), AiError::Provider(_)));
+        assert!(matches!(
+            map_status_error(429, ""),
+            AiError::RateLimited { .. }
+        ));
+        assert!(matches!(
+            map_status_error(500, "boom"),
+            AiError::Provider(_)
+        ));
     }
 
     #[test]

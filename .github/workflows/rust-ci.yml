@@ -1,0 +1,47 @@
+name: rust-ci
+
+# Linux checks for the shared Rust core and the iOS bridge crate: format,
+# tests, and the Swift bindgen (so the FFI surface stays generatable without
+# a Mac). The Tauri shell (src-tauri) needs GTK/WebKit system libraries and
+# is built by build-macos.yml on release instead.
+
+on:
+  push:
+    branches: [main]
+    paths: ["desktop-app/**", ".github/workflows/rust-ci.yml"]
+  pull_request:
+    paths: ["desktop-app/**", ".github/workflows/rust-ci.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-app
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Test core, adapters and ffi
+        run: >
+          cargo test
+          -p heypigeon-core
+          -p heypigeon-adapter-gmail
+          -p heypigeon-adapter-sqlite
+          -p heypigeon-adapter-openai
+          -p heypigeon-adapter-jev
+          -p heypigeon-ffi
+      - name: Generate Swift bindings
+        run: |
+          cargo build -p heypigeon-ffi
+          cargo run -q -p heypigeon-ffi --features bindgen --bin uniffi-bindgen -- \
+            generate --library target/debug/libheypigeon_ffi.so --language swift --out-dir target/bindings
+          test -s target/bindings/HeyPigeonCore.swift
+          grep -q "public static func \`open\`(dataDir: String, oauth: OauthClient)" target/bindings/HeyPigeonCore.swift

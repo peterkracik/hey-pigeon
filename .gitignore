@@ -11,5 +11,3 @@ ios-app/HeyPigeonCore/*.xcframework
 ios-app/Config/Local.xcconfig
 ios-app/build
 *.xcuserstate
-ios-app/ios
-ios-app/build-*.tar.gz

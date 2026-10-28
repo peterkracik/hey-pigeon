@@ -359,8 +359,13 @@ pub async fn set_schedule(
             .store
             .set_follow_up(&thread_id, follow_up_since)
             .map_err(estr)?;
-        devsync::record_follow_up(&state.store, &thread.account_id, &thread_id, follow_up_since)
-            .map_err(estr)?;
+        devsync::record_follow_up(
+            &state.store,
+            &thread.account_id,
+            &thread_id,
+            follow_up_since,
+        )
+        .map_err(estr)?;
     }
     let _ = app.emit(THREADS_UPDATED, ());
     // Push straight away — one small upload — so a second device sees the

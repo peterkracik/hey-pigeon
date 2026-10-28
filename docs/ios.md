@@ -276,14 +276,6 @@ Xcode run-script phase. Linux CI can already compile the crate, run its
 tests and generate the bindings, which is how the API is kept honest without
 a Mac.
 
-Release builds run on **EAS Build** (expo.dev) through a custom build config
-(`ios-app/.eas/build/build-ios.yml`): the worker installs Rust and XcodeGen,
-runs the same script, generates the Xcode project and hands over to EAS's
-own credential, versioning and fastlane steps — so signing certificates and
-provisioning profiles live in EAS's credential store like every other app
-on the account, and an EAS Workflow submits the result to TestFlight on each
-`ios-v*` tag. Setup in `ios-app/README.md`.
-
 ## Milestones
 
 1. **iOS-M1 — read and triage** (daily-drivable for mail you don't answer

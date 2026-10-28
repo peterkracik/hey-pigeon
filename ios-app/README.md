@@ -36,47 +36,37 @@ Fonts: drop `Manrope-Medium.ttf`, `Manrope-Bold.ttf`, `Manrope-ExtraBold.ttf`
 into `HeyPigeon/Resources/Fonts/` for the brand typeface; without them SwiftUI
 silently falls back to the system font.
 
-## Publishing (EAS)
+## Publishing (CI)
 
-Release builds and TestFlight uploads run on **EAS** (expo.dev), the same
-pipeline as any other app on the account. EAS Build can't use its default
-Expo/React Native steps for this project, so `.eas/build/build-ios.yml` lists
-the steps itself: install Rust + XcodeGen on the macOS worker, run
-`scripts/build-rust.sh`, generate the Xcode project, then EAS's own
-credential, version and fastlane steps. Signing certificates, provisioning
-profiles and the App Store Connect API key all live in EAS's credential store
-— nothing to export, nothing to put in Doppler except the Google client id.
-
-`.eas/workflows/publish-ios.yml` chains build → submit on every `ios-v*` tag.
-Versions: `app.json` holds the marketing version; build numbers are managed
-remotely by EAS (`appVersionSource: remote`, `autoIncrement`).
+`.github/workflows/publish-ios.yml` builds, signs and uploads the app to App
+Store Connect (TestFlight) on every `ios-v*` tag, or by hand from the Actions
+tab. The build is plain `xcodebuild` on a macOS runner — Expo's EAS Build
+cannot compile a native Xcode + Rust project — and the upload goes through
+**EAS Submit** (expo.dev), which accepts any signed IPA. `uploader: xcrun`
+does the same upload with Apple's `altool` and no Expo account; `none` just
+produces the IPA as a workflow artifact.
 
 ```sh
-git tag ios-v0.1.0 && git push origin ios-v0.1.0   # or: eas workflow:run publish-ios.yml
+git tag ios-v0.1.0 && git push origin ios-v0.1.0
 ```
 
-One-time setup, all from `ios-app/`:
+One-time setup, then the secrets listed at the top of the workflow (synced
+into the repo via Doppler):
 
-1. `npm i -g eas-cli && eas login`, then `eas init` — links this folder to an
-   EAS project (slug `hey-pigeon`) and writes `extra.eas.projectId` into
-   `app.json`; commit that.
-2. `eas credentials:configure-build -p ios -e production` — picks the team's
-   existing Apple Distribution certificate from EAS's store (or creates one)
-   and creates the App Store provisioning profile for `app.heypigeon.ios`.
-3. `eas credentials -p ios` → App Store Connect API Key — reuse the key EAS
-   already holds for your other apps, or upload one with the App Manager
-   role. `eas submit` uses it; the app record for `app.heypigeon.ios` must
-   exist in App Store Connect.
-4. `eas env:set --name GOOGLE_IOS_CLIENT_ID --value <id>.apps.googleusercontent.com --environment production --visibility sensitive`
-   — the iOS-type Google OAuth client (bundle id `app.heypigeon.ios`), created
-   in the same Google Cloud project as the desktop client.
-5. On expo.dev, connect the GitHub repository to the project so tag pushes
-   trigger the workflow. Until then, `eas workflow:run publish-ios.yml` or
-   `eas build -p ios -e production && eas submit -p ios --latest` by hand.
-
-The first build is also the first time the Swift compiles anywhere, so expect
-a round of compiler fixes from its log. Local sanity check without the cloud:
-`eas build -p ios -e production --local` on a Mac with Rust installed.
+1. **App Store Connect**: an app record for bundle id `app.heypigeon.ios`
+   (its numeric Apple ID is `ASC_APP_ID`), and an API key with the App
+   Manager role (`ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, the `.p8` as base64
+   in `ASC_API_KEY_P8`).
+2. **Signing**: an *Apple Distribution* certificate as `.p12`
+   (`IOS_DISTRIBUTION_CERTIFICATE_P12` base64 + its password). The certificate
+   is per team, so reuse the one EAS already manages for the other apps:
+   `eas credentials -p ios` → Distribution Certificate → Download. Provisioning
+   profiles are created by Xcode cloud signing at build time, nothing to
+   upload.
+3. **Google**: the iOS OAuth client id in `HEYPIGEON_IOS_OAUTH_CLIENT_ID`
+   (same idea as the baked-in desktop client).
+4. **Expo** (default uploader only): a project on expo.dev
+   (`EXPO_PROJECT_ID`) and an access token (`EXPO_TOKEN`).
 
 **Bundle ids, deliberately two.** iOS is `app.heypigeon.ios`; the Mac app
 stays `app.heypigeon`. They are separate products in App Store Connect

@@ -1,9 +1,0 @@
-{
-  "name": "heypigeon-ios",
-  "version": "0.1.0",
-  "private": true,
-  "description": "EAS project shell for the native iOS app — see README.md. Nothing here is JavaScript; EAS CLI needs a package.json and the expo package to resolve app.json.",
-  "dependencies": {
-    "expo": "^54.0.12"
-  }
-}

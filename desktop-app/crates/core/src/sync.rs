@@ -362,8 +362,11 @@ mod tests {
     fn follow_up_clears_only_on_a_newer_inbound_message() {
         let store = MemStore::default();
         let acc = "a1".to_string();
-        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
-        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 1, 100) else {
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
+        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 1, 100)
+        else {
             unreachable!()
         };
         store.upsert_thread(&thread).unwrap();
@@ -386,7 +389,10 @@ mod tests {
         crate::devsync::record_follow_up(&store, &acc, &thread.id, Some(150)).unwrap();
 
         // Nothing inbound after arming → stays.
-        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+        assert_eq!(
+            settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(),
+            0
+        );
         let t = store.get_thread(&thread.id).unwrap().unwrap();
         assert_eq!(t.scheduled_at, Some(9_999));
         assert_eq!(t.follow_up_since, Some(150));
@@ -398,7 +404,10 @@ mod tests {
             ..mine.clone()
         };
         store.upsert_message(&mine2).unwrap();
-        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+        assert_eq!(
+            settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(),
+            0
+        );
 
         // They reply → schedule and marker go, locally and in the sync map.
         let reply = crate::domain::Message {
@@ -408,16 +417,27 @@ mod tests {
             ..messages[0].clone()
         };
         store.upsert_message(&reply).unwrap();
-        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 1);
+        assert_eq!(
+            settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(),
+            1
+        );
         let t = store.get_thread(&thread.id).unwrap().unwrap();
         assert_eq!(t.scheduled_at, None);
         assert_eq!(t.follow_up_since, None);
         let entries = store.sync_entries(&acc).unwrap();
-        let tomb = |key: &str| entries.iter().find(|e| e.key == key).map(|e| e.value.is_none());
+        let tomb = |key: &str| {
+            entries
+                .iter()
+                .find(|e| e.key == key)
+                .map(|e| e.value.is_none())
+        };
         assert_eq!(tomb(&crate::devsync::reminder_key(&thread.id)), Some(true));
         assert_eq!(tomb(&crate::devsync::follow_up_key(&thread.id)), Some(true));
         // Idempotent: a second pass has nothing left to clear.
-        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
+        assert_eq!(
+            settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(),
+            0
+        );
     }
 
     /// A plain reminder (no follow-up marker) is never touched by replies.
@@ -425,8 +445,11 @@ mod tests {
     fn plain_reminder_survives_replies() {
         let store = MemStore::default();
         let acc = "a1".to_string();
-        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
-        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 2, 100) else {
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
+        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 2, 100)
+        else {
             unreachable!()
         };
         store.upsert_thread(&thread).unwrap();
@@ -438,8 +461,14 @@ mod tests {
             ..messages[0].clone()
         };
         store.upsert_message(&reply).unwrap();
-        assert_eq!(settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(), 0);
-        assert_eq!(store.get_thread(&thread.id).unwrap().unwrap().scheduled_at, Some(500));
+        assert_eq!(
+            settle_follow_ups(&store, &acc, &[thread.id.clone()]).unwrap(),
+            0
+        );
+        assert_eq!(
+            store.get_thread(&thread.id).unwrap().unwrap().scheduled_at,
+            Some(500)
+        );
     }
 
     fn new_thread_change(account_id: &str, i: usize, date: i64) -> HistoryChange {

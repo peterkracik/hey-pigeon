@@ -66,7 +66,9 @@ mod tests {
 
     fn seeded_store() -> MemStore {
         let store = MemStore::default();
-        store.upsert_account(&crate::fakes::sample_account("a1")).unwrap();
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
         store
     }
 
@@ -77,9 +79,18 @@ mod tests {
         crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let t = &store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap()[0];
+        let t = &store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()[0];
 
-        enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: t.id.clone() }).unwrap();
+        enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Archive {
+                thread_id: t.id.clone(),
+            },
+        )
+        .unwrap();
 
         // local effect is immediate
         let t2 = store.get_thread(&t.id).unwrap().unwrap();
@@ -95,16 +106,28 @@ mod tests {
         crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap()[0].id.clone();
-        enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id.clone() }).unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()[0]
+            .id
+            .clone();
+        enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Archive {
+                thread_id: id.clone(),
+            },
+        )
+        .unwrap();
 
         let (applied, failed) = drain(&provider, &store, 10).await.unwrap();
 
         assert_eq!((applied, failed), (1, 0));
         assert!(store.outbox_list(10).unwrap().is_empty());
-        assert!(provider.applied_mutations().iter().any(
-            |(_, m)| matches!(m, Mutation::Archive { thread_id } if *thread_id == id),
-        ));
+        assert!(provider
+            .applied_mutations()
+            .iter()
+            .any(|(_, m)| matches!(m, Mutation::Archive { thread_id } if *thread_id == id),));
     }
 
     #[tokio::test]
@@ -114,8 +137,17 @@ mod tests {
         crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let id = store.list_threads(None, &ThreadFilter::Inbox, None, 10).unwrap()[0].id.clone();
-        enqueue(&store, &"a1".to_string(), Mutation::Archive { thread_id: id }).unwrap();
+        let id = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()[0]
+            .id
+            .clone();
+        enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Archive { thread_id: id },
+        )
+        .unwrap();
         provider.fail_applies(true);
 
         let (applied, failed) = drain(&provider, &store, 10).await.unwrap();

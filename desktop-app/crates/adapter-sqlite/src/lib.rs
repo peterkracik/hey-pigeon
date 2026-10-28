@@ -1653,14 +1653,23 @@ mod tests {
         // the awaited reply.
         let since = t.last_msg_at + 1;
         assert!(store.set_follow_up(&id, Some(since)).unwrap());
-        assert_eq!(store.get_thread(&id).unwrap().unwrap().follow_up_since, Some(since));
+        assert_eq!(
+            store.get_thread(&id).unwrap().unwrap().follow_up_since,
+            Some(since)
+        );
         // Provider re-upsert must not clobber it (local-only column).
         sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        assert_eq!(store.get_thread(&id).unwrap().unwrap().follow_up_since, Some(since));
+        assert_eq!(
+            store.get_thread(&id).unwrap().unwrap().follow_up_since,
+            Some(since)
+        );
         assert!(store.set_follow_up(&id, None).unwrap());
-        assert_eq!(store.get_thread(&id).unwrap().unwrap().follow_up_since, None);
+        assert_eq!(
+            store.get_thread(&id).unwrap().unwrap().follow_up_since,
+            None
+        );
         assert!(!store.set_follow_up(&"nope".to_string(), Some(1)).unwrap());
     }
 

@@ -51,7 +51,6 @@ struct ThreadRowView: View {
                     .foregroundStyle(tone)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if let p = row.priority { PriorityIndicator(priority: p) }
                 ForEach(triageNames, id: \.self) { name in
                     Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
                 }
@@ -86,7 +85,7 @@ struct ThreadRowView: View {
         HStack(spacing: 6) {
             if row.scheduledAt != nil { mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
             if row.needsReply { mark("arrowshape.turn.up.left") }
-            if row.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(Theme.pin) }
+            if row.isPinned { mark("pin.fill") }
             if row.isDone && model.view != .archive { mark("checkmark") }
         }
     }

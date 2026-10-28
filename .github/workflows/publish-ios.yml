@@ -60,7 +60,8 @@ env:
 
 jobs:
   build-and-submit:
-    runs-on: macos-15
+    # macOS 26 image: Xcode 26 SDK, where Liquid Glass is the system look.
+    runs-on: macos-26
     timeout-minutes: 90
     # Secrets live in the "ios" GitHub environment (synced from Doppler);
     # a job only sees environment secrets when it names the environment.
@@ -72,8 +73,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show Xcode
-        run: xcodebuild -version
+      - name: Select newest Xcode 26
+        run: |
+          set -euo pipefail
+          xc="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
+          xcodebuild -version
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -154,11 +159,29 @@ jobs:
           KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
         run: |
           set -euo pipefail
+          test -n "$KEY_ID" || { echo "ASC_API_KEY_ID is not set" >&2; exit 1; }
           # xcodebuild and altool both look here.
           mkdir -p ~/private_keys
-          echo "$KEY_P8_B64" | base64 --decode > ~/private_keys/AuthKey_${KEY_ID}.p8
-          chmod 600 ~/private_keys/AuthKey_${KEY_ID}.p8
-          echo "ASC_KEY_PATH=$HOME/private_keys/AuthKey_${KEY_ID}.p8" >> "$GITHUB_ENV"
+          key=~/private_keys/AuthKey_${KEY_ID}.p8
+          # Accept the secret as: the raw PEM, base64 of the PEM, or base64 of
+          # base64 (a common copy-paste outcome). Never print the key itself.
+          if [[ "$KEY_P8_B64" == *"-----BEGIN"* ]]; then
+            printf '%s\n' "$KEY_P8_B64" > "$key"; form="raw PEM"
+          else
+            printf '%s' "$KEY_P8_B64" | tr -d '\n\r ' | base64 --decode > "$key" || { echo "ASC_API_KEY_P8 is not valid base64" >&2; exit 1; }
+            form="base64"
+            if ! grep -q -- "-----BEGIN" "$key"; then
+              tr -d '\n\r ' < "$key" | base64 --decode > "$key.2" 2>/dev/null && mv "$key.2" "$key" || true
+              form="base64 of base64"
+            fi
+          fi
+          chmod 600 "$key"
+          if ! grep -q -- "-----BEGIN PRIVATE KEY-----" "$key"; then
+            echo "ASC_API_KEY_P8 decoded ($form) but is not a PEM private key: expected '-----BEGIN PRIVATE KEY-----'. Store 'base64 -i AuthKey_${KEY_ID}.p8' as a single line." >&2
+            exit 1
+          fi
+          echo "App Store Connect key installed ($form, $(wc -c < "$key") bytes)"
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
 
       - name: Archive
         working-directory: ios-app

@@ -58,7 +58,7 @@ final class AppModel {
     var toast: Toast?
     var pendingRemind: ThreadRow?
     var composeDraft: SendDraft?
-    var showAccounts = false
+    var showSidebar = false
     var showSettings = false
     /// Scheduled / Need reply counts for the tab badges.
     var scheduledCount: Int { (try? engine.threads(in: .scheduled, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }

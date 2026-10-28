@@ -1,5 +1,7 @@
-// One inbox row. Typography does the work: sender · time, then subject ·
-// snippet on one line, badges only when true.
+// One inbox row, three lines: sender · time, subject, two-line snippet —
+// plus chips only when there is something to say. No avatar: the dot on the
+// left is the unread mark, tinted with the account colour in the unified
+// view; a read row has no dot at all.
 
 import SwiftUI
 
@@ -10,52 +12,56 @@ struct ThreadRowView: View {
 
     private var account: MailAccount? { model.accounts.first { $0.id == row.accountId } }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Unread accent bar + avatar circle (initial, tinted by account).
-            ZStack(alignment: .leading) {
-                if !row.isRead {
-                    RoundedRectangle(cornerRadius: 1.5).fill(Theme.accent).frame(width: 3, height: 36).offset(x: -16)
-                }
-                Circle()
-                    .fill(account.map { Theme.tagBackground($0.color) } ?? Theme.navy100)
-                    .frame(width: 36, height: 36)
-                    .overlay {
-                        Text(initial)
-                            .font(.custom("Manrope-Bold", size: 14, relativeTo: .subheadline))
-                            .foregroundStyle(account.map { Theme.tagForeground($0.color) } ?? Theme.textSecondary)
-                    }
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(row.fromSummary)
-                        .font(Theme.sender(!row.isRead))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    if row.isConversation {
-                        Text("\(row.messageCount)").font(.caption2.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                    }
-                    Spacer(minLength: 8)
-                    Text(timeText)
-                        .font(.caption.weight(row.isRead ? .medium : .semibold))
-                        .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
-                        .monospacedDigit()
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(preview)
-                        .font(.subheadline)
-                        .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    badges
-                }
-            }
-        }
-        .accessibilityElement(children: .combine)
+    private var dotColor: Color {
+        guard !row.isRead else { return .clear }
+        if showAccountDot, let a = account { return Theme.tagForeground(a.color) }
+        return Theme.accent
     }
 
-    private var initial: String {
-        String(row.fromSummary.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Circle().fill(dotColor).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                Text(row.fromSummary)
+                    .font(Theme.sender(!row.isRead))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if row.isConversation {
+                    Text("\(row.messageCount)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 8)
+                trailingMarks
+                Text(timeText)
+                    .font(.subheadline)
+                    .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
+                    .monospacedDigit()
+            }
+            Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                .font(.body.weight(row.isRead ? .regular : .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .padding(.leading, 16)
+            if !row.snippet.isEmpty {
+                Text(row.snippet)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(2)
+                    .padding(.leading, 16)
+            }
+            if row.priority != nil || row.hasAttachment {
+                HStack(spacing: 6) {
+                    if let p = row.priority, p != .spam {
+                        Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
+                    }
+                    if row.hasAttachment {
+                        Chip(text: "attachment", systemImage: "paperclip", background: Theme.navy100, foreground: Theme.textSecondary)
+                    }
+                }
+                .padding(.leading, 16).padding(.top, 2)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 
     private var timeText: String {
@@ -63,35 +69,34 @@ struct ThreadRowView: View {
         return Formatters.rowTime(row.lastMessageAt)
     }
 
-    private var preview: AttributedString {
-        var s = AttributedString(row.subject.isEmpty ? "(no subject)" : row.subject)
-        s.font = .subheadline.weight(row.isRead ? .regular : .semibold)
-        s.foregroundColor = row.isRead ? Theme.textSecondary : Theme.textPrimary
-        if !row.snippet.isEmpty {
-            s += AttributedString(" · \(row.snippet)")
-        }
-        return s
-    }
-
+    /// Small marks next to the time, only when true.
     @ViewBuilder
-    private var badges: some View {
-        HStack(spacing: 5) {
-            if let p = row.priority, p != .spam {
-                Circle().fill(Theme.priorityColor(p)).frame(width: 6, height: 6)
-                    .accessibilityLabel("Priority \(p.rawValue)")
-            }
-            if row.hasAttachment { badge("paperclip") }
-            if row.scheduledAt != nil { badge(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
-            if row.needsReply { badge("arrowshape.turn.up.left") }
-            if row.isStarred { badge("star.fill") }
-            if showAccountDot, let a = account {
-                Circle().fill(Theme.tagForeground(a.color)).frame(width: 6, height: 6)
-                    .accessibilityLabel(a.displayName)
-            }
+    private var trailingMarks: some View {
+        HStack(spacing: 6) {
+            if row.scheduledAt != nil { mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
+            if row.needsReply { mark("arrowshape.turn.up.left") }
+            if row.isStarred { Image(systemName: "star.fill").font(.caption).foregroundStyle(Color(hex: 0xE3B341)) }
         }
     }
 
-    private func badge(_ name: String) -> some View {
-        Image(systemName: name).font(.caption2).foregroundStyle(Theme.textTertiary)
+    private func mark(_ name: String) -> some View {
+        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary)
+    }
+}
+
+struct Chip: View {
+    let text: String
+    var systemImage: String? = nil
+    let background: Color
+    let foreground: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let systemImage { Image(systemName: systemImage).font(.caption2) }
+            Text(text).font(.caption.weight(.semibold))
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 9).padding(.vertical, 3)
+        .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

@@ -64,22 +64,26 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         TabView(selection: $model.tab) {
-            MailListScreen(tab: .inbox)
-                .tabItem { Label(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage) }
-                .badge(model.counts["inbox"] ?? 0)
-                .tag(MainTab.inbox)
-            MailListScreen(tab: .scheduled)
-                .tabItem { Label(MainTab.scheduled.title, systemImage: MainTab.scheduled.systemImage) }
-                .tag(MainTab.scheduled)
-            MailListScreen(tab: .needReply)
-                .tabItem { Label(MainTab.needReply.title, systemImage: MainTab.needReply.systemImage) }
-                .badge(model.needReplyCount)
-                .tag(MainTab.needReply)
-            SearchScreen()
-                .tabItem { Label(MainTab.search.title, systemImage: MainTab.search.systemImage) }
-                .tag(MainTab.search)
+            Tab(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage, value: MainTab.inbox) {
+                MailListScreen(tab: .inbox)
+            }
+            .badge(model.counts["inbox"] ?? 0)
+            Tab(MainTab.scheduled.title, systemImage: MainTab.scheduled.systemImage, value: MainTab.scheduled) {
+                MailListScreen(tab: .scheduled)
+            }
+            Tab(MainTab.needReply.title, systemImage: MainTab.needReply.systemImage, value: MainTab.needReply) {
+                MailListScreen(tab: .needReply)
+            }
+            .badge(model.needReplyCount)
+            // Search role: the system renders it as the separate glass circle
+            // next to the tab bar and morphs it into the search field.
+            Tab(value: MainTab.search, role: .search) {
+                SearchScreen()
+            }
         }
-            .sheet(isPresented: $model.showAccounts) { AccountsSheet() }
+        // Liquid Glass tab bar shrinks away while reading, back on scroll up.
+        .tabBarMinimizeBehavior(.onScrollDown)
+            .sheet(isPresented: $model.showSidebar) { SidebarSheet() }
             .sheet(isPresented: $model.showSettings) { SettingsView() }
             .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
             .sheet(item: $model.composeDraft) { draft in ComposeView(draft: draft) }
@@ -119,9 +123,8 @@ struct ToastView: View {
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(Theme.card, in: Capsule())
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-            .padding(.bottom, 60) // clears the tab bar
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .padding(.bottom, 72) // clears the floating tab bar
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .task(id: toast.id) {
                 try? await Task.sleep(for: .seconds(5))

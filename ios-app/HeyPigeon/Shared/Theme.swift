@@ -20,12 +20,12 @@ enum Theme {
     static let accent = Color(hex: 0xEE4D9B)
     static let accentSoft = Color(hex: 0xEE4D9B).opacity(0.13)
 
-    static let canvas = Color(light: Color(hex: 0xE9E9EC), dark: navy950)
+    static let canvas = Color(light: Color(hex: 0xFBFBFB), dark: navy950)
     static let card = Color(light: .white, dark: navy900)
     static let textPrimary = Color(light: Color(hex: 0x0D0D10), dark: navy50)
     static let textSecondary = Color(light: Color(hex: 0x4E5057), dark: navy400)
     static let textTertiary = Color(light: Color(hex: 0x8E9096), dark: navy500)
-    static let separator = Color(light: navy100, dark: navy800)
+    static let separator = Color(light: Color(hex: 0xE4E4E7), dark: navy800)
 
     static func tagBackground(_ c: AccountColor) -> Color {
         switch c {

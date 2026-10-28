@@ -69,61 +69,75 @@ Archiving is checking something off. The keyboard map becomes a gesture map.
 
 ### Information architecture
 
-A four-tab bar at the bottom — **the desktop rail, one to one** — and a
-navigation stack above it:
+Superhuman's phone layout is the reference: no title, two glass circles on
+top, the list starts immediately, a drawer for folders and accounts, and a
+floating "splits" pill above the tab bar. Here that maps to:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│ [accounts chip]      Inbox ⌄ (title = folder menu)   [✎] │
-│   thread rows …  ──push──►  Thread  ──sheet──►  Reply    │
-├──────────────────────────────────────────────────────────┤
-│   Inbox  ·  Scheduled  ·  Need reply  ·  Search          │  ← tab bar
+│ (≡)                                                  (✎) │  ← sidebar · compose
+│ ● Sender                                          10:42  │
+│   Subject                                                │
+│   two lines of snippet…                                  │
+│ ─────────────────────────────────────────────────────────│
+│   …                                                      │
+│        ( All 2 · ● Personal · ● Work )                   │  ← account filter pill
+│   (  Inbox  ·  Scheduled  ·  Need reply  )   (🔍)        │  ← tab bar + search
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **Tabs = the rail.** Inbox, Scheduled (reminders), Need reply and Search
-  are the four things the desktop rail has, so they are the four tabs. The
-  Inbox tab carries an unread badge; Need reply carries its count.
-- **Folders and labels live behind the Inbox title.** Tapping the title
-  opens Starred · Drafts · Sent · Archive · All mail · Spam · Trash, then the
-  Gmail labels — the sidebar as a menu (`.toolbarTitleMenu`), costing no
-  chrome. The title reads the chosen folder's name.
-- **Accounts live behind the avatar chip** top-left: stacked account dots,
-  tap to filter to one account (desktop's `1`/`2`), with "Add account" and
-  "Settings" at the bottom of the same sheet. The filter applies across all
-  four tabs.
-- **Search is a tab**, with the field always up. Results use the same rows
-  and gestures; the query syntax is Gmail's, exactly as on desktop.
-- **Triage chips** (Jev labels + priority) appear as one horizontally
-  scrolling row under the title *only when Jev is configured*. Unconfigured
-  users never see them — clean by default, everything reachable when wanted.
-- **Compose** is the only persistent button (top-right pencil). Floating
-  buttons were rejected: they cover the last row, which is where the user is
-  looking when they finish triaging.
-- **The thread view hides the tab bar** and shows its own bottom toolbar
-  (archive · remind · need reply · reply · more) in the same place: one bar
-  at the bottom at a time.
+- **Tabs = the rail.** Inbox, Scheduled (reminders) and Need reply are the
+  tab bar; Search is the system's separate search circle. Inbox carries an
+  unread badge, Need reply its count.
+- **The sidebar (≡)** is the desktop sidebar as a sheet: the accounts
+  (All / each account) nested under Inbox, then Starred · Drafts · Sent ·
+  Done · Scheduled · Need reply · All mail · Spam · Trash, the Gmail labels,
+  Add account and Settings. Picking a folder shows it in the Inbox tab.
+- **The account filter** (desktop `0`/`1`/`2`) is the floating pill above
+  the tab bar: All · Personal · Work, with the account dots. It applies
+  across all tabs and only appears with more than one account.
+- **Compose** is the top-right circle. Nothing else lives in the top bar.
+- **Triage chips** (Jev labels + priority) appear inline on rows, not as a
+  filter bar; a priority filter can join the account pill later.
+- **The thread view hides the tab bar** and shows two floating glass bars in
+  its place: Reply (+ new message), and the triage actions.
 
-### Rows and groups
+### Rows
 
-Same anatomy as desktop, one line shorter:
+Three lines, flat, hairline separators, no cards and no avatar:
 
 ```text
-[dot] Sender name                                   10:42
-      Subject line · first line of the snippet…     📎 ⏰ ↩︎
+● Sender name                                        10:42
+  Subject line
+  First two lines of the snippet, so the row is
+  readable without opening it…                 [medium] [📎]
 ```
 
-- Account dot only in the unified view (hidden when filtered to one account).
-- Unread: sender in semibold plus a 3-pt accent bar on the leading edge. No
-  sea of bold.
-- Badges, right-aligned under the time, only when true: attachment, reminder
-  (with "if no reply" variant), needs reply, priority dot.
-- **Day groups** ("Today", "Yesterday", "Mon 23") as sticky section headers,
-  exactly the desktop grouping. When auto-summarize is on, the day's AI
-  summary is a soft card under the header, collapsible per group (desktop's
-  `i`).
-- Pagination is keyset (`before = last row's last_msg_at`), 50 rows a page,
-  so the list is as cheap 10,000 threads deep as at the top.
+- The dot is the unread mark: account-coloured in the unified view, accent
+  when filtered to one account; a read row has no dot.
+- Sender in semibold, subject semibold when unread, snippet grey.
+- Reminder, need-reply and star marks sit next to the time; priority and
+  attachment are chips under the snippet, only when present.
+- No day-group headers in the inbox (the time column carries the date);
+  Scheduled keeps its due buckets (Overdue · Today · Tomorrow · This week ·
+  Later).
+- Pagination is keyset (`before = last row's last_msg_at`), 50 rows a page.
+
+### Liquid Glass (iOS 26)
+
+The app targets iOS 26 and uses the system's Liquid Glass surfaces rather
+than drawing its own chrome:
+
+- The tab bar is the floating glass pill with the Search tab as the separate
+  circle (`Tab(role: .search)`); it minimizes on scroll
+  (`tabBarMinimizeBehavior(.onScrollDown)`) so a long inbox is all rows.
+- No navigation title (`toolbar(removing: .title)`): the bar is just the
+  two glass circles, and the list starts right under them.
+- Toolbar items, the account pill, the undo toast, the thread's participant
+  pill and both bottom bars are glass (`glassEffect`, `.buttonStyle(.glass)`).
+- Sheets (Remind me, Sidebar) are plain iOS 26 sheets: the system draws the
+  glass background and grabber; content is a grouped list with a title row
+  and a close button, no navigation bar.
 
 ### Gestures (the keyboard map, translated)
 
@@ -150,7 +164,7 @@ Pull-to-refresh runs `sync_all`. The app also syncs on every foreground.
 
 ### Remind sheet
 
-Half-height sheet with presets in a 2×3 grid — *Later today (18:00)*,
+Half-height sheet with the presets as a grouped list — *Later today (18:00)*,
 *Tomorrow (09:00)*, *This weekend*, *Next week*, *In a month*, *Pick date…* —
 a toggle **"Only if nobody replies"** (desktop's follow-up), and a *Remove
 reminder* row when one is set. Times respect the user's locale and a
@@ -158,9 +172,11 @@ reminder* row when one is set. Times respect the user's locale and a
 
 ### Thread view
 
-Pushed onto the stack. Inline title is the subject; the list below shows the
-latest message expanded and older ones collapsed to one-line rows (sender ·
-first line · time), tap to expand — same as desktop.
+Pushed onto the stack. The top bar holds the back circle, a glass pill with
+the participants and a More circle; the subject sits in the content with its
+unread dot and priority chip, then a status line (reminder, AI summary).
+Messages are flat rows with hairlines: latest expanded, older ones collapsed
+to sender · first line · date, tap to expand — same as desktop.
 
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
@@ -171,9 +187,10 @@ first line · time), tap to expand — same as desktop.
   (`messages.attachments.get`, cached) and opens Quick Look. Never auto-open.
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
-- **Bottom toolbar** replaces the tab bar while a thread is open: Archive ·
-  Remind · Need reply · **Reply** · More (Star, Labels, Mark unread,
-  Forward, Summarize, Trash).
+- **Two floating bars** replace the tab bar while a thread is open: a Reply
+  pill (with the AI draft spark) next to a new-message circle, and under it
+  the triage bar: Archive · Remind · Need reply · Star · Collapse all. Labels,
+  Mark unread, Forward and Trash live in the top-right More menu.
 - Thread-level swipe between adjacent threads is deliberately **not** in v1
   (it fights the system back-swipe).
 

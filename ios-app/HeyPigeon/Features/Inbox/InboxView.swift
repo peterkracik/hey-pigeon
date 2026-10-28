@@ -1,8 +1,7 @@
-// The list screens behind the tab bar. One screen type serves Inbox,
-// Scheduled and Need reply (the Inbox tab also carries the folder/label
-// menu on its title); Search is its own screen. No toolbar rows: the title
-// is the folder switcher, the avatar chip is the account switcher, compose
-// is the one button.
+// The list screens behind the tab bar. No title: two glass circles on top
+// (sidebar, compose), the list starts right under them, and the account
+// filter floats above the tab bar as a glass pill. One screen type serves
+// Inbox, Scheduled and Need reply; Search is its own screen.
 
 import SwiftUI
 
@@ -27,20 +26,23 @@ struct MailListScreen: View {
                 }
             }
             .background(Theme.canvas)
+            // The title is for accessibility and the back button only; the
+            // bar shows just the two circles.
             .navigationTitle(tab == .inbox ? model.folder.title : tab.title)
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarTitleMenu {
-                if tab == .inbox { FoldersMenu() }
-            }
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar(removing: .title)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { model.showAccounts = true } label: { AccountChip() }
-                        .accessibilityLabel("Accounts")
+                    Button { model.showSidebar = true } label: { Image(systemName: "line.3.horizontal") }
+                        .accessibilityLabel("Folders and accounts")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { model.composeDraft = SendDraft() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("Compose")
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if model.accounts.count > 1 { AccountSplitBar() }
             }
             .refreshable { await model.sync() }
             .navigationDestination(for: ThreadRow.self) { row in
@@ -50,8 +52,8 @@ struct MailListScreen: View {
     }
 }
 
-/// Search tab: the field is always up; results use the same rows and
-/// gestures. Operators are Gmail's, exactly as on desktop.
+/// Search tab: the field is the tab bar's search slot; results use the
+/// same rows and gestures. Operators are Gmail's, exactly as on desktop.
 struct SearchScreen: View {
     @Environment(AppModel.self) private var model
     @State private var path: [ThreadRow] = []
@@ -75,9 +77,9 @@ struct SearchScreen: View {
             }
             .background(Theme.canvas)
             .navigationTitle("Search")
-            .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: "Search · from: to: label: is:unread has:attachment")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar(removing: .title)
+            .searchable(text: $model.searchText, prompt: "from: to: label: is:unread has:attachment")
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }
             }
@@ -85,16 +87,54 @@ struct SearchScreen: View {
     }
 }
 
-/// The grouped list with the gesture map. Shared by every tab.
+/// Floating account filter (desktop 0/1/2) above the tab bar.
+struct AccountSplitBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                segment(nil, title: "All", count: model.accounts.count, dot: nil)
+                ForEach(model.accounts) { a in
+                    segment(a.id, title: a.displayName, count: nil, dot: Theme.tagForeground(a.color))
+                }
+            }
+            .padding(4)
+        }
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
+    private func segment(_ id: String?, title: String, count: Int?, dot: Color?) -> some View {
+        let on = model.selectedAccountId == id
+        return Button {
+            model.selectedAccountId = id
+            Haptics.light()
+        } label: {
+            HStack(spacing: 6) {
+                if let dot { Circle().fill(dot).frame(width: 8, height: 8) }
+                Text(title).font(.subheadline.weight(on ? .bold : .medium))
+                if let count { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
+            }
+            .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(on ? Theme.card.opacity(0.95) : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The flat list with the gesture map. Shared by every tab. Day headers
+/// only where they carry meaning (the Scheduled view's due buckets).
 struct ThreadList: View {
     @Binding var path: [ThreadRow]
     @Environment(AppModel.self) private var model
 
+    private var showHeaders: Bool { model.view == .scheduled && !model.isSearching }
+
     var body: some View {
         List {
-            if model.triageLevelsPresent && !model.isSearching {
-                TriageChips().listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
-            }
             ForEach(model.groupedRows, id: \.title) { group in
                 Section {
                     ForEach(group.rows) { row in
@@ -104,8 +144,9 @@ struct ThreadList: View {
                                 model.markRead(row)
                                 path.append(row)
                             }
-                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-                            .listRowBackground(Theme.card)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                            .listRowBackground(Theme.canvas)
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
                             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                 Button { model.archive(row) } label: { Label("Archive", systemImage: "checkmark") }
                                     .tint(Theme.accent)
@@ -130,14 +171,16 @@ struct ThreadList: View {
                             .onAppear { model.loadMoreIfNeeded(current: row) }
                     }
                 } header: {
-                    Text(group.title)
-                        .font(Theme.display(13, relativeTo: .caption))
-                        .foregroundStyle(Theme.textTertiary)
-                        .textCase(nil)
+                    if showHeaders {
+                        Text(group.title)
+                            .font(Theme.display(13, relativeTo: .caption))
+                            .foregroundStyle(Theme.textTertiary)
+                            .textCase(nil)
+                    }
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
     }
@@ -181,79 +224,6 @@ struct RowMenu: View {
     }
 }
 
-/// Stacked account dots; the current account's name when filtered.
-struct AccountChip: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: -6) {
-                ForEach(model.accounts.prefix(3)) { a in
-                    Circle()
-                        .fill(Theme.tagForeground(a.color))
-                        .frame(width: 14, height: 14)
-                        .overlay(Circle().stroke(Theme.canvas, lineWidth: 2))
-                        .opacity(model.selectedAccountId == nil || model.selectedAccountId == a.id ? 1 : 0.35)
-                }
-            }
-            if let a = model.currentAccount {
-                Text(a.displayName).font(.subheadline.weight(.semibold))
-            }
-        }
-    }
-}
-
-/// Folders and labels, as the Inbox title's menu (the desktop sidebar).
-struct FoldersMenu: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        ForEach(MailView.folders, id: \.self) { v in
-            Button {
-                model.folder = v
-            } label: {
-                let n = model.counts[v.countKey] ?? 0
-                Label(n > 0 ? "\(v.title)  \(n)" : v.title, systemImage: v.systemImage)
-            }
-        }
-        if !model.labels.isEmpty {
-            Divider()
-            ForEach(model.labels) { l in
-                Button { model.folder = .label(id: l.id, name: l.name) } label: { Label(l.name, systemImage: "tag") }
-            }
-        }
-    }
-}
-
-/// Jev priority filter, shown only when the engine has triage data.
-struct TriageChips: View {
-    @State private var selected: TriageLevel?
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(nil, "All")
-                chip(.high, "High")
-                chip(.medium, "Medium")
-                chip(.low, "Low")
-            }
-            .padding(.horizontal, 16).padding(.bottom, 8)
-        }
-    }
-
-    private func chip(_ level: TriageLevel?, _ title: String) -> some View {
-        let on = selected == level
-        return Button { selected = level } label: {
-            Text(title)
-                .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(on ? Theme.textPrimary : Theme.card, in: Capsule())
-                .foregroundStyle(on ? Theme.card : Theme.textSecondary)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 struct SkeletonList: View {
     var body: some View {
         List {
@@ -261,12 +231,13 @@ struct SkeletonList: View {
                 VStack(alignment: .leading, spacing: 8) {
                     RoundedRectangle(cornerRadius: 4).fill(Theme.navy100).frame(width: 140, height: 12)
                     RoundedRectangle(cornerRadius: 4).fill(Theme.navy100).frame(height: 10)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.navy100).frame(width: 220, height: 10)
                 }
                 .padding(.vertical, 8)
-                .listRowBackground(Theme.card)
+                .listRowBackground(Theme.canvas)
             }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .redacted(reason: .placeholder)
     }

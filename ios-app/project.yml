@@ -63,6 +63,9 @@ targets:
           - fetch
         BGTaskSchedulerPermittedIdentifiers:
           - app.heypigeon.refresh
+        # Only HTTPS (exempt). Without this every TestFlight build waits on a
+        # manual "Missing Compliance" answer in App Store Connect.
+        ITSAppUsesNonExemptEncryption: false
         # Drop Manrope-*.ttf into HeyPigeon/Resources/Fonts to get the brand
         # typeface; without the files SwiftUI falls back to the system font.
         UIAppFonts:

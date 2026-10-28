@@ -353,12 +353,13 @@ pub fn list_sender(messages: &[Message], own_email: &str) -> ListSender {
     }
 }
 
-/// A message is the account owner's when Gmail filed it as SENT or it came
-/// from the account's own address (the SENT label alone misses mail sent
-/// from another client before the label settled, and a bare address alone
-/// misses send-as aliases).
+/// A message is the account owner's when Gmail filed it as SENT or DRAFT
+/// (a draft in a thread is always the user's unsent reply) or it came from
+/// the account's own address. The labels alone miss nothing sent from a
+/// send-as alias, and the address alone misses a draft or sent mail whose
+/// From is such an alias — so both checks run.
 pub fn is_own_message(m: &Message, own_email: &str) -> bool {
-    m.label_ids.iter().any(|l| l == "SENT")
+    m.label_ids.iter().any(|l| l == "SENT" || l == "DRAFT")
         || (!own_email.is_empty() && bare_addr(&m.from_addr).eq_ignore_ascii_case(own_email))
 }
 
@@ -634,6 +635,17 @@ mod tests {
             sender_msg("Alias <alias@example.com>", "priya@acme.co", 2, &["SENT"]),
         ];
         assert_eq!(list_sender(&by_label, "me@example.com").name, "Priya Nair");
+        // An unsent draft reply from a send-as alias is the user's too.
+        let draft = vec![
+            sender_msg(
+                "Priya Nair <priya@acme.co>",
+                "me@example.com",
+                1,
+                &["INBOX"],
+            ),
+            sender_msg("Alias <alias@example.com>", "priya@acme.co", 2, &["DRAFT"]),
+        ];
+        assert_eq!(list_sender(&draft, "me@example.com").name, "Priya Nair");
     }
 
     /// A later inbound message still wins: the row tracks the newest other

@@ -23,7 +23,7 @@ ios-app/
 2. Rust targets: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`.
 3. OAuth client: in the same Google Cloud project as the desktop client
    (see [docs/google-oauth-setup.md](../docs/google-oauth-setup.md)), add a
-   second credential of type **iOS**, bundle id `app.heypigeon.ios`. Copy the
+   second credential of type **iOS**, bundle id `app.heypigeon`. Copy the
    client id and its reversed form (Google shows both) into
    `Config/Local.xcconfig` (start from `Local.xcconfig.example`).
 4. `scripts/build-rust.sh` once by hand (it also runs as a pre-build phase).
@@ -52,7 +52,7 @@ git tag ios-v0.1.0 && git push origin ios-v0.1.0
 
 One-time setup, then the secrets listed at the top of the workflow:
 
-1. **App Store Connect**: an app record for bundle id `app.heypigeon.ios`
+1. **App Store Connect**: an app record for bundle id `app.heypigeon`
    (its numeric Apple ID is `ASC_APP_ID`), and an API key with the App
    Manager role (`ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, the `.p8` as base64
    in `ASC_API_KEY_P8`).

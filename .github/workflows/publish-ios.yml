@@ -20,7 +20,7 @@ name: publish-ios
 #   EXPO_TOKEN                         expo.dev access token (uploader: eas only)
 #   EXPO_PROJECT_ID                    EAS project id the submission is recorded under (uploader: eas only)
 #
-# One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
+# One-time setup outside CI: create the app record (bundle id app.heypigeon)
 # in App Store Connect; create the ASC API key; export the distribution
 # certificate as .p12; for EAS, create an expo.dev project and a token.
 # Provisioning profiles are created on the fly by Xcode cloud signing.
@@ -46,7 +46,7 @@ concurrency:
 
 env:
   SCHEME: HeyPigeon
-  BUNDLE_ID: app.heypigeon.ios
+  BUNDLE_ID: app.heypigeon
   ARCHIVE: ios-app/build/HeyPigeon.xcarchive
   EXPORT_DIR: ios-app/build/export
 

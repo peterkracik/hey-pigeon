@@ -93,7 +93,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install xcodegen
         run: brew install xcodegen
@@ -277,6 +277,10 @@ jobs:
           set -euo pipefail
           test -n "$EXPO_TOKEN" || { echo "EXPO_TOKEN is not set (or pick uploader: xcrun)" >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/eas" && cd "$RUNNER_TEMP/eas"
+          # EAS CLI locates the project by its package.json; a stub is enough.
+          cat > package.json <<EOF
+          { "name": "hey-pigeon", "version": "${{ steps.ver.outputs.version }}", "private": true }
+          EOF
           cat > app.json <<EOF
           {
             "expo": {

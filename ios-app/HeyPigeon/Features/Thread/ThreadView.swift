@@ -1,8 +1,10 @@
-// A thread: participants in the glass pill on top, subject with the priority
-// chip and the Jev labels, messages as flat rows (latest expanded) with the
-// desktop's per-message actions (Reply · Reply all · Forward), and two
-// floating glass bars at the bottom: Reply (+ AI draft) and the triage
-// actions in the desktop's words: Done · Remind · Need reply · Pin · Delete.
+// A thread: participants in the glass pill on top, subject with one meta
+// line (priority, Jev labels, message count, account), messages as the
+// inbox's rows (latest expanded, the middle of long threads folded), and two
+// floating glass bars at the bottom: the Reply button — tap for the default
+// action, chevron for Reply · Reply all · Forward, as in Superhuman — with
+// the AI draft inside, and the triage actions in the desktop's words:
+// Done · Remind · Need reply · Pin · Delete.
 
 import SwiftUI
 
@@ -15,6 +17,9 @@ struct ThreadView: View {
     @State private var allCollapsed = false
     @State private var failed: String?
     @State private var drafting = false
+    /// Reply kind picked from the chevron; nil follows the default.
+    @State private var replyChoice: ReplyKind?
+    @State private var unfolded = false
 
     private var current: ThreadRow { model.rows.first { $0.id == row.id } ?? detail?.thread ?? row }
 
@@ -24,6 +29,17 @@ struct ThreadView: View {
         for m in msgs where !m.isMine && !seen.contains(m.fromName) { seen.append(m.fromName) }
         return seen.isEmpty ? row.fromSummary : seen.joined(separator: ", ")
     }
+
+    private var account: MailAccount? { model.accounts.first { $0.id == current.accountId } }
+
+    /// Reply all when someone besides the sender is on the last message,
+    /// else Reply.
+    private var defaultReply: ReplyKind {
+        guard let last = detail?.messages.last, !last.isMine else { return .reply }
+        return last.to.contains { $0 != "me" && !$0.isEmpty } ? .replyAll : .reply
+    }
+
+    private var replyKind: ReplyKind { replyChoice ?? defaultReply }
 
     private var accountLabels: [MailLabelItem] {
         model.labels.filter { $0.accountId == current.accountId && !$0.id.hasPrefix("CATEGORY_") }
@@ -37,28 +53,18 @@ struct ThreadView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Circle().fill(current.isRead ? .clear : Theme.accent).frame(width: 8, height: 8)
-                    Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                        .font(Theme.display(22, relativeTo: .title2))
-                        .foregroundStyle(Theme.textPrimary)
-                }
-                .padding(.horizontal, 20).padding(.top, 6)
+                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                    .font(Theme.display(22, relativeTo: .title2))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 16).padding(.top, 6)
 
-                triageHeader.padding(.horizontal, 20).padding(.top, 10)
+                metaLine.padding(.horizontal, 16).padding(.top, 8)
 
                 if current.scheduledAt != nil || current.needsReply {
-                    statusLine.padding(.horizontal, 20).padding(.top, 8)
+                    statusLine.padding(.horizontal, 16).padding(.top, 8)
                 }
                 if let detail {
-                    ForEach(detail.messages) { m in
-                        let isLast = m.id == detail.messages.last?.id
-                        MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || isLast)) {
-                            allCollapsed = false
-                            if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
-                        } onReply: { reply(to: m, all: false) } onReplyAll: { reply(to: m, all: true) } onForward: { forward(m) }
-                        Divider().padding(.leading, 20)
-                    }
+                    messageList(detail.messages).padding(.top, 14)
                 } else if let failed {
                     ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(failed))
                 } else {
@@ -132,39 +138,75 @@ struct ThreadView: View {
         }
     }
 
+    // MARK: Messages
+
+    /// The messages with 1 pt gaps, as in the list. Past four messages the
+    /// middle folds into one row (first, "N earlier", last two) unless one
+    /// of them is unread or opened.
+    private func messageList(_ messages: [MessageItem]) -> some View {
+        let lastIndex = messages.count - 1
+        let foldable = !unfolded && messages.count > 4
+            && messages[1..<(lastIndex - 1)].allSatisfy { $0.isRead && !expanded.contains($0.id) }
+        return VStack(spacing: 1) {
+            ForEach(Array(messages.enumerated()), id: \.element.id) { index, m in
+                if foldable && index > 0 && index < lastIndex - 1 {
+                    if index == 1 {
+                        EarlierRow(count: lastIndex - 2) { withAnimation(.snappy) { unfolded = true } }
+                    }
+                } else {
+                    MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || index == lastIndex)) {
+                        allCollapsed = false
+                        if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
+                    } onAction: { kind in run(kind, on: m) }
+                }
+            }
+        }
+        .background(Theme.separator.opacity(0.6))
+    }
+
     // MARK: Header pieces
 
     /// Priority + the Jev labels, with a "+" menu to edit them by hand
-    /// (sticky until "Reanalyze all emails" in Settings).
-    @ViewBuilder
-    private var triageHeader: some View {
+    /// (sticky until "Reanalyze all emails" in Settings), then the message
+    /// count and the account — its first letter in the account colour, as
+    /// in the list.
+    private var metaLine: some View {
         let names = current.triageLabelIds.compactMap { id in model.triageLabels.first { $0.id == id } }
-        if current.priority != nil || !names.isEmpty || !model.triageLabels.isEmpty {
-            HStack(spacing: 6) {
-                if let p = current.priority { PriorityIndicator(priority: p) }
-                ForEach(names) { l in
-                    Chip(text: l.name, systemImage: "sparkles", background: Theme.sunken, foreground: Theme.textSecondary)
-                }
-                if !model.triageLabels.isEmpty {
-                    Menu {
-                        ForEach(model.triageLabels) { label in
-                            let on = current.triageLabelIds.contains(label.id)
-                            Button {
-                                var ids = current.triageLabelIds
-                                if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
-                                model.setTriageLabels(current, ids)
-                            } label: { Label(label.name, systemImage: on ? "checkmark" : "tag") }
-                        }
-                    } label: {
-                        Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(Theme.textTertiary)
-                            .frame(width: 24, height: 22)
-                            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .accessibilityLabel("Edit labels")
-                }
-                Spacer()
+        return HStack(spacing: 6) {
+            if let p = current.priority { PriorityIndicator(priority: p) }
+            ForEach(names) { l in
+                Chip(text: l.name, systemImage: "sparkles", background: Theme.sunken, foreground: Theme.textSecondary)
             }
+            if !model.triageLabels.isEmpty {
+                Menu {
+                    ForEach(model.triageLabels) { label in
+                        let on = current.triageLabelIds.contains(label.id)
+                        Button {
+                            var ids = current.triageLabelIds
+                            if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
+                            model.setTriageLabels(current, ids)
+                        } label: { Label(label.name, systemImage: on ? "checkmark" : "tag") }
+                    }
+                } label: {
+                    Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(Theme.textTertiary)
+                        .frame(width: 24, height: 22)
+                        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .accessibilityLabel("Edit labels")
+            }
+            metaText.font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+            Spacer(minLength: 0)
         }
+    }
+
+    private var metaText: Text {
+        let count = detail?.messages.count ?? row.messageCount
+        var t = Text(count == 1 ? "1 message" : "\(count) messages")
+        if let a = account, model.accounts.count > 1, let first = a.email.first {
+            t = t + Text(" · ") + Text(String(first)).foregroundStyle(Theme.tagForeground(a.color)).bold()
+                + Text(a.email.dropFirst())
+        }
+        return t
     }
 
     private var statusLine: some View {
@@ -177,13 +219,12 @@ struct ThreadView: View {
         }
         .font(.caption.weight(.medium))
         .foregroundStyle(Theme.textSecondary)
-        .padding(.leading, 18)
     }
 
     // MARK: Bottom bars
 
-    /// Reply pill (+ AI draft) and the "new message" circle, then the triage
-    /// bar underneath — every button its own glass element in one container
+    /// The "new message" circle and the Reply pill, then the triage bar
+    /// underneath — every button its own glass element in one container
     /// so taps land on the buttons, not on the glass.
     private var bottomBars: some View {
         VStack(spacing: 10) {
@@ -194,24 +235,7 @@ struct ThreadView: View {
                     }
                     .buttonStyle(.glass)
                     .accessibilityLabel("New message")
-                    Button { if let last = detail?.messages.last { reply(to: last, all: false) } } label: {
-                        HStack {
-                            Image(systemName: "arrowshape.turn.up.left")
-                            Text("Reply")
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(detail == nil)
-                    if model.aiConfigured {
-                        Button { Task { await draftReply() } } label: {
-                            Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 24, height: 24)
-                        }
-                        .buttonStyle(.glass)
-                        .disabled(detail == nil || drafting)
-                        .accessibilityLabel("Draft a reply with AI")
-                    }
+                    replyPill
                 }
             }
             GlassEffectContainer(spacing: 8) {
@@ -234,6 +258,68 @@ struct ThreadView: View {
         .padding(.horizontal, 16).padding(.bottom, 8)
     }
 
+    /// Superhuman's reply button: the chevron picks Reply · Reply all ·
+    /// Forward (kept for this thread), the label runs it on the latest
+    /// message, the sparkle drafts the reply with AI.
+    private var replyPill: some View {
+        HStack(spacing: 0) {
+            Menu {
+                ForEach(ReplyKind.allCases) { kind in
+                    Button { replyChoice = kind; run(kind) } label: {
+                        Label(kind.title, systemImage: kind == replyKind ? "checkmark" : kind.systemImage)
+                        Text(recipients(kind))
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: replyKind.systemImage)
+                    Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                }
+                .padding(.leading, 18).padding(.trailing, 12)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Choose reply type")
+            Rectangle().fill(Theme.separator).frame(width: 1, height: 22)
+            Button { run(replyKind) } label: {
+                Text(replyKind.title)
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if model.aiConfigured {
+                Button { Task { await draftReply() } } label: {
+                    Image(systemName: "sparkles").foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(Theme.accent.opacity(drafting ? 0.4 : 0.85), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(detail == nil || drafting)
+                .accessibilityLabel("Draft a reply with AI")
+                .padding(.trailing, 5)
+            }
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .frame(height: 48)
+        .glassEffect(.regular, in: .capsule)
+        .disabled(detail == nil)
+    }
+
+    /// Who a reply kind goes to, for the menu's second line.
+    private func recipients(_ kind: ReplyKind) -> String {
+        guard let last = detail?.messages.last else { return "" }
+        switch kind {
+        case .forward: return "Choose recipients"
+        case .reply, .replyAll:
+            let d = replyDraft(to: last, all: kind == .replyAll)
+            let names = (d.to + d.cc).map { address in
+                detail?.messages.first { $0.fromAddress == address }?.fromName ?? address
+            }
+            return names.joined(separator: ", ")
+        }
+    }
+
     private func bar(_ label: String, _ systemImage: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage).font(.title3).frame(maxWidth: .infinity).frame(height: 28)
@@ -245,7 +331,21 @@ struct ThreadView: View {
 
     // MARK: Reply / forward
 
+    /// Runs a reply kind on one message; the latest when none is given.
+    private func run(_ kind: ReplyKind, on message: MessageItem? = nil) {
+        guard let m = message ?? detail?.messages.last else { return }
+        switch kind {
+        case .reply: reply(to: m, all: false)
+        case .replyAll: reply(to: m, all: true)
+        case .forward: forward(m)
+        }
+    }
+
     private func reply(to m: MessageItem, all: Bool) {
+        model.composeDraft = replyDraft(to: m, all: all)
+    }
+
+    private func replyDraft(to m: MessageItem, all: Bool) -> SendDraft {
         var d = SendDraft()
         let others = m.to.filter { $0 != "me" && !$0.isEmpty }
         if m.isMine {
@@ -258,7 +358,7 @@ struct ThreadView: View {
         d.replyToThreadId = row.id
         d.fromAccountId = current.accountId
         d.history = transcript
-        model.composeDraft = d
+        return d
     }
 
     private func forward(_ m: MessageItem) {
@@ -283,55 +383,110 @@ struct ThreadView: View {
     }
 }
 
-/// One message: a flat row (sender · date · first line) that expands to the
-/// body and the desktop's message actions. No card, hairline separators.
+enum ReplyKind: String, CaseIterable, Identifiable {
+    case reply, replyAll, forward
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .reply: "Reply"
+        case .replyAll: "Reply all"
+        case .forward: "Forward"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .reply: "arrowshape.turn.up.left"
+        case .replyAll: "arrowshape.turn.up.left.2"
+        case .forward: "arrowshape.turn.up.right"
+        }
+    }
+}
+
+/// One message as the inbox row: sender · time, one snippet line; the
+/// unread bar on the left edge. Expanded, it sits on the card surface with
+/// the recipients and the body, and its ••• (or a long press on any row)
+/// replies to or forwards this message.
 struct MessageRow: View {
     let message: MessageItem
     let expanded: Bool
     let onToggle: () -> Void
-    let onReply: () -> Void
-    let onReplyAll: () -> Void
-    let onForward: () -> Void
+    let onAction: (ReplyKind) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(message.isMine ? "Me" : message.fromName)
-                            .font(Theme.sender(true))
+                            .font(Theme.sender(!message.isRead))
                             .foregroundStyle(Theme.textPrimary)
-                        if expanded {
-                            Text("to \(message.to.joined(separator: ", "))")
-                                .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                        } else {
-                            Text(message.snippet).font(.subheadline).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                        }
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
+                            .font(.footnote)
+                            .foregroundStyle(message.isRead ? Theme.textTertiary : Theme.textSecondary)
+                            .monospacedDigit()
+                        if expanded { actionsMenu }
                     }
-                    Spacer()
-                    Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
-                        .font(.subheadline).foregroundStyle(Theme.textTertiary)
+                    if expanded {
+                        Text("to \(message.to.joined(separator: ", "))")
+                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    } else {
+                        Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    }
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if expanded {
                 MessageBodyView(html: message.bodyHTML, text: message.bodyText ?? message.snippet, senderAddress: message.fromAddress)
-                HStack(spacing: 18) {
-                    action("Reply", "arrowshape.turn.up.left", onReply)
-                    action("Reply all", "arrowshape.turn.up.left.2", onReplyAll)
-                    action("Forward", "arrowshape.turn.up.right", onForward)
-                    Spacer()
-                }
-                .padding(.top, 2)
+                    .padding(.top, 12)
             }
         }
-        .padding(.horizontal, 20).padding(.vertical, 12)
+        .padding(.horizontal, 16).padding(.vertical, expanded ? 12 : 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(expanded ? Theme.card : Theme.canvas)
+        .overlay(alignment: .leading) {
+            if !message.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
+        }
+        .contextMenu {
+            ForEach(ReplyKind.allCases) { kind in
+                Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
+            }
+        }
     }
 
-    private func action(_ title: String, _ systemImage: String, _ run: @escaping () -> Void) -> some View {
-        Button(action: run) {
-            Label(title, systemImage: systemImage).font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+    private var actionsMenu: some View {
+        Menu {
+            ForEach(ReplyKind.allCases) { kind in
+                Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
+            }
+        } label: {
+            Image(systemName: "ellipsis").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                .frame(width: 28, height: 22).contentShape(Rectangle())
+        }
+        .accessibilityLabel("Actions for this message")
+    }
+}
+
+/// The folded middle of a long thread: "4 earlier messages".
+private struct EarlierRow: View {
+    let count: Int
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Image(systemName: "line.3.horizontal").font(.caption.weight(.bold))
+                Text("\(count) earlier messages").font(.footnote.weight(.semibold))
+                Spacer()
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(Theme.canvas)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

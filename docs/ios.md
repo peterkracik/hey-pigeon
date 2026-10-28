@@ -205,24 +205,35 @@ reminder* row when one is set. Times respect the user's locale and a
 ### Thread view
 
 Pushed onto the stack. The top bar holds the back circle, a glass pill with
-the participants and a More circle; the subject sits in the content with its
-unread dot and priority chip, then a status line (reminder, AI summary).
-Messages are flat rows with hairlines: latest expanded, older ones collapsed
-to sender · first line · date, tap to expand — same as desktop.
+the participants and a More circle; the subject sits in the content with one
+meta line (priority, Jev labels, message count, account), then a status line
+(reminder, need reply). Messages are the inbox's rows — sender · time, one
+snippet line, the unread bar on the left edge, 1 pt gaps: latest expanded on
+the card surface, older ones collapsed on the canvas, tap to expand. Past four
+messages the read middle folds into one "N earlier messages" row.
 
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
-  "Load images" bar per sender remembers the choice. The HTML is the
+  "Load" line per sender remembers the choice. The HTML is the
   ammonia-sanitized body the core already stores. Links open in
   `SFSafariViewController`; the real URL is shown in a long-press preview.
+  The trailing quoted history (`div.gmail_quote`, Outlook's reference
+  container, a trailing `<blockquote>`, or `>` lines in plain text) folds
+  behind a ••• button, same rules as desktop.
 - **Attachments** are chips under the message: tap fetches the bytes
   (`messages.attachments.get`, cached) and opens Quick Look. Never auto-open.
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
-- **Two floating bars** replace the tab bar while a thread is open: a Reply
-  pill (with the AI draft spark) next to a new-message circle, and under it
+- **Two floating bars** replace the tab bar while a thread is open: the
+  Reply pill next to a new-message circle, and under it
   the triage bar: Archive · Remind · Need reply · Star · Collapse all. Labels,
   Mark unread, Forward and Trash live in the top-right More menu.
+- **Reply pill** works like Superhuman's: tapping it runs the default (Reply
+  all when others are on the latest message, else Reply), the chevron picks
+  Reply · Reply all · Forward with each one's recipients (the pick sticks for
+  the thread), and the AI draft spark sits inside it. There are no action
+  links under the bodies: an open message's ••• or a long press on any
+  message replies to or forwards that one.
 - Thread-level swipe between adjacent threads is deliberately **not** in v1
   (it fights the system back-swipe).
 

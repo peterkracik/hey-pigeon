@@ -21,3 +21,4 @@ terraform/backend.hcl
 terraform/**/*.tfvars
 !terraform/**/*.tfvars.example
 terraform/.build/
+/terraform.tfvars

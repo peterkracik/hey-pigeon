@@ -1,7 +1,8 @@
 name: publish-ios
 
 # Build the iOS app (Rust core → xcframework → Xcode archive), sign it for the
-# App Store, and upload it to App Store Connect / TestFlight.
+# App Store, and upload it to App Store Connect / TestFlight on `ios-v*` tags.
+# Pushes to main that touch ios-app/ run the same build without the upload.
 #
 # Expo's EAS Build cannot compile this app (it is a native Xcode project over a
 # Rust core, not a React Native project), so the build runs here with
@@ -27,11 +28,14 @@ name: publish-ios
 
 on:
   push:
+    # Tags publish (build + upload to App Store Connect). Path filters do
+    # not apply to tag pushes.
     tags: ["ios-v*"]
-    # TEMPORARY while the iOS scaffold gets its first compiles: a manual
-    # dispatch is only possible once this file is on main, so branch pushes
-    # run the build (no upload) instead. Remove before merging.
-    branches: ["claude/confident-lovelace-krjff8"]
+    # Branch pushes only build, as a compile check, when the iOS app changed.
+    # TEMPORARY: the PR branch is listed until the scaffold merges, because a
+    # manual dispatch needs this file on main first. Remove it then.
+    branches: ["main", "claude/confident-lovelace-krjff8"]
+    paths: ["ios-app/**", ".github/workflows/publish-ios.yml"]
   workflow_dispatch:
     inputs:
       uploader:

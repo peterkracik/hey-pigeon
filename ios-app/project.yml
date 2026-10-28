@@ -49,6 +49,12 @@ targets:
       path: HeyPigeon/Info.plist
       properties:
         CFBundleDisplayName: Hey Pigeon
+        # XcodeGen writes literal 1.0 / 1 here unless told otherwise, which
+        # ignores the MARKETING_VERSION / CURRENT_PROJECT_VERSION the publish
+        # workflow passes — and App Store Connect then rejects the second
+        # upload as a duplicate 1.0 (1).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # The Rust engine reads the iOS OAuth client id from here (HeyPigeonApp.swift).
         GoogleIOSClientID: $(GOOGLE_IOS_CLIENT_ID)
         # Google's iOS OAuth redirect: the reversed client id as a URL scheme.

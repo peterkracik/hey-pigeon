@@ -12,6 +12,7 @@
   import { toast } from "./toast.svelte";
   import PriorityIndicator from "./PriorityIndicator.svelte";
   import TriageBadges from "./TriageBadges.svelte";
+  import SummaryText from "./SummaryText.svelte";
 
   let {
     emails,
@@ -463,7 +464,13 @@
       </div>
       {#if summaryReady && summary.open}
         <div class="summary-block" class:is-error={!!summary.error}>
-          {summary.generating ? "Summarizing\u2026" : (summary.error ?? summary.text)}
+          {#if summary.generating}
+            {"Summarizing\u2026"}
+          {:else if summary.error}
+            {summary.error}
+          {:else}
+            <SummaryText text={summary.text} />
+          {/if}
         </div>
       {/if}
       {#each g.items as e (e.id)}
@@ -828,8 +835,8 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-secondary);
-    white-space: pre-line;
-    max-height: 4.6em;
+    /* Room for the prompt's 4 bullets (+ a wrapped line) before clipping. */
+    max-height: 7.6em;
     overflow: hidden;
   }
   .summary-block.is-error {

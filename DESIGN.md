@@ -247,7 +247,7 @@ trait AiProvider {
 - Settings: paste key, pick provider + model (default a `gpt-4o-mini`-class model
   for cost).
 - **v1 AI set (M3)**:
-  - **Summarize thread** (`s` in thread view) — one-paragraph TL;DR.
+  - **Summarize thread** (`s` in thread view) — a few factual bullets (key names, dates, amounts in bold) ending with the current status.
   - **Draft reply** — generate a reply draft in the user's tone into the composer;
     user always edits/sends, never auto-send.
   - **Ask AI** via cmd+k — free-form question grounded in the open thread.

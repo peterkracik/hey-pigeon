@@ -1,8 +1,8 @@
 // The list screens behind the tab bar. The view's name sits between the
 // glass circles on top (sidebar · AI, compose), the list starts right under
 // them, and the Jev label filter floats above the tab bar as a glass pill.
-// Accounts live in the sidebar. One screen type serves Inbox, Scheduled and Need reply; Search
-// is its own screen (Features/Search).
+// Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
+// Need reply; Search is its own screen (Features/Search).
 
 import SwiftUI
 

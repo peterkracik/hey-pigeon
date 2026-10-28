@@ -536,31 +536,6 @@ fn decode_entities(s: &str) -> String {
     out
 }
 
-/// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
-fn display_name(from: &str) -> String {
-    let name = from
-        .split('<')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches('"');
-    if name.is_empty() {
-        from.trim().to_string()
-    } else {
-        name.to_string()
-    }
-}
-
-/// "Priya Nair <priya@acme.co>" → "priya@acme.co".
-fn bare_addr(from: &str) -> String {
-    from.split('<')
-        .nth(1)
-        .and_then(|s| s.split('>').next())
-        .unwrap_or(from)
-        .trim()
-        .to_string()
-}
-
 fn decode_body(data: &str) -> Option<String> {
     base64::engine::general_purpose::URL_SAFE
         .decode(data)
@@ -645,6 +620,9 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         .unwrap_or("(no subject)")
         .to_string();
     let labels = heypigeon_core::sync::thread_labels_union(&messages);
+    // The row names the other party, never the user's own reply. Account ids
+    // are the account's email address, which is what the SENT/From check needs.
+    let sender = heypigeon_core::sync::list_sender(&messages, account_id);
     let thread = Thread {
         id: wire.id.clone(),
         account_id: account_id.clone(),
@@ -657,8 +635,8 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         // the inbox, not trash/spam/draft, and not sent-only.
         is_archived: heypigeon_core::sync::derive_is_archived(&labels, &messages),
         msg_count: messages.len() as i64,
-        from_summary: last.map(|m| display_name(&m.from_addr)).unwrap_or_default(),
-        last_from_addr: last.map(|m| bare_addr(&m.from_addr)).unwrap_or_default(),
+        from_summary: sender.name,
+        last_from_addr: sender.addr,
         // Local-only metadata — the wire never carries a schedule.
         scheduled_at: None,
         needs_reply: false,
@@ -1234,20 +1212,6 @@ mod tests {
     }
 
     #[test]
-    fn display_name_variants() {
-        assert_eq!(display_name("Priya Nair <p@acme.co>"), "Priya Nair");
-        assert_eq!(display_name("\"Nair, Priya\" <p@acme.co>"), "Nair, Priya");
-        assert_eq!(display_name("p@acme.co"), "p@acme.co");
-    }
-
-    #[test]
-    fn bare_addr_variants() {
-        assert_eq!(bare_addr("Priya Nair <p@acme.co>"), "p@acme.co");
-        assert_eq!(bare_addr("p@acme.co"), "p@acme.co");
-        assert_eq!(bare_addr("<p@acme.co>"), "p@acme.co");
-    }
-
-    #[test]
     fn wire_history_list_maps_fields() {
         let json = serde_json::json!({
             "history": [
@@ -1276,6 +1240,44 @@ mod tests {
         assert_eq!(history_checkpoint(&empty, "999"), "1010");
         let none: WireHistoryList = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(history_checkpoint(&none, "999"), "999");
+    }
+
+    /// A thread the user replied to keeps naming the other party in the
+    /// list, and the avatar address follows suit.
+    #[test]
+    fn wire_thread_names_other_party_after_own_reply() {
+        let wire_msg = |id: &str, from: &str, to: &str, date: &str, labels: &[&str]| {
+            serde_json::json!({
+                "id": id,
+                "labelIds": labels,
+                "snippet": "",
+                "internalDate": date,
+                "payload": {
+                    "mimeType": "text/plain",
+                    "headers": [
+                        {"name": "From", "value": from},
+                        {"name": "To", "value": to},
+                        {"name": "Subject", "value": "Q3 plan"}
+                    ],
+                    "body": {"data": "SGk="}
+                }
+            })
+        };
+        let json = serde_json::json!({
+            "id": "t1",
+            "messages": [
+                wire_msg("m1", "Priya Nair <p@acme.co>", "me@example.com", "1", &["INBOX"]),
+                wire_msg("m2", "Me <me@example.com>", "Priya Nair <p@acme.co>", "2", &["SENT"]),
+            ]
+        });
+        let wire: WireThread = serde_json::from_value(json).unwrap();
+        let (thread, _) = to_thread(&"me@example.com".to_string(), &wire);
+        assert_eq!(thread.from_summary, "Priya Nair");
+        assert_eq!(thread.last_from_addr, "p@acme.co");
+        assert_eq!(
+            thread.last_msg_at, 2,
+            "timestamp still follows the newest message"
+        );
     }
 
     #[test]

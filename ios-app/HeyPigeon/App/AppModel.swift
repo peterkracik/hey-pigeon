@@ -15,13 +15,19 @@ struct Toast: Identifiable, Equatable {
     static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
 }
 
-/// One day-group's AI summary (desktop InboxList "Summarize N active").
+/// One AI summary — a day group's (desktop InboxList "Summarize N active")
+/// or an open thread's — cached against the content it was made from.
 struct GroupSummary: Equatable {
     var cacheKey: String
     var text: String?
     var error: String?
     var generating = false
-    var open = true
+}
+
+/// What the summary sheet shows: the cache key and a title.
+struct SummaryPresentation: Identifiable, Equatable {
+    let id: String
+    let title: String
 }
 
 struct RowGroup: Identifiable {
@@ -119,6 +125,8 @@ final class AppModel {
     static let defaultSwipeActions: [RowAction] = [.read, .done, .remind, .needReply]
 
     private(set) var groupSummaries: [String: GroupSummary] = [:]
+    /// The summary sheet, when one is open (slides up like compose).
+    var summarySheet: SummaryPresentation?
 
     init(engine: MailEngine) {
         self.engine = engine
@@ -343,7 +351,7 @@ final class AppModel {
         toast = Toast(text: text, undo: undo)
     }
 
-    // MARK: AI summaries (desktop InboxList)
+    // MARK: AI summaries (desktop InboxList + ThreadView), shown in a sheet
 
     func summary(for group: RowGroup) -> GroupSummary? {
         guard let s = groupSummaries[group.title], s.cacheKey == group.summaryKey else { return nil }
@@ -365,13 +373,43 @@ final class AppModel {
         }
     }
 
-    func toggleSummary(_ group: RowGroup) {
-        guard var s = summary(for: group) else { summarize(group); return }
-        s.open.toggle()
-        groupSummaries[group.title] = s
+    /// The sparkle on a group header: generate if needed, then present.
+    func openSummary(_ group: RowGroup) {
+        if summary(for: group) == nil { summarize(group) }
+        summarySheet = SummaryPresentation(id: group.title, title: group.title)
     }
 
-    /// One group at a time, only ones not already cached for their content.
+    private func threadKey(_ row: ThreadRow) -> String { "thread:\(row.id)" }
+
+    func threadSummary(_ row: ThreadRow, messages: [MessageItem]) -> GroupSummary? {
+        let key = messages.map(\.id).joined(separator: ",")
+        guard let s = groupSummaries[threadKey(row)], s.cacheKey == key else { return nil }
+        return s
+    }
+
+    func summarizeThread(_ row: ThreadRow, messages: [MessageItem]) {
+        guard !messages.isEmpty, threadSummary(row, messages: messages) == nil else { return }
+        let key = messages.map(\.id).joined(separator: ",")
+        let storeKey = threadKey(row)
+        groupSummaries[storeKey] = GroupSummary(cacheKey: key, generating: true)
+        let items = messages.map { (from: $0.isMine ? "Me" : $0.fromName, snippet: String(($0.bodyText ?? $0.snippet).prefix(1500))) }
+        Task {
+            do {
+                let text = try await engine.aiSummarizeThread(subject: row.subject, items: items)
+                groupSummaries[storeKey] = GroupSummary(cacheKey: key, text: text)
+            } catch {
+                groupSummaries[storeKey] = GroupSummary(cacheKey: key, error: error.localizedDescription)
+            }
+        }
+    }
+
+    func openThreadSummary(_ row: ThreadRow, messages: [MessageItem]) {
+        summarizeThread(row, messages: messages)
+        summarySheet = SummaryPresentation(id: threadKey(row), title: row.subject.isEmpty ? "(no subject)" : row.subject)
+    }
+
+    /// Auto-summarize: pre-generate so the sheet opens instantly. One group
+    /// at a time, only ones not already cached for their content.
     private func runAutoSummaries() {
         if groupSummaries.values.contains(where: \.generating) { return }
         if let g = groupedRows.first(where: { !$0.active.isEmpty && summary(for: $0) == nil }) {

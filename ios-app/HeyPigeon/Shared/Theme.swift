@@ -35,6 +35,8 @@ enum Theme {
     /// Unread rows sit on the card surface; read rows sink into the canvas.
     static let rowUnread = card
     static let rowRead = canvas
+    /// Unread marker on the row's left edge: white on dark, the accent on light.
+    static let unreadBar = Color(light: accent, dark: .white)
     /// Pin colour (Gmail star): the amber tag.
     static let pin = Color(hex: 0xE3B341)
 

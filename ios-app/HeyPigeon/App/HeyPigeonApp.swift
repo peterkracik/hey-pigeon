@@ -89,6 +89,7 @@ struct RootView: View {
             .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
             .sheet(item: $model.pendingRemind, onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
             .sheet(item: $model.composeDraft, onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
+            .sheet(item: $model.summarySheet) { p in SummarySheet(presentation: p) }
             .overlay(alignment: .bottom) { ToastView() }
             .alert(
                 "Account disconnected",

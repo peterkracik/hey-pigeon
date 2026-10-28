@@ -14,8 +14,6 @@ struct ThreadView: View {
     @State private var expanded: Set<String> = []
     @State private var allCollapsed = false
     @State private var failed: String?
-    @State private var summary: String?
-    @State private var summarizing = false
     @State private var drafting = false
 
     private var current: ThreadRow { model.rows.first { $0.id == row.id } ?? detail?.thread ?? row }
@@ -52,9 +50,6 @@ struct ThreadView: View {
                 if current.scheduledAt != nil || current.needsReply {
                     statusLine.padding(.horizontal, 20).padding(.top, 8)
                 }
-                if model.aiConfigured, detail != nil {
-                    summaryRow.padding(.horizontal, 20).padding(.top, 10)
-                }
                 if let detail {
                     ForEach(detail.messages) { m in
                         let isLast = m.id == detail.messages.last?.id
@@ -82,6 +77,15 @@ struct ThreadView: View {
                 Text(participants).font(.subheadline.weight(.semibold)).lineLimit(1)
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .glassEffect(.regular, in: .capsule)
+            }
+            if model.aiConfigured {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if let d = detail { model.openThreadSummary(current, messages: d.messages) }
+                    } label: { Image(systemName: "sparkles") }
+                    .disabled(detail == nil)
+                    .accessibilityLabel("Summarize thread")
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -121,7 +125,9 @@ struct ThreadView: View {
             do {
                 detail = try await model.engine.thread(id: row.id)
                 if detail == nil { failed = "This thread is no longer available." }
-                else if model.autoSummarize && model.aiConfigured { await summarize() }
+                else if model.autoSummarize && model.aiConfigured, let d = detail {
+                    model.summarizeThread(current, messages: d.messages)
+                }
             } catch { failed = error.localizedDescription }
         }
     }
@@ -135,9 +141,7 @@ struct ThreadView: View {
         let names = current.triageLabelIds.compactMap { id in model.triageLabels.first { $0.id == id } }
         if current.priority != nil || !names.isEmpty || !model.triageLabels.isEmpty {
             HStack(spacing: 6) {
-                if let p = current.priority, p != .spam {
-                    Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
-                }
+                if let p = current.priority { PriorityIndicator(priority: p) }
                 ForEach(names) { l in
                     Chip(text: l.name, systemImage: "sparkles", background: Theme.sunken, foreground: Theme.textSecondary)
                 }
@@ -174,38 +178,6 @@ struct ThreadView: View {
         .font(.caption.weight(.medium))
         .foregroundStyle(Theme.textSecondary)
         .padding(.leading, 18)
-    }
-
-    /// Desktop "Summarize thread": explicit click, cached for the view.
-    private var summaryRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                if summary == nil { Task { await summarize() } } else { summary = nil }
-            } label: {
-                Text(summarizing ? "Summarizing…" : (summary == nil ? "Summarize thread" : "Hide summary"))
-                    .font(.caption2.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-            }
-            .disabled(summarizing)
-            if let summary {
-                Text(summary)
-                    .font(.footnote).foregroundStyle(Theme.textSecondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-        }
-    }
-
-    private func summarize() async {
-        guard let msgs = detail?.messages, !msgs.isEmpty else { return }
-        summarizing = true
-        defer { summarizing = false }
-        do {
-            summary = try await model.engine.aiSummarizeThread(
-                subject: row.subject,
-                items: msgs.map { (from: $0.isMine ? "Me" : $0.fromName, snippet: String(($0.bodyText ?? $0.snippet).prefix(1500))) }
-            )
-        } catch { summary = error.localizedDescription }
     }
 
     // MARK: Bottom bars

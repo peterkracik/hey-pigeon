@@ -138,27 +138,19 @@ struct ThreadList: View {
         List {
             ForEach(model.groupedRows) { group in
                 Section {
-                    if let s = model.summary(for: group), s.open, s.generating || s.text != nil || s.error != nil {
-                        Text(s.generating ? "Summarizing…" : (s.error ?? s.text ?? ""))
-                            .font(.footnote)
-                            .foregroundStyle(s.error == nil ? Theme.textSecondary : .red)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .padding(.horizontal, 20).padding(.vertical, 4)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Theme.canvas)
-                            .listRowSeparator(.hidden)
-                    }
                     ForEach(group.rows) { row in
                         SwipeableRow(
                             leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
                             trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
-                            background: row.isRead ? Theme.rowRead : Theme.rowUnread
+                            background: Theme.card
                         ) {
                             ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil)
-                                .padding(.horizontal, 20).padding(.vertical, 7)
+                                .padding(.horizontal, 16).padding(.vertical, 7)
                                 .contentShape(Rectangle())
+                                // Unread marker: a bar on the left edge, flush with the screen.
+                                .overlay(alignment: .leading) {
+                                    if !row.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
+                                }
                                 .onTapGesture {
                                     Keyboard.dismiss()
                                     model.markRead(row)
@@ -166,7 +158,7 @@ struct ThreadList: View {
                                 }
                         }
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                        .listRowBackground(row.isRead ? Theme.rowRead : Theme.rowUnread)
+                        .listRowBackground(Color.clear)
                         .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
                         .contextMenu { RowMenu(row: row) }
                         .onAppear { model.loadMoreIfNeeded(current: row) }
@@ -218,19 +210,13 @@ struct GroupHeader: View {
                 .textCase(nil)
             Spacer()
             if model.aiConfigured, !group.active.isEmpty {
-                Button {
-                    model.toggleSummary(group)
-                } label: {
-                    if let s = model.summary(for: group) {
-                        Text(s.generating ? "Summarizing…" : (s.open ? "Hide summary" : "Show summary"))
-                    } else {
-                        Text("Summarize \(group.active.count) active")
-                    }
+                Button { model.openSummary(group) } label: {
+                    Image(systemName: "sparkles").font(.caption.weight(.semibold))
+                        .foregroundStyle(model.summary(for: group)?.text == nil ? Theme.textTertiary : Theme.accent)
+                        .frame(width: 28, height: 22)
                 }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Theme.textTertiary)
-                .textCase(nil)
-                .disabled(model.summary(for: group)?.generating == true)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Summary of \(group.title)")
             }
         }
         .padding(.horizontal, 4)

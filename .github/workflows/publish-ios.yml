@@ -20,7 +20,7 @@ name: publish-ios
 #   HEYPIGEON_IOS_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" (…apps.googleusercontent.com)
 #   EXPO_TOKEN                         expo.dev access token (uploader: eas only)
 #   EXPO_PROJECT_ID                    EAS project id the submission is recorded under (uploader: eas only)
-# Optional variable (same "ios" environment, not a secret):
+# Optional (same "ios" environment, variable or secret — not sensitive):
 #   HEYPIGEON_RELAY_URL                push relay register-token URL (terraform output); pre-fills Settings → Notifications
 #
 # One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
@@ -132,7 +132,7 @@ jobs:
           DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_IOS_CLIENT_ID = ${CLIENT_ID}
           GOOGLE_IOS_REVERSED_CLIENT_ID = ${reversed}
-          HEYPIGEON_RELAY_URL = ${{ vars.HEYPIGEON_RELAY_URL }}
+          HEYPIGEON_RELAY_URL = ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
           EOF
 
       - name: Build Rust core for iOS (device slice) + Swift bindings

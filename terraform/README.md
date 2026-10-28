@@ -100,9 +100,11 @@ comment). Pushes to `main` run `apply`. Auth is Workload Identity Federation —
 no key file anywhere.
 
 The `terraform` job runs in the GitHub **environment `infra`**
-(Settings → Environments → New environment). Put these as its **environment
-variables** (none are secret). Protection rules on that environment — required
-reviewers, deployment branches limited to `main` — gate every apply.
+(Settings → Environments → New environment). Put these on that environment —
+in this repo they are synced there from Doppler; the workflow reads each as a
+variable first and a secret second, so either kind works, and none of them is
+sensitive. Protection rules on the environment — required reviewers,
+deployment branches limited to `main` — gate every apply.
 
 | Variable | Value |
 | --- | --- |
@@ -116,8 +118,8 @@ reviewers, deployment branches limited to `main` — gate every apply.
 Everything else about the deploy (region, runtime, topic name) is in the
 Terraform files.
 
-Why environment variables rather than repository variables: a job only sees
-environment variables when it names the environment, which keeps the Google
+Why an environment rather than repository-level values: a job only sees an
+environment's values when it names the environment, which keeps the Google
 Cloud configuration scoped to this one job, and the environment is where
 GitHub attaches approval rules and deployment history.
 

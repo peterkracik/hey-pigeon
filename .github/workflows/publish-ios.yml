@@ -126,6 +126,7 @@ jobs:
           DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_IOS_CLIENT_ID = ${CLIENT_ID}
           GOOGLE_IOS_REVERSED_CLIENT_ID = ${reversed}
+          HEYPIGEON_RELAY_URL = ${{ vars.HEYPIGEON_RELAY_URL }}
           EOF
 
       - name: Build Rust core for iOS (device slice) + Swift bindings

@@ -46,8 +46,14 @@ final class AppModel {
     static let refreshTaskId = "app.heypigeon.refresh"
     static let pageSize = 50
 
+    /// The one model of the process, for the UIKit delegate (AppDelegate)
+    /// that has no SwiftUI environment to read it from.
+    private(set) static var current: AppModel?
+
     let engine: MailEngine
     let oauth = OAuthCoordinator()
+    /// "New mail (push)" — the optional relay (relay/README.md).
+    let push: PushController
 
     private(set) var accounts: [MailAccount] = []
     private(set) var accountStates: [String: AccountState] = [:]
@@ -107,6 +113,9 @@ final class AppModel {
     var disconnectedAccountId: String?
     var currentAccount: MailAccount? { accounts.first { $0.id == selectedAccountId } }
 
+    /// A notification tap asked for this thread; the inbox screen consumes it.
+    var pendingThreadId: String?
+
     // MARK: Preferences (the desktop keeps these in localStorage)
 
     /// Group pinned messages at the top of the inbox.
@@ -130,6 +139,7 @@ final class AppModel {
 
     init(engine: MailEngine) {
         self.engine = engine
+        push = PushController(engine: engine)
         let d = UserDefaults.standard
         pinListEnabled = d.object(forKey: "pinListEnabled") as? Bool ?? true
         autoSummarize = d.bool(forKey: "autoSummarize")
@@ -142,6 +152,8 @@ final class AppModel {
         }
         reloadAccounts()
         reload()
+        push.notify = { [weak self] text in self?.show(text) }
+        AppModel.current = self
     }
 
     // MARK: Loading
@@ -225,6 +237,27 @@ final class AppModel {
         } catch {
             show("Sync failed: \(error.localizedDescription)")
         }
+        // The app icon badge is the unified unread count — with or without push.
+        await NewMailNotifier.refreshBadge(self)
+    }
+
+    /// Deep link from a notification (reminder or new mail): the inbox tab
+    /// pushes the thread when it sees `pendingThreadId`.
+    func openThread(id: String) {
+        tab = .inbox
+        pendingThreadId = id
+    }
+
+    /// Resolve a pending deep link to a row, searching the loaded inbox
+    /// first and the store second. Nil clears nothing — the screen decides.
+    func row(forThreadId id: String) -> ThreadRow? {
+        if let r = groupedRows.flatMap(\.rows).first(where: { $0.id == id }) { return r }
+        for view in [MailView.inbox, .scheduled, .needReply, .all] {
+            if let r = (try? engine.threads(in: view, accountId: nil, before: nil, limit: 500))?.first(where: { $0.id == id }) {
+                return r
+            }
+        }
+        return nil
     }
 
     // MARK: Actions — the desktop's set, same names (optimistic; the
@@ -461,6 +494,8 @@ final class AppModel {
             reloadAccounts()
             show("Connected \(email)")
             if disconnectedAccountId == email { disconnectedAccountId = nil }
+            // A push registration covers every account: redo it for the new one.
+            await push.accountsChanged()
         } catch is CancellationError {
         } catch let e as URLError where e.code == .cancelled {
         } catch let e as NSError where e.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && e.code == 1 {
@@ -477,11 +512,12 @@ final class AppModel {
         } catch { show(error.localizedDescription) }
     }
 
-    func removeAccount(_ account: MailAccount) {
+    func removeAccount(_ account: MailAccount) async {
         do {
-            try engine.removeAccount(id: account.id)
+            try await engine.removeAccount(id: account.id)
             reloadAccounts()
             reload()
+            push.refreshStatus()
         } catch { show(error.localizedDescription) }
     }
 

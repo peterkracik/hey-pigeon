@@ -58,6 +58,12 @@ struct MailListScreen: View {
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }
             }
+            // Notification tap: the inbox tab opens the thread it names.
+            .onChange(of: model.pendingThreadId, initial: true) { _, id in
+                guard tab == .inbox, let id, let row = model.row(forThreadId: id) else { return }
+                model.pendingThreadId = nil
+                path = [row]
+            }
         }
     }
 }

@@ -121,12 +121,38 @@ final class RustEngine: MailEngine {
         try engine.updateAccount(accountId: id, displayName: displayName, color: color?.rawValue, signature: signature)
     }
 
-    func removeAccount(id: String) throws {
-        try engine.removeAccount(accountId: id)
+    func removeAccount(id: String) async throws {
+        try await engine.removeAccount(accountId: id)
     }
 
     func syncAll() async throws -> Bool {
         try await engine.syncAll()
+    }
+
+    func syncNow(accountId: String) async throws -> Bool {
+        try await engine.syncNow(accountId: accountId)
+    }
+
+    // MARK: Push relay
+
+    func registerPushToken(relayURL: String, deviceToken: String, environment: String) async throws {
+        try await engine.registerPushToken(relayUrl: relayURL, deviceToken: deviceToken, environment: environment)
+    }
+
+    func disablePush() async throws {
+        try await engine.disablePush()
+    }
+
+    func pushStatus() throws -> PushState {
+        let s = try engine.pushStatus()
+        return PushState(
+            enabled: s.enabled,
+            relayURL: s.relayUrl,
+            topic: s.topic,
+            accounts: s.accounts.map {
+                PushAccountState(id: $0.accountId, watchExpiresAt: $0.watchExpiresAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) })
+            }
+        )
     }
 
     func beginOAuth(loginHint: String?) throws -> OAuthStart {

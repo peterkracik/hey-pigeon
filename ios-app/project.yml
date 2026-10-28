@@ -33,6 +33,13 @@ targets:
       - path: HeyPigeon
     dependencies:
       - package: HeyPigeonCore
+    # Push Notifications capability (issue #16, optional relay). XcodeGen
+    # writes the entitlements file; the App Store export flips
+    # aps-environment to production.
+    entitlements:
+      path: HeyPigeon/HeyPigeon.entitlements
+      properties:
+        aps-environment: development
     preBuildScripts:
       - name: Build Rust core (cargo + uniffi)
         script: |
@@ -57,6 +64,8 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # The Rust engine reads the iOS OAuth client id from here (HeyPigeonApp.swift).
         GoogleIOSClientID: $(GOOGLE_IOS_CLIENT_ID)
+        # Default relay URL for Settings → Notifications (PushController.swift); may be empty.
+        HeyPigeonRelayURL: $(HEYPIGEON_RELAY_URL)
         # Google's iOS OAuth redirect: the reversed client id as a URL scheme.
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
@@ -65,6 +74,7 @@ targets:
               - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
         UIBackgroundModes:
           - fetch
+          - remote-notification # silent push from the optional relay
         BGTaskSchedulerPermittedIdentifiers:
           - app.heypigeon.refresh
         # Drop Manrope-*.ttf into HeyPigeon/Resources/Fonts to get the brand

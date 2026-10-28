@@ -107,6 +107,21 @@ struct AccountState: Identifiable, Hashable {
     let lastSyncAt: Date?
 }
 
+/// Engine-side view of the push relay: registered or not, and when each
+/// account's Gmail watch lease runs out unless renewed (the engine renews
+/// on every sync once less than 6 days remain).
+struct PushState: Hashable {
+    let enabled: Bool
+    let relayURL: String?
+    let topic: String?
+    let accounts: [PushAccountState]
+}
+
+struct PushAccountState: Identifiable, Hashable {
+    let id: String
+    let watchExpiresAt: Date?
+}
+
 struct AIStatus: Hashable {
     let configured: Bool
     let providerId: String?
@@ -305,8 +320,11 @@ protocol MailEngine: AnyObject {
     func setManualTriageLabels(threadId: String, ids: [String]) throws
 
     func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws
-    func removeAccount(id: String) throws
+    /// Async: with push on, the engine first forgets the device at the relay and stops the Gmail watch.
+    func removeAccount(id: String) async throws
     func syncAll() async throws -> Bool
+    /// One account only (a silent push names the mailbox that changed).
+    func syncNow(accountId: String) async throws -> Bool
     func beginOAuth(loginHint: String?) throws -> OAuthStart
     /// Resolves with the email that signed in.
     func finishOAuth(callbackURL: URL) async throws -> String
@@ -321,6 +339,12 @@ protocol MailEngine: AnyObject {
     func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String
     func aiSummarizeGroup(items: [(from: String, subject: String, snippet: String)]) async throws -> String
+
+    // Optional iOS push relay (relay/README.md). The Google access token used
+    // to authenticate with the relay never leaves the engine.
+    func registerPushToken(relayURL: String, deviceToken: String, environment: String) async throws
+    func disablePush() async throws
+    func pushStatus() throws -> PushState
 
     // Jev triage.
     func triageStatus() throws -> TriageStatus

@@ -92,6 +92,7 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
       return;
     }
     if (!email) {
+      // auth.verify logged why (aud mismatch, scope, expired, no profile).
       res.status(401).json({ error: "token rejected" });
       return;
     }

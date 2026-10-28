@@ -20,9 +20,11 @@ Gmail users.watch ──► Pub/Sub topic `gmail-push` ──► Cloud Run funct
 ```
 
 A second function, `register-token`, lets the app store its APNs device
-token. It is authenticated with the Google access token the app already holds
-(`oauth2.googleapis.com/tokeninfo` → email), so there is no new login and a
-mailbox's tokens can only be written by its owner. It answers with the
+token. It is authenticated with the Google access token the app already holds:
+`tokeninfo` proves the token was issued to the app's OAuth client and carries a
+Gmail scope, and Gmail's `users/me/profile` names the mailbox (the app's grant
+has no `userinfo.email` scope, so `tokeninfo` alone cannot). No new login, and
+a mailbox's tokens can only be written by its owner. It answers with the
 Pub/Sub topic to `watch`, so the app needs exactly one setting: the relay URL.
 
 ## What the relay sees and stores
@@ -59,7 +61,7 @@ index.js          Cloud Run functions entry: wires Firestore, Secret Manager, AP
 src/handlers.js   onMailChange + registerToken, pure (all I/O injected) — the privacy rules live here
 src/apns.js       ES256 provider JWT (node:crypto, 50-min cache), HTTP/2 to api[.sandbox].push.apple.com
 src/tokens.js     Firestore token table
-src/auth.js       tokeninfo check: aud ∈ GOOGLE_CLIENT_IDS, email verified, gmail scope present
+src/auth.js       tokeninfo check (aud ∈ GOOGLE_CLIENT_IDS, gmail scope), then Gmail users/me/profile for the address
 src/secret.js     reads the .p8 from Secret Manager at runtime
 test/             node --test, no network
 ```

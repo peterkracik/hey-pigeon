@@ -40,6 +40,7 @@ const handlers = createHandlers({
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    log: console,
   }),
   topic: env("PUBSUB_TOPIC", ""),
   log: console,

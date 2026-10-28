@@ -319,7 +319,22 @@ impl GmailProvider {
             .append_pair("q", &format!("rfc822msgid:{}", draft_message_id(key)))
             .append_pair("maxResults", "1");
         let list: serde_json::Value = self.get_json(account_id, url.as_str()).await?;
-        Ok(list["drafts"][0]["id"].as_str().map(str::to_string))
+        if let Some(id) = list["drafts"][0]["id"].as_str() {
+            return Ok(Some(id.to_string()));
+        }
+        // A draft reopened from the Drafts folder is keyed by its Gmail
+        // message id until the first save stamps the composer Message-ID.
+        if !is_gmail_message_id(key) {
+            return Ok(None);
+        }
+        let list: WireDraftList = self
+            .get_json(account_id, &format!("{API}/drafts?maxResults=500"))
+            .await?;
+        Ok(list
+            .drafts
+            .into_iter()
+            .find(|d| d.message.id == key)
+            .map(|d| d.id))
     }
 
     /// drafts.create / drafts.update with the composer's current content.
@@ -632,8 +647,30 @@ struct WireHeader {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WireBody {
     data: Option<String>,
+    /// Set on an attachment part whose bytes are fetched separately
+    /// (`messages.attachments.get`); small ones carry `data` inline.
+    #[serde(default)]
+    attachment_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WireDraftList {
+    #[serde(default)]
+    drafts: Vec<WireDraftRef>,
+}
+
+#[derive(Deserialize)]
+struct WireDraftRef {
+    id: String,
+    message: WireDraftMessage,
+}
+
+#[derive(Deserialize)]
+struct WireDraftMessage {
+    id: String,
 }
 
 // ------------------------------------------------------------------ mapping
@@ -1110,6 +1147,48 @@ impl MailProvider for GmailProvider {
         Ok((thread.has_attachment, messages))
     }
 
+    async fn get_draft(
+        &self,
+        account_id: &AccountId,
+        message_id: &MessageId,
+    ) -> Result<DraftContent, MailError> {
+        let wire: WireMessage = self
+            .get_json(
+                account_id,
+                &format!("{API}/messages/{message_id}?format=full"),
+            )
+            .await?;
+        let mut draft = to_draft(&wire);
+        let mut pending = Vec::new();
+        if let Some(p) = wire.payload.as_ref() {
+            collect_attachments(p, &mut pending);
+        }
+        for (filename, mime_type, body) in pending {
+            let data = match (body.data.as_deref(), body.attachment_id.as_deref()) {
+                (Some(d), _) => d.to_string(),
+                (None, Some(aid)) => {
+                    let a: WireBody = self
+                        .get_json(
+                            account_id,
+                            &format!("{API}/messages/{message_id}/attachments/{aid}"),
+                        )
+                        .await?;
+                    a.data.unwrap_or_default()
+                }
+                (None, None) => continue,
+            };
+            let Some(bytes) = decode_b64url(&data) else {
+                continue;
+            };
+            draft.attachments.push(OutAttachment {
+                filename,
+                mime_type,
+                data_b64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            });
+        }
+        Ok(draft)
+    }
+
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
         if let Mutation::Send {
             to,
@@ -1221,6 +1300,89 @@ impl MailProvider for GmailProvider {
     }
 }
 
+/// A Gmail message id (hex, no dashes) rather than a composer UUID key.
+fn is_gmail_message_id(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Base64url as Gmail sends it, padded or not.
+fn decode_b64url(data: &str) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data.trim_end_matches('='))
+        .ok()
+}
+
+/// Bare addresses from an address-list header: `"Doe, Jane" <jane@x.com>,
+/// bob@y.com` → `["jane@x.com", "bob@y.com"]`. Commas inside quotes or
+/// angle brackets do not split.
+fn header_addresses(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let (mut cur, mut quoted, mut angle) = (String::new(), false, false);
+    for c in value.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '<' if !quoted => angle = true,
+            '>' if !quoted => angle = false,
+            ',' if !quoted && !angle => {
+                parts.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    parts.push(cur);
+    parts
+        .iter()
+        .filter_map(|p| {
+            let p = p.trim();
+            let addr = match (p.rfind('<'), p.rfind('>')) {
+                (Some(a), Some(b)) if a < b => &p[a + 1..b],
+                _ => p,
+            };
+            let addr = addr.trim();
+            (!addr.is_empty()).then(|| addr.to_string())
+        })
+        .collect()
+}
+
+/// Headers and bodies of a draft message (attachments are fetched by the caller).
+fn to_draft(w: &WireMessage) -> DraftContent {
+    let payload = w.payload.as_ref();
+    let list = |name: &str| {
+        payload
+            .and_then(|p| header(p, name))
+            .map(header_addresses)
+            .unwrap_or_default()
+    };
+    let m = to_message(&String::new(), "", w);
+    DraftContent {
+        message_id: w.id.clone(),
+        to: list("To"),
+        cc: list("Cc"),
+        bcc: list("Bcc"),
+        subject: payload
+            .and_then(|p| header(p, "Subject"))
+            .unwrap_or("")
+            .to_string(),
+        body_text: m.body_text,
+        body_html: m.body_html,
+        attachments: Vec::new(),
+    }
+}
+
+/// Attachment parts (non-empty filename), depth first: filename, mime, body.
+fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<(String, String, &'a WireBody)>) {
+    if !part.filename.is_empty() {
+        if let Some(b) = part.body.as_ref() {
+            out.push((part.filename.clone(), part.mime_type.clone(), b));
+        }
+    }
+    for p in &part.parts {
+        collect_attachments(p, out);
+    }
+}
+
 /// Message-ID a saved draft carries, so it can be found again by its
 /// composer key (`rfc822msgid:` search) after the id cache is gone.
 fn draft_message_id(key: &str) -> String {
@@ -1281,6 +1443,59 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_addresses_keep_quoted_commas_and_strip_names() {
+        assert_eq!(
+            header_addresses("\"Doe, Jane\" <Jane@x.com>, bob@y.com ,, Ann <a@z.org>"),
+            vec!["Jane@x.com", "bob@y.com", "a@z.org"]
+        );
+        assert!(header_addresses("").is_empty());
+    }
+
+    #[test]
+    fn gmail_message_ids_are_told_apart_from_composer_keys() {
+        assert!(is_gmail_message_id("18c2f0a9b7d41e3f"));
+        assert!(!is_gmail_message_id("6F9619FF-8B86-D011-B42D-00C04FC964FF"));
+        assert!(!is_gmail_message_id(""));
+    }
+
+    #[test]
+    fn draft_parses_recipients_subject_body_and_attachment_parts() {
+        let b64 = |s: &str| base64::engine::general_purpose::URL_SAFE.encode(s);
+        let wire: WireMessage = serde_json::from_value(serde_json::json!({
+            "id": "abc123",
+            "labelIds": ["DRAFT"],
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "headers": [
+                    {"name": "To", "value": "\"Doe, Jane\" <jane@x.com>"},
+                    {"name": "Cc", "value": "c@x.com"},
+                    {"name": "Bcc", "value": "b@x.com"},
+                    {"name": "Subject", "value": "Plan"}
+                ],
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": b64("hello")}},
+                    {"mimeType": "application/pdf", "filename": "a.pdf",
+                     "body": {"attachmentId": "att1"}}
+                ]
+            }
+        }))
+        .unwrap();
+        let d = to_draft(&wire);
+        assert_eq!(d.message_id, "abc123");
+        assert_eq!(d.to, vec!["jane@x.com"]);
+        assert_eq!(d.cc, vec!["c@x.com"]);
+        assert_eq!(d.bcc, vec!["b@x.com"]);
+        assert_eq!(d.subject, "Plan");
+        assert_eq!(d.body_text.as_deref(), Some("hello"));
+        let mut parts = Vec::new();
+        collect_attachments(wire.payload.as_ref().unwrap(), &mut parts);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].0, "a.pdf");
+        assert_eq!(parts[0].2.attachment_id.as_deref(), Some("att1"));
+        assert_eq!(decode_b64url(&b64("x?y")).unwrap(), b"x?y");
+    }
 
     #[test]
     fn draft_message_id_is_stable_and_header_safe() {

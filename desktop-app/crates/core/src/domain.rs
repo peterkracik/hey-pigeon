@@ -274,6 +274,32 @@ pub enum Mutation {
     },
 }
 
+/// A saved draft as the provider holds it, for reopening it in the
+/// composer (to edit, send or discard).
+#[derive(Clone, PartialEq)]
+pub struct DraftContent {
+    /// Provider message id of the draft. Used as the composer key, so the
+    /// next save updates this draft instead of creating a second one.
+    pub message_id: MessageId,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub bcc: Vec<String>,
+    pub subject: String,
+    pub body_text: Option<String>,
+    pub body_html: Option<String>,
+    pub attachments: Vec<OutAttachment>,
+}
+
+// Log hygiene: addresses, subject and body stay out of Debug output.
+impl std::fmt::Debug for DraftContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DraftContent")
+            .field("message_id", &self.message_id)
+            .field("attachments", &self.attachments.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// One attachment on an outgoing Send mutation.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutAttachment {

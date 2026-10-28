@@ -77,7 +77,7 @@ enum Theme {
     }
 
     static func sender(_ unread: Bool) -> Font {
-        .custom(unread ? "Manrope-Bold" : "Manrope-SemiBold", size: 15, relativeTo: .subheadline)
+        .custom(unread ? "Manrope-Bold" : "Manrope-SemiBold", size: 14, relativeTo: .subheadline)
     }
 }
 

@@ -3,6 +3,7 @@
 
 import Foundation
 import HeyPigeonCore
+import UIKit // NSAttributedString's html import
 
 @MainActor
 final class RustEngine: MailEngine {
@@ -103,6 +104,35 @@ final class RustEngine: MailEngine {
         guard let t = try await engine.getThread(threadId: id) else { return nil }
         let me = t.thread.accountId
         return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
+    }
+
+    func draft(threadId: String) async throws -> SendDraft? {
+        guard let d = try await engine.loadDraft(threadId: threadId) else { return nil }
+        var draft = SendDraft()
+        draft.to = d.to
+        draft.cc = d.cc
+        draft.bcc = d.bcc
+        draft.subject = d.subject
+        draft.bodyText = d.bodyText ?? d.bodyHtml.map(Self.plainText) ?? ""
+        draft.attachments = d.attachments.map {
+            DraftAttachment(filename: $0.filename, mimeType: $0.mimeType,
+                            size: Data(base64Encoded: $0.dataB64)?.count ?? 0, dataBase64: $0.dataB64)
+        }
+        draft.replyToThreadId = d.replyToThread
+        draft.fromAccountId = d.accountId
+        draft.draftKey = d.messageId
+        draft.draftSaved = true
+        return draft
+    }
+
+    /// An html-only draft's text, for the plain editor.
+    private static func plainText(_ html: String) -> String {
+        guard let data = html.data(using: .utf8),
+              let s = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.html,
+                                                                    .characterEncoding: String.Encoding.utf8.rawValue],
+                                              documentAttributes: nil)
+        else { return html }
+        return s.string
     }
 
     func perform(_ action: MailAction, accountId: String) async throws {

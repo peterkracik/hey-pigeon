@@ -45,11 +45,11 @@ struct ThreadRowView: View {
                     .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
                     .monospacedDigit()
             }
-            // Subject line carries the chips at its end: three lines per row,
-            // about 86 pt, so six rows fit above the bars.
+            // Subject line carries the chips at its end: three compact lines
+            // per row, so seven rows fit above the bars.
             HStack(spacing: 8) {
                 highlighted(row.subject.isEmpty ? "(no subject)" : row.subject)
-                    .font(.subheadline.weight(row.isRead ? .regular : .semibold))
+                    .font(.footnote.weight(row.isRead ? .regular : .semibold))
                     .foregroundStyle(tone)
                     .lineLimit(1)
                 Spacer(minLength: 0)

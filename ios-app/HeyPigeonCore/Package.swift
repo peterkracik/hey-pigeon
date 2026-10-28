@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.2
 // Wraps the Rust core for Swift: the generated UniFFI bindings
 // (Sources/HeyPigeonCore/HeyPigeonCore.swift) over the static library
 // xcframework. Both are produced by ../scripts/build-rust.sh and git-ignored.

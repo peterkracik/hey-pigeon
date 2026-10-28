@@ -99,6 +99,30 @@ extension Color {
     }
 }
 
+/// The menu sheets (sidebar, Settings): the app's canvas, sections on
+/// cards, close in the nav bar — one look for both.
+extension View {
+    func menuList() -> some View {
+        listStyle(.insetGrouped)
+            .listSectionSpacing(16)
+            // The inset-grouped default leaves a wide gutter in a sheet; keep
+            // the cards close to the edges like the inbox rows.
+            .contentMargins(.horizontal, 12, for: .scrollContent)
+            .contentMargins(.top, 4, for: .scrollContent)
+            .scrollContentBackground(.hidden)
+            .background(Theme.canvas)
+    }
+
+    /// A section of a menu sheet, on a card.
+    func menuCard() -> some View { listRowBackground(Theme.card) }
+
+    func menuSheet() -> some View {
+        presentationBackground(Theme.canvas)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+    }
+}
+
 /// Settings › Appearance: follow the system, or force light / dark.
 enum Appearance: String, CaseIterable, Identifiable {
     case system, light, dark

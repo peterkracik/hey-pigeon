@@ -184,6 +184,57 @@ impl GmailProvider {
         info.picture
     }
 
+    /// One page of `threads.list` for a search query, every thread
+    /// fetched at the metadata tier — the shape both backfill walks share.
+    async fn list_query(
+        &self,
+        account_id: &AccountId,
+        q: &str,
+        page_token: Option<String>,
+    ) -> Result<ThreadPage, MailError> {
+        let mut url = url::Url::parse(&format!("{API}/threads")).expect("static url");
+        // No labelIds filter: the backfill covers the whole corpus
+        // (SENT/DRAFT/STARRED/user labels), and includeSpamTrash pulls the
+        // Spam + Trash folders — threads.list excludes them by default.
+        url.query_pairs_mut()
+            .append_pair("q", q)
+            .append_pair("includeSpamTrash", "true")
+            .append_pair("maxResults", "100");
+        if let Some(t) = &page_token {
+            url.query_pairs_mut().append_pair("pageToken", t);
+        }
+        let list: WireThreadsList = self.get_json(account_id, url.as_str()).await?;
+
+        // Backfill list rendering needs metadata only (DESIGN.md tiering).
+        // Bounded fan-out per chunk keeps Gmail quota happy.
+        let urls: Vec<String> = list
+            .threads
+            .iter()
+            .map(|t| {
+                format!(
+                    "{API}/threads/{}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject",
+                    t.id
+                )
+            })
+            .collect();
+        let mut threads = Vec::with_capacity(urls.len());
+        for chunk in urls.chunks(FETCH_CONCURRENCY) {
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|url| async move {
+                    let wire: WireThread = self.get_json(account_id, url).await?;
+                    Ok::<_, MailError>(to_thread(account_id, &wire))
+                })
+                .collect();
+            threads.extend(futures::future::try_join_all(futs).await?);
+        }
+
+        Ok(ThreadPage {
+            threads,
+            next_page_token: list.next_page_token,
+        })
+    }
+
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         account_id: &AccountId,
@@ -967,47 +1018,27 @@ impl MailProvider for GmailProvider {
         window_days: u32,
         page_token: Option<String>,
     ) -> Result<ThreadPage, MailError> {
-        let mut url = url::Url::parse(&format!("{API}/threads")).expect("static url");
-        // No labelIds filter: the backfill covers the whole recent corpus
-        // (SENT/DRAFT/STARRED/user labels), and includeSpamTrash pulls the
-        // Spam + Trash folders — threads.list excludes them by default.
-        url.query_pairs_mut()
-            .append_pair("q", &format!("newer_than:{window_days}d"))
-            .append_pair("includeSpamTrash", "true")
-            .append_pair("maxResults", "100");
-        if let Some(t) = &page_token {
-            url.query_pairs_mut().append_pair("pageToken", t);
-        }
-        let list: WireThreadsList = self.get_json(account_id, url.as_str()).await?;
+        self.list_query(
+            account_id,
+            &format!("newer_than:{window_days}d"),
+            page_token,
+        )
+        .await
+    }
 
-        // Backfill list rendering needs metadata only (DESIGN.md tiering).
-        // Bounded fan-out per chunk keeps Gmail quota happy.
-        let urls: Vec<String> = list
-            .threads
-            .iter()
-            .map(|t| {
-                format!(
-                    "{API}/threads/{}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject",
-                    t.id
-                )
-            })
-            .collect();
-        let mut threads = Vec::with_capacity(urls.len());
-        for chunk in urls.chunks(FETCH_CONCURRENCY) {
-            let futs: Vec<_> = chunk
-                .iter()
-                .map(|url| async move {
-                    let wire: WireThread = self.get_json(account_id, url).await?;
-                    Ok::<_, MailError>(to_thread(account_id, &wire))
-                })
-                .collect();
-            threads.extend(futures::future::try_join_all(futs).await?);
-        }
-
-        Ok(ThreadPage {
-            threads,
-            next_page_token: list.next_page_token,
-        })
+    async fn list_before(
+        &self,
+        account_id: &AccountId,
+        before_ms: i64,
+        page_token: Option<String>,
+    ) -> Result<ThreadPage, MailError> {
+        // `before:` takes epoch seconds as well as dates.
+        self.list_query(
+            account_id,
+            &format!("before:{}", before_ms / 1000),
+            page_token,
+        )
+        .await
     }
 
     async fn list_labels(&self, account_id: &AccountId) -> Result<Vec<Label>, MailError> {

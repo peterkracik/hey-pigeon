@@ -7,6 +7,7 @@ import BackgroundTasks
 import Foundation
 import Observation
 import SwiftUI
+import UIKit
 
 struct Toast: Identifiable, Equatable {
     let id = UUID()
@@ -93,6 +94,7 @@ final class AppModel {
     private(set) var rows: [ThreadRow] = []
     private(set) var hasMore = true
     private(set) var isSyncing = false
+    private var isBackfillingOlder = false
     private(set) var lastSyncAt: Date?
     private(set) var hasLoadedOnce = false
 
@@ -408,6 +410,38 @@ final class AppModel {
         // reminders — with or without push. Awaited here so a background
         // refresh finishes it before the task is marked complete.
         await NewMailNotifier.refreshBadge(self)
+        if UIApplication.shared.applicationState == .active {
+            Task { await backfillOlder() }
+        }
+    }
+
+    /// Pulls mail older than the sync window into the local store, a page
+    /// per account per step, while the app is in front. The engine
+    /// checkpoints the walk, so it resumes on the next foreground sync and
+    /// is a no-op once the whole archive is local.
+    private func backfillOlder() async {
+        guard !isBackfillingOlder else { return }
+        isBackfillingOlder = true
+        defer { isBackfillingOlder = false }
+        while UIApplication.shared.applicationState == .active {
+            guard let more = try? await engine.backfillOlder() else { break }
+            appendOlderRows()
+            if !more { break }
+            // Breathing room for the delta sync and the UI between pages.
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+    }
+
+    /// Old mail lands below everything loaded, so a list that has not hit
+    /// its end picks it up by scrolling; one that has gets the next page
+    /// appended here instead of a reload that would jump the scroll.
+    private func appendOlderRows() {
+        counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? counts
+        guard let last = rows.last else { reload(); return }
+        guard !hasMore else { return }
+        let more = (try? engine.threads(in: view, accountId: selectedAccountId, before: last.lastMessageAt, limit: Self.pageSize)) ?? []
+        rows.append(contentsOf: more)
+        hasMore = more.count == Self.pageSize
     }
 
     /// Deep link from a notification (reminder or new mail): the inbox tab

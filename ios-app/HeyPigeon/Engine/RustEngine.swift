@@ -194,6 +194,10 @@ final class RustEngine: MailEngine {
         try await engine.syncNow(accountId: accountId)
     }
 
+    func backfillOlder() async throws -> Bool {
+        try await engine.backfillOlder()
+    }
+
     // MARK: Push relay
 
     func registerPushToken(relayURL: String, deviceToken: String, environment: String) async throws {

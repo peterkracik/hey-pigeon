@@ -393,6 +393,9 @@ protocol MailEngine: AnyObject {
     func syncAll() async throws -> Bool
     /// One account only (a silent push names the mailbox that changed).
     func syncNow(accountId: String) async throws -> Bool
+    /// One step of the archive walk (mail older than the 30-day sync
+    /// window). True while any account has more to fetch.
+    func backfillOlder() async throws -> Bool
     func beginOAuth(loginHint: String?) throws -> OAuthStart
     /// Resolves with the email that signed in.
     func finishOAuth(callbackURL: URL) async throws -> String

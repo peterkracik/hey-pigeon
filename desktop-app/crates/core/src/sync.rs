@@ -58,6 +58,70 @@ pub async fn backfill<M: MailProvider, S: Store>(
     Ok(total)
 }
 
+/// `sync_meta` keys for the archive walk (`backfill_older`).
+const META_OLDER_BEFORE_MS: &str = "older_before_ms";
+const META_OLDER_CURSOR: &str = "older_cursor";
+const META_OLDER_DONE: &str = "older_done";
+
+/// Progressive backfill (DESIGN.md "Large mailboxes"): after the recent
+/// window, page through everything older, at most `max_pages` pages per
+/// call. The cut-off is pinned on the first call (so the page token keeps
+/// addressing the same query) and the cursor is checkpointed in
+/// `sync_meta` after every page, so the walk resumes across launches.
+/// Returns `(threads upserted, finished)`; a finished walk is a no-op.
+pub async fn backfill_older<M: MailProvider, S: Store>(
+    provider: &M,
+    store: &S,
+    account_id: &AccountId,
+    window_days: u32,
+    max_pages: usize,
+) -> Result<(usize, bool), SyncError> {
+    if store.sync_meta_get(account_id, META_OLDER_DONE)?.as_deref() == Some("1") {
+        return Ok((0, true));
+    }
+    let before_ms = match store
+        .sync_meta_get(account_id, META_OLDER_BEFORE_MS)?
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        Some(ms) => ms,
+        None => {
+            let ms = crate::domain::now_ms() - i64::from(window_days) * 86_400_000;
+            store.sync_meta_set(account_id, META_OLDER_BEFORE_MS, &ms.to_string())?;
+            ms
+        }
+    };
+    let mut page_token = store
+        .sync_meta_get(account_id, META_OLDER_CURSOR)?
+        .filter(|t| !t.is_empty());
+    let mut total = 0usize;
+    for _ in 0..max_pages {
+        let page = provider
+            .list_before(account_id, before_ms, page_token.take())
+            .await?;
+        for (thread, messages) in &page.threads {
+            store.upsert_thread(thread)?;
+            for m in messages {
+                store.upsert_message(m)?;
+            }
+            total += 1;
+        }
+        match page.next_page_token {
+            Some(t) => {
+                store.sync_meta_set(account_id, META_OLDER_CURSOR, &t)?;
+                page_token = Some(t);
+            }
+            None => {
+                store.sync_meta_set(account_id, META_OLDER_CURSOR, "")?;
+                store.sync_meta_set(account_id, META_OLDER_DONE, "1")?;
+                log::info!("backfill_older({account_id}): +{total} threads, done");
+                return Ok((total, true));
+            }
+        }
+    }
+    log::info!("backfill_older({account_id}): +{total} threads");
+    Ok((total, false))
+}
+
 /// "Remind me if no reply": a follow-up reminder is satisfied the moment
 /// someone else writes in the thread after it was armed. Checks each given
 /// thread and clears both the schedule and the marker (locally and in the
@@ -426,6 +490,36 @@ mod tests {
         assert!(threads
             .windows(2)
             .all(|w| w[0].last_msg_at >= w[1].last_msg_at));
+    }
+
+    /// The archive walk pages a bounded amount per call, resumes from its
+    /// stored cursor, and is a no-op once finished.
+    #[tokio::test]
+    async fn backfill_older_resumes_and_finishes() {
+        let provider = FakeProvider::with_sample_data("a1", 25, 10);
+        let store = MemStore::default();
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
+        let acc = "a1".to_string();
+
+        let r = backfill_older(&provider, &store, &acc, 30, 2)
+            .await
+            .unwrap();
+        assert_eq!(r, (20, false), "two pages, more to come");
+        let r = backfill_older(&provider, &store, &acc, 30, 2)
+            .await
+            .unwrap();
+        assert_eq!(r, (5, true), "resumed from the cursor, last page");
+        let r = backfill_older(&provider, &store, &acc, 30, 2)
+            .await
+            .unwrap();
+        assert_eq!(r, (0, true), "finished walk is a no-op");
+
+        let threads = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 100)
+            .unwrap();
+        assert_eq!(threads.len(), 25);
     }
 
     /// A follow-up ("remind me if no reply") clears itself only when an

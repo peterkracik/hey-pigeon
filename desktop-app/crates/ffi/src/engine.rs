@@ -19,7 +19,9 @@ use crate::types::*;
 
 /// Backfill window on first sync (DESIGN.md: 90 days first, older later —
 /// the desktop shell uses 30 today; the phone follows it).
-const BACKFILL_DAYS: u32 = 30;
+pub(crate) const BACKFILL_DAYS: u32 = 30;
+/// Archive-walk pages (100 threads each) per `backfill_older` call.
+const OLDER_PAGES_PER_CALL: usize = 1;
 const KEYCHAIN_SERVICE: &str = "app.heypigeon";
 pub(crate) const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
@@ -476,6 +478,48 @@ impl Engine {
             self.notify_threads_updated();
         }
         Ok(changed)
+    }
+
+    /// One step of the archive walk: mail older than the backfill window,
+    /// a page per account, checkpointed so it resumes across launches
+    /// (DESIGN.md "Progressive backfill"). Returns whether any account has
+    /// more to fetch — the shell keeps calling while that is true and the
+    /// app is in front. Never fires `on_threads_updated`: old mail lands
+    /// below the newest page, so the shell appends it instead of resetting
+    /// a scrolled list. An account mid-sync is skipped (still "more"); one
+    /// that fails is skipped until the next call, so a network error ends
+    /// the shell's loop instead of spinning it.
+    pub async fn backfill_older(&self) -> Result<bool, EngineError> {
+        let mut more = false;
+        for a in self.store.list_accounts()? {
+            if self.disconnected.lock().unwrap().contains(&a.id) {
+                continue;
+            }
+            if !self.syncing.lock().unwrap().insert(a.id.clone()) {
+                more = true;
+                continue;
+            }
+            let result = {
+                let provider = self.provider.read().await;
+                sync::backfill_older(
+                    &*provider,
+                    &self.store,
+                    &a.id,
+                    BACKFILL_DAYS,
+                    OLDER_PAGES_PER_CALL,
+                )
+                .await
+            };
+            self.syncing.lock().unwrap().remove(&a.id);
+            match result {
+                Ok((_, done)) => more |= !done,
+                Err(sync::SyncError::Mail(MailError::AuthExpired)) => {
+                    self.mark_disconnected(&a.id);
+                }
+                Err(e) => log::warn!("backfill_older({}) failed: {e}", a.id),
+            }
+        }
+        Ok(more)
     }
 
     /// Connection + cross-device sync state for every stored account.

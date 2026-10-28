@@ -220,6 +220,8 @@ final class MockEngine: MailEngine {
         try await syncAll()
     }
 
+    func backfillOlder() async throws -> Bool { false }
+
     // MARK: Push relay (pretend)
 
     private var pushRelayURL: String?

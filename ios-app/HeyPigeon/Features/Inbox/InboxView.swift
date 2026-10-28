@@ -1,8 +1,8 @@
-// The list screens behind the tab bar. No title: two glass circles on top
-// (sidebar, compose), the list starts right under them, and the Jev label
-// filter floats above the tab bar as a glass pill. Accounts live in the
-// sidebar. One screen type serves Inbox, Scheduled and Need reply; Search
-// is its own screen (Features/Search).
+// The list screens behind the tab bar. The view's name sits between the
+// glass circles on top (sidebar · AI, compose), the list starts right under
+// them, and the Jev label filter floats above the tab bar as a glass pill.
+// Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
+// Need reply; Search is its own screen (Features/Search).
 
 import SwiftUI
 
@@ -27,11 +27,10 @@ struct MailListScreen: View {
                 }
             }
             .background(Theme.canvas)
-            // The title is for accessibility and the back button only; the
-            // bar shows just the two circles.
+            // ListTitle is the principal item. No .toolbar(removing: .title)
+            // here: the principal counts as the title and went with it.
             .navigationTitle(tab == .inbox ? model.folder.title : tab.title)
             .toolbarTitleDisplayMode(.inline)
-            .toolbar(removing: .title)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { model.showSidebar = true } label: { Image(systemName: "line.3.horizontal") }
@@ -69,7 +68,7 @@ struct MailListScreen: View {
 }
 
 /// Folder title + unread count in the top bar, with the account next to it
-/// when there is more than one. Tapping opens the account switcher.
+/// when there is more than one; then tapping opens the account switcher.
 struct ListTitle: View {
     let tab: MainTab
     @Environment(AppModel.self) private var model
@@ -85,45 +84,54 @@ struct ListTitle: View {
     }
 
     var body: some View {
-        Menu {
-            Button {
-                model.selectedAccountId = nil
-            } label: {
-                Label("All accounts", systemImage: model.selectedAccountId == nil ? "checkmark" : "circle.grid.2x2")
-            }
-            ForEach(model.accounts) { a in
-                Button {
-                    model.selectedAccountId = a.id
-                    Haptics.light()
-                } label: {
-                    Label(a.displayName, systemImage: a.id == model.selectedAccountId ? "checkmark" : "circle.fill")
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Text(title).font(Theme.display(17, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
-                if count > 0 {
-                    Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                }
-                if model.accounts.count > 1 {
-                    if let a = model.currentAccount {
-                        Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
-                        Text(a.displayName).font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                    } else {
-                        HStack(spacing: -2) {
-                            ForEach(model.accounts.prefix(3)) { a in
-                                Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
-                            }
-                        }
-                        Text("All").font(.subheadline).foregroundStyle(Theme.textSecondary)
-                    }
-                    Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+        if model.accounts.count > 1 {
+            Menu { accountMenu } label: { label }
+                .accessibilityLabel("\(title), \(count) unread. Switch account")
+        } else {
+            label.accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(title), \(count) unread")
+                .accessibilityAddTraits(.isHeader)
         }
-        .disabled(model.accounts.count < 2)
-        .accessibilityLabel("\(title), \(count) unread. Switch account")
+    }
+
+    @ViewBuilder private var accountMenu: some View {
+        Button {
+            model.selectedAccountId = nil
+        } label: {
+            Label("All accounts", systemImage: model.selectedAccountId == nil ? "checkmark" : "circle.grid.2x2")
+        }
+        ForEach(model.accounts) { a in
+            Button {
+                model.selectedAccountId = a.id
+                Haptics.light()
+            } label: {
+                Label(a.displayName, systemImage: a.id == model.selectedAccountId ? "checkmark" : "circle.fill")
+            }
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 6) {
+            Text(title).font(Theme.display(17, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
+            if count > 0 {
+                Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            }
+            if model.accounts.count > 1 {
+                if let a = model.currentAccount {
+                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
+                    Text(a.displayName).font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                } else {
+                    HStack(spacing: -2) {
+                        ForEach(model.accounts.prefix(3)) { a in
+                            Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
+                        }
+                    }
+                    Text("All").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                }
+                Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 }
 

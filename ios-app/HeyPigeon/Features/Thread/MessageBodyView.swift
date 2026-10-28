@@ -45,9 +45,9 @@ struct MessageBodyView: View {
                     .frame(height: height)
                 if hasQuote && !showQuoted { quoteButton }
             } else if let split = Self.splitQuoted(text) {
-                Text(Self.linkified(split.main)).font(.body).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                SelectableText(text: Self.linkified(split.main)) { url in link = url }
                 if showQuoted {
-                    Text(Self.linkified(split.quoted)).font(.subheadline).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
+                    SelectableText(text: Self.linkified(split.quoted, style: .subheadline, color: Theme.textSecondary)) { url in link = url }
                         .padding(.leading, 10)
                         .overlay(alignment: .leading) { Rectangle().fill(Theme.separator).frame(width: 2) }
                 } else {
@@ -96,10 +96,11 @@ struct MessageBodyView: View {
     }
 
     /// Plain-text mail with every URL turned into a tappable, underlined link.
-    private static func linkified(_ text: String) -> NSAttributedString {
+    private static func linkified(_ text: String, style: UIFont.TextStyle = .body,
+                                  color: Color = Theme.textPrimary) -> NSAttributedString {
         let out = NSMutableAttributedString(string: text, attributes: [
-            .font: UIFont.preferredFont(forTextStyle: .body),
-            .foregroundColor: UIColor(Theme.textPrimary),
+            .font: UIFont.preferredFont(forTextStyle: style),
+            .foregroundColor: UIColor(color),
         ])
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
         for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {

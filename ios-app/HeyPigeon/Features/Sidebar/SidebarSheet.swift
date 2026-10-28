@@ -107,17 +107,20 @@ struct SidebarSheet: View {
             dismiss()
         } label: {
             HStack(spacing: 12) {
-                if let color {
-                    Circle().fill(Theme.tagForeground(color)).frame(width: 10, height: 10)
-                } else {
-                    HStack(spacing: -3) {
-                        ForEach(model.accounts.prefix(3)) { a in
-                            Circle().fill(Theme.tagForeground(a.color)).frame(width: 10, height: 10)
-                        }
-                    }
-                }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
+                    // The account dot sits right in front of the name.
+                    HStack(spacing: 7) {
+                        if let color {
+                            Circle().fill(Theme.tagForeground(color)).frame(width: 9, height: 9)
+                        } else {
+                            HStack(spacing: -3) {
+                                ForEach(model.accounts.prefix(3)) { a in
+                                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 9, height: 9)
+                                }
+                            }
+                        }
+                        Text(title)
+                    }
                     if disconnected {
                         Text("Disconnected — reconnect in Settings").font(.caption).foregroundStyle(.red)
                     } else if let subtitle {
@@ -129,7 +132,6 @@ struct SidebarSheet: View {
                     Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                 }
             }
-            .padding(.leading, 28)
         }
     }
 }

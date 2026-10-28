@@ -53,8 +53,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: relay-test
-    # Fork PRs have no OIDC identity for this project; they still get the
-    # format/validate checks below via the `if` on the auth steps.
+    # Format + validate always run. Auth, plan and apply need the GitHub
+    # variables that exist only after terraform/bootstrap has been applied
+    # once (terraform/README.md), and an OIDC identity fork PRs don't have:
+    # without them a PR is still green (plan skipped, with a notice) and a
+    # push to main fails loudly instead of silently not deploying.
     defaults:
       run:
         working-directory: terraform
@@ -81,22 +84,42 @@ jobs:
           terraform -chdir=bootstrap init -backend=false
           terraform -chdir=bootstrap validate
 
+      - name: Is Google Cloud configured for CI?
+        id: gcp
+        env:
+          WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SA: ${{ vars.GCP_DEPLOYER_SA }}
+          BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          SAME_REPO: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [[ -n "$WIF" && -n "$SA" && -n "$BUCKET" && -n "$PROJECT" && "$SAME_REPO" == "true" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              echo "::error::terraform apply needs GCP_PROJECT_ID, TF_STATE_BUCKET, GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_DEPLOYER_SA as repository variables — apply terraform/bootstrap first (terraform/README.md)."
+              exit 1
+            fi
+            echo "::notice::Google Cloud is not configured for CI yet (repository variables missing, or a fork PR). Skipping terraform plan; fmt and validate passed."
+          fi
+
       - name: Authenticate to Google Cloud
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gcp.outputs.ready == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
 
       - name: Init (GCS backend)
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gcp.outputs.ready == 'true'
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="prefix=relay"
 
       - name: Plan
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.gcp.outputs.ready == 'true' && github.event_name == 'pull_request'
         id: plan
         run: |
           set -o pipefail
@@ -127,5 +150,5 @@ jobs:
           PLAN_LINES: ${{ steps.plan.outputs.lines }}
 
       - name: Apply
-        if: github.event_name == 'push'
+        if: steps.gcp.outputs.ready == 'true' && github.event_name == 'push'
         run: terraform apply -auto-approve -lock-timeout=120s

@@ -35,7 +35,7 @@ on:
     # Branch pushes only build, as a compile check, when the iOS app changed.
     # TEMPORARY: the PR branch is listed until the scaffold merges, because a
     # manual dispatch needs this file on main first. Remove it then.
-    branches: ["main", "claude/confident-lovelace-krjff8"]
+    branches: ["main", "claude/confident-lovelace-krjff8", "claude/charming-euler-zspu0k"]
     paths: ["ios-app/**", ".github/workflows/publish-ios.yml"]
   workflow_dispatch:
     inputs:

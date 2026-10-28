@@ -104,20 +104,21 @@ floating "splits" pill above the tab bar. Here that maps to:
 
 ### Rows
 
-Three lines, flat, hairline separators, no cards and no avatar:
+Three lines, flat, hairline separators, no cards and no avatar — about
+86 pt per row, so six rows are visible above the bars:
 
 ```text
-● Sender name                                        10:42
-  Subject line
-  First two lines of the snippet, so the row is
-  readable without opening it…                 [medium] [📎]
+● Sender name  3                                ⏰ 10:42
+  Subject line                              [medium] 📎
+  First line of the snippet…
 ```
 
 - The dot is the unread mark: account-coloured in the unified view, accent
   when filtered to one account; a read row has no dot.
-- Sender in semibold, subject semibold when unread, snippet grey.
-- Reminder, need-reply and star marks sit next to the time; priority and
-  attachment are chips under the snippet, only when present.
+- Sender in semibold (15 pt Manrope), subject semibold when unread, one
+  line of snippet in grey.
+- Reminder, need-reply and star marks sit next to the time; priority chip
+  and attachment clip sit at the end of the subject line, only when present.
 - No day-group headers in the inbox (the time column carries the date);
   Scheduled keeps its due buckets (Overdue · Today · Tomorrow · This week ·
   Later).

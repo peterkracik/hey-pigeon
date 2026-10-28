@@ -32,7 +32,7 @@ ios-app/
 To work on the UI without any of 3–4, set `HEYPIGEON_MOCK=1` in the scheme:
 the app runs against an in-memory sample inbox.
 
-Fonts: drop `Manrope-Medium.ttf`, `Manrope-Bold.ttf`, `Manrope-ExtraBold.ttf`
+Fonts: drop `Manrope-SemiBold.ttf`, `Manrope-Bold.ttf`, `Manrope-ExtraBold.ttf`
 into `HeyPigeon/Resources/Fonts/` for the brand typeface; without them SwiftUI
 silently falls back to the system font.
 

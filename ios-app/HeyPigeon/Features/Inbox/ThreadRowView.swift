@@ -32,35 +32,35 @@ struct ThreadRowView: View {
                 Spacer(minLength: 8)
                 trailingMarks
                 Text(timeText)
-                    .font(.subheadline)
+                    .font(.footnote)
                     .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
                     .monospacedDigit()
             }
-            Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                .font(.body.weight(row.isRead ? .regular : .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .padding(.leading, 16)
+            // Subject line carries the chips at its end: three lines per row,
+            // about 86 pt, so six rows fit above the bars.
+            HStack(spacing: 8) {
+                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                    .font(.subheadline.weight(row.isRead ? .regular : .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if let p = row.priority, p != .spam {
+                    Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
+                }
+                if row.hasAttachment {
+                    Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .padding(.leading, 16)
             if !row.snippet.isEmpty {
                 Text(row.snippet)
-                    .font(.subheadline)
+                    .font(.footnote)
                     .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .padding(.leading, 16)
             }
-            if row.priority != nil || row.hasAttachment {
-                HStack(spacing: 6) {
-                    if let p = row.priority, p != .spam {
-                        Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
-                    }
-                    if row.hasAttachment {
-                        Chip(text: "attachment", systemImage: "paperclip", background: Theme.navy100, foreground: Theme.textSecondary)
-                    }
-                }
-                .padding(.leading, 16).padding(.top, 2)
-            }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
     }
 
@@ -96,7 +96,7 @@ struct Chip: View {
             Text(text).font(.caption.weight(.semibold))
         }
         .foregroundStyle(foreground)
-        .padding(.horizontal, 9).padding(.vertical, 3)
-        .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 7).padding(.vertical, 2)
+        .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }

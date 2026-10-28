@@ -144,7 +144,7 @@ struct ThreadList: View {
                                 model.markRead(row)
                                 path.append(row)
                             }
-                            .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                            .listRowInsets(EdgeInsets(top: 7, leading: 20, bottom: 7, trailing: 20))
                             .listRowBackground(Theme.canvas)
                             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
                             .swipeActions(edge: .leading, allowsFullSwipe: true) {

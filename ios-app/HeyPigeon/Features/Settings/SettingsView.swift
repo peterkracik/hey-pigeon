@@ -77,7 +77,7 @@ struct SettingsView: View {
         guard let s else { return "—" }
         if !s.isConnected { return "Disconnected — reconnect to resume sync" }
         switch s.syncState {
-        case "ok": return "Connected · reminders synced \(s.lastSyncAt.map(Formatters.rowTime) ?? "")"
+        case "ok": return "Connected · reminders synced \(s.lastSyncAt.map { Formatters.rowTime($0) } ?? "")"
         case "pending": return "Connected · syncing…"
         case "unavailable": return "Connected · reminder sync off: \(s.syncDetail ?? "re-connect to enable")"
         default: return "Connected · reminder sync error"

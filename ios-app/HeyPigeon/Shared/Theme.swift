@@ -85,6 +85,7 @@ extension Color {
     }
 }
 
+@MainActor
 enum Haptics {
     static func archive() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
     static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }

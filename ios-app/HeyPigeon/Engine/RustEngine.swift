@@ -82,7 +82,7 @@ final class RustEngine: MailEngine {
                 before: before.map(\.epochMs), limit: UInt32(limit)
             )
         }
-        return rows.map(ThreadRow.init)
+        return rows.map { ThreadRow($0) }
     }
 
     func search(_ query: String, limit: Int) throws -> [ThreadRow] {

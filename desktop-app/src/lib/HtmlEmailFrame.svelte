@@ -3,6 +3,8 @@
   // allow-same-origin keeps the height measurable from the parent.
   // ponytail: no sanitization yet — mock data only; ammonia in the Rust core
   // must sanitize before real mail ever reaches this frame (DESIGN.md Security).
+  import { linkifyDocument } from "./linkify";
+
   let { html }: { html: string } = $props();
 
   let frame: HTMLIFrameElement | undefined = $state();
@@ -134,6 +136,7 @@
     if (doc?.body) {
       doc.body.style.margin = "0";
       doc.body.style.fontFamily = "ui-sans-serif, system-ui, sans-serif";
+      linkifyDocument(doc);
     }
     collapseQuote();
     resize();

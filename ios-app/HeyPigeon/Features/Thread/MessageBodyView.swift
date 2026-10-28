@@ -36,10 +36,29 @@ struct MessageBodyView: View {
                 HTMLView(html: html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, height: $height) { url in link = url }
                     .frame(height: height)
             } else {
-                Text(text).font(.body).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                Text(Self.linkified(text)).font(.body).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
             }
         }
+        // Links in the plain-text body open the same in-app Safari sheet as
+        // links in HTML mail, not the Safari app.
+        .environment(\.openURL, OpenURLAction { url in
+            link = url
+            return .handled
+        })
         .sheet(item: $link) { url in SafariView(url: url).ignoresSafeArea() }
+    }
+
+    /// Plain-text mail with every URL turned into a tappable, underlined link.
+    private static func linkified(_ text: String) -> AttributedString {
+        var out = AttributedString(text)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
+        for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme ?? ""),
+                  let r = Range(match.range, in: text), let ar = Range(r, in: out) else { continue }
+            out[ar].link = url
+            out[ar].underlineStyle = .single
+        }
+        return out
     }
 }
 
@@ -57,7 +76,10 @@ private struct HTMLView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
-        config.dataDetectorTypes = [.link, .phoneNumber]
+        // URLs written as plain text are linkified in didFinish instead of by
+        // the .link detector: its taps arrive as x-apple-data-detectors: URLs,
+        // which the navigation policy below cancels, so they never opened.
+        config.dataDetectorTypes = [.phoneNumber]
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
         web.scrollView.isScrollEnabled = false
@@ -116,11 +138,55 @@ private struct HTMLView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self] result, _ in
+            // allowsContentJavaScript only blocks the mail's own scripts; this
+            // app-injected one still runs. Linkify first, then measure.
+            webView.evaluateJavaScript(Self.linkifyScript + "document.documentElement.scrollHeight") { [weak self] result, _ in
                 guard let self, let h = result as? CGFloat, h > 0 else { return }
                 DispatchQueue.main.async { self.parent.height = h + 4 }
             }
         }
+
+        /// Wraps URLs that the mail only wrote as text (outside any <a>) in
+        /// links, so taps reach decidePolicyFor like any other link. Same
+        /// rules as desktop-app/src/lib/linkify.ts: trailing sentence
+        /// punctuation and an unbalanced ")" stay outside the link.
+        static let linkifyScript = #"""
+        (function () {
+          var re = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
+          function trim(u) {
+            for (;;) {
+              var c = u.charAt(u.length - 1);
+              if (c && ".,;:!?*_~]}".indexOf(c) >= 0) u = u.slice(0, -1);
+              else if (c === ")" && u.split("(").length <= u.split(")").length - 1) u = u.slice(0, -1);
+              else return u;
+            }
+          }
+          if (!document.body) return;
+          var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), nodes = [], n;
+          while ((n = w.nextNode())) {
+            if (/https?:\/\/|www\./i.test(n.nodeValue) && !(n.parentElement && n.parentElement.closest("a,style,title,textarea"))) nodes.push(n);
+          }
+          nodes.forEach(function (node) {
+            var text = node.nodeValue, frag = document.createDocumentFragment(), pos = 0, m, found = false;
+            re.lastIndex = 0;
+            while ((m = re.exec(text))) {
+              var url = trim(m[0]);
+              if (url.length < 5 || url.toLowerCase() === "www.") continue;
+              if (m.index > pos) frag.appendChild(document.createTextNode(text.slice(pos, m.index)));
+              var a = document.createElement("a");
+              a.href = /^www\./i.test(url) ? "https://" + url : url;
+              a.textContent = url;
+              frag.appendChild(a);
+              pos = m.index + url.length;
+              re.lastIndex = pos;
+              found = true;
+            }
+            if (!found) return;
+            if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+            node.parentNode.replaceChild(frag, node);
+          });
+        })();
+        """#
     }
 }
 

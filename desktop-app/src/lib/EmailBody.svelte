@@ -1,5 +1,6 @@
 <script lang="ts">
   import HtmlEmailFrame from "./HtmlEmailFrame.svelte";
+  import { splitLinks } from "./linkify";
 
   // The one message-body renderer — used by both the quick-view preview and
   // the full thread view so the two always show identical content.
@@ -36,10 +37,13 @@
   let quoteOpen = $state(false);
 </script>
 
+{#snippet linked(text: string)}{#each splitLinks(text) as s}{#if s.href}<a href={s.href}>{s.text}</a
+    >{:else}{s.text}{/if}{/each}{/snippet}
+
 {#if html}
   <HtmlEmailFrame html={body} />
 {:else if split}
-  <div class="body">{split.main}</div>
+  <div class="body">{@render linked(split.main)}</div>
   <button
     class="quote-pill"
     type="button"
@@ -48,10 +52,10 @@
     onclick={() => (quoteOpen = !quoteOpen)}>···</button
   >
   {#if quoteOpen}
-    <div class="body quoted">{split.quoted}</div>
+    <div class="body quoted">{@render linked(split.quoted)}</div>
   {/if}
 {:else}
-  <div class="body">{body}</div>
+  <div class="body">{@render linked(body)}</div>
 {/if}
 
 <style>
@@ -61,6 +65,11 @@
     line-height: 1.6;
     color: var(--text-secondary);
     white-space: pre-wrap;
+  }
+  .body a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .body.quoted {
     color: var(--text-tertiary);

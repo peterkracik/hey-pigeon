@@ -424,7 +424,6 @@ private struct TriageSection: View {
 
 private struct NotificationsSection: View {
     @Environment(AppModel.self) private var model
-    @State private var url = ""
 
     var body: some View {
         let push = model.push
@@ -435,49 +434,30 @@ private struct NotificationsSection: View {
                     Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
                 }
             }
-            .disabled(push.busy || (!push.enabled && !push.canEnable))
-            // A build made with its relay (TestFlight / App Store) has nothing
-            // to type; the field is for someone running their own relay.
-            if !push.isBaked {
-                TextField("Relay URL (https://…)", text: $url)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .onSubmit { commitURL() }
-                    .onChange(of: url) { _, v in push.relayURL = v }
-            }
-            if push.enabled, let status = push.status, !status.accounts.isEmpty {
-                ForEach(status.accounts) { a in
-                    LabeledContent(a.id) {
-                        Text(a.watchExpiresAt.map { "watch until \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "no watch yet")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                    .font(.footnote)
-                }
-            }
+            .disabled(push.busy || !push.canEnable)
             if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(.red) }
         } header: {
             Text("Notifications")
         } footer: {
-            Text(push.isBaked
-                 ? "Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way."
-                 : "Optional. Needs a relay you host (relay/README.md in the repo). The relay only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Reminders stay local and work without it.")
+            Text("Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way.")
         }
-        .onAppear { url = push.relayURL; push.refreshStatus() }
+        .onAppear { push.refreshStatus() }
     }
 
+    /// One line under the toggle: state, then the sync lease when there is one.
     private var statusLine: String {
         let push = model.push
+        if !push.canEnable { return "Not available in this build" }
         if push.busy { return "Working…" }
-        if !push.enabled { return push.canEnable ? "Off" : "Enter the relay URL first" }
-        if push.isBaked, push.status?.enabled != true, push.deviceToken == nil { return "Registering…" }
-        if push.status?.enabled == true { return "On · registered" }
-        return push.deviceToken == nil ? "Waiting for the system token…" : "On · not registered yet"
-    }
-
-    private func commitURL() {
-        let push = model.push
-        push.relayURL = url.trimmingCharacters(in: .whitespaces)
-        if push.enabled { Task { await push.accountsChanged() } }
+        if !push.enabled { return "Off" }
+        guard push.status?.enabled == true else {
+            return push.deviceToken == nil ? "Registering…" : "On · not registered yet"
+        }
+        let leases = (push.status?.accounts ?? []).compactMap(\.watchExpiresAt)
+        guard let soonest = leases.min() else { return "On · syncing on next open" }
+        let n = push.status?.accounts.count ?? 0
+        let who = n > 1 ? "\(n) accounts" : "mailbox"
+        return "On · \(who) watched until \(soonest.formatted(date: .abbreviated, time: .shortened))"
     }
 }
 

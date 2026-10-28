@@ -21,15 +21,13 @@ final class PushController {
     var enabled: Bool {
         didSet { defaults.set(enabled, forKey: Keys.enabled) }
     }
-    /// The relay to register with. Fixed when the build carries one
-    /// (`isBaked`); otherwise whatever the user entered in Settings.
-    var relayURL: String {
-        didSet { if !isBaked { defaults.set(relayURL, forKey: Keys.relayURL) } }
-    }
-    /// True when the build was made with HEYPIGEON_RELAY_URL (TestFlight /
-    /// App Store builds of the author's relay). Settings then shows only the
-    /// toggle, and push starts on — same footing as the baked OAuth client.
-    let isBaked: Bool
+    /// The relay to register with: fixed at build time (HEYPIGEON_RELAY_URL →
+    /// Info.plist), never shown or edited in the UI. Empty in a build made
+    /// without one, which disables the toggle.
+    let relayURL: String
+    /// True when the build carries a relay. Push then starts on — same
+    /// footing as the baked OAuth client.
+    var isBaked: Bool { !relayURL.isEmpty }
     /// Last APNs token the system gave us (hex). Re-registered whenever
     /// accounts change; iOS may rotate it at any launch.
     private(set) var deviceToken: String? {
@@ -41,7 +39,6 @@ final class PushController {
 
     private enum Keys {
         static let enabled = "push.enabled"
-        static let relayURL = "push.relayURL"
         static let deviceToken = "push.deviceToken"
     }
 
@@ -63,23 +60,19 @@ final class PushController {
         // GoogleIOSClientID.
         let bakedRaw = ((Bundle.main.object(forInfoDictionaryKey: "HeyPigeonRelayURL") as? String) ?? "")
             .trimmingCharacters(in: .whitespaces)
-        let baked = bakedRaw.hasPrefix("https://") ? bakedRaw : ""
-        isBaked = !baked.isEmpty
-        relayURL = isBaked ? baked : (defaults.string(forKey: Keys.relayURL) ?? "")
+        relayURL = bakedRaw.hasPrefix("https://") ? bakedRaw : ""
         // Default: on when the build knows its relay and the user has never
         // decided otherwise; off when there is nothing to register with.
         if let decided = defaults.object(forKey: Keys.enabled) as? Bool {
-            enabled = decided
+            enabled = decided && !relayURL.isEmpty
         } else {
-            enabled = isBaked
+            enabled = !relayURL.isEmpty
         }
         deviceToken = defaults.string(forKey: Keys.deviceToken)
         refreshStatus()
     }
 
-    var canEnable: Bool {
-        relayURL.trimmingCharacters(in: .whitespaces).hasPrefix("https://")
-    }
+    var canEnable: Bool { isBaked }
 
     func refreshStatus() {
         status = try? engine.pushStatus()
@@ -139,7 +132,7 @@ final class PushController {
         defer { busy = false }
         do {
             try await engine.registerPushToken(
-                relayURL: relayURL.trimmingCharacters(in: .whitespaces),
+                relayURL: relayURL,
                 deviceToken: token,
                 environment: Self.environment
             )

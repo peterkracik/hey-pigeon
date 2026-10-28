@@ -662,6 +662,12 @@ pub struct FakeProvider {
     history: Mutex<Vec<HistoryChange>>,
     latest_history_id: Mutex<String>,
     history_expired: Mutex<bool>,
+    /// Push watch bookkeeping: every `watch` call, every `stop_watch` call,
+    /// the expiration the next `watch` reports, and a failure toggle.
+    watch_calls: Mutex<Vec<(AccountId, String)>>,
+    stop_calls: Mutex<Vec<AccountId>>,
+    watch_expiration_ms: Mutex<i64>,
+    fail_watch: Mutex<bool>,
 }
 
 impl FakeProvider {
@@ -719,6 +725,10 @@ impl FakeProvider {
             history: Mutex::new(Vec::new()),
             latest_history_id: Mutex::new("hist-1".to_string()),
             history_expired: Mutex::new(false),
+            watch_calls: Mutex::new(Vec::new()),
+            stop_calls: Mutex::new(Vec::new()),
+            watch_expiration_ms: Mutex::new(0),
+            fail_watch: Mutex::new(false),
         }
     }
 
@@ -739,6 +749,24 @@ impl FakeProvider {
 
     pub fn fail_applies(&self, fail: bool) {
         *self.fail_applies.lock().unwrap() = fail;
+    }
+
+    /// Expiration (epoch ms) the next `watch` call reports.
+    pub fn set_watch_expiration(&self, expiration_ms: i64) {
+        *self.watch_expiration_ms.lock().unwrap() = expiration_ms;
+    }
+
+    /// Make `watch` / `stop_watch` fail with a provider error.
+    pub fn fail_watch(&self, fail: bool) {
+        *self.fail_watch.lock().unwrap() = fail;
+    }
+
+    pub fn watch_calls(&self) -> Vec<(AccountId, String)> {
+        self.watch_calls.lock().unwrap().clone()
+    }
+
+    pub fn stop_calls(&self) -> Vec<AccountId> {
+        self.stop_calls.lock().unwrap().clone()
     }
 }
 
@@ -827,6 +855,28 @@ impl MailProvider for FakeProvider {
             .lock()
             .unwrap()
             .push((account_id.clone(), mutation.clone()));
+        Ok(())
+    }
+
+    async fn watch(&self, account_id: &AccountId, topic: &str) -> Result<WatchState, MailError> {
+        if *self.fail_watch.lock().unwrap() {
+            return Err(MailError::Provider("fake watch failure".to_string()));
+        }
+        self.watch_calls
+            .lock()
+            .unwrap()
+            .push((account_id.clone(), topic.to_string()));
+        Ok(WatchState {
+            history_id: self.latest_history_id.lock().unwrap().clone(),
+            expiration_ms: *self.watch_expiration_ms.lock().unwrap(),
+        })
+    }
+
+    async fn stop_watch(&self, account_id: &AccountId) -> Result<(), MailError> {
+        if *self.fail_watch.lock().unwrap() {
+            return Err(MailError::Provider("fake stop failure".to_string()));
+        }
+        self.stop_calls.lock().unwrap().push(account_id.clone());
         Ok(())
     }
 }

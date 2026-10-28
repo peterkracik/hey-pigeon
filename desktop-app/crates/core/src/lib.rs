@@ -6,5 +6,6 @@ pub mod domain;
 pub mod fakes;
 pub mod outbox;
 pub mod ports;
+pub mod push;
 pub mod search;
 pub mod sync;

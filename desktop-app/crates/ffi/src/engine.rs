@@ -51,7 +51,7 @@ pub struct Engine {
     pub(crate) store: SqliteStore,
     pub(crate) secrets: Arc<dyn SecretStore + Send + Sync>,
     oauth_client: ClientConfig,
-    provider: RwLock<GmailProvider>,
+    pub(crate) provider: RwLock<GmailProvider>,
     pending_oauth: Mutex<Option<AuthRequest>>,
     listener: Mutex<Option<Arc<dyn EngineListener>>>,
     /// Accounts with a delta sync in flight (foreground + background can overlap).
@@ -339,8 +339,11 @@ impl Engine {
         Ok(())
     }
 
-    /// Forget an account: its rows, its labels and its refresh token.
-    pub fn remove_account(&self, account_id: String) -> Result<(), EngineError> {
+    /// Forget an account: its rows, its labels and its refresh token. If
+    /// push is on, the relay registration and the Gmail watch go first
+    /// (best effort — the lease expires on its own within 7 days anyway).
+    pub async fn remove_account(&self, account_id: String) -> Result<(), EngineError> {
+        self.forget_push_for_account(&account_id).await;
         self.store.delete_account(&account_id)?;
         let _ = self
             .secrets
@@ -505,7 +508,7 @@ impl Engine {
         }
     }
 
-    fn mark_disconnected(&self, account_id: &AccountId) {
+    pub(crate) fn mark_disconnected(&self, account_id: &AccountId) {
         let newly = self.disconnected.lock().unwrap().insert(account_id.clone());
         if !newly {
             return;
@@ -544,6 +547,11 @@ impl Engine {
         // Cross-device state rides the same cadence, even after a failed
         // delta — independent failure mode, and cheap.
         let synced = self.devsync_account(account_id).await;
+        // The push watch lease is renewed on the same cadence too (push.rs):
+        // one meta read per round, one Gmail call per day at most.
+        if result.is_ok() {
+            self.renew_watch(account_id).await;
+        }
         self.syncing.lock().unwrap().remove(account_id);
         let changed = match result {
             Ok(changed) => self.mark_connected(account_id) || changed,
@@ -785,7 +793,7 @@ mod tests {
         assert_eq!(e.list_needs_reply().unwrap().len(), 1);
         assert_eq!(e.store.outbox_list(10).unwrap().len(), 1);
 
-        e.remove_account("a@x.com".into()).unwrap();
+        e.remove_account("a@x.com".into()).await.unwrap();
         assert!(e.list_accounts().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

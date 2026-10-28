@@ -64,6 +64,15 @@ pub struct HistoryPage {
     pub latest_history_id: String,
 }
 
+/// Result of registering a push watch (Gmail `users.watch`): the history
+/// id the watch starts from and when the provider will stop publishing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchState {
+    pub history_id: String,
+    /// Epoch milliseconds; Gmail watches live at most 7 days.
+    pub expiration_ms: i64,
+}
+
 /// Mail backend (Gmail REST in v1). Async because it's all network.
 pub trait MailProvider {
     fn profile(
@@ -142,6 +151,34 @@ pub trait MailProvider {
         account_id: &AccountId,
         mutation: &Mutation,
     ) -> impl std::future::Future<Output = Result<(), MailError>> + Send;
+
+    /// Ask the provider to publish "mailbox changed" events for this account
+    /// to `topic` (Gmail `users.watch` → a Pub/Sub topic; the optional iOS
+    /// relay consumes them). The watch is time-limited: callers renew it via
+    /// `crate::push::ensure_watch`. Default errors — providers without push
+    /// stay honest, and the desktop poller never calls this.
+    fn watch(
+        &self,
+        account_id: &AccountId,
+        topic: &str,
+    ) -> impl std::future::Future<Output = Result<WatchState, MailError>> + Send {
+        let _ = (account_id, topic);
+        async {
+            Err(MailError::Provider(
+                "push notifications not supported".into(),
+            ))
+        }
+    }
+
+    /// Stop publishing for this account (Gmail `users.stop`). Default is a
+    /// no-op: nothing was ever watched.
+    fn stop_watch(
+        &self,
+        account_id: &AccountId,
+    ) -> impl std::future::Future<Output = Result<(), MailError>> + Send {
+        let _ = account_id;
+        async { Ok(()) }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

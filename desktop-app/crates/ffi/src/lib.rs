@@ -18,6 +18,7 @@
 uniffi::setup_scaffolding!();
 
 mod engine;
+mod push;
 mod secrets;
 mod settings;
 mod types;

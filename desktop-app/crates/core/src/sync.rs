@@ -285,9 +285,67 @@ fn refresh_thread<S: Store>(store: &S, thread_id: &ThreadId) -> Result<(), Store
     // clear a local archive, or the thread never reappears in the local inbox.
     t.is_inbox = t.labels.iter().any(|l| l == "INBOX");
     t.is_archived = derive_is_archived(&t.labels, &messages);
-    t.from_summary = display_name(&last.from_addr);
-    t.last_from_addr = bare_addr(&last.from_addr);
+    let own_email = store
+        .list_accounts()?
+        .into_iter()
+        .find(|a| a.id == t.account_id)
+        .map(|a| a.email)
+        .unwrap_or_else(|| t.account_id.clone());
+    let sender = list_sender(&messages, &own_email);
+    t.from_summary = sender.name;
+    t.last_from_addr = sender.addr;
     store.upsert_thread(&t)
+}
+
+/// Who a thread row names and whose avatar it shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListSender {
+    /// "Priya Nair" — the `Thread::from_summary` value.
+    pub name: String,
+    /// "priya@acme.co" — the `Thread::last_from_addr` value.
+    pub addr: String,
+}
+
+/// The person a thread row should name: the newest message's sender that is
+/// not the account owner, so a thread the user just replied to keeps showing
+/// the other party instead of flipping to the user's own name. A sent-only
+/// thread (every message is the owner's) names the newest message's first
+/// recipient — who it was written to — and only a thread with no messages
+/// at all yields empty strings.
+pub fn list_sender(messages: &[Message], own_email: &str) -> ListSender {
+    let from = |m: &Message| ListSender {
+        name: display_name(&m.from_addr),
+        addr: bare_addr(&m.from_addr),
+    };
+    if let Some(m) = messages
+        .iter()
+        .rev()
+        .find(|m| !is_own_message(m, own_email))
+    {
+        return from(m);
+    }
+    let Some(last) = messages.last() else {
+        return ListSender {
+            name: String::new(),
+            addr: String::new(),
+        };
+    };
+    match last.to_addrs.iter().find(|a| !a.trim().is_empty()) {
+        Some(to) => ListSender {
+            name: display_name(to),
+            addr: bare_addr(to),
+        },
+        None => from(last),
+    }
+}
+
+/// A message is the account owner's when Gmail filed it as SENT or it came
+/// from the account's own address (the SENT label alone misses mail sent
+/// from another client before the label settled, and a bare address alone
+/// misses send-as aliases).
+pub fn is_own_message(m: &Message, own_email: &str) -> bool {
+    m.label_ids.iter().any(|l| l == "SENT")
+        || (!own_email.is_empty() && bare_addr(&m.from_addr).eq_ignore_ascii_case(own_email))
 }
 
 /// Gmail history ids are numeric strings; compare numerically when possible
@@ -300,7 +358,7 @@ fn newer_history_id(candidate: &str, current: &str) -> bool {
 }
 
 /// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
-fn display_name(from: &str) -> String {
+pub fn display_name(from: &str) -> String {
     let name = from
         .split('<')
         .next()
@@ -315,7 +373,7 @@ fn display_name(from: &str) -> String {
 }
 
 /// "Priya Nair <priya@acme.co>" → "priya@acme.co".
-fn bare_addr(from: &str) -> String {
+pub fn bare_addr(from: &str) -> String {
     from.split('<')
         .nth(1)
         .and_then(|s| s.split('>').next())
@@ -469,6 +527,161 @@ mod tests {
             store.get_thread(&thread.id).unwrap().unwrap().scheduled_at,
             Some(500)
         );
+    }
+
+    #[test]
+    fn display_name_variants() {
+        assert_eq!(display_name("Priya Nair <p@acme.co>"), "Priya Nair");
+        assert_eq!(display_name("\"Nair, Priya\" <p@acme.co>"), "Nair, Priya");
+        assert_eq!(display_name("p@acme.co"), "p@acme.co");
+    }
+
+    #[test]
+    fn bare_addr_variants() {
+        assert_eq!(bare_addr("Priya Nair <p@acme.co>"), "p@acme.co");
+        assert_eq!(bare_addr("p@acme.co"), "p@acme.co");
+        assert_eq!(bare_addr("<p@acme.co>"), "p@acme.co");
+    }
+
+    fn sender_msg(from: &str, to: &str, date: i64, labels: &[&str]) -> Message {
+        Message {
+            id: format!("m{date}"),
+            thread_id: "t".to_string(),
+            account_id: "me@example.com".to_string(),
+            from_addr: from.to_string(),
+            to_addrs: vec![to.to_string()],
+            date,
+            snippet: String::new(),
+            body_html: None,
+            body_text: None,
+            label_ids: labels.iter().map(|l| l.to_string()).collect(),
+            is_read: true,
+        }
+    }
+
+    /// The row keeps naming the other person after the user replies — the
+    /// newest message is the user's own, so it is skipped.
+    #[test]
+    fn list_sender_skips_own_reply() {
+        let msgs = vec![
+            sender_msg(
+                "Priya Nair <priya@acme.co>",
+                "me@example.com",
+                1,
+                &["INBOX"],
+            ),
+            sender_msg("Me <me@example.com>", "priya@acme.co", 2, &["SENT"]),
+        ];
+        assert_eq!(
+            list_sender(&msgs, "me@example.com"),
+            ListSender {
+                name: "Priya Nair".to_string(),
+                addr: "priya@acme.co".to_string(),
+            }
+        );
+    }
+
+    /// Own mail is recognised by address alone (case-insensitively) when the
+    /// SENT label is missing, and by the SENT label alone for a send-as alias.
+    #[test]
+    fn list_sender_recognises_own_mail_by_label_or_address() {
+        let by_addr = vec![
+            sender_msg(
+                "Priya Nair <priya@acme.co>",
+                "me@example.com",
+                1,
+                &["INBOX"],
+            ),
+            sender_msg("Me <Me@Example.com>", "priya@acme.co", 2, &[]),
+        ];
+        assert_eq!(list_sender(&by_addr, "me@example.com").name, "Priya Nair");
+        let by_label = vec![
+            sender_msg(
+                "Priya Nair <priya@acme.co>",
+                "me@example.com",
+                1,
+                &["INBOX"],
+            ),
+            sender_msg("Alias <alias@example.com>", "priya@acme.co", 2, &["SENT"]),
+        ];
+        assert_eq!(list_sender(&by_label, "me@example.com").name, "Priya Nair");
+    }
+
+    /// A later inbound message still wins: the row tracks the newest other
+    /// party, not the first.
+    #[test]
+    fn list_sender_prefers_newest_other_party() {
+        let msgs = vec![
+            sender_msg(
+                "Priya Nair <priya@acme.co>",
+                "me@example.com",
+                1,
+                &["INBOX"],
+            ),
+            sender_msg("Me <me@example.com>", "priya@acme.co", 2, &["SENT"]),
+            sender_msg("Sam Lee <sam@acme.co>", "me@example.com", 3, &["INBOX"]),
+        ];
+        assert_eq!(list_sender(&msgs, "me@example.com").name, "Sam Lee");
+    }
+
+    /// A sent-only thread names who it was written to, not the user.
+    #[test]
+    fn list_sender_names_recipient_of_sent_only_thread() {
+        let msgs = vec![sender_msg(
+            "Me <me@example.com>",
+            "Priya Nair <priya@acme.co>",
+            1,
+            &["SENT"],
+        )];
+        assert_eq!(
+            list_sender(&msgs, "me@example.com"),
+            ListSender {
+                name: "Priya Nair".to_string(),
+                addr: "priya@acme.co".to_string(),
+            }
+        );
+        // No recipient at all (draft-like) → fall back to the sender.
+        let mut bare = msgs.clone();
+        bare[0].to_addrs.clear();
+        assert_eq!(list_sender(&bare, "me@example.com").name, "Me");
+        assert_eq!(list_sender(&[], "me@example.com").name, "");
+    }
+
+    /// Delta sync rebuilds the derived row after an in-place change; the
+    /// rebuilt row must apply the same rule, resolving the owner's address
+    /// from the account record.
+    #[test]
+    fn refresh_thread_keeps_other_party_after_own_reply() {
+        let store = MemStore::default();
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
+        let HistoryChange::MessageAdded { thread, messages } = new_thread_change("a1", 1, 100)
+        else {
+            unreachable!()
+        };
+        store.upsert_thread(&thread).unwrap();
+        for m in &messages {
+            store.upsert_message(m).unwrap();
+        }
+        // sample_account("a1") has the address a1@example.com.
+        let mine = crate::domain::Message {
+            id: format!("{}:sent", thread.id),
+            from_addr: "a1@example.com".to_string(),
+            to_addrs: vec!["new@example.com".to_string()],
+            date: 140,
+            label_ids: vec!["SENT".to_string()],
+            ..messages[0].clone()
+        };
+        store.upsert_message(&mine).unwrap();
+        // Simulate a label flip on the reply so the row is rebuilt.
+        update_labels(&store, &thread.id, &mine.id, &["STARRED".to_string()], &[]).unwrap();
+        refresh_thread(&store, &thread.id).unwrap();
+        let t = store.get_thread(&thread.id).unwrap().unwrap();
+        assert_eq!(t.from_summary, "Newcomer");
+        assert_eq!(t.last_from_addr, "new@example.com");
+        assert_eq!(t.msg_count, 2);
+        assert_eq!(t.last_msg_at, 140);
     }
 
     fn new_thread_change(account_id: &str, i: usize, date: i64) -> HistoryChange {

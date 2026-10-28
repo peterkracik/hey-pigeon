@@ -22,3 +22,14 @@ resource "google_service_account" "relay_deployer" {
   display_name = "Hey Pigeon relay — Terraform deployer (CI)"
   depends_on   = [google_project_service.api]
 }
+
+# Optional: the identity Doppler (or another secret manager) uses to write
+# the APNs key. Gets rights on that one secret in the root stack
+# (`apns_secret_writers`), nothing else.
+resource "google_service_account" "secret_sync" {
+  count = var.create_secret_sync_account ? 1 : 0
+
+  account_id   = "secret-sync"
+  display_name = "Hey Pigeon — external secret sync (Doppler)"
+  depends_on   = [google_project_service.api]
+}

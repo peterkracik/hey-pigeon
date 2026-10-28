@@ -16,3 +16,13 @@ resource "google_secret_manager_secret_iam_member" "relay_fn_reads_apns_key" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.relay_fn_sa}"
 }
+
+# Whoever syncs the key in (Doppler → Secret Manager) needs to add versions
+# and read metadata on this one secret, nothing project-wide.
+resource "google_secret_manager_secret_iam_member" "apns_key_writers" {
+  for_each = toset(var.apns_secret_writers)
+
+  secret_id = google_secret_manager_secret.apns_key.secret_id
+  role      = "roles/secretmanager.admin"
+  member    = each.value
+}

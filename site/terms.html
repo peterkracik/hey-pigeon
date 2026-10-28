@@ -13,20 +13,16 @@
 <header class="site wrap">
   <a class="brand" href="/">
     <svg width="28" height="28" viewBox="0 0 1024 1024" style="border-radius:6px;display:block">
-      <defs>
-        <linearGradient id="pg-bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#2E2F38"/>
-          <stop offset="0.55" stop-color="#17181D"/>
-          <stop offset="1" stop-color="#08080A"/>
-        </linearGradient>
-        <linearGradient id="pg-check" x1="292" y1="704" x2="744" y2="352" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#FF83BC"/>
-          <stop offset="1" stop-color="#C43277"/>
-        </linearGradient>
-      </defs>
-      <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#pg-bg)"/>
-      <path d="M 306 522 L 434 650 L 730 322" fill="none" stroke="url(#pg-check)" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
+  <defs>
+    <linearGradient id="hp-bg-nav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FAF8F4"/><stop offset="1" stop-color="#ECE8E0"/></linearGradient>
+    <linearGradient id="hp-bird-nav" x1="0.15" y1="0" x2="0.85" y2="1"><stop offset="0" stop-color="#5CB4FF"/><stop offset="1" stop-color="#3D5BFF"/></linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-bg-nav)"/>
+  <path d="M760 455 L872 492 Q884 497 872 503 L752 545 Z" fill="#FFB224" stroke="#FFB224" stroke-width="20" stroke-linejoin="round"/>
+  <path d="M496 236 C 682 236 800 356 800 512 C 800 668 682 788 496 788 C 440 788 392 778 348 758 L 236 806 Q 212 815 218 790 L 246 690 C 210 640 192 580 192 512 C 192 356 310 236 496 236 Z" fill="url(#hp-bird-nav)"/>
+  <circle cx="640" cy="440" r="40" fill="#0F1630"/>
+  <circle cx="654" cy="426" r="13" fill="#fff"/>
+</svg>
     <span>Hey Pigeon</span>
   </a>
   <nav class="site">

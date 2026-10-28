@@ -51,8 +51,9 @@ must get right. Everything else is optional.
                Gmail REST API (per account)
 ```
 
-- **Tauri 2** — chosen over Electron (lighter) and native Swift (slower iteration).
-  Decisive: Tauri 2 ships to **iOS and Android** from the same codebase — see iOS section.
+- **Tauri 2** — chosen over Electron (lighter) and native Swift (slower iteration)
+  for the desktop. The iOS app is a native SwiftUI shell over the same Rust core
+  (see iOS section) — the Svelte UI stays desktop-only.
 - **Rust core** owns all state: OAuth, sync, SQLite. The frontend is a dumb, fast view.
 - **Svelte** frontend — lean output, fits the minimalist ethos.
 - UI reads via Tauri commands (query SQLite), receives change events (new mail, sync
@@ -298,20 +299,30 @@ Archiving an email should feel like checking off a task.
 | i | show / hide AI summaries (list: all day groups; thread: the thread summary) |
 | ? | keyboard shortcut cheat sheet |
 
-## iOS (future, shapes v1 decisions)
+## iOS
 
-Tauri 2 builds for iOS. To keep that door open, v1 must:
+**Decision (revised): a native SwiftUI app over the shared Rust core, not a
+Tauri iOS build.** Full design, UX spec and milestones in
+[docs/ios.md](./docs/ios.md). The short version:
 
-- Keep **all** logic in the Rust core; frontend stays a pure view (no fs/network in JS).
-- Use Tauri plugins with mobile support for keychain/opener; no desktop-only APIs in
-  core paths (loopback OAuth redirect becomes a custom URL scheme on iOS — isolate
-  the redirect-listener behind a trait now).
-- Responsive layout from day one (the narrow "thread view replaces list" behavior is
-  exactly the phone layout).
-- No background timers assumption: sync must tolerate being suspended and resuming
-  (it already does — delta sync is stateless between runs).
-- Realistic caveat: iOS build won't be free effort (App Store, background fetch
-  limits, keyboard-first UX doesn't translate). Door open ≠ v1 requirement.
+- The core crates (`core`, `adapter-gmail`, `adapter-sqlite`, …) compile for
+  iOS unchanged and are exposed to Swift through `crates/ffi` (UniFFI). The
+  `Engine` object there is the phone's equivalent of `src-tauri/src/mail.rs`:
+  the same operations as the IPC contract, as `async throws` Swift calls.
+- The desktop Svelte UI is desktop-shaped (sidebar, rail, keyboard
+  controller) — a phone UI is a new view layer either way, so the "shared UI"
+  argument for Tauri iOS evaporated, while a web view would have cost the
+  native feel (swipes, haptics, Dynamic Type, system sheets) that *is* the
+  product.
+- What v1 had to keep true still holds and paid off: all logic in Rust, the
+  UI a projection, sync stateless between runs. Two iOS-specific seams were
+  added: `oauth::AuthRequest` (consent URL + code exchange, redirect-agnostic;
+  the loopback flow is a wrapper over it) and an optional `client_secret`
+  (Google's iOS OAuth clients have none).
+- The shell owns sync cadence on iOS (foreground, pull, `BGAppRefreshTask`);
+  the engine exposes `sync_all` and never loops. Reminders are local
+  notifications scheduled from `list_scheduled`. New-mail push stays out
+  until someone wants the optional relay.
 
 ## Cross-device sync (multiple Macs, later iOS)
 
@@ -507,7 +518,7 @@ Ports (traits) in v1 — and what each one future-proofs:
    reply + Ask AI**. Cancel Superhuman.
 4. **M4+ (unordered)**: snooze (local), cross-device sync (Drive `appDataFolder`), split inbox, more AI providers
    (Anthropic, local/Ollama), AI triage experiments, shared OAuth client + release
-   builds, iOS spike.
+   builds, iOS app (native SwiftUI over the Rust core — [docs/ios.md](./docs/ios.md)).
 
 ## Risks
 
@@ -519,13 +530,14 @@ Ports (traits) in v1 — and what each one future-proofs:
   battle-tested sanitizer (ammonia in Rust) + sandboxed iframe; accept imperfect
   rendering of marketing mail.
 - **Webview perf** on huge lists: virtualize the list from day one.
-- **Tauri iOS maturity**: door-open strategy only; don't promise dates.
+- **iOS**: a second UI to maintain and a Rust cross-compile in the Xcode build.
+  Kept small by design (phone-sized UI, zero logic in Swift); see docs/ios.md.
 
 ## Stack summary
 
 | Piece | Choice |
 | --- | --- |
-| Shell | Tauri 2 |
+| Shell | Tauri 2 (desktop) · SwiftUI over `crates/ffi` via UniFFI (iOS) |
 | Core | Rust (reqwest, rusqlite/sqlx, ammonia, keyring) |
 | DB | SQLite + FTS5 |
 | UI | Svelte + TypeScript |

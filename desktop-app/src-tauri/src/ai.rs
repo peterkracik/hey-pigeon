@@ -452,7 +452,8 @@ mod tests {
 
     #[test]
     fn build_draft_reply_prompt_includes_subject_history_and_notes() {
-        let p = build_draft_reply_prompt("Invoice #42", "Sarah: Can you send it?", Some("say Friday"));
+        let p =
+            build_draft_reply_prompt("Invoice #42", "Sarah: Can you send it?", Some("say Friday"));
         assert!(p.starts_with("Subject: Invoice #42"));
         assert!(p.contains("Sarah: Can you send it?"));
         assert!(p.contains("Notes from the user for this reply:\nsay Friday"));

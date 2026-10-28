@@ -1,7 +1,14 @@
-//! OAuth 2 PKCE loopback flow (native-app flow).
+//! OAuth 2 PKCE flow (native-app flow), in two layers:
+//!
+//! - [`AuthRequest`] is the shell-neutral part: build the consent URL for a
+//!   given redirect URI, then validate the callback and exchange the code.
+//!   The iOS shell drives it with `ASWebAuthenticationSession` and a
+//!   reversed-client-id custom scheme (see [`ios_redirect_uri`]).
+//! - [`authorize`] is the desktop loopback flow on top of it: listener binds
+//!   127.0.0.1, accepts exactly one request, then shuts down.
+//!
 //! Security properties (DESIGN.md): PKCE S256 (intercepted codes are useless
-//! without the verifier), random `state` (CSRF), listener binds 127.0.0.1,
-//! accepts exactly one request, then shuts down.
+//! without the verifier) and a random `state` (CSRF) in both layers.
 
 use base64::Engine;
 use rand::RngCore;
@@ -37,7 +44,19 @@ const AUTHORIZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfig {
     pub client_id: String,
-    pub client_secret: String,
+    /// "Desktop app" clients carry a (not actually secret) secret that the
+    /// token endpoint insists on; "iOS" clients have none at all.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
+/// The redirect URI Google requires for an "iOS" OAuth client: the client
+/// id reversed into a custom URL scheme. The app registers that scheme in
+/// its Info.plist and `ASWebAuthenticationSession` hands the callback back.
+pub fn ios_redirect_uri(client_id: &str) -> String {
+    let mut parts: Vec<&str> = client_id.split('.').collect();
+    parts.reverse();
+    format!("{}:/oauthredirect", parts.join("."))
 }
 
 /// Tokens as returned by Google. Refresh token goes to the SecretStore;
@@ -60,61 +79,136 @@ fn random_token() -> String {
     b64url(&buf)
 }
 
-/// Run the full authorization flow. `open_url` is called once with the
-/// consent URL (the app decides how to open a browser — port boundary:
-/// this crate never touches the OS shell).
-///
-/// `login_hint` pre-selects a Google account on the consent screen — set
-/// when re-connecting a known account so the user is not asked to pick one
-/// (and is less likely to pick the wrong one). Google treats it as a hint
-/// only; the caller still has to check which account came back.
+/// A consent request in flight: the consent URL to open, plus the PKCE
+/// verifier and `state` needed to finish it. Shell-neutral — it never opens
+/// a browser or listens on a socket; the caller owns the redirect.
+#[derive(Debug)]
+pub struct AuthRequest {
+    client: ClientConfig,
+    verifier: String,
+    state: String,
+    redirect_uri: String,
+    url: String,
+}
+
+impl AuthRequest {
+    /// Build the consent URL for `redirect_uri` (a loopback address on
+    /// desktop, [`ios_redirect_uri`] on iOS).
+    ///
+    /// `login_hint` pre-selects a Google account on the consent screen — set
+    /// when re-connecting a known account so the user is not asked to pick
+    /// one (and is less likely to pick the wrong one). Google treats it as a
+    /// hint only; the caller still has to check which account came back.
+    pub fn begin(client: &ClientConfig, login_hint: Option<&str>, redirect_uri: &str) -> Self {
+        let verifier = random_token();
+        let challenge = b64url(&Sha256::digest(verifier.as_bytes()));
+        let state = random_token();
+
+        let mut params: Vec<(&str, &str)> = vec![
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", SCOPE),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("state", &state),
+            ("access_type", "offline"),
+            ("prompt", "consent"),
+        ];
+        if let Some(hint) = login_hint {
+            params.push(("login_hint", hint));
+        }
+        let url = url::Url::parse_with_params(AUTH_ENDPOINT, &params).expect("static url");
+        Self {
+            client: client.clone(),
+            verifier,
+            state,
+            redirect_uri: redirect_uri.to_string(),
+            url: url.into(),
+        }
+    }
+
+    /// The consent URL to open in a browser / auth session.
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn redirect_uri(&self) -> &str {
+        &self.redirect_uri
+    }
+
+    /// Finish with the full callback URL the redirect delivered
+    /// (`<redirect_uri>?code=…&state=…`): validates `state`, then exchanges
+    /// the code. Consumes the request — a code is single-use and so is the
+    /// verifier.
+    pub async fn finish(self, callback_url: &str) -> Result<TokenSet, OauthError> {
+        let code = extract_code(callback_url, &self.state)?;
+        self.exchange(&code).await
+    }
+
+    /// Exchange an already-validated authorization code for tokens.
+    async fn exchange(self, code: &str) -> Result<TokenSet, OauthError> {
+        let mut form: Vec<(&str, &str)> = vec![
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", &self.client.client_id),
+            ("redirect_uri", &self.redirect_uri),
+            ("code_verifier", &self.verifier),
+        ];
+        if let Some(secret) = &self.client.client_secret {
+            form.push(("client_secret", secret));
+        }
+        let resp = reqwest::Client::new()
+            .post(TOKEN_ENDPOINT)
+            .form(&form)
+            .send()
+            .await?;
+        parse_token_response(resp).await
+    }
+}
+
+/// Pull `code` out of a callback URL, checking `state` first. Shared by the
+/// loopback listener and the mobile custom-scheme path.
+fn extract_code(callback_url: &str, expected_state: &str) -> Result<String, OauthError> {
+    let url =
+        url::Url::parse(callback_url).map_err(|e| OauthError::Authorization(e.to_string()))?;
+    let get = |k: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.into_owned())
+    };
+    match (get("code"), get("state"), get("error")) {
+        (_, _, Some(e)) => Err(OauthError::Authorization(e)),
+        (_, Some(s), _) if s != expected_state => {
+            Err(OauthError::Authorization("state mismatch".to_string()))
+        }
+        (Some(code), Some(_), _) => Ok(code),
+        _ => Err(OauthError::Authorization(
+            "missing code or state".to_string(),
+        )),
+    }
+}
+
+/// Run the full desktop authorization flow over a loopback redirect.
+/// `open_url` is called once with the consent URL (the app decides how to
+/// open a browser — port boundary: this crate never touches the OS shell).
+/// See [`AuthRequest::begin`] for `login_hint`.
 pub async fn authorize(
     client: &ClientConfig,
     login_hint: Option<&str>,
     open_url: impl FnOnce(&str),
 ) -> Result<TokenSet, OauthError> {
-    let verifier = random_token();
-    let challenge = b64url(&Sha256::digest(verifier.as_bytes()));
-    let state = random_token();
-
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}");
 
-    let mut params: Vec<(&str, &str)> = vec![
-        ("response_type", "code"),
-        ("client_id", &client.client_id),
-        ("redirect_uri", &redirect_uri),
-        ("scope", SCOPE),
-        ("code_challenge", &challenge),
-        ("code_challenge_method", "S256"),
-        ("state", &state),
-        ("access_type", "offline"),
-        ("prompt", "consent"),
-    ];
-    if let Some(hint) = login_hint {
-        params.push(("login_hint", hint));
-    }
-    let auth_url = url::Url::parse_with_params(AUTH_ENDPOINT, &params).expect("static url");
-    open_url(auth_url.as_str());
+    let request = AuthRequest::begin(client, login_hint, &redirect_uri);
+    open_url(request.url());
 
-    let code = tokio::time::timeout(AUTHORIZE_TIMEOUT, wait_for_code(listener, &state))
+    let code = tokio::time::timeout(AUTHORIZE_TIMEOUT, wait_for_code(listener, &request.state))
         .await
         .map_err(|_| OauthError::Timeout)??;
-
-    let resp = reqwest::Client::new()
-        .post(TOKEN_ENDPOINT)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", &code),
-            ("client_id", &client.client_id),
-            ("client_secret", &client.client_secret),
-            ("redirect_uri", &redirect_uri),
-            ("code_verifier", &verifier),
-        ])
-        .send()
-        .await?;
-    parse_token_response(resp).await
+    request.exchange(&code).await
 }
 
 /// Exchange a refresh token for a fresh access token.
@@ -124,14 +218,17 @@ pub async fn authorize(
 /// fresh consent flow fixes; `Http`/`Io` are transport failures (offline)
 /// and say nothing about whether the account is still connected.
 pub async fn refresh(client: &ClientConfig, refresh_token: &str) -> Result<TokenSet, OauthError> {
+    let mut form: Vec<(&str, &str)> = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", &client.client_id),
+    ];
+    if let Some(secret) = &client.client_secret {
+        form.push(("client_secret", secret));
+    }
     let resp = reqwest::Client::new()
         .post(TOKEN_ENDPOINT)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", &client.client_id),
-            ("client_secret", &client.client_secret),
-        ])
+        .form(&form)
         .send()
         .await?;
     parse_token_response(resp).await
@@ -159,24 +256,7 @@ async fn wait_for_code(listener: TcpListener, expected_state: &str) -> Result<St
         .next()
         .and_then(|l| l.split_whitespace().nth(1))
         .unwrap_or("/");
-    let url = url::Url::parse(&format!("http://127.0.0.1{path}"))
-        .map_err(|e| OauthError::Authorization(e.to_string()))?;
-    let get = |k: &str| {
-        url.query_pairs()
-            .find(|(key, _)| key == k)
-            .map(|(_, v)| v.into_owned())
-    };
-
-    let result = match (get("code"), get("state"), get("error")) {
-        (_, _, Some(e)) => Err(OauthError::Authorization(e)),
-        (_, Some(s), _) if s != expected_state => {
-            Err(OauthError::Authorization("state mismatch".to_string()))
-        }
-        (Some(code), Some(_), _) => Ok(code),
-        _ => Err(OauthError::Authorization(
-            "missing code or state".to_string(),
-        )),
-    };
+    let result = extract_code(&format!("http://127.0.0.1{path}"), expected_state);
 
     let (status, msg) = match &result {
         Ok(_) => (
@@ -211,6 +291,70 @@ mod tests {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let challenge = b64url(&Sha256::digest(verifier.as_bytes()));
         assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
+
+    fn client() -> ClientConfig {
+        ClientConfig {
+            client_id: "123-abc.apps.googleusercontent.com".to_string(),
+            client_secret: None,
+        }
+    }
+
+    #[test]
+    fn ios_redirect_uri_is_reversed_client_id_scheme() {
+        assert_eq!(
+            ios_redirect_uri("123-abc.apps.googleusercontent.com"),
+            "com.googleusercontent.apps.123-abc:/oauthredirect"
+        );
+    }
+
+    #[test]
+    fn auth_request_url_carries_pkce_state_and_redirect() {
+        let redirect = ios_redirect_uri(&client().client_id);
+        let req = AuthRequest::begin(&client(), Some("me@example.com"), &redirect);
+        let url = url::Url::parse(req.url()).unwrap();
+        let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(url.host_str(), Some("accounts.google.com"));
+        assert_eq!(q["redirect_uri"], redirect);
+        assert_eq!(q["state"], req.state);
+        assert_eq!(q["code_challenge_method"], "S256");
+        assert_eq!(
+            q["code_challenge"],
+            b64url(&Sha256::digest(req.verifier.as_bytes()))
+        );
+        assert_eq!(q["login_hint"], "me@example.com");
+        assert_eq!(q["access_type"], "offline");
+    }
+
+    #[test]
+    fn client_secret_is_optional_in_config_json() {
+        let c: ClientConfig = serde_json::from_str(r#"{"client_id":"x"}"#).unwrap();
+        assert_eq!(c.client_secret, None);
+        let c: ClientConfig =
+            serde_json::from_str(r#"{"client_id":"x","client_secret":"s"}"#).unwrap();
+        assert_eq!(c.client_secret.as_deref(), Some("s"));
+    }
+
+    #[test]
+    fn extract_code_validates_state_and_errors() {
+        let base = "com.googleusercontent.apps.123-abc:/oauthredirect";
+        assert_eq!(
+            extract_code(&format!("{base}?code=abc&state=st"), "st").unwrap(),
+            "abc"
+        );
+        assert!(extract_code(&format!("{base}?code=abc&state=WRONG"), "st").is_err());
+        assert!(extract_code(&format!("{base}?error=access_denied&state=st"), "st").is_err());
+        assert!(extract_code(&format!("{base}?state=st"), "st").is_err());
+    }
+
+    #[tokio::test]
+    async fn finish_rejects_state_mismatch_before_any_network() {
+        let req = AuthRequest::begin(&client(), None, "http://127.0.0.1:1");
+        let err = req
+            .finish("http://127.0.0.1:1/?code=abc&state=WRONG")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OauthError::Authorization(_)), "{err}");
     }
 
     #[tokio::test]

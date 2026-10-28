@@ -142,7 +142,7 @@ fn load_oauth_config() -> Result<oauth::ClientConfig, String> {
     if let (Some(id), Some(secret)) = (BUILTIN_CLIENT_ID, BUILTIN_CLIENT_SECRET) {
         return Ok(oauth::ClientConfig {
             client_id: id.to_string(),
-            client_secret: secret.to_string(),
+            client_secret: Some(secret.to_string()),
         });
     }
     Err(format!(
@@ -359,8 +359,13 @@ pub async fn set_schedule(
             .store
             .set_follow_up(&thread_id, follow_up_since)
             .map_err(estr)?;
-        devsync::record_follow_up(&state.store, &thread.account_id, &thread_id, follow_up_since)
-            .map_err(estr)?;
+        devsync::record_follow_up(
+            &state.store,
+            &thread.account_id,
+            &thread_id,
+            follow_up_since,
+        )
+        .map_err(estr)?;
     }
     let _ = app.emit(THREADS_UPDATED, ());
     // Push straight away — one small upload — so a second device sees the

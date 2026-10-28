@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (git-ignored) and fill in. Same bring-your-own
+// OAuth idea as ~/.config/heypigeon/oauth.json on the desktop, but the client
+// must be of type "iOS" in Google Cloud Console (no secret) — see README.md.
+DEVELOPMENT_TEAM = ABCDE12345
+GOOGLE_IOS_CLIENT_ID = 123456789-abcdefg.apps.googleusercontent.com
+GOOGLE_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.123456789-abcdefg

@@ -1,0 +1,8 @@
+# Swift binding options (read by `uniffi-bindgen generate --library`).
+[bindings.swift]
+# Swift module the generated file declares; the Xcode target imports it.
+module_name = "HeyPigeonCore"
+# C module that wraps the Rust static library (module map + header).
+ffi_module_name = "HeyPigeonCoreFFI"
+# Records as `let` structs: the UI treats engine rows as immutable snapshots.
+generate_immutable_records = true

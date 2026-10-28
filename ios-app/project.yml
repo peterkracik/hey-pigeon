@@ -1,0 +1,93 @@
+# XcodeGen spec — `xcodegen generate` produces HeyPigeon.xcodeproj (git-ignored).
+# The project file is generated rather than committed so diffs stay readable.
+name: HeyPigeon
+options:
+  bundleIdPrefix: app.heypigeon
+  deploymentTarget:
+    iOS: "26.0" # Liquid Glass is the system look from iOS 26; the UI uses its APIs directly
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+configFiles:
+  Debug: Config/Local.xcconfig
+  Release: Config/Local.xcconfig
+
+packages:
+  HeyPigeonCore:
+    path: HeyPigeonCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    TARGETED_DEVICE_FAMILY: "1,2"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: false # build-rust.sh writes into the package dir
+
+targets:
+  HeyPigeon:
+    type: application
+    platform: iOS
+    sources:
+      - path: HeyPigeon
+    dependencies:
+      - package: HeyPigeonCore
+    preBuildScripts:
+      - name: Build Rust core (cargo + uniffi)
+        script: |
+          "$SRCROOT/scripts/build-rust.sh"
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.ios
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # From Config/Local.xcconfig — see Config/Local.xcconfig.example
+        DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: HeyPigeon/Info.plist
+      properties:
+        CFBundleDisplayName: Hey Pigeon
+        # XcodeGen writes literal 1.0 / 1 here unless told otherwise, which
+        # ignores the MARKETING_VERSION / CURRENT_PROJECT_VERSION the publish
+        # workflow passes — and App Store Connect then rejects the second
+        # upload as a duplicate 1.0 (1).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # The Rust engine reads the iOS OAuth client id from here (HeyPigeonApp.swift).
+        GoogleIOSClientID: $(GOOGLE_IOS_CLIENT_ID)
+        # Google's iOS OAuth redirect: the reversed client id as a URL scheme.
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: app.heypigeon.oauth
+            CFBundleURLSchemes:
+              - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - app.heypigeon.refresh
+        # Drop Manrope-*.ttf into HeyPigeon/Resources/Fonts to get the brand
+        # typeface; without the files SwiftUI falls back to the system font.
+        UIAppFonts:
+          - Manrope-SemiBold.ttf
+          - Manrope-Bold.ttf
+          - Manrope-ExtraBold.ttf
+        # Only HTTPS (exempt). Without this every TestFlight build waits on a
+        # manual "Missing Compliance" answer in App Store Connect.
+        ITSAppUsesNonExemptEncryption: false
+        # With a custom Info.plist the INFOPLIST_KEY_* build settings are not
+        # merged in, so the launch screen, orientations and icon name go here.
+        # App Store Connect rejects the upload without them (90475, 90474, 90713).
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    scheme:
+      environmentVariables:
+        # Set to 1 to run against the in-memory sample inbox (no OAuth, no Rust).
+        HEYPIGEON_MOCK: "0"

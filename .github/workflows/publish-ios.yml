@@ -1,0 +1,329 @@
+name: publish-ios
+
+# Build the iOS app (Rust core → xcframework → Xcode archive), sign it for the
+# App Store, and upload it to App Store Connect / TestFlight on `ios-v*` tags.
+# Pushes to main that touch ios-app/ run the same build without the upload.
+#
+# Expo's EAS Build cannot compile this app (it is a native Xcode project over a
+# Rust core, not a React Native project), so the build runs here with
+# xcodebuild. EAS Submit can submit any IPA, so it does the upload by default;
+# `uploader: xcrun` does the same with Apple's own tool and no Expo account.
+#
+# Secrets (GitHub environment "ios", Settings → Environments → ios; synced from Doppler):
+#   APPLE_TEAM_ID                      10-char team id (already used by build-macos)
+#   IOS_DISTRIBUTION_CERTIFICATE_P12   base64 of an "Apple Distribution" .p12
+#   IOS_DISTRIBUTION_CERTIFICATE_PASSWORD
+#   ASC_API_KEY_ID                     App Store Connect API key (App Manager role)
+#   ASC_API_ISSUER_ID
+#   ASC_API_KEY_P8                     base64 of the AuthKey_<id>.p8 file
+#   ASC_APP_ID                         numeric Apple ID of the app record in App Store Connect
+#   HEYPIGEON_IOS_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" (…apps.googleusercontent.com)
+#   EXPO_TOKEN                         expo.dev access token (uploader: eas only)
+#   EXPO_PROJECT_ID                    EAS project id the submission is recorded under (uploader: eas only)
+#
+# One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
+# in App Store Connect; create the ASC API key; export the distribution
+# certificate as .p12; for EAS, create an expo.dev project and a token.
+# The App Store provisioning profile is created/refreshed by fastlane sigh
+# through the ASC key on every run (manual signing; no device needed).
+
+on:
+  push:
+    # Tags publish (build + upload to App Store Connect). Path filters do
+    # not apply to tag pushes.
+    tags: ["ios-v*"]
+    # Pushes to main only build, as a compile check, when the iOS app changed.
+    branches: ["main"]
+    paths: ["ios-app/**", ".github/workflows/publish-ios.yml"]
+  workflow_dispatch:
+    inputs:
+      uploader:
+        description: "How to upload the IPA to App Store Connect"
+        type: choice
+        default: eas
+        options: [eas, xcrun, none]
+      version:
+        description: "Marketing version (defaults to the tag, e.g. ios-v0.1.0 → 0.1.0)"
+        type: string
+        required: false
+
+concurrency:
+  group: publish-ios
+  cancel-in-progress: false
+
+env:
+  SCHEME: HeyPigeon
+  BUNDLE_ID: app.heypigeon.ios
+  # Name of the App Store provisioning profile sigh creates/refreshes.
+  PROFILE_NAME: HeyPigeon AppStore
+  ARCHIVE: ios-app/build/HeyPigeon.xcarchive
+  EXPORT_DIR: ios-app/build/export
+
+jobs:
+  build-and-submit:
+    # macOS 26 image: Xcode 26 SDK, where Liquid Glass is the system look.
+    runs-on: macos-26
+    timeout-minutes: 90
+    # Secrets live in the "ios" GitHub environment (synced from Doppler);
+    # a job only sees environment secrets when it names the environment.
+    environment:
+      name: ios
+      url: https://appstoreconnect.apple.com/apps
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode 26
+        run: |
+          set -euo pipefail
+          xc="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
+          xcodebuild -version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-app
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Resolve version numbers
+        id: ver
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/ios-v* ]]; then
+            version="${GITHUB_REF#refs/tags/ios-v}"
+          else
+            version="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          # Build numbers must only ever go up per version; the run number does.
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Version ${version} (${GITHUB_RUN_NUMBER})"
+
+      - name: Write Local.xcconfig (team + Google iOS OAuth client)
+        env:
+          CLIENT_ID: ${{ secrets.HEYPIGEON_IOS_OAUTH_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLIENT_ID" || { echo "HEYPIGEON_IOS_OAUTH_CLIENT_ID is not set" >&2; exit 1; }
+          # com.googleusercontent.apps.<id> — the reversed client id Google uses as the redirect scheme.
+          reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
+          cat > ios-app/Config/Local.xcconfig <<EOF
+          DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
+          GOOGLE_IOS_CLIENT_ID = ${CLIENT_ID}
+          GOOGLE_IOS_REVERSED_CLIENT_ID = ${reversed}
+          EOF
+
+      - name: Build Rust core for iOS (device slice) + Swift bindings
+        env:
+          RUST_PROFILE: release
+          PLATFORM_NAME: iphoneos
+        run: ios-app/scripts/build-rust.sh
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Import signing certificate
+        env:
+          CERT_P12_B64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          echo "$CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/dist.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" >/dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/dist.p12"
+          security find-identity -v -p codesigning "$keychain"
+          # SHA-1 of the imported identity: what xcodebuild signs with (manual signing).
+          sha="$(security find-identity -v -p codesigning "$keychain" | awk 'NR==1 {print $2}')"
+          test -n "$sha" || { echo "no code-signing identity in the imported .p12" >&2; exit 1; }
+          echo "CERT_SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Install App Store Connect API key
+        env:
+          KEY_P8_B64: ${{ secrets.ASC_API_KEY_P8 }}
+          KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$KEY_ID" || { echo "ASC_API_KEY_ID is not set" >&2; exit 1; }
+          # xcodebuild and altool both look here.
+          mkdir -p ~/private_keys
+          key=~/private_keys/AuthKey_${KEY_ID}.p8
+          # Accept the secret as: the raw PEM, base64 of the PEM, or base64 of
+          # base64 (a common copy-paste outcome). Never print the key itself.
+          if [[ "$KEY_P8_B64" == *"-----BEGIN"* ]]; then
+            printf '%s\n' "$KEY_P8_B64" > "$key"; form="raw PEM"
+          else
+            printf '%s' "$KEY_P8_B64" | tr -d '\n\r ' | base64 --decode > "$key" || { echo "ASC_API_KEY_P8 is not valid base64" >&2; exit 1; }
+            form="base64"
+            if ! grep -q -- "-----BEGIN" "$key"; then
+              tr -d '\n\r ' < "$key" | base64 --decode > "$key.2" 2>/dev/null && mv "$key.2" "$key" || true
+              form="base64 of base64"
+            fi
+          fi
+          chmod 600 "$key"
+          if ! grep -q -- "-----BEGIN PRIVATE KEY-----" "$key"; then
+            echo "ASC_API_KEY_P8 decoded ($form) but is not a PEM private key: expected '-----BEGIN PRIVATE KEY-----'. Store 'base64 -i AuthKey_${KEY_ID}.p8' as a single line." >&2
+            exit 1
+          fi
+          echo "App Store Connect key installed ($form, $(wc -c < "$key") bytes)"
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+
+      # Automatic signing would archive with a *development* profile, which
+      # needs a registered device. Manual signing with an App Store profile
+      # needs none: fastlane's `sigh` creates/refreshes it through the App
+      # Store Connect key and installs it for xcodebuild.
+      - name: Fetch App Store provisioning profile
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          LC_ALL: en_US.UTF-8
+          LANG: en_US.UTF-8
+        run: |
+          set -euo pipefail
+          python3 - "$ASC_KEY_PATH" "${{ secrets.ASC_API_KEY_ID }}" "${{ secrets.ASC_API_ISSUER_ID }}" > "$RUNNER_TEMP/asc.json" <<'PY'
+          import json, sys
+          json.dump({"key_id": sys.argv[2], "issuer_id": sys.argv[3], "key": open(sys.argv[1]).read(), "in_house": False}, sys.stdout)
+          PY
+          chmod 600 "$RUNNER_TEMP/asc.json"
+          fastlane sigh \
+            --api_key_path "$RUNNER_TEMP/asc.json" \
+            --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+            --app_identifier "$BUNDLE_ID" \
+            --provisioning_name "$PROFILE_NAME" \
+            --force \
+            --output_path "$RUNNER_TEMP/profiles" \
+            --filename "AppStore.mobileprovision"
+          rm -f "$RUNNER_TEMP/asc.json"
+
+      - name: Archive
+        working-directory: ios-app
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project HeyPigeon.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$GITHUB_WORKSPACE/$ARCHIVE" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
+            CODE_SIGN_IDENTITY="$CERT_SHA" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}"
+
+      - name: Export IPA (App Store Connect)
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>$CERT_SHA</string>
+            <key>provisioningProfiles</key><dict>
+              <key>$BUNDLE_ID</key><string>$PROFILE_NAME</string>
+            </dict>
+            <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$EXPORT_DIR"
+          ls -la "$EXPORT_DIR"
+          echo "IPA=$(ls "$EXPORT_DIR"/*.ipa | head -1)" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HeyPigeon-ios-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}
+          path: ${{ env.EXPORT_DIR }}/*.ipa
+          if-no-files-found: error
+
+      # ---- Upload: EAS Submit (expo.dev) ----------------------------------
+      # EAS Submit works on any IPA, built anywhere. It needs a minimal Expo
+      # project description to attach the submission to; it is written here at
+      # run time so the repo carries nothing Expo-specific.
+      - name: Submit to App Store Connect via EAS Submit
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.uploader == 'eas' }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPO_TOKEN" || { echo "EXPO_TOKEN is not set (or pick uploader: xcrun)" >&2; exit 1; }
+          mkdir -p "$RUNNER_TEMP/eas" && cd "$RUNNER_TEMP/eas"
+          # EAS CLI locates the project by its package.json; a stub is enough.
+          cat > package.json <<EOF
+          { "name": "hey-pigeon", "version": "${{ steps.ver.outputs.version }}", "private": true }
+          EOF
+          cat > app.json <<EOF
+          {
+            "expo": {
+              "name": "Hey Pigeon",
+              "slug": "hey-pigeon",
+              "version": "${{ steps.ver.outputs.version }}",
+              "ios": { "bundleIdentifier": "${BUNDLE_ID}" },
+              "extra": { "eas": { "projectId": "${{ secrets.EXPO_PROJECT_ID }}" } }
+            }
+          }
+          EOF
+          cat > eas.json <<EOF
+          {
+            "cli": { "version": ">= 12.0.0" },
+            "submit": {
+              "production": {
+                "ios": {
+                  "ascAppId": "${{ secrets.ASC_APP_ID }}",
+                  "appleTeamId": "${{ secrets.APPLE_TEAM_ID }}",
+                  "ascApiKeyPath": "${ASC_KEY_PATH}",
+                  "ascApiKeyId": "${{ secrets.ASC_API_KEY_ID }}",
+                  "ascApiKeyIssuerId": "${{ secrets.ASC_API_ISSUER_ID }}"
+                }
+              }
+            }
+          }
+          EOF
+          npx --yes eas-cli@latest submit \
+            --platform ios \
+            --profile production \
+            --path "$GITHUB_WORKSPACE/$IPA" \
+            --non-interactive \
+            --wait
+
+      # ---- Upload: Apple's own tool, no Expo account -----------------------
+      - name: Submit to App Store Connect via xcrun altool
+        if: ${{ inputs.uploader == 'xcrun' }}
+        run: |
+          set -euo pipefail
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA" \
+            --apiKey "${{ secrets.ASC_API_KEY_ID }}" \
+            --apiIssuer "${{ secrets.ASC_API_ISSUER_ID }}"
+
+      - name: Clean up keys
+        if: always()
+        run: rm -rf ~/private_keys "$RUNNER_TEMP/signing.keychain-db" ios-app/Config/Local.xcconfig

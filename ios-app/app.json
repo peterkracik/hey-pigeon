@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Hey Pigeon",
+    "slug": "hey-pigeon",
+    "version": "0.1.0",
+    "ios": {
+      "bundleIdentifier": "app.heypigeon.ios",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}

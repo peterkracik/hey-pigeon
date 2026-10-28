@@ -1,0 +1,76 @@
+# EAS custom build for the native iOS app (Rust core + SwiftUI shell).
+#
+# The default `eas/build` assumes an Expo/React Native project (prebuild, pod
+# install). This project is a plain Xcode project, so the steps are listed
+# explicitly: install Rust + XcodeGen, build the Rust core into an xcframework,
+# generate the Xcode project, then hand over to the same credential / version /
+# fastlane steps `eas/build` would run. Credentials come from EAS's store, the
+# same way as every other app on the account.
+#
+# Referenced from eas.json: build.production.ios.config = build-ios.yml
+build:
+  name: Build Hey Pigeon for iOS
+  steps:
+    - eas/checkout
+    - eas/install_node_modules
+    - eas/resolve_build_config
+    - eas/resolve_apple_team_id_from_credentials:
+        id: team
+
+    - run:
+        name: Install Rust toolchain and XcodeGen
+        command: |
+          set -euo pipefail
+          # Rust: stable, minimal profile, host (for uniffi-bindgen) + iOS device target.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --target aarch64-apple-ios
+          "$HOME/.cargo/bin/cargo" --version
+          # XcodeGen: release binary, no Homebrew needed.
+          curl -sSL https://github.com/yonaskolb/XcodeGen/releases/latest/download/xcodegen.zip -o /tmp/xcodegen.zip
+          mkdir -p /tmp/xcodegen && unzip -qo /tmp/xcodegen.zip -d /tmp/xcodegen
+          XCODEGEN="$(find /tmp/xcodegen -type f -name xcodegen -perm +111 | head -1)"
+          test -n "$XCODEGEN" || { echo "xcodegen binary not found in archive" >&2; exit 1; }
+          set-env XCODEGEN "$XCODEGEN"
+          "$XCODEGEN" --version
+
+    - run:
+        name: Write Config/Local.xcconfig (team + Google iOS OAuth client)
+        inputs:
+          apple_team_id: ${ steps.team.apple_team_id }
+        command: |
+          set -euo pipefail
+          # GOOGLE_IOS_CLIENT_ID is an EAS environment variable (production environment).
+          test -n "${GOOGLE_IOS_CLIENT_ID:-}" || { echo "GOOGLE_IOS_CLIENT_ID is not set: eas env:set --name GOOGLE_IOS_CLIENT_ID ..." >&2; exit 1; }
+          # com.googleusercontent.apps.<id> — the reversed client id Google uses as the redirect scheme.
+          reversed="$(echo "$GOOGLE_IOS_CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
+          cat > Config/Local.xcconfig <<EOF
+          DEVELOPMENT_TEAM = ${ inputs.apple_team_id }
+          GOOGLE_IOS_CLIENT_ID = ${GOOGLE_IOS_CLIENT_ID}
+          GOOGLE_IOS_REVERSED_CLIENT_ID = ${reversed}
+          EOF
+
+    - run:
+        name: Build Rust core (device slice) and Swift bindings
+        command: |
+          set -euo pipefail
+          export RUST_PROFILE=release PLATFORM_NAME=iphoneos
+          ./scripts/build-rust.sh
+
+    - run:
+        name: Generate Xcode project
+        command: |
+          set -euo pipefail
+          "$XCODEGEN" generate
+          # EAS's iOS steps look for the Xcode project under ./ios.
+          ln -sfn . ios
+          ls ios/HeyPigeon.xcodeproj >/dev/null
+
+    - eas/configure_ios_credentials
+    - eas/configure_ios_version
+    - eas/generate_gymfile_from_template:
+        inputs:
+          credentials: ${ eas.job.secrets.buildCredentials }
+          scheme: HeyPigeon
+          build_configuration: Release
+    - eas/run_fastlane
+    - eas/find_and_upload_build_artifacts

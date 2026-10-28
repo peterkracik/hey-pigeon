@@ -210,6 +210,32 @@ export const updateAccount = (
 ) => invoke<void>("update_account", { accountId, ...fields });
 export const removeAccount = (accountId: string) =>
   invoke<void>("remove_account", { accountId });
+
+// ------------------------------------------------------------ synced prefs
+// App-wide preferences live in the backend store and travel between the
+// user's devices through the same hidden Drive folder as reminders
+// (`pref:<name>` keys). API keys and OAuth tokens never do — each device
+// keeps its own keychain.
+
+/** The preference names that sync. `ai.model` and `triage.enabled` have
+ *  their own commands (setAiModel / setAutolabelEnabled) but ride the same
+ *  channel. */
+export type PrefName =
+  | "pin_list"
+  | "hover_actions"
+  | "swipe_actions"
+  | "auto_summarize"
+  | "sidebar_hidden"
+  | "label_colors"
+  | "ai.model"
+  | "triage.enabled";
+
+/** Every stored preference, `{ name: json }`. Missing = never set. */
+export const getPrefs = () => invoke<Record<string, unknown>>("get_prefs");
+/** Set (`value` non-null) or clear (`null`) one preference; pushed to the
+ *  user's other devices right away. */
+export const setPref = (name: PrefName, value: unknown) =>
+  invoke<void>("set_pref", { name, value });
 /** Rename a Gmail label. Applies to every connected account owning the id
  *  (the sidebar dedupes by id). */
 export const updateLabel = (labelId: string, newName: string) =>
@@ -353,6 +379,15 @@ export function lookupAvatar(
 export async function onThreadsUpdated(cb: () => void): Promise<() => void> {
   if (!isTauri) return () => {};
   return listen("threads_updated", cb);
+}
+
+/** Fires when a cross-device sync round changed settings here (account
+ *  name/colour/signature, triage labels, prefs edited on another device).
+ *  Deliberately separate from `threads_updated`, which fires on every
+ *  local edit and would race the optimistic UI if prefs re-read on it. */
+export async function onPrefsUpdated(cb: () => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  return listen("prefs_updated", cb);
 }
 
 /** Fires once per transition of an account into the disconnected state

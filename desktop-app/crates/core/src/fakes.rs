@@ -48,6 +48,8 @@ struct MemStoreInner {
     /// Threads whose triage labels were manually edited — `set_thread_triage`
     /// must leave them alone until `reset_triage` clears the pin.
     triage_labels_manual: std::collections::HashSet<ThreadId>,
+    /// App-wide preferences (`Store::get_pref` & co.).
+    prefs: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl MemStore {
@@ -57,6 +59,20 @@ impl MemStore {
         let s = Self::default();
         s.inner.lock().unwrap().device_id = Some(device_id.to_string());
         s
+    }
+
+    /// Disconnect an account: its row, threads, messages and sync state go
+    /// (mirrors the SQLite adapter's `delete_account`). App-wide data
+    /// (triage labels, prefs) stays — it belongs to the install, not the
+    /// account.
+    pub fn delete_account(&self, account_id: &str) {
+        let mut g = self.inner.lock().unwrap();
+        g.accounts.remove(account_id);
+        g.threads.retain(|_, t| t.account_id != account_id);
+        g.messages.retain(|_, m| m.account_id != account_id);
+        g.labels.remove(account_id);
+        g.sync_kv.remove(account_id);
+        g.sync_meta.retain(|(a, _), _| a != account_id);
     }
 }
 
@@ -224,6 +240,10 @@ impl Store for MemStore {
     }
 
     fn create_triage_label(&self, name: &str) -> Result<TriageLabel, StoreError> {
+        // Ids travel between devices, so a plain counter would collide (two
+        // installs both minting "1"). The SQLite adapter uses a random id;
+        // here the device id prefix is the fake of that.
+        let device = self.sync_device_id()?;
         let mut g = self.inner.lock().unwrap();
         if g.triage_labels
             .iter()
@@ -233,7 +253,7 @@ impl Store for MemStore {
         }
         g.next_triage_label_id += 1;
         let label = TriageLabel {
-            id: g.next_triage_label_id.to_string(),
+            id: format!("{device}-{}", g.next_triage_label_id),
             name: name.to_string(),
         };
         g.triage_labels.push(label.clone());
@@ -262,6 +282,54 @@ impl Store for MemStore {
             t.triage_label_ids.retain(|l| l != id);
         }
         Ok(())
+    }
+
+    fn upsert_triage_label(&self, label: &TriageLabel) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.triage_labels.iter_mut().find(|l| l.id == label.id) {
+            Some(existing) => existing.name = label.name.clone(),
+            None => {
+                g.triage_labels.push(label.clone());
+                // New label: everyone stale, same as `create_triage_label`.
+                g.triage_versions.clear();
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_manual_triage_labels(&self, thread_id: &ThreadId) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        if !g.threads.contains_key(thread_id) {
+            return Ok(false);
+        }
+        g.triage_labels_manual.remove(thread_id);
+        g.triage_versions.remove(thread_id);
+        Ok(true)
+    }
+
+    fn get_pref(&self, name: &str) -> Result<Option<serde_json::Value>, StoreError> {
+        Ok(self.inner.lock().unwrap().prefs.get(name).cloned())
+    }
+
+    fn set_pref(&self, name: &str, value: Option<&serde_json::Value>) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match value {
+            Some(v) => {
+                g.prefs.insert(name.to_string(), v.clone());
+            }
+            None => {
+                g.prefs.remove(name);
+            }
+        }
+        Ok(())
+    }
+
+    fn list_prefs(&self) -> Result<Vec<(String, serde_json::Value)>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.prefs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect())
     }
 
     fn reset_triage(&self) -> Result<(), StoreError> {

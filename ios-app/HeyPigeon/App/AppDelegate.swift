@@ -50,18 +50,31 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     // MARK: Notification taps → the thread
+    //
+    // UNUserNotificationCenterDelegate calls back off the main actor with
+    // non-Sendable arguments, so these two stay nonisolated: pull out the
+    // one String needed, answer the system, then hop to the model.
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard let threadId = response.notification.request.content.userInfo["threadId"] as? String else { return }
-        AppModel.current?.openThread(id: threadId)
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let threadId = response.notification.request.content.userInfo["threadId"] as? String
+        completionHandler()
+        guard let threadId else { return }
+        Task { @MainActor in
+            AppModel.current?.openThread(id: threadId)
+        }
     }
 
     /// Nothing is shown while the app is in front: the list is live, and the
     /// badge follows the sync. (Same as before this delegate existed.)
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
-        []
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([])
     }
 }

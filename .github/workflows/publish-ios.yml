@@ -32,10 +32,8 @@ on:
     # Tags publish (build + upload to App Store Connect). Path filters do
     # not apply to tag pushes.
     tags: ["ios-v*"]
-    # Branch pushes only build, as a compile check, when the iOS app changed.
-    # TEMPORARY: the PR branch is listed until the scaffold merges, because a
-    # manual dispatch needs this file on main first. Remove it then.
-    branches: ["main", "claude/confident-lovelace-krjff8"]
+    # Pushes to main only build, as a compile check, when the iOS app changed.
+    branches: ["main"]
     paths: ["ios-app/**", ".github/workflows/publish-ios.yml"]
   workflow_dispatch:
     inputs:

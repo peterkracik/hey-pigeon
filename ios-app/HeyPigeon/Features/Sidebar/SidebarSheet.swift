@@ -1,5 +1,6 @@
 // The sidebar: accounts (desktop 0/1/2), folders, labels, Settings — the
-// desktop sidebar as a sheet, opened from the top-left circle.
+// desktop sidebar as a sheet, opened from the top-left circle. Same canvas
+// as the main screens, sections on white cards, close in the nav bar.
 
 import SwiftUI
 
@@ -8,6 +9,21 @@ struct SidebarSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        NavigationStack {
+            list
+                .toolbarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(role: .close) { dismiss() }
+                    }
+                }
+        }
+        .presentationBackground(Theme.canvas)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var list: some View {
         List {
             Section {
                 folderRow(.inbox)
@@ -16,18 +32,8 @@ struct SidebarSheet: View {
                     accountRow(a.id, title: a.displayName, subtitle: a.email, color: a.color,
                                disconnected: model.accountStates[a.id]?.isConnected == false)
                 }
-            } header: {
-                HStack {
-                    Label("Hey Pigeon", systemImage: "envelope.fill")
-                        .font(Theme.display(18, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.glass)
-                        .accessibilityLabel("Close")
-                }
-                .textCase(nil)
-                .padding(.bottom, 4)
             }
+            .listRowBackground(Theme.card)
             // The desktop sidebar's folders, in its order (Archive is "done"
             // in this app's vocabulary; Scheduled and Need reply are tabs).
             Section {
@@ -41,6 +47,7 @@ struct SidebarSheet: View {
                 folderRow(.spam)
                 folderRow(.trash)
             }
+            .listRowBackground(Theme.card)
             if !model.labels.isEmpty {
                 Section {
                     ForEach(model.labels) { l in
@@ -49,6 +56,7 @@ struct SidebarSheet: View {
                         }
                     }
                 }
+                .listRowBackground(Theme.card)
             }
             Section {
                 // The consent sheet needs a window to present over; closing
@@ -61,12 +69,17 @@ struct SidebarSheet: View {
                 } label: { Label("Add Google account", systemImage: "plus.circle") }
                 Button { dismiss(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
+            .listRowBackground(Theme.card)
         }
         .listStyle(.insetGrouped)
+        .listSectionSpacing(16)
+        // The inset-grouped default leaves a wide gutter in a sheet; keep
+        // the cards close to the edges like the inbox rows.
+        .contentMargins(.horizontal, 12, for: .scrollContent)
+        .contentMargins(.top, 4, for: .scrollContent)
         .scrollContentBackground(.hidden)
+        .background(Theme.canvas)
         .foregroundStyle(Theme.textPrimary)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
 
     private func go(_ folder: MailView) {

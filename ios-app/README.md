@@ -103,11 +103,12 @@ silent-push callbacks), `Shared/NewMailNotifier.swift` (one delta sync for the
 account named in the push, a local notification per new unread thread, badge).
 `HEYPIGEON_RELAY_URL` in `Config/Local.xcconfig` (or the value of the same
 name on the `ios` GitHub environment for CI builds) bakes the relay into the
-build, like the OAuth client: Settings → Notifications then shows only the
-on/off toggle, on by default. A build without it shows a relay URL field and
-starts with push off — for someone running their own relay. Xcode builds
-register `sandbox` tokens, TestFlight / App Store builds `production` ones;
-the relay routes per token.
+build, like the OAuth client. The URL is never shown in the UI: Settings →
+Notifications has the on/off toggle (on by default) with one status line
+under it — registration state and until when the mailbox is watched. A build
+without a relay shows the toggle disabled ("Not available in this build").
+Xcode builds register `sandbox` tokens, TestFlight / App Store builds
+`production` ones; the relay routes per token.
 
 The upload lands in TestFlight; releasing to the App Store is still the
 "Submit for review" click in App Store Connect — or a later `fastlane

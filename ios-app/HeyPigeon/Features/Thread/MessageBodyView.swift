@@ -36,33 +36,87 @@ struct MessageBodyView: View {
                 HTMLView(html: html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, height: $height) { url in link = url }
                     .frame(height: height)
             } else {
-                Text(Self.linkified(text)).font(.body).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                // A UITextView, not Text + .textSelection: on iOS that only
+                // copies the whole body, with no range selection or the
+                // system edit menu (Look Up, Translate, Share…).
+                SelectableText(text: Self.linkified(text)) { url in link = url }
             }
         }
-        // Links in the plain-text body open the same in-app Safari sheet as
-        // links in HTML mail, not the Safari app.
-        .environment(\.openURL, OpenURLAction { url in
-            link = url
-            return .handled
-        })
         .sheet(item: $link) { url in SafariView(url: url).ignoresSafeArea() }
     }
 
     /// Plain-text mail with every URL turned into a tappable, underlined link.
-    private static func linkified(_ text: String) -> AttributedString {
-        var out = AttributedString(text)
+    private static func linkified(_ text: String) -> NSAttributedString {
+        let out = NSMutableAttributedString(string: text, attributes: [
+            .font: UIFont.preferredFont(forTextStyle: .body),
+            .foregroundColor: UIColor(Theme.textPrimary),
+        ])
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
         for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-            guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme ?? ""),
-                  let r = Range(match.range, in: text), let ar = Range(r, in: out) else { continue }
-            out[ar].link = url
-            out[ar].underlineStyle = .single
+            guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme ?? "") else { continue }
+            out.addAttribute(.link, value: url, range: match.range)
         }
         return out
     }
 }
 
 extension URL: Identifiable { public var id: String { absoluteString } }
+
+/// Read-only, selectable plain-text body: long-press or double-tap selects a
+/// range and brings up the native edit menu. Link taps go to `onLink` (the
+/// in-app Safari sheet, same as HTML mail), not the Safari app.
+private struct SelectableText: UIViewRepresentable {
+    let text: NSAttributedString
+    let onLink: (URL) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.adjustsFontForContentSizeCategory = true
+        view.dataDetectorTypes = []
+        view.linkTextAttributes = [
+            .foregroundColor: UIColor(Theme.textPrimary),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        view.delegate = context.coordinator
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.onLink = onLink
+        // Only on a real change: re-assigning drops the user's selection.
+        guard context.coordinator.shown != text else { return }
+        context.coordinator.shown = text
+        view.attributedText = text
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? UIScreen.main.bounds.width
+        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: ceil(fit.height))
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var onLink: (URL) -> Void
+        var shown: NSAttributedString?
+        init(onLink: @escaping (URL) -> Void) { self.onLink = onLink }
+
+        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem,
+                      defaultAction: UIAction) -> UIAction?
+        {
+            guard case let .link(url) = textItem.content else { return defaultAction }
+            return UIAction { [onLink] _ in onLink(url) }
+        }
+    }
+}
 
 private struct HTMLView: UIViewRepresentable {
     let html: String
@@ -111,6 +165,8 @@ private struct HTMLView: UIViewRepresentable {
           :root { color-scheme: \(dark ? "dark" : "light"); }
           body { margin: 0; font: -apple-system-body; font-family: -apple-system, system-ui; color: \(fg); word-wrap: break-word; -webkit-text-size-adjust: 100%; }
           img, table { max-width: 100% !important; height: auto; }
+          /* Some mail turns selection off; the user can always select and copy. */
+          body, body * { -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important; }
           a { color: \(link); }
           blockquote { border-left: 3px solid #9A9CA2; margin: 0; padding-left: 12px; color: #75787F; }
         </style></head><body>\(html)</body></html>

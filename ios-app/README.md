@@ -50,8 +50,8 @@ produces the IPA as a workflow artifact.
 git tag ios-v0.1.0 && git push origin ios-v0.1.0
 ```
 
-One-time setup, then the secrets listed at the top of the workflow (synced
-into the repo via Doppler):
+One-time setup, then the secrets listed at the top of the workflow, in the
+GitHub environment `ios` (synced there from Doppler):
 
 1. **App Store Connect**: an app record for bundle id `app.heypigeon.ios`
    (its numeric Apple ID is `ASC_APP_ID`), and an API key with the App

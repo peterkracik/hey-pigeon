@@ -8,7 +8,7 @@ name: publish-ios
 # xcodebuild. EAS Submit can submit any IPA, so it does the upload by default;
 # `uploader: xcrun` does the same with Apple's own tool and no Expo account.
 #
-# Secrets (Settings → Secrets and variables → Actions):
+# Secrets (GitHub environment "ios", Settings → Environments → ios; synced from Doppler):
 #   APPLE_TEAM_ID                      10-char team id (already used by build-macos)
 #   IOS_DISTRIBUTION_CERTIFICATE_P12   base64 of an "Apple Distribution" .p12
 #   IOS_DISTRIBUTION_CERTIFICATE_PASSWORD
@@ -54,6 +54,11 @@ jobs:
   build-and-submit:
     runs-on: macos-15
     timeout-minutes: 90
+    # Secrets live in the "ios" GitHub environment (synced from Doppler);
+    # a job only sees environment secrets when it names the environment.
+    environment:
+      name: ios
+      url: https://appstoreconnect.apple.com/apps
     permissions:
       contents: read
     steps:

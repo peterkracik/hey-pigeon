@@ -11,6 +11,7 @@
   import * as ipc from "./ipc";
   import type { BackendTriageLabel } from "./ipc";
   import { toast } from "./toast.svelte";
+  import SummaryText from "./SummaryText.svelte";
 
   let {
     email,
@@ -247,7 +248,13 @@
       </div>
       {#if summaryReady && threadSummary && threadSummary.open}
         <div class="summary-block" class:is-error={!!threadSummary.error}>
-          {threadSummary.generating ? "Summarizing\u2026" : (threadSummary.error ?? threadSummary.text)}
+          {#if threadSummary.generating}
+            {"Summarizing\u2026"}
+          {:else if threadSummary.error}
+            {threadSummary.error}
+          {:else}
+            <SummaryText text={threadSummary.text} />
+          {/if}
         </div>
       {/if}
     {/if}
@@ -375,8 +382,8 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-secondary);
-    white-space: pre-line;
-    max-height: 4.6em;
+    /* Room for the prompt's 4 bullets (+ a wrapped line) before clipping. */
+    max-height: 7.6em;
     overflow: hidden;
   }
   .summary-block.is-error {

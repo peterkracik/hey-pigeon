@@ -20,11 +20,13 @@ const TRIAGE_ENABLED: &str = "triage.enabled";
 /// turn a refresh into a multi-minute Jev round; the next round continues.
 const TRIAGE_BATCH: u32 = 10;
 
-// The prompts are copied verbatim from the desktop shell so both apps get
-// the same voice from the same model.
+// The prompts are copied verbatim from the desktop shell (src-tauri/src/ai.rs)
+// so both apps get the same voice from the same model. The two summary
+// prompts ask for a tiny markdown subset ("- " bullets + **bold**) that
+// SummaryMarkup.swift renders on iOS, as SummaryText.svelte does on desktop.
 const EDIT_SYSTEM_PROMPT: &str = "You are an email writing assistant. You may be given the prior conversation for context — use it to answer questions or reference details the user asks for. Apply the user's instruction to the given text and return ONLY the revised text — no preamble, no explanation, no markdown formatting, no surrounding quotes.";
-const SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, giving them a quick heads-up on their active (not yet done) emails. Talk directly to them, warm and casual — e.g. \"You've got an invoice from...\" or \"Sarah followed up on...\" — first or second person, never a detached report. Return at most 3 short lines, one per notable item or theme; merge similar emails into one line. Plain text only: no markdown, no headers, no bullet characters, no preamble. If nothing is worth calling out, say so in one friendly line (e.g. \"Nothing urgent here.\").";
-const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, recapping an email conversation so they can skip reading every message. Talk directly to them, warm and casual — e.g. \"Sarah's asking for the invoice, and Priya already sent the draft.\" Return at most 3 short lines covering who said what and where things currently stand. Plain text only: no markdown, no headers, no bullet characters, no preamble.";
+const SUMMARY_SYSTEM_PROMPT: &str = "You write a factual digest of the user's active (not yet done) emails. Informational only: state what each email is and what it contains, in a neutral third-person tone. No greetings, no opinions, no advice, no questions, no chit-chat.\n\nFormat rules:\n- Return 1 to 4 bullet points, each on its own line starting with \"- \".\n- One bullet per notable email or theme; merge similar emails into one bullet (e.g. \"3 newsletters\").\n- Keep each bullet to one short sentence or fragment.\n- Wrap the key facts in **double asterisks** for bold: sender or company names, amounts, dates, deadlines, order or invoice numbers.\n- Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.\n- If nothing is notable, return a single bullet: \"- Nothing notable.\"";
+const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You write a factual recap of one email conversation so the reader does not have to read every message. Informational only: who said what, what was asked, what was agreed, and the current state. Neutral, report-style tone; refer to the user (labelled \"Me\" in the transcript) as \"you\". No greetings, no opinions, no advice, no questions, no chit-chat.\n\nFormat rules:\n- Return 1 to 4 bullet points, each on its own line starting with \"- \".\n- Keep each bullet to one short sentence or fragment.\n- The last bullet states the current status or open item (e.g. **Waiting on** a reply, a **deadline**, a **decision**).\n- Wrap the key facts in **double asterisks** for bold: people's names, amounts, dates, deadlines, decisions.\n- Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.";
 const DRAFT_REPLY_SYSTEM_PROMPT: &str = "You are drafting an email reply on behalf of the user, who appears as \"Me\" in the conversation transcript. Write the reply to the latest message from the other participant(s): answer their questions, respond to their requests, and keep the user's established tone from any earlier \"Me\" messages. Be concise and natural. Never invent facts, dates, or commitments the conversation does not support — put a short placeholder in square brackets where the user must fill something in. If the user provided notes, build the reply around them. Return ONLY the reply body as plain text: no subject line, no markdown, no explanation, no surrounding quotes, and no signature block.";
 
 fn build_draft_reply_prompt(subject: &str, history: &str, notes: Option<&str>) -> String {
@@ -534,5 +536,16 @@ mod tests {
             snippet: "x".into(),
         }]);
         assert!(s.contains("From: a@b\nSubject: S\nx"));
+    }
+
+    /// Both summary prompts must ask for the subset SummaryMarkup.swift
+    /// renders — and stay identical to the desktop shell's copies.
+    #[test]
+    fn summary_prompts_ask_for_the_rendered_markdown_subset() {
+        for prompt in [SUMMARY_SYSTEM_PROMPT, THREAD_SUMMARY_SYSTEM_PROMPT] {
+            assert!(prompt.contains("starting with \"- \""));
+            assert!(prompt.contains("**bold**"));
+            assert!(prompt.contains("No headers, no other markdown"));
+        }
     }
 }

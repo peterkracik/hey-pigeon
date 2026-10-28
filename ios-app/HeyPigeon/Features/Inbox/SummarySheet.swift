@@ -15,7 +15,7 @@ struct SummarySheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let s = summary, let text = s.text {
-                        Text(text).font(.body).foregroundStyle(Theme.textPrimary)
+                        SummaryTextView(text: text).font(.body).foregroundStyle(Theme.textPrimary)
                     } else if let s = summary, let error = s.error {
                         Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
                     } else {

@@ -13,20 +13,28 @@
 <header class="site wrap">
   <a class="brand" href="/">
     <svg width="28" height="28" viewBox="0 0 1024 1024" style="border-radius:6px;display:block">
-      <defs>
-        <linearGradient id="pg-bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#2E2F38"/>
-          <stop offset="0.55" stop-color="#17181D"/>
-          <stop offset="1" stop-color="#08080A"/>
-        </linearGradient>
-        <linearGradient id="pg-check" x1="292" y1="704" x2="744" y2="352" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#FF83BC"/>
-          <stop offset="1" stop-color="#C43277"/>
-        </linearGradient>
-      </defs>
-      <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#pg-bg)"/>
-      <path d="M 306 522 L 434 650 L 730 322" fill="none" stroke="url(#pg-check)" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
+  <defs>
+    <linearGradient id="hp-tile-nav" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
+    <mask id="hp-gap-nav" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="490" cy="370" r="231" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile-nav)"/>
+  <g transform="translate(36 52) rotate(-14 512 540)" fill="#EE4D9B">
+    <g mask="url(#hp-gap-nav)">
+      <g stroke="#EE4D9B" stroke-width="110" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M435 720 L425 800"/>
+        <path d="M555 720 L575 795"/>
+        <path d="M362 600 L305 650"/>
+        <path d="M610 610 L740 540"/>
+      </g>
+      <rect x="335" y="500" width="310" height="250" rx="125"/>
+    </g>
+    <circle cx="490" cy="370" r="205"/>
+    <rect x="352" y="285" width="290" height="190" rx="95" fill="#FFFFFF"/>
+  </g>
+</svg>
     <span>Hey Pigeon</span>
   </a>
   <nav class="site">

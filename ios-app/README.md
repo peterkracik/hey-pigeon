@@ -39,16 +39,23 @@ silently falls back to the system font.
 ## Publishing (CI)
 
 `.github/workflows/publish-ios.yml` builds, signs and uploads the app to App
-Store Connect (TestFlight) on every `ios-v*` tag, or by hand from the Actions
-tab. The build is plain `xcodebuild` on a macOS runner — Expo's EAS Build
-cannot compile a native Xcode + Rust project — and the upload goes through
-**EAS Submit** (expo.dev), which accepts any signed IPA. `uploader: xcrun`
-does the same upload with Apple's `altool` and no Expo account; `none` just
-produces the IPA as a workflow artifact.
+Store Connect (TestFlight) on **every push to `main` that changes the app**:
+anything under `ios-app/` (docs excepted) or in the Rust crates the
+xcframework is built from. Changes elsewhere do not start it. The marketing
+version is `MARKETING_VERSION` in `project.yml`; the build number is the run
+number, so each push is a new TestFlight build of that version. Bump
+`MARKETING_VERSION` when you want a new version. An `ios-v*` tag publishes
+too and takes the version from the tag name:
 
 ```sh
-git tag ios-v0.1.0 && git push origin ios-v0.1.0
+git tag ios-v0.2.0 && git push origin ios-v0.2.0
 ```
+
+The build is plain `xcodebuild` on a macOS runner — Expo's EAS Build cannot
+compile a native Xcode + Rust project — and the upload goes through **EAS
+Submit** (expo.dev), which accepts any signed IPA. A manual run from the
+Actions tab can pick `uploader: xcrun` (Apple's `altool`, no Expo account) or
+`none` (IPA as a workflow artifact only).
 
 One-time setup, then the secrets listed at the top of the workflow, in the
 GitHub environment `ios` (synced there from Doppler):

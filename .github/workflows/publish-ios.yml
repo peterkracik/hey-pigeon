@@ -1,8 +1,10 @@
 name: publish-ios
 
 # Build the iOS app (Rust core → xcframework → Xcode archive), sign it for the
-# App Store, and upload it to App Store Connect / TestFlight on `ios-v*` tags.
-# Pushes to main that touch ios-app/ run the same build without the upload.
+# App Store, and upload it to App Store Connect / TestFlight. Every push to
+# main that changes the app — the Swift shell or the Rust crates it embeds —
+# publishes a TestFlight build; nothing runs for changes elsewhere. An
+# `ios-v*` tag publishes too and sets the marketing version from the tag.
 #
 # Expo's EAS Build cannot compile this app (it is a native Xcode project over a
 # Rust core, not a React Native project), so the build runs here with
@@ -31,12 +33,20 @@ name: publish-ios
 
 on:
   push:
-    # Tags publish (build + upload to App Store Connect). Path filters do
+    # Tags publish with the version taken from the tag name. Path filters do
     # not apply to tag pushes.
     tags: ["ios-v*"]
-    # Pushes to main only build, as a compile check, when the iOS app changed.
+    # Pushes to main publish when the app itself changed: the Swift shell,
+    # the Rust crates the xcframework is built from, or this workflow.
+    # Documentation inside those folders does not count.
     branches: ["main"]
-    paths: ["ios-app/**", ".github/workflows/publish-ios.yml"]
+    paths:
+      - "ios-app/**"
+      - "!ios-app/**/*.md"
+      - "desktop-app/crates/**"
+      - "desktop-app/Cargo.toml"
+      - "desktop-app/Cargo.lock"
+      - ".github/workflows/publish-ios.yml"
   workflow_dispatch:
     inputs:
       uploader:
@@ -45,7 +55,7 @@ on:
         default: eas
         options: [eas, xcrun, none]
       version:
-        description: "Marketing version (defaults to the tag, e.g. ios-v0.1.0 → 0.1.0)"
+        description: "Marketing version (defaults to the tag for ios-v* tags, else MARKETING_VERSION in ios-app/project.yml)"
         type: string
         required: false
 
@@ -111,7 +121,10 @@ jobs:
           elif [[ "${GITHUB_REF}" == refs/tags/ios-v* ]]; then
             version="${GITHUB_REF#refs/tags/ios-v}"
           else
-            version="0.0.${GITHUB_RUN_NUMBER}"
+            # Pushes to main: the version the project declares; the build
+            # number below distinguishes the TestFlight builds within it.
+            version="$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' ios-app/project.yml | head -1)"
+            test -n "$version" || { echo "MARKETING_VERSION not found in ios-app/project.yml" >&2; exit 1; }
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           # Build numbers must only ever go up per version; the run number does.
@@ -295,7 +308,8 @@ jobs:
       # project description to attach the submission to; it is written here at
       # run time so the repo carries nothing Expo-specific.
       - name: Submit to App Store Connect via EAS Submit
-        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.uploader == 'eas' }}
+        # Every push build (main or tag) uploads; a manual run picks its uploader.
+        if: ${{ github.event_name == 'push' || inputs.uploader == 'eas' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |

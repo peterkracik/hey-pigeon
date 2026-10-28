@@ -248,6 +248,30 @@ pub enum Mutation {
         #[serde(default)]
         reply_to_thread: Option<ThreadId>,
     },
+    /// Create or update the Gmail draft for an open composer. `key` is the
+    /// composer's own id (stable across saves), so repeated saves update one
+    /// draft instead of piling up new ones.
+    SaveDraft {
+        key: String,
+        to: Vec<String>,
+        #[serde(default)]
+        cc: Vec<String>,
+        #[serde(default)]
+        bcc: Vec<String>,
+        subject: String,
+        body_text: String,
+        #[serde(default)]
+        body_html: Option<String>,
+        #[serde(default)]
+        attachments: Vec<OutAttachment>,
+        #[serde(default)]
+        reply_to_thread: Option<ThreadId>,
+    },
+    /// Delete the draft saved under `key` (discarded or sent). A no-op when
+    /// no such draft exists.
+    DeleteDraft {
+        key: String,
+    },
 }
 
 /// One attachment on an outgoing Send mutation.
@@ -316,6 +340,18 @@ impl std::fmt::Debug for Mutation {
                 .field("recipients", &to.len())
                 .field("reply_to_thread", reply_to_thread)
                 .finish_non_exhaustive(),
+            Mutation::SaveDraft {
+                key,
+                reply_to_thread,
+                ..
+            } => f
+                .debug_struct("SaveDraft")
+                .field("key", key)
+                .field("reply_to_thread", reply_to_thread)
+                .finish_non_exhaustive(),
+            Mutation::DeleteDraft { key } => {
+                f.debug_struct("DeleteDraft").field("key", key).finish()
+            }
         }
     }
 }

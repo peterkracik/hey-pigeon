@@ -430,7 +430,7 @@ impl Store for MemStore {
                     t.labels.push(label_id.clone());
                 }
             }
-            Mutation::Send { .. } => {}
+            Mutation::Send { .. } | Mutation::SaveDraft { .. } | Mutation::DeleteDraft { .. } => {}
         };
         let id = match mutation {
             Mutation::Archive { thread_id }
@@ -440,7 +440,9 @@ impl Store for MemStore {
             | Mutation::ModifyLabel { thread_id, .. }
             | Mutation::Trash { thread_id } => thread_id,
             // Nothing changes locally for outgoing mail (no Sent view in M1).
-            Mutation::Send { .. } => return Ok(()),
+            Mutation::Send { .. } | Mutation::SaveDraft { .. } | Mutation::DeleteDraft { .. } => {
+                return Ok(())
+            }
         };
         let t = g
             .threads

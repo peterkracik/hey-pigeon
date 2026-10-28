@@ -349,6 +349,12 @@ private extension MailAction {
                   bodyHtml: d.bodyHTML,
                   attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
                   replyToThread: d.replyToThreadId)
+        case .saveDraft(let d):
+            .saveDraft(key: d.draftKey, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
+                       bodyHtml: d.bodyHTML,
+                       attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
+                       replyToThread: d.replyToThreadId)
+        case .deleteDraft(let key): .deleteDraft(key: key)
         }
     }
 }

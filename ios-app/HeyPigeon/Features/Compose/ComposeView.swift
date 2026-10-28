@@ -3,7 +3,8 @@
 // chips, and the footer with Send · Discard · AI · Attach · Aa. Send hands
 // the draft to the model, which holds it for the undo window before it goes
 // to the outbox (text part always, html part when formatting was applied);
-// an undone send reopens this view prefilled.
+// an undone send reopens this view prefilled. Closing (the X, a swipe down)
+// or leaving the app saves it as a Gmail draft; Discard deletes that draft.
 
 import PhotosUI
 import SwiftUI
@@ -28,6 +29,13 @@ struct ComposeView: View {
     @State private var askLink = false
     @State private var sending = false
     @State private var pristine = true
+    /// Content as last saved (or as opened) — a draft is saved only when it changed.
+    @State private var savedSnapshot: Snapshot?
+    /// Account the Gmail draft was saved under, nil while none was saved.
+    @State private var savedFrom: String?
+    /// Sent or discarded: leaving must not save a draft.
+    @State private var finished = false
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focus: Field?
@@ -47,6 +55,18 @@ struct ComposeView: View {
         // A forward or a restored (undone) send arrives with a body the user
         // owns: switching From must not replace it with a signature.
         _pristine = State(initialValue: draft.bodyText.isEmpty)
+        _savedFrom = State(initialValue: draft.draftSaved ? draft.fromAccountId : nil)
+    }
+
+    private struct Snapshot: Equatable {
+        let to: [String], cc: [String], bcc: [String]
+        let subject: String, body: String, html: String?
+        let attachments: [String]
+    }
+
+    private var snapshot: Snapshot {
+        Snapshot(to: to, cc: cc, bcc: bcc, subject: draft.subject, body: plainBody,
+                 html: RichText.html(body_), attachments: attachments.map(\.id))
     }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
@@ -94,7 +114,10 @@ struct ComposeView: View {
             .navigationTitle(draft.replyToThreadId == nil ? "New message" : "Reply")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { close() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { close() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close and save draft")
+                }
             }
             .onAppear {
                 if fromId.isEmpty {
@@ -105,6 +128,14 @@ struct ComposeView: View {
                     pristine = true
                 }
                 focus = to.isEmpty ? .to : .body
+                // An undone send (it carries bodyRich) is unsaved work: no
+                // baseline, so closing it saves it.
+                if savedSnapshot == nil, draft.bodyRich == nil { savedSnapshot = snapshot }
+            }
+            // A swipe down closes like the X: whatever changed is kept as a draft.
+            .onDisappear { if !finished { saveDraft() } }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background, !finished { saveDraft() }
             }
             .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { addFiles(urls) }
@@ -129,7 +160,6 @@ struct ComposeView: View {
                 Text("Turn the selected text into a link.")
             }
         }
-        .interactiveDismissDisabled(!pristine || !to.isEmpty || !draft.subject.isEmpty)
     }
 
     // MARK: Rows
@@ -214,7 +244,7 @@ struct ComposeView: View {
                 .buttonStyle(.glassProminent)
                 .tint(Theme.textPrimary)
                 .disabled(!canSend)
-                Button { close() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
+                Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
                     .buttonStyle(.glass)
                     .accessibilityLabel("Discard")
                 Spacer()
@@ -365,8 +395,8 @@ struct ComposeView: View {
 
     // MARK: Send / close
 
-    private func send() {
-        sending = true
+    /// The draft as the editor holds it now.
+    private var composed: SendDraft {
         var d = draft
         d.to = to
         d.cc = cc
@@ -375,15 +405,49 @@ struct ComposeView: View {
         d.bodyHTML = RichText.html(body_)
         d.bodyRich = body_
         d.attachments = attachments
+        return d
+    }
+
+    private func send() {
+        sending = true
+        finished = true
+        var d = composed
         let from = fromId
+        // A draft saved under another From account is not the one this
+        // send's account would delete afterwards.
+        if let old = savedFrom, old != from {
+            model.deleteDraft(d.draftKey, from: old)
+            d.draftSaved = false
+        }
         Keyboard.dismiss()
         dismiss()
         model.send(d, from: from)
     }
 
+    /// X: close, keeping the message as a Gmail draft (saved on disappear).
     private func close() {
         Keyboard.dismiss()
         dismiss()
+    }
+
+    /// Trash: close and delete the draft, if one was saved.
+    private func discard() {
+        finished = true
+        if let from = savedFrom { model.deleteDraft(draft.draftKey, from: from) }
+        Keyboard.dismiss()
+        dismiss()
+    }
+
+    /// Save (create or update) the Gmail draft when the content changed
+    /// since it was opened or last saved.
+    private func saveDraft() {
+        let now = snapshot
+        guard !fromId.isEmpty, now != savedSnapshot else { return }
+        if let old = savedFrom, old != fromId { model.deleteDraft(draft.draftKey, from: old) }
+        model.saveDraft(composed, from: fromId)
+        savedSnapshot = now
+        savedFrom = fromId
+        draft.draftSaved = true
     }
 }
 

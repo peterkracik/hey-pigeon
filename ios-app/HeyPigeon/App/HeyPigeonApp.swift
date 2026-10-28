@@ -115,7 +115,7 @@ struct RootView: View {
 }
 
 extension SendDraft: Identifiable {
-    var id: String { "\(replyToThreadId ?? "new")-\(subject)" }
+    var id: String { draftKey }
 }
 
 /// Bottom toast with an optional Undo — the archive gesture's safety net.

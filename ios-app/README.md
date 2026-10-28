@@ -71,6 +71,15 @@ stays `app.heypigeon`. They are separate products in App Store Connect
 not merge them under one id. No wildcard App ID is needed: automatic
 signing registers the explicit App ID on the first archive.
 
+**Capabilities.** iOS-M1 needs none beyond a plain App ID: background
+refresh and local notifications are Info.plist / permission matters, the
+Keychain is the app's own, the OAuth redirect is a URL scheme. Add App
+Groups + Keychain Sharing with the first extension (widget, share sheet),
+Push Notifications only if the optional relay ever ships, iCloud KVS only
+for the optional secret sync. `HeyPigeon/PrivacyInfo.xcprivacy` declares the
+required-reason APIs (UserDefaults, SQLite file stats, monotonic clock); App
+Store Connect rejects uploads without it.
+
 The upload lands in TestFlight; releasing to the App Store is still the
 "Submit for review" click in App Store Connect — or a later `fastlane
 deliver` step, if that ever becomes a chore.

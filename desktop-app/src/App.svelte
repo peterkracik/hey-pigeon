@@ -389,6 +389,14 @@
   // It stays in Scheduled, All mail and Need reply.
   const isSnoozed = (scheduledAt: number | null | undefined): boolean =>
     scheduledAt !== null && scheduledAt !== undefined && scheduledAt > Date.now();
+  // "Scheduled for today": the reminder's time falls on today's calendar
+  // day, already fired or not. Overdue from earlier days is not today's
+  // badge, and tomorrow's is not yet.
+  const isDueToday = (scheduledAt: number | null | undefined): boolean => {
+    if (scheduledAt === null || scheduledAt === undefined) return false;
+    const startOfToday = new Date().setHours(0, 0, 0, 0);
+    return scheduledAt >= startOfToday && scheduledAt < startOfToday + 86_400_000;
+  };
   // Folder key for a thread merged in from outside the active folder page
   // (list_scheduled / list_needs_reply): never "inbox" for a thread the
   // inbox must not show.
@@ -682,11 +690,20 @@
   // Backend-computed unread counts in live mode (every folder + label,
   // account-scoped like the rest of the view); a small inbox-only mock in
   // browser dev mode.
-  const counts = $derived(
-    ipc.isTauri && liveAccounts.length
-      ? liveCounts
-      : { inbox: EMAILS_SEED.filter((e) => e.folder === "inbox" && e.unread).length },
+  // Reminders due today, scoped like the view (unified or one account) —
+  // the badge on the rail's Scheduled button and the sidebar's Scheduled
+  // row. list_scheduled feeds every scheduled thread into emailsData, so
+  // archived and snoozed ones are counted too, like the Scheduled view.
+  const dueTodayCount = $derived(
+    emailsData.filter((e) => isDueToday(e.scheduledAt) && (unified || e.accountId === activeAccountId)).length,
   );
+  const counts = $derived({
+    ...(ipc.isTauri && liveAccounts.length
+      ? liveCounts
+      : { inbox: EMAILS_SEED.filter((e) => e.folder === "inbox" && e.unread).length }),
+    // Scheduled has no unread count; its badge is what is due today.
+    scheduled: dueTodayCount,
+  });
   const title = $derived.by(() =>
     view === "calendar"
       ? "Scheduled"
@@ -1634,6 +1651,9 @@
           d="M8 3v3M16 3v3M4 9h17M6 5h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2z"
           size={17}
         />
+        {#if dueTodayCount > 0}
+          <span class="rail-badge" aria-label="{dueTodayCount} due today">{dueTodayCount}</span>
+        {/if}
       </button>
       <button
         class="rail-btn"
@@ -2144,6 +2164,7 @@
     z-index: 40;
   }
   .rail-btn {
+    position: relative;
     border: none;
     background: none;
     cursor: pointer;
@@ -2177,6 +2198,30 @@
     flex-direction: column;
     gap: 4px;
     margin-top: 12px;
+  }
+  /* Reminders due today, pinned to the Scheduled button's corner — the
+     title row's coral badge at icon scale. */
+  .rail-badge {
+    position: absolute;
+    top: 2px;
+    right: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--tag-coral-fg);
+    color: var(--white);
+    font-family: var(--font-body);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 0 0 2px var(--bg-canvas);
+    pointer-events: none;
   }
   .main {
     flex: 1;

@@ -21,9 +21,15 @@ final class PushController {
     var enabled: Bool {
         didSet { defaults.set(enabled, forKey: Keys.enabled) }
     }
+    /// The relay to register with. Fixed when the build carries one
+    /// (`isBaked`); otherwise whatever the user entered in Settings.
     var relayURL: String {
-        didSet { defaults.set(relayURL, forKey: Keys.relayURL) }
+        didSet { if !isBaked { defaults.set(relayURL, forKey: Keys.relayURL) } }
     }
+    /// True when the build was made with HEYPIGEON_RELAY_URL (TestFlight /
+    /// App Store builds of the author's relay). Settings then shows only the
+    /// toggle, and push starts on — same footing as the baked OAuth client.
+    let isBaked: Bool
     /// Last APNs token the system gave us (hex). Re-registered whenever
     /// accounts change; iOS may rotate it at any launch.
     private(set) var deviceToken: String? {
@@ -52,13 +58,21 @@ final class PushController {
     init(engine: MailEngine, defaults: UserDefaults = .standard) {
         self.engine = engine
         self.defaults = defaults
-        enabled = defaults.bool(forKey: Keys.enabled)
-        // Build-time default (Info.plist ← Local.xcconfig HEYPIGEON_RELAY_URL),
-        // overridable in Settings. An unset xcconfig key arrives as the
-        // literal "$(…)", same as GoogleIOSClientID.
-        let baked = (Bundle.main.object(forInfoDictionaryKey: "HeyPigeonRelayURL") as? String) ?? ""
-        let saved = defaults.string(forKey: Keys.relayURL) ?? ""
-        relayURL = !saved.isEmpty ? saved : (baked.hasPrefix("$(") ? "" : baked)
+        // Build-time relay (Info.plist ← Local.xcconfig HEYPIGEON_RELAY_URL).
+        // An unset xcconfig key arrives as the literal "$(…)", same as
+        // GoogleIOSClientID.
+        let bakedRaw = ((Bundle.main.object(forInfoDictionaryKey: "HeyPigeonRelayURL") as? String) ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        let baked = bakedRaw.hasPrefix("https://") ? bakedRaw : ""
+        isBaked = !baked.isEmpty
+        relayURL = isBaked ? baked : (defaults.string(forKey: Keys.relayURL) ?? "")
+        // Default: on when the build knows its relay and the user has never
+        // decided otherwise; off when there is nothing to register with.
+        if let decided = defaults.object(forKey: Keys.enabled) as? Bool {
+            enabled = decided
+        } else {
+            enabled = isBaked
+        }
         deviceToken = defaults.string(forKey: Keys.deviceToken)
         refreshStatus()
     }

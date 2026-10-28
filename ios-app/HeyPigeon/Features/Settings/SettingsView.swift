@@ -436,11 +436,15 @@ private struct NotificationsSection: View {
                 }
             }
             .disabled(push.busy || (!push.enabled && !push.canEnable))
-            TextField("Relay URL (https://…)", text: $url)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .keyboardType(.URL)
-                .onSubmit { commitURL() }
-                .onChange(of: url) { _, v in push.relayURL = v }
+            // A build made with its relay (TestFlight / App Store) has nothing
+            // to type; the field is for someone running their own relay.
+            if !push.isBaked {
+                TextField("Relay URL (https://…)", text: $url)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .onSubmit { commitURL() }
+                    .onChange(of: url) { _, v in push.relayURL = v }
+            }
             if push.enabled, let status = push.status, !status.accounts.isEmpty {
                 ForEach(status.accounts) { a in
                     LabeledContent(a.id) {
@@ -454,7 +458,9 @@ private struct NotificationsSection: View {
         } header: {
             Text("Notifications")
         } footer: {
-            Text("Optional. Needs a relay you host (relay/README.md in the repo). The relay only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Reminders stay local and work without it.")
+            Text(push.isBaked
+                 ? "Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way."
+                 : "Optional. Needs a relay you host (relay/README.md in the repo). The relay only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Reminders stay local and work without it.")
         }
         .onAppear { url = push.relayURL; push.refreshStatus() }
     }
@@ -463,6 +469,7 @@ private struct NotificationsSection: View {
         let push = model.push
         if push.busy { return "Working…" }
         if !push.enabled { return push.canEnable ? "Off" : "Enter the relay URL first" }
+        if push.isBaked, push.status?.enabled != true, push.deviceToken == nil { return "Registering…" }
         if push.status?.enabled == true { return "On · registered" }
         return push.deviceToken == nil ? "Waiting for the system token…" : "On · not registered yet"
     }

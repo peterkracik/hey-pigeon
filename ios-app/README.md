@@ -101,10 +101,13 @@ The app side: `Shared/PushController.swift` (the toggle, the relay URL, the
 APNs token → `Engine.registerPushToken`), `App/AppDelegate.swift` (token and
 silent-push callbacks), `Shared/NewMailNotifier.swift` (one delta sync for the
 account named in the push, a local notification per new unread thread, badge).
-`HEYPIGEON_RELAY_URL` in `Config/Local.xcconfig` (or the GitHub variable of
-the same name for CI builds) pre-fills the relay URL; Settings → Notifications
-overrides it. Xcode builds register `sandbox` tokens, TestFlight / App Store
-builds `production` ones; the relay routes per token.
+`HEYPIGEON_RELAY_URL` in `Config/Local.xcconfig` (or the value of the same
+name on the `ios` GitHub environment for CI builds) bakes the relay into the
+build, like the OAuth client: Settings → Notifications then shows only the
+on/off toggle, on by default. A build without it shows a relay URL field and
+starts with push off — for someone running their own relay. Xcode builds
+register `sandbox` tokens, TestFlight / App Store builds `production` ones;
+the relay routes per token.
 
 The upload lands in TestFlight; releasing to the App Store is still the
 "Submit for review" click in App Store Connect — or a later `fastlane

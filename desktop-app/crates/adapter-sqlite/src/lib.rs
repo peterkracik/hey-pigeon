@@ -241,6 +241,14 @@ const MIGRATIONS: &[&str] = &[
     DROP TABLE triage_labels;
     ALTER TABLE triage_labels_v15 RENAME TO triage_labels;
     ",
+    // v16 — one-time heal for the list-row sender rule (a replied thread
+    // names the other party, not the user). `from_summary` /
+    // `last_from_addr` are derived at upsert time, and delta_sync only
+    // rebuilds threads that change, so rows the user already replied to
+    // would keep naming the user until they happened to be touched. Same
+    // recovery as v8: clearing the checkpoint forces a full backfill
+    // (idempotent upserts) on next startup, which rewrites every row.
+    "UPDATE accounts SET history_id = NULL;",
 ];
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
@@ -2586,6 +2594,31 @@ mod tests {
         assert!(
             s.list_accounts().unwrap()[0].history_id.is_none(),
             "v8 forces a one-time backfill after the labels upgrade"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn v16_migration_clears_checkpoint_so_sender_rows_are_rebuilt() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v16-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v15.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let _ = SqliteStore::init_to(conn, 15).unwrap(); // pre-v16 schema
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (id, email, display_name, color, history_id)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky', 'hist-42')",
+                [],
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(
+            s.list_accounts().unwrap()[0].history_id.is_none(),
+            "v16 forces a one-time backfill so every row re-derives its sender"
         );
         let _ = std::fs::remove_file(&path);
     }

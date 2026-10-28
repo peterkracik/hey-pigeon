@@ -1,9 +1,10 @@
-// A thread: participants in the glass pill on top, subject with one meta
-// line (priority, Jev labels, message count, account), messages as the
-// inbox's rows (latest expanded, the middle of long threads folded), and two
+// A thread: the other people's names between the back and action circles,
+// subject with one line of chips (priority, Jev labels, reminder, need
+// reply — the list's chips) and the message count, messages as the inbox's
+// rows (latest expanded, the middle of long threads folded), and two
 // floating glass bars at the bottom: the Reply button — tap for the default
 // action, chevron for Reply · Reply all · Forward, as in Superhuman — with
-// the AI draft inside, and the triage actions in the desktop's words:
+// the AI draft inside, and one triage bar in the desktop's words:
 // Done · Remind · Need reply · Pin · Delete.
 
 import SwiftUI
@@ -29,8 +30,6 @@ struct ThreadView: View {
         for m in msgs where !m.isMine && !seen.contains(m.fromName) { seen.append(m.fromName) }
         return seen.isEmpty ? row.fromSummary : seen.joined(separator: ", ")
     }
-
-    private var account: MailAccount? { model.accounts.first { $0.id == current.accountId } }
 
     /// Reply all when someone besides the sender is on the last message,
     /// else Reply.
@@ -60,9 +59,6 @@ struct ThreadView: View {
 
                 metaLine.padding(.horizontal, 16).padding(.top, 8)
 
-                if current.scheduledAt != nil || current.needsReply {
-                    statusLine.padding(.horizontal, 16).padding(.top, 8)
-                }
                 if let detail {
                     messageList(detail.messages).padding(.top, 14)
                 } else if let failed {
@@ -75,14 +71,18 @@ struct ThreadView: View {
             .padding(.bottom, 150)
         }
         .background(Theme.canvas)
+        // Same setup as the inbox's top bar, where the principal item shows.
+        .navigationTitle(participants)
         .toolbarTitleDisplayMode(.inline)
         .toolbar(removing: .title)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(participants).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .glassEffect(.regular, in: .capsule)
+                Text(participants)
+                    .font(Theme.display(17, relativeTo: .headline))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
             }
             if model.aiConfigured {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -140,18 +140,20 @@ struct ThreadView: View {
 
     // MARK: Messages
 
-    /// The messages with 1 pt gaps, as in the list. Past four messages the
-    /// middle folds into one row (first, "N earlier", last two) unless one
-    /// of them is unread or opened.
+    /// The messages with 1 pt gaps, as in the list. Long threads fold their
+    /// middle into one row: the first message, "N earlier", then the last
+    /// two and any unread run before them. Opening a message unfolds.
     private func messageList(_ messages: [MessageItem]) -> some View {
         let lastIndex = messages.count - 1
-        let foldable = !unfolded && messages.count > 4
-            && messages[1..<(lastIndex - 1)].allSatisfy { $0.isRead && !expanded.contains($0.id) }
+        var keepFrom = max(lastIndex - 1, 1)
+        while keepFrom > 1 && !messages[keepFrom - 1].isRead { keepFrom -= 1 }
+        let foldable = !unfolded && keepFrom - 1 >= 2
+            && !messages[1..<keepFrom].contains { expanded.contains($0.id) }
         return VStack(spacing: 1) {
             ForEach(Array(messages.enumerated()), id: \.element.id) { index, m in
-                if foldable && index > 0 && index < lastIndex - 1 {
+                if foldable && index > 0 && index < keepFrom {
                     if index == 1 {
-                        EarlierRow(count: lastIndex - 2) { withAnimation(.snappy) { unfolded = true } }
+                        EarlierRow(count: keepFrom - 1) { withAnimation(.snappy) { unfolded = true } }
                     }
                 } else {
                     MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || index == lastIndex)) {
@@ -166,16 +168,15 @@ struct ThreadView: View {
 
     // MARK: Header pieces
 
-    /// Priority + the Jev labels, with a "+" menu to edit them by hand
-    /// (sticky until "Reanalyze all emails" in Settings), then the message
-    /// count and the account — its first letter in the account colour, as
-    /// in the list.
+    /// One line of the list's chips: priority, the Jev labels with a "+"
+    /// chip to edit them by hand (sticky until "Reanalyze all emails" in
+    /// Settings), the reminder and need-reply badges; then the count.
     private var metaLine: some View {
         let names = current.triageLabelIds.compactMap { id in model.triageLabels.first { $0.id == id } }
         return HStack(spacing: 6) {
             if let p = current.priority { PriorityIndicator(priority: p) }
             ForEach(names) { l in
-                Chip(text: l.name, systemImage: "sparkles", background: Theme.sunken, foreground: Theme.textSecondary)
+                Chip(text: l.name, background: Theme.sunken, foreground: Theme.textSecondary)
             }
             if !model.triageLabels.isEmpty {
                 Menu {
@@ -188,72 +189,50 @@ struct ThreadView: View {
                         } label: { Label(label.name, systemImage: on ? "checkmark" : "tag") }
                     }
                 } label: {
-                    Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(Theme.textTertiary)
-                        .frame(width: 24, height: 22)
-                        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Chip(text: names.isEmpty ? "Label" : "", systemImage: "plus",
+                         background: Theme.sunken, foreground: Theme.textTertiary)
                 }
                 .accessibilityLabel("Edit labels")
             }
-            metaText.font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var metaText: Text {
-        let count = detail?.messages.count ?? row.messageCount
-        var t = Text(count == 1 ? "1 message" : "\(count) messages")
-        if let a = account, model.accounts.count > 1, let first = a.email.first {
-            t = t + Text(" · ") + Text(String(first)).foregroundStyle(Theme.tagForeground(a.color)).bold()
-                + Text(a.email.dropFirst())
-        }
-        return t
-    }
-
-    private var statusLine: some View {
-        HStack(spacing: 10) {
             if let at = current.scheduledAt {
-                Label(current.isFollowUp ? "Follow up \(Formatters.reminder(at)) if no reply" : "Reminder \(Formatters.reminder(at))",
-                      systemImage: current.isFollowUp ? "clock.arrow.circlepath" : "clock")
+                Chip(text: Formatters.reminder(at), systemImage: current.isFollowUp ? "clock.arrow.circlepath" : "clock",
+                     background: Theme.sunken, foreground: Theme.textSecondary)
+                    .accessibilityLabel(current.isFollowUp ? "Follow up \(Formatters.reminder(at)) if no reply" : "Reminder \(Formatters.reminder(at))")
             }
-            if current.needsReply { Label("Needs your reply", systemImage: "arrowshape.turn.up.left") }
+            if current.needsReply {
+                Chip(text: "Need reply", systemImage: "arrowshape.turn.up.left", background: Theme.sunken, foreground: Theme.textSecondary)
+            }
+            Spacer(minLength: 4)
+            let count = detail?.messages.count ?? row.messageCount
+            if count > 1 {
+                Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                    .accessibilityLabel("\(count) messages")
+            }
         }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(Theme.textSecondary)
     }
 
     // MARK: Bottom bars
 
-    /// The "new message" circle and the Reply pill, then the triage bar
-    /// underneath — every button its own glass element in one container
-    /// so taps land on the buttons, not on the glass.
+    /// The Reply pill, then the triage actions as one glass bar.
     private var bottomBars: some View {
         VStack(spacing: 10) {
-            GlassEffectContainer(spacing: 10) {
-                HStack(spacing: 10) {
-                    Button { model.composeDraft = SendDraft(fromAccountId: current.accountId) } label: {
-                        Image(systemName: "square.and.pencil").frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.glass)
-                    .accessibilityLabel("New message")
-                    replyPill
+            replyPill
+            HStack(spacing: 0) {
+                bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "arrow.uturn.backward" : "checkmark") {
+                    model.toggleDone(current); onClose()
                 }
-            }
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "arrow.uturn.backward" : "checkmark") {
-                        model.toggleDone(current); onClose()
-                    }
-                    bar("Remind me", "clock") { model.pendingRemind = current }
-                    bar(current.needsReply ? "Clear need reply" : "Need reply",
-                        current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left") {
-                        model.toggleNeedsReply(current)
-                    }
-                    bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil) {
-                        model.togglePin(current)
-                    }
-                    bar("Delete", "trash", tint: Color(hex: 0xB34E2E)) { model.delete(current); onClose() }
+                bar("Remind me", "clock") { model.pendingRemind = current }
+                bar(current.needsReply ? "Clear need reply" : "Need reply",
+                    current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left") {
+                    model.toggleNeedsReply(current)
                 }
+                bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil) {
+                    model.togglePin(current)
+                }
+                bar("Delete", "trash", tint: Color(hex: 0xB34E2E)) { model.delete(current); onClose() }
             }
+            .frame(height: 52)
+            .glassEffect(.regular, in: .capsule)
         }
         .padding(.horizontal, 16).padding(.bottom, 8)
     }
@@ -322,9 +301,11 @@ struct ThreadView: View {
 
     private func bar(_ label: String, _ systemImage: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage).font(.title3).frame(maxWidth: .infinity).frame(height: 28)
+            Image(systemName: systemImage).font(.title3)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.plain)
         .foregroundStyle(tint ?? Theme.textPrimary)
         .accessibilityLabel(label)
     }

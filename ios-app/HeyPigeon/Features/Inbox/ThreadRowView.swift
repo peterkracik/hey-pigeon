@@ -122,7 +122,7 @@ struct Chip: View {
     var body: some View {
         HStack(spacing: 4) {
             if let systemImage { Image(systemName: systemImage).font(.caption2) }
-            Text(text).font(.caption.weight(.semibold)).lineLimit(1)
+            if !text.isEmpty { Text(text).font(.caption.weight(.semibold)).lineLimit(1) }
         }
         .foregroundStyle(foreground)
         .padding(.horizontal, 7).padding(.vertical, 2)

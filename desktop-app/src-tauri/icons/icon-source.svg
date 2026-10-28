@@ -3,21 +3,21 @@
     <linearGradient id="hp-tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
     <mask id="hp-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
       <rect width="1024" height="1024" fill="#fff"/>
-      <circle cx="490" cy="378" r="206" fill="#000"/>
+      <circle cx="490" cy="370" r="231" fill="#000"/>
     </mask>
   </defs>
   <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile)"/>
-  <g transform="translate(40 30) rotate(-14 512 540)" fill="#EE4D9B">
-    <g mask="url(#hp-gap)">
-      <g stroke="#EE4D9B" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M430 700 L410 810"/>
-        <path d="M555 700 L585 805"/>
-        <path d="M372 585 L300 655"/>
-        <path d="M605 580 L715 480 L728 340"/>
+  <g transform="translate(36 52) rotate(-14 512 540)" fill="#EE4D9B">
+    <g stroke="#EE4D9B" stroke-width="110" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <g mask="url(#hp-gap)">
+        <path d="M435 720 L425 800"/>
+        <path d="M555 720 L575 795"/>
+        <path d="M362 600 L305 650"/>
       </g>
-      <rect x="345" y="485" width="290" height="255" rx="115"/>
+      <path d="M630 620 L760 500 L815 400"/>
     </g>
-    <circle cx="490" cy="378" r="180"/>
-    <rect x="362" y="300" width="262" height="176" rx="88" fill="#FFFFFF"/>
+    <rect x="335" y="500" width="310" height="250" rx="125" mask="url(#hp-gap)"/>
+    <circle cx="490" cy="370" r="205"/>
+    <rect x="352" y="285" width="290" height="190" rx="95" fill="#FFFFFF"/>
   </g>
 </svg>

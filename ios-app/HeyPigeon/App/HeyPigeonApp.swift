@@ -77,6 +77,8 @@ struct RootView: View {
             Tab(MainTab.scheduled.title, systemImage: MainTab.scheduled.systemImage, value: MainTab.scheduled) {
                 MailListScreen(tab: .scheduled)
             }
+            // Reminders due today, not every scheduled thread.
+            .badge(model.dueTodayCount)
             Tab(MainTab.needReply.title, systemImage: MainTab.needReply.systemImage, value: MainTab.needReply) {
                 MailListScreen(tab: .needReply)
             }

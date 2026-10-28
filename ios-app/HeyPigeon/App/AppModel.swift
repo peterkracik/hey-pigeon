@@ -106,9 +106,26 @@ final class AppModel {
     var showSidebar = false
     var showSettings = false
 
-    /// Scheduled / Need reply counts for the tab badges.
-    var scheduledCount: Int { (try? engine.threads(in: .scheduled, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
+    /// Scheduled / Need reply counts for the sidebar and the title.
+    var scheduledCount: Int { scheduledThreads(accountId: selectedAccountId).count }
     var needReplyCount: Int { (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
+    /// Reminders due today — the Scheduled tab's badge. The app icon badge
+    /// adds the unified count (NewMailNotifier.refreshBadge).
+    var dueTodayCount: Int { Self.dueToday(scheduledThreads(accountId: selectedAccountId)).count }
+
+    /// Every scheduled thread (archived and snoozed ones too, like the
+    /// Scheduled tab), one account or all.
+    func scheduledThreads(accountId: String?) -> [ThreadRow] {
+        (try? engine.threads(in: .scheduled, accountId: accountId, before: nil, limit: 500)) ?? []
+    }
+
+    /// "Scheduled for today": the reminder's time falls on today's calendar
+    /// day, fired already or not. Overdue from earlier days is not today's
+    /// badge, and tomorrow's is not yet.
+    static func dueToday(_ threads: [ThreadRow], now: Date = Date()) -> [ThreadRow] {
+        let cal = Calendar.current
+        return threads.filter { t in t.scheduledAt.map { cal.isDate($0, inSameDayAs: now) } ?? false }
+    }
 
     var disconnectedAccountId: String?
     var currentAccount: MailAccount? { accounts.first { $0.id == selectedAccountId } }
@@ -234,6 +251,9 @@ final class AppModel {
         hasLoadedOnce = true
         if isSearching { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }
+        // Anything that changes the list can change the icon badge: a read,
+        // a reminder set for later today, another device's edit.
+        Task { await NewMailNotifier.refreshBadge(self) }
     }
 
     func loadMoreIfNeeded(current row: ThreadRow) {
@@ -292,7 +312,9 @@ final class AppModel {
         } catch {
             show("Sync failed: \(error.localizedDescription)")
         }
-        // The app icon badge is the unified unread count — with or without push.
+        // The app icon badge is the unified unread count plus today's
+        // reminders — with or without push. Awaited here so a background
+        // refresh finishes it before the task is marked complete.
         await NewMailNotifier.refreshBadge(self)
     }
 

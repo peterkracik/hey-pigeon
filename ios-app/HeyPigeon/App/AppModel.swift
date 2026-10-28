@@ -97,8 +97,18 @@ final class AppModel {
     private(set) var hasLoadedOnce = false
 
     var searchText = "" { didSet { runSearch() } }
+    /// The Search tab's filter buttons, added to the typed words as operators.
+    var searchFilters = SearchFilters() { didSet { runSearch() } }
     private(set) var searchResults: [ThreadRow] = []
-    var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+    var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty || !searchFilters.isEmpty }
+    /// The typed words (hand-typed operators left out), underlined in result rows.
+    var searchTerms: [String] {
+        searchText.split(whereSeparator: \.isWhitespace).map(String.init).filter { !$0.contains(":") }
+    }
+    /// Search tab "Recent": newest first, on this device only.
+    private(set) var recentSearches: [RecentSearch] = AppModel.loadRecentSearches() {
+        didSet { AppModel.saveRecentSearches(recentSearches) }
+    }
 
     var toast: Toast?
     var pendingRemind: ThreadRow?
@@ -245,7 +255,79 @@ final class AppModel {
 
     private func runSearch() {
         guard isSearching else { searchResults = []; return }
-        searchResults = (try? engine.search(searchText, limit: 50)) ?? []
+        let query = (searchFilters.operators + [searchText]).joined(separator: " ")
+        searchResults = (try? engine.search(query, limit: 50)) ?? []
+    }
+
+    // MARK: Search — recent searches and the From / To people
+
+    private nonisolated static let recentSearchesKey = "recentSearches"
+    private static let recentSearchesLimit = 6
+
+    private nonisolated static func loadRecentSearches() -> [RecentSearch] {
+        guard let data = UserDefaults.standard.data(forKey: recentSearchesKey) else { return [] }
+        return (try? JSONDecoder().decode([RecentSearch].self, from: data)) ?? []
+    }
+
+    private nonisolated static func saveRecentSearches(_ list: [RecentSearch]) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: recentSearchesKey)
+    }
+
+    /// Keep the current search in "Recent" (on submit, or when a result opens).
+    func rememberSearch() {
+        let entry = RecentSearch(text: searchText.trimmingCharacters(in: .whitespaces), filters: searchFilters)
+        guard !entry.text.isEmpty || !entry.filters.isEmpty else { return }
+        var list = recentSearches.filter { $0 != entry }
+        list.insert(entry, at: 0)
+        recentSearches = Array(list.prefix(Self.recentSearchesLimit))
+    }
+
+    func runRecentSearch(_ entry: RecentSearch) {
+        searchFilters = entry.filters
+        searchText = entry.text
+    }
+
+    func forgetSearch(_ entry: RecentSearch) {
+        recentSearches.removeAll { $0 == entry }
+    }
+
+    func clearRecentSearches() {
+        recentSearches = []
+    }
+
+    /// People for the From / To pickers: who the mail comes from, across
+    /// every account, most frequent first (ties: most recent). The user's
+    /// own addresses are left out. `accountId` is where they last wrote.
+    func searchPeople() -> [PersonSuggestion] {
+        let mine = Set(accounts.map { $0.email.lowercased() })
+        let source = (try? engine.threads(in: .all, accountId: nil, before: nil, limit: 500)) ?? rows
+        var order: [String] = []
+        var seen: [String: (name: String, accountId: String, count: Int)] = [:]
+        for row in source {
+            let address = row.lastFromAddress.lowercased()
+            guard !address.isEmpty, !mine.contains(address) else { continue }
+            if var entry = seen[address] {
+                entry.count += 1
+                seen[address] = entry
+            } else {
+                // "Ana, Me (4)" → "Ana"; fall back to the address.
+                let first = row.fromSummary.components(separatedBy: ",").first?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                let name = first.isEmpty || first == "Me" ? address : first
+                seen[address] = (name: name, accountId: row.accountId, count: 1)
+                order.append(address)
+            }
+        }
+        let rank = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+        return order
+            .sorted { a, b in
+                let ca = seen[a]!.count, cb = seen[b]!.count
+                return ca != cb ? ca > cb : rank[a]! < rank[b]!
+            }
+            .map { address in
+                let entry = seen[address]!
+                return PersonSuggestion(person: SearchPerson(name: entry.name, address: address), accountId: entry.accountId)
+            }
     }
 
     /// The desktop's groups exactly: Pinned (inbox, when enabled) · Today ·

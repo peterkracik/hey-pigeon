@@ -9,6 +9,8 @@ import SwiftUI
 struct ThreadRowView: View {
     let row: ThreadRow
     let showAccountDot: Bool
+    /// Search words to underline in the subject and snippet.
+    var highlight: [String] = []
     @Environment(AppModel.self) private var model
 
     private var account: MailAccount? { model.accounts.first { $0.id == row.accountId } }
@@ -46,7 +48,7 @@ struct ThreadRowView: View {
             // Subject line carries the chips at its end: three lines per row,
             // about 86 pt, so six rows fit above the bars.
             HStack(spacing: 8) {
-                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                highlighted(row.subject.isEmpty ? "(no subject)" : row.subject)
                     .font(.subheadline.weight(row.isRead ? .regular : .semibold))
                     .foregroundStyle(tone)
                     .lineLimit(1)
@@ -59,7 +61,7 @@ struct ThreadRowView: View {
                 }
             }
             if !row.snippet.isEmpty {
-                Text(row.snippet)
+                highlighted(row.snippet)
                     .font(.footnote)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
@@ -67,6 +69,22 @@ struct ThreadRowView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+    }
+
+    /// The text with every search word underlined in the accent and lifted
+    /// to the primary colour; plain text when there is nothing to mark.
+    private func highlighted(_ text: String) -> Text {
+        guard !highlight.isEmpty else { return Text(text) }
+        var marked = AttributedString(text)
+        for word in highlight {
+            var rest = marked.startIndex..<marked.endIndex
+            while let hit = marked[rest].range(of: word, options: [.caseInsensitive, .diacriticInsensitive]) {
+                marked[hit].foregroundColor = Theme.textPrimary
+                marked[hit].underlineStyle = Text.LineStyle(pattern: .solid, color: Theme.accent)
+                rest = hit.upperBound..<marked.endIndex
+            }
+        }
+        return Text(marked)
     }
 
     /// Jev labels on the row, by name (at most two; the rest is in the thread).

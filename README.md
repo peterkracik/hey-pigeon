@@ -31,6 +31,12 @@ Because there's no backend and no third-party data store, there's no
 "Hey Pigeon got breached" risk model to worry about — your data's exposure
 surface is exactly your own Google account's, unchanged by using this app.
 
+The one honest exception: iOS push notifications need Apple's APNs, so the
+iOS app can optionally talk to a tiny relay you host yourself in your own
+Google Cloud project. It sees your address and a change counter, never mail
+— see [relay/README.md](./relay/README.md). Off by default; the app is
+complete without it.
+
 ## Status
 
 Early, personal, actively-changing. See [DESIGN.md](./DESIGN.md) for the

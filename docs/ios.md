@@ -303,7 +303,7 @@ Not an M1 goal, but the structure above does not have to change for it.
 | Client secret | Required by Desktop-app clients | None. `ClientConfig.client_secret` is now `Option`. |
 | Secrets | OS keychain (`keyring`) | iOS Keychain through the same crate (`apple-native` covers iOS). Items are per app; not iCloud-synced in v1. |
 | Sync cadence | 30 s poll loop in Rust | **The shell owns cadence.** Foreground: sync on launch, on every foreground, on pull. Background: `BGAppRefreshTask` (iOS decides when; expect a few times a day). No loop inside the engine. |
-| New-mail push | Polling | **Not in v1.** Real push needs APNs, i.e. a relay — DESIGN.md's "one true server case". Local-first means the inbox is current the moment the app opens; that is the v1 promise. Optional self-hostable relay later, metadata only. |
+| New-mail push | Polling | **Optional relay** (issue #16, `relay/`, `terraform/`): Gmail `users.watch` → Pub/Sub → Cloud Run → silent APNs push → the phone runs one delta sync and composes the notification locally; badge = unified unread. The relay sees email + historyId, never mail. Off by default — local-first still means the inbox is current the moment the app opens. Settings → Notifications → "New mail (push)" + relay URL. |
 | Reminder notifications | Posted from the poll loop | **Local notifications**, scheduled ahead from `list_scheduled()` on every sync (next 7 days, replaced wholesale each time). Works fully offline, no server. Follow-ups cancel on the next sync that sees a reply. |
 | Mail HTML | Sandboxed iframe, CSP | `WKWebView` with scripts off, CSP meta, remote images blocked, links to Safari VC. Same sanitized HTML. |
 | Attachments | Disk LRU cache | Same core logic; cache in the app container, relative paths. |
@@ -362,4 +362,5 @@ a Mac.
 ## Out of scope
 
 Android (the same `ffi` crate would bind through UniFFI's Kotlin generator,
-but nobody is asking), the App Store, generic IMAP, any server.
+but nobody is asking), the App Store, generic IMAP, any server beyond the
+optional metadata-only push relay (`relay/README.md`).

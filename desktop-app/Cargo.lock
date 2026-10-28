@@ -1892,6 +1892,8 @@ name = "heypigeon-ffi"
 version = "0.1.0"
 dependencies = [
  "heypigeon-adapter-gmail",
+ "heypigeon-adapter-jev",
+ "heypigeon-adapter-openai",
  "heypigeon-adapter-sqlite",
  "heypigeon-core",
  "keyring",

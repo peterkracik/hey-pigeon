@@ -81,7 +81,7 @@ floating "splits" pill above the tab bar. Here that maps to:
 │   two lines of snippet…                                  │
 │ ─────────────────────────────────────────────────────────│
 │   …                                                      │
-│        ( Inbox 2 · Invoices · Travel · Newsletters )     │  ← label filter pill
+│        ( Inbox 2 · Invoices · Travel · Newsletters )     │  ← Jev label pill (Settings › Triage)
 │   (  Inbox  ·  Scheduled  ·  Need reply  )   (🔍)        │  ← tab bar + search
 └──────────────────────────────────────────────────────────┘
 ```
@@ -90,13 +90,20 @@ floating "splits" pill above the tab bar. Here that maps to:
   tab bar; Search is the system's separate search circle. Inbox carries an
   unread badge, Need reply its count.
 - **The sidebar (≡)** is the desktop sidebar as a sheet: the accounts
-  (All / each account) nested under Inbox, then Starred · Drafts · Sent ·
-  Done · Scheduled · Need reply · All mail · Spam · Trash, the Gmail labels,
-  Add account and Settings. Picking a folder shows it in the Inbox tab.
-- **The label filter** is the floating pill above the tab bar: Inbox, then
-  the Gmail labels (Superhuman's "splits"); one tap switches the list.
-  Accounts (desktop `0`/`1`/`2`) switch in the sidebar, nested under Inbox,
-  and the choice applies across all tabs.
+  (All / each account) nested under Inbox, then the desktop's folders in
+  its order — Starred · Sent · Drafts · Archive · Scheduled · Need reply ·
+  All emails · Spam · Trash — the Gmail labels, Add account and Settings.
+  Picking a folder shows it in the Inbox tab.
+- **The label pill** above the tab bar is the desktop's label tabs under the
+  folder title: the folder (no filter), then the **Jev triage labels** from
+  Settings › Triage. One tap narrows the list to that label. Gmail labels
+  stay in the sidebar. Accounts (desktop `0`/`1`/`2`) switch in the sidebar,
+  nested under Inbox, and the choice applies across all tabs.
+- **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
+  Last 7 days · Older. Scheduled buckets by due date; Need reply has no
+  Pinned group.
+- **Rows:** unread rows sit on the card surface in primary text with the
+  dot; read rows sink into the canvas in the secondary tone.
 - **Compose** is the top-right circle. Nothing else lives in the top bar.
 - **Triage chips** (Jev labels + priority) appear inline on rows, not as a
   filter bar; a priority filter can join the account pill later.
@@ -148,24 +155,29 @@ action, a longer one the second. Each threshold ticks with a haptic and the
 revealed colour and icon change, so what happens on release is never a
 guess. Letting go before the first threshold does nothing.
 
-| Desktop | iOS | Notes |
+The actions are the desktop's, in the desktop's words: **Mark done** (`e`,
+archive), **Pin** (`s`, the Gmail star), **Remind me** (`h`), **Need reply**
+(`n`), **Mark read/unread** (`u`), **Move to folder** (`v`), **Add label**
+(`l`), **Reply** / **Reply all** / **Forward**, **Delete** (`#`).
+
+| Desktop | iOS default | Notes |
 | --- | --- | --- |
 | `u` read/unread | **swipe right, short** | grey |
-| `e` archive | **swipe right, long** | accent pink: the "check off" moment, row slides out, Undo toast for 5 s |
+| `e` mark done | **swipe right, long** | accent pink: the "check off" moment, row slides out, Undo toast for 5 s |
 | `h` remind me | **swipe left, short** | opens the Remind sheet |
 | `n` need reply | **swipe left, long** | blue; toggles, row gets the ↩︎ mark |
-| `#` trash, star, labels | long-press menu | also in the thread's More menu |
+| `s` pin, `#` delete, `v` move, `l` label | long-press menu | also in the thread's More menu |
 | `enter` open | tap | |
-| `esc` back | back / edge swipe | After archiving from inside a thread: pop back (default) or advance to the next thread (setting) |
+| `esc` back | back / edge swipe | |
 | `j`/`k` | scroll | |
 | `/` search | Search tab | |
-| `cmd+k` palette | long-press a row | Context menu with preview: Archive, Read/Unread, Star, Remind me…, Need reply, Labels…, Trash |
+| `cmd+k` palette | long-press a row | Mark done, Remind me, Pin, Need reply, Mark read/unread, Move to folder, Add label, Jev labels, Delete |
 | `0`/`1`/`2` accounts | sidebar | |
 | `g i` / `g a` | sidebar · label pill | Scheduled and Need reply are tabs |
 | `?` | — | Not needed; gestures are discoverable |
 
-The tier map lives in one place (`SwipeableRow` call in `InboxView`) so it
-can become a Settings page later.
+Which action sits on which tier is **Settings › Inbox › Swipe actions** —
+the desktop's "Hover actions", translated to the phone's gesture.
 
 Multi-select: the native List edit mode (Edit button, or two-finger drag
 down the rows) shows a bottom bar with Archive · Read · Remind · Trash.
@@ -225,11 +237,32 @@ label management (rename, colour, delete) stays in Settings.
 
 ### Settings
 
-Accounts (colour, display name, signature, connection and sync state,
-Reconnect, Remove) · AI provider (key paste, model, auto-summarize) · Jev
-triage (key, enabled, labels, reanalyze) · Notifications · Appearance
-(system / light / dark) · About. Account removal and anything that deletes
-asks once.
+The desktop's sections, same order, same wording:
+
+- **Accounts** — avatar, name, email, connection state; Name, Color (the
+  five tags), Sync (reminder sync over the account's Drive app folder),
+  Signature; Reconnect, Remove (asks once); Add account.
+- **AI** — ChatGPT (OpenAI): paste a key (verified before it is stored),
+  Model, Auto-summarize, Remove. Powers "Summarize N active" on the day
+  groups, "Summarize thread", the ✨ draft reply, and Edit with AI in
+  compose (tone and edit presets or a freeform instruction).
+- **Triage** — Jev: key (verified), Auto-triage, Reanalyze all emails, the
+  labels (add; swipe to remove). Classification runs at the end of every
+  sync round, bounded per round, never on its own timer. The labels are the
+  bottom pill and the chips on rows; a thread's labels can be edited by hand
+  (sticky until Reanalyze).
+- **Inbox** — Pinned list; Swipe actions (the four tiers).
+- **About** — version, links. Updates come through TestFlight / App Store.
+
+### Compose
+
+The desktop Composer: From chip (account dot + address, switching swaps
+the signature while the body is pristine), To with recipient chips and a
+Cc/Bcc toggle, Subject, a rich-text body (iOS 26 `TextEditor` over
+`AttributedString`), attachment chips (Files or Photos, 18 MB cap), and the
+footer: Send · Discard · ✨ Edit with AI · Attach · Aa (bold, italic,
+underline, strikethrough, link). Plain text always goes out; an html part
+only when formatting was applied.
 
 ### States and motion
 

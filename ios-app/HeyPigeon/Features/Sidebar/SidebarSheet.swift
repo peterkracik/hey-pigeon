@@ -28,11 +28,13 @@ struct SidebarSheet: View {
                 .textCase(nil)
                 .padding(.bottom, 4)
             }
+            // The desktop sidebar's folders, in its order (Archive is "done"
+            // in this app's vocabulary; Scheduled and Need reply are tabs).
             Section {
                 folderRow(.starred)
-                folderRow(.drafts)
                 folderRow(.sent)
-                folderRow(.archive, title: "Done")
+                folderRow(.drafts)
+                folderRow(.archive)
                 tabRow(.scheduled, count: model.scheduledCount)
                 tabRow(.needReply, count: model.needReplyCount)
                 folderRow(.all)
@@ -49,7 +51,14 @@ struct SidebarSheet: View {
                 }
             }
             Section {
-                Button { dismiss(); Task { await model.addAccount() } } label: { Label("Add Google account", systemImage: "plus.circle") }
+                // The consent sheet needs a window to present over; closing
+                // this sheet first tore it down. Stay up until it finishes.
+                Button {
+                    Task {
+                        await model.addAccount()
+                        dismiss()
+                    }
+                } label: { Label("Add Google account", systemImage: "plus.circle") }
                 Button { dismiss(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
         }

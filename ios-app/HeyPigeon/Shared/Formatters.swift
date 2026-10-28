@@ -40,14 +40,14 @@ enum Formatters {
 
     static func fullDate(_ date: Date) -> String { full.string(from: date) }
 
-    /// Section header for the day groups: "Today", "Yesterday", "Mon 23 Oct".
-    static func dayGroup(_ date: Date) -> String {
+    /// Section header for the day groups — the desktop's buckets exactly:
+    /// Today · Last 7 days · Older.
+    static func dayGroup(_ date: Date, now: Date = Date()) -> String {
         let cal = Calendar.current
-        if cal.isDateInToday(date) { return "Today" }
-        if cal.isDateInYesterday(date) { return "Yesterday" }
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate(cal.isDate(date, equalTo: Date(), toGranularity: .year) ? "EEE d MMM" : "d MMM yyyy")
-        return f.string(from: date)
+        let startOfToday = cal.startOfDay(for: now)
+        if date >= startOfToday { return "Today" }
+        if date >= startOfToday.addingTimeInterval(-7 * 86_400) { return "Last 7 days" }
+        return "Older"
     }
 
     /// Scheduled view buckets.

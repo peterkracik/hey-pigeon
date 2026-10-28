@@ -65,6 +65,10 @@ final class RustEngine: MailEngine {
         try engine.listLabels().map { MailLabelItem(id: $0.id, accountId: $0.accountId, name: $0.name) }
     }
 
+    func triageLabels() throws -> [TriageLabelItem] {
+        try engine.listTriageLabels().map { TriageLabelItem(id: $0.id, name: $0.name) }
+    }
+
     func unreadCounts(accountId: String?) throws -> [String: Int] {
         try engine.unreadCounts(accountId: accountId).mapValues(Int.init)
     }
@@ -109,6 +113,14 @@ final class RustEngine: MailEngine {
         try engine.setNeedsReply(threadId: threadId, needsReply: value)
     }
 
+    func setManualTriageLabels(threadId: String, ids: [String]) throws {
+        try engine.setManualTriageLabels(threadId: threadId, labelIds: ids)
+    }
+
+    func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws {
+        try engine.updateAccount(accountId: id, displayName: displayName, color: color?.rawValue, signature: signature)
+    }
+
     func removeAccount(id: String) throws {
         try engine.removeAccount(accountId: id)
     }
@@ -126,6 +138,58 @@ final class RustEngine: MailEngine {
     func finishOAuth(callbackURL: URL) async throws -> String {
         try await engine.finishOauth(callbackUrl: callbackURL.absoluteString)
     }
+
+    // MARK: AI (only "openai" exists today, same as the desktop)
+
+    private let provider = "openai"
+
+    func aiStatus() throws -> AIStatus {
+        let s = try engine.aiStatus()
+        return AIStatus(configured: s.configured, providerId: s.providerId, model: s.model)
+    }
+    func aiModels() throws -> [AIModel] {
+        try engine.aiModels(providerId: provider).map { AIModel(id: $0.id, label: $0.label) }
+    }
+    func setAIKey(_ key: String) async throws {
+        try await engine.setAiKey(providerId: provider, apiKey: key)
+    }
+    func removeAIKey() throws { try engine.removeAiKey(providerId: provider) }
+    func setAIModel(_ model: String) throws { try engine.setAiModel(providerId: provider, model: model) }
+    func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
+        try await engine.aiEditText(providerId: provider, instruction: instruction, text: text, history: history)
+    }
+    func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String {
+        try await engine.aiDraftReply(providerId: provider, subject: subject, history: history, notes: notes)
+    }
+    func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String {
+        try await engine.aiSummarizeThread(
+            providerId: provider, subject: subject,
+            items: items.map { ThreadSummaryItem(from: $0.from, snippet: $0.snippet) }
+        )
+    }
+    func aiSummarizeGroup(items: [(from: String, subject: String, snippet: String)]) async throws -> String {
+        try await engine.aiSummarizeGroup(
+            providerId: provider,
+            items: items.map { SummaryItem(from: $0.from, subject: $0.subject, snippet: $0.snippet) }
+        )
+    }
+
+    // MARK: Triage
+
+    func triageStatus() throws -> TriageStatus {
+        let s = try engine.triageStatus()
+        return TriageStatus(configured: s.configured, enabled: s.enabled, lastError: s.lastError)
+    }
+    func setJevKey(_ key: String) async throws { try await engine.setJevKey(apiKey: key) }
+    func removeJevKey() throws { try engine.removeJevKey() }
+    func setAutoTriage(_ enabled: Bool) throws { try engine.setAutolabelEnabled(enabled: enabled) }
+    func createTriageLabel(name: String) throws -> TriageLabelItem {
+        let l = try engine.createTriageLabel(name: name)
+        return TriageLabelItem(id: l.id, name: l.name)
+    }
+    func renameTriageLabel(id: String, name: String) throws { try engine.renameTriageLabel(id: id, newName: name) }
+    func deleteTriageLabel(id: String) throws { try engine.deleteTriageLabel(id: id) }
+    func reanalyzeTriage() throws { try engine.reanalyzeAllTriage() }
 }
 
 // MARK: - Mapping
@@ -229,7 +293,9 @@ private extension MailAction {
         case .modifyLabel(let id, let label, let add): .modifyLabel(threadId: id, labelId: label, add: add)
         case .send(let d):
             .send(to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
-                  bodyHtml: nil, attachments: [], replyToThread: d.replyToThreadId)
+                  bodyHtml: d.bodyHTML,
+                  attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
+                  replyToThread: d.replyToThreadId)
         }
     }
 }

@@ -1,0 +1,538 @@
+//! The Settings surface of the engine: per-account edits, the AI provider
+//! (BYO OpenAI key), and Jev auto-triage with its local labels. Mirrors
+//! `src-tauri/src/ai.rs` + `autolabel.rs` + `mail::update_account` one to
+//! one so the phone's Settings screen is the desktop's.
+
+use heypigeon_adapter_jev::{ClassifyInput, JevClassifier};
+use heypigeon_adapter_openai::OpenAiProvider;
+use heypigeon_core::ports::{AiProvider, ChatMessage, ChatRole, CompletionRequest, Store};
+
+use crate::engine::{Engine, ACCOUNT_COLORS};
+use crate::types::*;
+
+const AI_PROVIDER: &str = "openai";
+const AI_KEY: &str = "ai.openai.api_key";
+const AI_MODEL: &str = "ai.openai.model";
+const JEV_KEY: &str = "triage.jev.api_key";
+const TRIAGE_ENABLED: &str = "triage.enabled";
+
+/// Threads classified per sync round. Bounded so one large inbox cannot
+/// turn a refresh into a multi-minute Jev round; the next round continues.
+const TRIAGE_BATCH: u32 = 10;
+
+// The prompts are copied verbatim from the desktop shell so both apps get
+// the same voice from the same model.
+const EDIT_SYSTEM_PROMPT: &str = "You are an email writing assistant. You may be given the prior conversation for context — use it to answer questions or reference details the user asks for. Apply the user's instruction to the given text and return ONLY the revised text — no preamble, no explanation, no markdown formatting, no surrounding quotes.";
+const SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, giving them a quick heads-up on their active (not yet done) emails. Talk directly to them, warm and casual — e.g. \"You've got an invoice from...\" or \"Sarah followed up on...\" — first or second person, never a detached report. Return at most 3 short lines, one per notable item or theme; merge similar emails into one line. Plain text only: no markdown, no headers, no bullet characters, no preamble. If nothing is worth calling out, say so in one friendly line (e.g. \"Nothing urgent here.\").";
+const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You're the user's personal assistant, recapping an email conversation so they can skip reading every message. Talk directly to them, warm and casual — e.g. \"Sarah's asking for the invoice, and Priya already sent the draft.\" Return at most 3 short lines covering who said what and where things currently stand. Plain text only: no markdown, no headers, no bullet characters, no preamble.";
+const DRAFT_REPLY_SYSTEM_PROMPT: &str = "You are drafting an email reply on behalf of the user, who appears as \"Me\" in the conversation transcript. Write the reply to the latest message from the other participant(s): answer their questions, respond to their requests, and keep the user's established tone from any earlier \"Me\" messages. Be concise and natural. Never invent facts, dates, or commitments the conversation does not support — put a short placeholder in square brackets where the user must fill something in. If the user provided notes, build the reply around them. Return ONLY the reply body as plain text: no subject line, no markdown, no explanation, no surrounding quotes, and no signature block.";
+
+fn build_draft_reply_prompt(subject: &str, history: &str, notes: Option<&str>) -> String {
+    let mut out = format!("Subject: {subject}\n\nConversation so far (oldest first):\n{history}");
+    if let Some(n) = notes.map(str::trim).filter(|n| !n.is_empty()) {
+        out.push_str("\n\nNotes from the user for this reply:\n");
+        out.push_str(n);
+    }
+    out.push_str("\n\nWrite the reply.");
+    out
+}
+
+fn build_thread_summary_prompt(subject: &str, items: &[ThreadSummaryItem]) -> String {
+    let mut out = format!("Subject: {subject}\n\n");
+    out.push_str(
+        &items
+            .iter()
+            .map(|i| format!("{}: {}", i.from, i.snippet))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    );
+    out
+}
+
+fn build_summary_prompt(items: &[SummaryItem]) -> String {
+    items
+        .iter()
+        .map(|i| format!("From: {}\nSubject: {}\n{}", i.from, i.subject, i.snippet))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn ai_err(e: impl std::fmt::Display) -> EngineError {
+    EngineError::Ai(e.to_string())
+}
+
+fn check_provider(provider_id: &str) -> Result<(), EngineError> {
+    if provider_id == AI_PROVIDER {
+        Ok(())
+    } else {
+        Err(EngineError::Invalid(format!(
+            "unknown AI provider {provider_id}"
+        )))
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl Engine {
+    // ------------------------------------------------------------ accounts
+
+    /// Update per-account settings: display name, colour (one of the five
+    /// tags), signature. `None` leaves a field unchanged.
+    pub fn update_account(
+        &self,
+        account_id: String,
+        display_name: Option<String>,
+        color: Option<String>,
+        signature: Option<String>,
+    ) -> Result<(), EngineError> {
+        if let Some(c) = &color {
+            if !ACCOUNT_COLORS.contains(&c.as_str()) {
+                return Err(EngineError::Invalid(format!("unknown color {c}")));
+            }
+        }
+        let mut account = self
+            .store
+            .list_accounts()?
+            .into_iter()
+            .find(|a| a.id == account_id)
+            .ok_or_else(|| EngineError::Invalid(format!("unknown account {account_id}")))?;
+        if let Some(n) = display_name {
+            let n = n.trim().to_string();
+            if !n.is_empty() {
+                account.display_name = n;
+            }
+        }
+        if let Some(c) = color {
+            account.color = c;
+        }
+        if let Some(s) = signature {
+            account.signature = s;
+        }
+        self.store.upsert_account(&account)?;
+        self.notify_threads_updated();
+        Ok(())
+    }
+
+    // ------------------------------------------------------------ AI (OpenAI)
+
+    pub fn ai_status(&self) -> Result<AiStatus, EngineError> {
+        let configured = matches!(self.secrets.get(AI_KEY), Ok(Some(_)));
+        Ok(AiStatus {
+            configured,
+            provider_id: configured.then(|| AI_PROVIDER.to_string()),
+            model: self.secrets.get(AI_MODEL)?,
+        })
+    }
+
+    /// Static catalogue; no key needed.
+    pub fn ai_models(&self, provider_id: String) -> Result<Vec<AiModel>, EngineError> {
+        check_provider(&provider_id)?;
+        Ok(OpenAiProvider::model_catalog()
+            .into_iter()
+            .map(|m| AiModel {
+                id: m.id,
+                label: m.label,
+            })
+            .collect())
+    }
+
+    /// Verify a pasted key with one live call before persisting it, so a
+    /// typo or a revoked key never gets saved.
+    pub async fn set_ai_key(
+        &self,
+        provider_id: String,
+        api_key: String,
+    ) -> Result<(), EngineError> {
+        check_provider(&provider_id)?;
+        let key = api_key.trim().to_string();
+        if key.is_empty() {
+            return Err(EngineError::Invalid("API key is empty".into()));
+        }
+        OpenAiProvider::new(key.clone())
+            .verify()
+            .await
+            .map_err(ai_err)?;
+        self.secrets.set(AI_KEY, &key)?;
+        Ok(())
+    }
+
+    pub fn remove_ai_key(&self, provider_id: String) -> Result<(), EngineError> {
+        check_provider(&provider_id)?;
+        self.secrets.delete(AI_KEY)?;
+        self.secrets.delete(AI_MODEL)?;
+        Ok(())
+    }
+
+    pub fn set_ai_model(&self, provider_id: String, model: String) -> Result<(), EngineError> {
+        check_provider(&provider_id)?;
+        self.secrets.set(AI_MODEL, &model)?;
+        Ok(())
+    }
+
+    /// Apply one instruction (preset or freeform) to a piece of compose
+    /// text and return the revised text. `history` is the plain-text
+    /// transcript when replying inside a thread.
+    pub async fn ai_edit_text(
+        &self,
+        provider_id: String,
+        instruction: String,
+        text: String,
+        history: Option<String>,
+    ) -> Result<String, EngineError> {
+        check_provider(&provider_id)?;
+        let instruction = instruction.trim();
+        let text = text.trim();
+        if instruction.is_empty() {
+            return Err(EngineError::Invalid("instruction is empty".into()));
+        }
+        if text.is_empty() {
+            return Err(EngineError::Invalid("nothing to edit".into()));
+        }
+        let mut user = String::new();
+        if let Some(h) = history.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+            user.push_str("Conversation so far (oldest first):\n");
+            user.push_str(h);
+            user.push_str("\n\n");
+        }
+        user.push_str(&format!("Instruction: {instruction}\n\nText:\n{text}"));
+        self.openai_complete(EDIT_SYSTEM_PROMPT, user).await
+    }
+
+    /// A few lines about a group of active (not done) emails.
+    pub async fn ai_summarize_group(
+        &self,
+        provider_id: String,
+        items: Vec<SummaryItem>,
+    ) -> Result<String, EngineError> {
+        check_provider(&provider_id)?;
+        if items.is_empty() {
+            return Err(EngineError::Invalid("nothing to summarize".into()));
+        }
+        self.openai_complete(SUMMARY_SYSTEM_PROMPT, build_summary_prompt(&items))
+            .await
+    }
+
+    /// A short recap of one open thread.
+    pub async fn ai_summarize_thread(
+        &self,
+        provider_id: String,
+        subject: String,
+        items: Vec<ThreadSummaryItem>,
+    ) -> Result<String, EngineError> {
+        check_provider(&provider_id)?;
+        if items.is_empty() {
+            return Err(EngineError::Invalid("nothing to summarize".into()));
+        }
+        self.openai_complete(
+            THREAD_SUMMARY_SYSTEM_PROMPT,
+            build_thread_summary_prompt(&subject, &items),
+        )
+        .await
+    }
+
+    /// Draft a reply to the open thread from its transcript (+ the user's
+    /// notes). Never sends: the user edits and sends themselves.
+    pub async fn ai_draft_reply(
+        &self,
+        provider_id: String,
+        subject: String,
+        history: String,
+        notes: Option<String>,
+    ) -> Result<String, EngineError> {
+        check_provider(&provider_id)?;
+        if history.trim().is_empty() {
+            return Err(EngineError::Invalid("nothing to reply to".into()));
+        }
+        self.openai_complete(
+            DRAFT_REPLY_SYSTEM_PROMPT,
+            build_draft_reply_prompt(&subject, &history, notes.as_deref()),
+        )
+        .await
+    }
+
+    // ------------------------------------------------------------ triage (Jev)
+
+    pub fn triage_status(&self) -> Result<TriageStatus, EngineError> {
+        Ok(TriageStatus {
+            configured: matches!(self.secrets.get(JEV_KEY), Ok(Some(_))),
+            enabled: self.triage_enabled()?,
+            last_error: self.triage_last_error.lock().unwrap().clone(),
+        })
+    }
+
+    /// Verify the key with one trivial request before persisting it.
+    pub async fn set_jev_key(&self, api_key: String) -> Result<(), EngineError> {
+        let key = api_key.trim().to_string();
+        if key.is_empty() {
+            return Err(EngineError::Invalid("API key is empty".into()));
+        }
+        JevClassifier::new(key.clone())
+            .verify()
+            .await
+            .map_err(ai_err)?;
+        self.secrets.set(JEV_KEY, &key)?;
+        Ok(())
+    }
+
+    pub fn remove_jev_key(&self) -> Result<(), EngineError> {
+        self.secrets.delete(JEV_KEY)?;
+        Ok(())
+    }
+
+    pub fn set_autolabel_enabled(&self, enabled: bool) -> Result<(), EngineError> {
+        self.secrets
+            .set(TRIAGE_ENABLED, if enabled { "true" } else { "false" })?;
+        Ok(())
+    }
+
+    pub fn create_triage_label(&self, name: String) -> Result<TriageLabel, EngineError> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(EngineError::Invalid("label name cannot be empty".into()));
+        }
+        Ok(self.store.create_triage_label(&name)?.into())
+    }
+
+    pub fn rename_triage_label(&self, id: String, new_name: String) -> Result<(), EngineError> {
+        let new_name = new_name.trim().to_string();
+        if new_name.is_empty() {
+            return Err(EngineError::Invalid("label name cannot be empty".into()));
+        }
+        self.store.rename_triage_label(&id, &new_name)?;
+        Ok(())
+    }
+
+    /// Deleting a label changes what is on screen (its chips disappear).
+    pub fn delete_triage_label(&self, id: String) -> Result<(), EngineError> {
+        self.store.delete_triage_label(&id)?;
+        self.notify_threads_updated();
+        Ok(())
+    }
+
+    /// Settings "Reanalyze all emails": every thread becomes stale and the
+    /// next sync rounds reclassify the mailbox gradually.
+    pub fn reanalyze_all_triage(&self) -> Result<(), EngineError> {
+        self.store.reset_triage()?;
+        Ok(())
+    }
+
+    /// Manual label edit from the thread view. Sticky until "Reanalyze".
+    pub fn set_manual_triage_labels(
+        &self,
+        thread_id: String,
+        label_ids: Vec<String>,
+    ) -> Result<(), EngineError> {
+        self.store
+            .set_manual_triage_labels(&thread_id, &label_ids)?;
+        self.notify_threads_updated();
+        Ok(())
+    }
+}
+
+// Internals — not exported.
+impl Engine {
+    fn triage_enabled(&self) -> Result<bool, EngineError> {
+        Ok(self.secrets.get(TRIAGE_ENABLED)?.as_deref() == Some("true"))
+    }
+
+    async fn openai_complete(&self, system: &str, user: String) -> Result<String, EngineError> {
+        let key = self.secrets.get(AI_KEY)?.ok_or_else(|| {
+            EngineError::Invalid("connect an AI provider in Settings first".into())
+        })?;
+        let model = self.secrets.get(AI_MODEL)?.unwrap_or_else(|| {
+            OpenAiProvider::model_catalog()
+                .into_iter()
+                .next()
+                .map(|m| m.id)
+                .unwrap_or_default()
+        });
+        let req = CompletionRequest {
+            model,
+            messages: vec![
+                ChatMessage {
+                    role: ChatRole::System,
+                    content: system.to_string(),
+                },
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: user,
+                },
+            ],
+        };
+        OpenAiProvider::new(key)
+            .complete(req)
+            .await
+            .map(|s| s.trim().to_string())
+            .map_err(ai_err)
+    }
+
+    /// Classify up to `TRIAGE_BATCH` stale threads. Called at the end of
+    /// `sync_all`; overlapping rounds are skipped.
+    pub(crate) async fn classify_pending(&self) {
+        {
+            let mut running = self.classifying.lock().unwrap();
+            if *running {
+                return;
+            }
+            *running = true;
+        }
+        let result = self.classify_pending_inner().await;
+        *self.classifying.lock().unwrap() = false;
+        match result {
+            Ok(0) => {}
+            Ok(n) => {
+                log::info!("triage: classified {n} thread(s)");
+                *self.triage_last_error.lock().unwrap() = None;
+                self.notify_threads_updated();
+            }
+            Err(e) => {
+                log::warn!("triage: {e}");
+                *self.triage_last_error.lock().unwrap() = Some(e.to_string());
+            }
+        }
+    }
+
+    async fn classify_pending_inner(&self) -> Result<usize, EngineError> {
+        if !self.triage_enabled()? {
+            return Ok(0);
+        }
+        let Some(api_key) = self.secrets.get(JEV_KEY)? else {
+            return Ok(0);
+        };
+        let pending = self.store.list_threads_needing_triage(TRIAGE_BATCH)?;
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        let labels = self.store.list_triage_labels()?;
+        let classifier = JevClassifier::new(api_key);
+        let mut n = 0;
+        for thread in pending {
+            let messages = self.store.list_messages(&thread.id)?;
+            // Thread row landed before its messages (mid-sync race): the
+            // next round sees it again.
+            let Some(last) = messages.last() else {
+                continue;
+            };
+            let input = ClassifyInput {
+                subject: &thread.subject,
+                snippet: &thread.snippet,
+                from: &last.from_addr,
+            };
+            let result = classifier.classify(&input, &labels).await.map_err(ai_err)?;
+            self.store.set_thread_triage(
+                &thread.id,
+                &result.label_ids,
+                result.priority,
+                thread.msg_count,
+            )?;
+            n += 1;
+        }
+        Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::Engine;
+    use std::sync::Arc;
+
+    fn open(tag: &str) -> (Arc<Engine>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "heypigeon-ffi-settings-{tag}-{}-{}",
+            std::process::id(),
+            heypigeon_core::domain::now_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let e = Engine::open(
+            dir.to_string_lossy().into_owned(),
+            OauthClient {
+                client_id: "123-abc.apps.googleusercontent.com".into(),
+                client_secret: None,
+            },
+        )
+        .unwrap();
+        (e, dir)
+    }
+
+    #[test]
+    fn triage_labels_round_trip_and_status() {
+        let (e, dir) = open("triage");
+        let s = e.triage_status().unwrap();
+        assert!(!s.configured && !s.enabled && s.last_error.is_none());
+        let l = e.create_triage_label("  Invoices ".into()).unwrap();
+        assert_eq!(l.name, "Invoices");
+        assert!(e.create_triage_label("   ".into()).is_err());
+        e.rename_triage_label(l.id.clone(), "Bills".into()).unwrap();
+        assert_eq!(e.list_triage_labels().unwrap()[0].name, "Bills");
+        e.delete_triage_label(l.id).unwrap();
+        assert!(e.list_triage_labels().unwrap().is_empty());
+        e.set_autolabel_enabled(true).unwrap();
+        assert!(e.triage_status().unwrap().enabled);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ai_status_and_model_catalog() {
+        let (e, dir) = open("ai");
+        let s = e.ai_status().unwrap();
+        assert!(!s.configured && s.provider_id.is_none());
+        assert!(!e.ai_models("openai".into()).unwrap().is_empty());
+        assert!(e.ai_models("other".into()).is_err());
+        e.set_ai_model("openai".into(), "gpt-x".into()).unwrap();
+        assert_eq!(e.ai_status().unwrap().model.as_deref(), Some("gpt-x"));
+        e.remove_ai_key("openai".into()).unwrap();
+        assert!(e.ai_status().unwrap().model.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_account_validates_color_and_keeps_fields() {
+        let (e, dir) = open("account");
+        e.store
+            .upsert_account(&heypigeon_core::domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        assert!(e
+            .update_account("me@x.com".into(), None, Some("neon".into()), None)
+            .is_err());
+        e.update_account(
+            "me@x.com".into(),
+            Some("Peter".into()),
+            Some("mint".into()),
+            Some("— P".into()),
+        )
+        .unwrap();
+        let a = &e.list_accounts().unwrap()[0];
+        assert_eq!(
+            (
+                a.display_name.as_str(),
+                a.color.as_str(),
+                a.signature.as_str()
+            ),
+            ("Peter", "mint", "— P")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prompts() {
+        let p =
+            build_draft_reply_prompt("Invoice #42", "Sarah: Can you send it?", Some("say Friday"));
+        assert!(p.starts_with("Subject: Invoice #42"));
+        assert!(p.contains("Notes from the user for this reply:\nsay Friday"));
+        assert!(!build_draft_reply_prompt("Hi", "Sam: Hello", Some("   ")).contains("Notes from"));
+        let s = build_summary_prompt(&[SummaryItem {
+            from: "a@b".into(),
+            subject: "S".into(),
+            snippet: "x".into(),
+        }]);
+        assert!(s.contains("From: a@b\nSubject: S\nx"));
+    }
+}

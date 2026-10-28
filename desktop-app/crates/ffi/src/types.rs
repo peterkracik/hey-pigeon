@@ -361,6 +361,47 @@ pub struct AccountStatus {
     pub last_sync_at: Option<i64>,
 }
 
+/// Whether an AI provider is configured and which model is selected — the
+/// stored key itself is never returned.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AiStatus {
+    pub configured: bool,
+    pub provider_id: Option<String>,
+    pub model: Option<String>,
+}
+
+/// One selectable model of an AI provider.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AiModel {
+    pub id: String,
+    pub label: String,
+}
+
+/// Jev auto-triage: key present, background classification on, last error.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TriageStatus {
+    pub configured: bool,
+    pub enabled: bool,
+    pub last_error: Option<String>,
+}
+
+/// One email's contribution to a group summary — subject + snippet only,
+/// never the full body.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SummaryItem {
+    pub from: String,
+    pub subject: String,
+    pub snippet: String,
+}
+
+/// One message's contribution to a thread summary — sender + trimmed body
+/// text, never the raw HTML.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ThreadSummaryItem {
+    pub from: String,
+    pub snippet: String,
+}
+
 /// Google OAuth client the shell was built with. iOS clients have no secret.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct OauthClient {
@@ -393,6 +434,9 @@ pub enum EngineError {
     Oauth(String),
     #[error("{0}")]
     Invalid(String),
+    /// An AI provider / Jev call failed (network, bad key, provider error).
+    #[error("ai: {0}")]
+    Ai(String),
 }
 
 impl From<heypigeon_core::ports::StoreError> for EngineError {

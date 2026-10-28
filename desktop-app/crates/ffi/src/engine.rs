@@ -21,7 +21,7 @@ use crate::types::*;
 /// the desktop shell uses 30 today; the phone follows it).
 const BACKFILL_DAYS: u32 = 30;
 const KEYCHAIN_SERVICE: &str = "app.heypigeon";
-const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
+pub(crate) const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
 /// Change notifications, implemented on the Swift side. Called from engine
 /// threads — hop to the main actor before touching UI.
@@ -48,8 +48,8 @@ impl Default for SyncState {
 
 #[derive(uniffi::Object)]
 pub struct Engine {
-    store: SqliteStore,
-    secrets: Arc<dyn SecretStore + Send + Sync>,
+    pub(crate) store: SqliteStore,
+    pub(crate) secrets: Arc<dyn SecretStore + Send + Sync>,
     oauth_client: ClientConfig,
     provider: RwLock<GmailProvider>,
     pending_oauth: Mutex<Option<AuthRequest>>,
@@ -59,6 +59,10 @@ pub struct Engine {
     /// Accounts whose Google grant no longer works (edge-triggered).
     disconnected: Mutex<HashSet<AccountId>>,
     sync_status: Mutex<HashMap<AccountId, SyncStatusEntry>>,
+    /// Guards Jev classification from overlapping runs (settings.rs).
+    pub(crate) classifying: Mutex<bool>,
+    /// Last Jev failure; None after a clean run (settings.rs).
+    pub(crate) triage_last_error: Mutex<Option<String>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -104,6 +108,8 @@ impl Engine {
             syncing: Mutex::new(HashSet::new()),
             disconnected: Mutex::new(disconnected),
             sync_status: Mutex::new(HashMap::new()),
+            classifying: Mutex::new(false),
+            triage_last_error: Mutex::new(None),
         }))
     }
 
@@ -363,6 +369,9 @@ impl Engine {
         if changed {
             self.notify_threads_updated();
         }
+        // Jev triage rides the sync cadence, never its own timer (desktop
+        // does the same at the end of its poll tick).
+        self.classify_pending().await;
         Ok(changed)
     }
 
@@ -490,7 +499,7 @@ impl Engine {
 
 // Internals — not exported.
 impl Engine {
-    fn notify_threads_updated(&self) {
+    pub(crate) fn notify_threads_updated(&self) {
         if let Some(l) = self.listener.lock().unwrap().clone() {
             l.on_threads_updated();
         }

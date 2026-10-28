@@ -83,10 +83,10 @@ struct RootView: View {
         }
         // Liquid Glass tab bar shrinks away while reading, back on scroll up.
         .tabBarMinimizeBehavior(.onScrollDown)
-            .sheet(isPresented: $model.showSidebar) { SidebarSheet() }
-            .sheet(isPresented: $model.showSettings) { SettingsView() }
-            .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
-            .sheet(item: $model.composeDraft) { draft in ComposeView(draft: draft) }
+            .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
+            .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
+            .sheet(item: $model.pendingRemind, onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
+            .sheet(item: $model.composeDraft, onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
             .overlay(alignment: .bottom) { ToastView() }
             .alert(
                 "Account disconnected",

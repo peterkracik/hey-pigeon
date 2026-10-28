@@ -26,6 +26,11 @@ enum Theme {
     static let textSecondary = Color(light: Color(hex: 0x4E5057), dark: navy400)
     static let textTertiary = Color(light: Color(hex: 0x8E9096), dark: navy500)
     static let separator = Color(light: Color(hex: 0xE4E4E7), dark: navy800)
+    /// Unread rows sit on the card surface; read rows sink into the canvas.
+    static let rowUnread = card
+    static let rowRead = canvas
+    /// Pin colour (Gmail star): the amber tag.
+    static let pin = Color(hex: 0xE3B341)
 
     static func tagBackground(_ c: AccountColor) -> Color {
         switch c {
@@ -82,6 +87,15 @@ extension Color {
         self.init(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
         })
+    }
+}
+
+/// The keyboard does not always go away on its own when a sheet closes or
+/// a tab switches; this resigns whatever has focus.
+@MainActor
+enum Keyboard {
+    static func dismiss() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 

@@ -1,6 +1,7 @@
 // Observable app state: the one object the views read. Owns the engine,
-// the current view/account, the loaded rows, sync state and the undo toast.
-// All mutations go through here so optimistic UI + undo live in one place.
+// the current view/account, the loaded rows, sync state, the preferences
+// the desktop keeps in localStorage, and the undo toast. All mutations go
+// through here so optimistic UI + undo live in one place.
 
 import BackgroundTasks
 import Foundation
@@ -11,8 +12,26 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     let text: String
     var undo: (() -> Void)?
-
     static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
+}
+
+/// One day-group's AI summary (desktop InboxList "Summarize N active").
+struct GroupSummary: Equatable {
+    var cacheKey: String
+    var text: String?
+    var error: String?
+    var generating = false
+    var open = true
+}
+
+struct RowGroup: Identifiable {
+    let title: String
+    let rows: [ThreadRow]
+    let isPinned: Bool
+    var id: String { title }
+    /// Rows worth summarizing: not done.
+    var active: [ThreadRow] { rows.filter { !$0.isDone } }
+    var summaryKey: String { title + "|" + active.map(\.id).joined(separator: ",") }
 }
 
 @MainActor
@@ -27,15 +46,29 @@ final class AppModel {
     private(set) var accounts: [MailAccount] = []
     private(set) var accountStates: [String: AccountState] = [:]
     private(set) var labels: [MailLabelItem] = []
+    private(set) var triageLabels: [TriageLabelItem] = []
     private(set) var counts: [String: Int] = [:]
+    private(set) var aiConfigured = false
 
     /// nil = unified across accounts (desktop's `0`).
     var selectedAccountId: String? { didSet { reload() } }
     /// Bottom bar selection.
-    var tab: MainTab = .inbox { didSet { reload() } }
-    /// Folder/label the Inbox tab shows (its title menu); the other tabs
-    /// have fixed views.
-    var folder: MailView = .inbox { didSet { reload() } }
+    var tab: MainTab = .inbox {
+        didSet {
+            Keyboard.dismiss()
+            reload()
+        }
+    }
+    /// Folder/label the Inbox tab shows; the other tabs have fixed views.
+    var folder: MailView = .inbox {
+        didSet {
+            triageFilterId = nil
+            reload()
+        }
+    }
+    /// Jev label the list is narrowed to (the bottom pill). nil = all.
+    var triageFilterId: String?
+
     /// What the list currently shows, derived from tab + folder.
     var view: MailView {
         switch tab {
@@ -60,16 +93,40 @@ final class AppModel {
     var composeDraft: SendDraft?
     var showSidebar = false
     var showSettings = false
+
     /// Scheduled / Need reply counts for the tab badges.
     var scheduledCount: Int { (try? engine.threads(in: .scheduled, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
     var needReplyCount: Int { (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
-    var disconnectedAccountId: String?
 
+    var disconnectedAccountId: String?
     var currentAccount: MailAccount? { accounts.first { $0.id == selectedAccountId } }
-    var triageLevelsPresent: Bool { rows.contains { $0.priority != nil } }
+
+    // MARK: Preferences (the desktop keeps these in localStorage)
+
+    /// Group pinned messages at the top of the inbox.
+    var pinListEnabled: Bool {
+        didSet { UserDefaults.standard.set(pinListEnabled, forKey: "pinListEnabled") }
+    }
+    /// Generate AI summaries without a click.
+    var autoSummarize: Bool {
+        didSet { UserDefaults.standard.set(autoSummarize, forKey: "autoSummarize") }
+    }
+    /// Swipe tiers: right short, right long, left short, left long — the
+    /// desktop's "Hover actions", translated to the phone's gesture.
+    var swipeActions: [RowAction] {
+        didSet { UserDefaults.standard.set(swipeActions.map(\.rawValue), forKey: "swipeActions") }
+    }
+    static let defaultSwipeActions: [RowAction] = [.read, .done, .remind, .needReply]
+
+    private(set) var groupSummaries: [String: GroupSummary] = [:]
 
     init(engine: MailEngine) {
         self.engine = engine
+        let d = UserDefaults.standard
+        pinListEnabled = d.object(forKey: "pinListEnabled") as? Bool ?? true
+        autoSummarize = d.bool(forKey: "autoSummarize")
+        let stored = (d.stringArray(forKey: "swipeActions") ?? []).compactMap(RowAction.init(rawValue:))
+        swipeActions = stored.count == 4 ? stored : Self.defaultSwipeActions
         engine.onThreadsUpdated = { [weak self] in self?.reload() }
         engine.onAccountDisconnected = { [weak self] id in
             self?.disconnectedAccountId = id
@@ -85,8 +142,13 @@ final class AppModel {
         accounts = (try? engine.accounts()) ?? []
         accountStates = Dictionary(uniqueKeysWithValues: ((try? engine.accountStates()) ?? []).map { ($0.id, $0) })
         labels = (try? engine.labels()) ?? []
+        triageLabels = (try? engine.triageLabels()) ?? []
+        aiConfigured = (try? engine.aiStatus())?.configured ?? false
         if let selected = selectedAccountId, !accounts.contains(where: { $0.id == selected }) {
             selectedAccountId = nil
+        }
+        if let f = triageFilterId, !triageLabels.contains(where: { $0.id == f }) {
+            triageFilterId = nil
         }
     }
 
@@ -96,6 +158,7 @@ final class AppModel {
         counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? [:]
         hasLoadedOnce = true
         if isSearching { runSearch() }
+        if autoSummarize && aiConfigured { runAutoSummaries() }
     }
 
     func loadMoreIfNeeded(current row: ThreadRow) {
@@ -110,20 +173,33 @@ final class AppModel {
         searchResults = (try? engine.search(searchText, limit: 50)) ?? []
     }
 
-    /// Rows grouped by day (or by due bucket in Scheduled), newest first.
-    var groupedRows: [(title: String, rows: [ThreadRow])] {
-        let source = isSearching ? searchResults : rows
-        var order: [String] = []
-        var groups: [String: [ThreadRow]] = [:]
-        for r in source {
-            let key: String = switch view {
-            case .scheduled where !isSearching: Formatters.dueGroup(r.scheduledAt ?? r.lastMessageAt)
-            default: Formatters.dayGroup(r.lastMessageAt)
-            }
-            if groups[key] == nil { order.append(key) }
-            groups[key, default: []].append(r)
+    /// The desktop's groups exactly: Pinned (inbox, when enabled) · Today ·
+    /// Last 7 days · Older; the Scheduled tab buckets by due date instead.
+    var groupedRows: [RowGroup] {
+        var source = isSearching ? searchResults : rows
+        if let f = triageFilterId, tab == .inbox, !isSearching {
+            source = source.filter { $0.triageLabelIds.contains(f) }
         }
-        return order.map { ($0, groups[$0] ?? []) }
+        if view == .scheduled && !isSearching {
+            return bucket(source, titles: ["Overdue", "Today", "Tomorrow", "This week", "Later"]) {
+                Formatters.dueGroup($0.scheduledAt ?? $0.lastMessageAt)
+            }
+        }
+        var head: [RowGroup] = []
+        if pinListEnabled && view == .inbox && !isSearching {
+            let pinned = source.filter(\.isPinned)
+            if !pinned.isEmpty {
+                head = [RowGroup(title: "Pinned", rows: pinned, isPinned: true)]
+                source = source.filter { !$0.isPinned }
+            }
+        }
+        return head + bucket(source, titles: ["Today", "Last 7 days", "Older"]) { Formatters.dayGroup($0.lastMessageAt) }
+    }
+
+    private func bucket(_ rows: [ThreadRow], titles: [String], key: (ThreadRow) -> String) -> [RowGroup] {
+        var groups: [String: [ThreadRow]] = [:]
+        for r in rows { groups[key(r), default: []].append(r) }
+        return titles.compactMap { t in groups[t].map { RowGroup(title: t, rows: $0, isPinned: false) } }
     }
 
     // MARK: Sync
@@ -143,17 +219,23 @@ final class AppModel {
         }
     }
 
-    // MARK: Actions (optimistic: the engine applies locally before returning)
+    // MARK: Actions — the desktop's set, same names (optimistic; the
+    // engine applies locally before returning)
 
-    func archive(_ row: ThreadRow) {
+    /// Desktop `e`: archive is "done".
+    func markDone(_ row: ThreadRow) {
         Haptics.archive()
-        perform(.archive(threadId: row.id), on: row, toast: "Archived") { [weak self] in
+        perform(.archive(threadId: row.id), on: row, toast: "Marked done") { [weak self] in
             self?.perform(.unarchive(threadId: row.id), on: row)
         }
     }
 
-    func unarchive(_ row: ThreadRow) {
+    func markNotDone(_ row: ThreadRow) {
         perform(.unarchive(threadId: row.id), on: row, toast: "Moved to inbox")
+    }
+
+    func toggleDone(_ row: ThreadRow) {
+        if row.isDone { markNotDone(row) } else { markDone(row) }
     }
 
     func toggleRead(_ row: ThreadRow) {
@@ -166,14 +248,16 @@ final class AppModel {
         perform(.markRead(threadId: row.id, read: true), on: row)
     }
 
-    func toggleStar(_ row: ThreadRow) {
+    /// Desktop `s`: pin is the Gmail star.
+    func togglePin(_ row: ThreadRow) {
         Haptics.light()
-        perform(.star(threadId: row.id, starred: !row.isStarred), on: row)
+        perform(.star(threadId: row.id, starred: !row.isPinned), on: row, toast: row.isPinned ? "Unpinned" : "Pinned")
     }
 
-    func trash(_ row: ThreadRow) {
+    /// Desktop `#`.
+    func delete(_ row: ThreadRow) {
         Haptics.warning()
-        perform(.trash(threadId: row.id), on: row, toast: "Moved to trash")
+        perform(.trash(threadId: row.id), on: row, toast: "Deleted")
     }
 
     func toggleNeedsReply(_ row: ThreadRow) {
@@ -196,6 +280,40 @@ final class AppModel {
             }
             reload()
         } catch { show(error.localizedDescription) }
+    }
+
+    /// Desktop `l`: add or remove one Gmail label.
+    func setLabel(_ row: ThreadRow, _ label: MailLabelItem, on: Bool) {
+        perform(.modifyLabel(threadId: row.id, labelId: label.id, add: on), on: row,
+                toast: on ? "Label added · \(label.name)" : "Label removed · \(label.name)")
+    }
+
+    /// Desktop `v`: classic Gmail move — the label AND done.
+    func move(_ row: ThreadRow, to label: MailLabelItem) {
+        if view == .trash || view == .spam {
+            setLabel(row, label, on: true)
+            show("Labeled, not moved · \(label.name) added — mail stays in \(view.title)")
+            return
+        }
+        perform(.modifyLabel(threadId: row.id, labelId: label.id, add: true), on: row)
+        markDone(row)
+    }
+
+    /// Manual Jev label edit — sticky until "Reanalyze all emails".
+    func setTriageLabels(_ row: ThreadRow, _ ids: [String]) {
+        do { try engine.setManualTriageLabels(threadId: row.id, ids: ids) } catch { show(error.localizedDescription) }
+    }
+
+    /// Swipe tiers and the Settings picker dispatch through here.
+    func run(_ action: RowAction, on row: ThreadRow) {
+        switch action {
+        case .done: toggleDone(row)
+        case .delete: delete(row)
+        case .remind: pendingRemind = row
+        case .needReply: toggleNeedsReply(row)
+        case .pin: togglePin(row)
+        case .read: toggleRead(row)
+        }
     }
 
     func send(_ draft: SendDraft, from accountId: String) async {
@@ -225,6 +343,42 @@ final class AppModel {
         toast = Toast(text: text, undo: undo)
     }
 
+    // MARK: AI summaries (desktop InboxList)
+
+    func summary(for group: RowGroup) -> GroupSummary? {
+        guard let s = groupSummaries[group.title], s.cacheKey == group.summaryKey else { return nil }
+        return s
+    }
+
+    func summarize(_ group: RowGroup) {
+        let key = group.summaryKey
+        let items = group.active.map { (from: $0.fromSummary, subject: $0.subject, snippet: $0.snippet) }
+        guard !items.isEmpty else { return }
+        groupSummaries[group.title] = GroupSummary(cacheKey: key, generating: true)
+        Task {
+            do {
+                let text = try await engine.aiSummarizeGroup(items: items)
+                groupSummaries[group.title] = GroupSummary(cacheKey: key, text: text)
+            } catch {
+                groupSummaries[group.title] = GroupSummary(cacheKey: key, error: error.localizedDescription)
+            }
+        }
+    }
+
+    func toggleSummary(_ group: RowGroup) {
+        guard var s = summary(for: group) else { summarize(group); return }
+        s.open.toggle()
+        groupSummaries[group.title] = s
+    }
+
+    /// One group at a time, only ones not already cached for their content.
+    private func runAutoSummaries() {
+        if groupSummaries.values.contains(where: \.generating) { return }
+        if let g = groupedRows.first(where: { !$0.active.isEmpty && summary(for: $0) == nil }) {
+            summarize(g)
+        }
+    }
+
     // MARK: Accounts
 
     func addAccount(loginHint: String? = nil) async {
@@ -237,9 +391,18 @@ final class AppModel {
             if disconnectedAccountId == email { disconnectedAccountId = nil }
         } catch is CancellationError {
         } catch let e as URLError where e.code == .cancelled {
+        } catch let e as NSError where e.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && e.code == 1 {
+            // The user closed the consent sheet.
         } catch {
             show("Couldn't connect: \(error.localizedDescription)")
         }
+    }
+
+    func updateAccount(_ account: MailAccount, displayName: String? = nil, color: AccountColor? = nil, signature: String? = nil) {
+        do {
+            try engine.updateAccount(id: account.id, displayName: displayName, color: color, signature: signature)
+            reloadAccounts()
+        } catch { show(error.localizedDescription) }
     }
 
     func removeAccount(_ account: MailAccount) {

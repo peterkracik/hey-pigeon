@@ -1,7 +1,8 @@
-// One inbox row, three lines: sender · time, subject, two-line snippet —
+// One inbox row, three lines: sender · time, subject, one-line snippet —
 // plus chips only when there is something to say. No avatar: the dot on the
 // left is the unread mark, tinted with the account colour in the unified
-// view; a read row has no dot at all.
+// view. Unread rows sit on the card surface in primary text; read rows sink
+// into the canvas in the secondary tone, so the two states read at a glance.
 
 import SwiftUI
 
@@ -18,13 +19,15 @@ struct ThreadRowView: View {
         return Theme.accent
     }
 
+    private var tone: Color { row.isRead ? Theme.textSecondary : Theme.textPrimary }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Circle().fill(dotColor).frame(width: 8, height: 8).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
                 Text(row.fromSummary)
                     .font(Theme.sender(!row.isRead))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(tone)
                     .lineLimit(1)
                 if row.isConversation {
                     Text("\(row.messageCount)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
@@ -41,11 +44,14 @@ struct ThreadRowView: View {
             HStack(spacing: 8) {
                 Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                     .font(.subheadline.weight(row.isRead ? .regular : .semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(tone)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if let p = row.priority, p != .spam {
                     Chip(text: p.rawValue, background: Theme.priorityColor(p).opacity(0.14), foreground: Theme.priorityColor(p))
+                }
+                ForEach(triageNames, id: \.self) { name in
+                    Chip(text: name, background: Theme.navy100, foreground: Theme.textSecondary)
                 }
                 if row.hasAttachment {
                     Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)
@@ -64,6 +70,11 @@ struct ThreadRowView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Jev labels on the row, by name (at most two; the rest is in the thread).
+    private var triageNames: [String] {
+        row.triageLabelIds.prefix(2).compactMap { id in model.triageLabels.first { $0.id == id }?.name }
+    }
+
     private var timeText: String {
         if model.view == .scheduled, let at = row.scheduledAt { return Formatters.reminder(at) }
         return Formatters.rowTime(row.lastMessageAt)
@@ -75,7 +86,8 @@ struct ThreadRowView: View {
         HStack(spacing: 6) {
             if row.scheduledAt != nil { mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
             if row.needsReply { mark("arrowshape.turn.up.left") }
-            if row.isStarred { Image(systemName: "star.fill").font(.caption).foregroundStyle(Color(hex: 0xE3B341)) }
+            if row.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(Theme.pin) }
+            if row.isDone && model.view != .archive { mark("checkmark") }
         }
     }
 
@@ -93,7 +105,7 @@ struct Chip: View {
     var body: some View {
         HStack(spacing: 4) {
             if let systemImage { Image(systemName: systemImage).font(.caption2) }
-            Text(text).font(.caption.weight(.semibold))
+            Text(text).font(.caption.weight(.semibold)).lineLimit(1)
         }
         .foregroundStyle(foreground)
         .padding(.horizontal, 7).padding(.vertical, 2)

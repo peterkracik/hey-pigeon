@@ -1,8 +1,8 @@
 // The list screens behind the tab bar. No title: two glass circles on top
-// (sidebar, compose), the list starts right under them, and the label
+// (sidebar, compose), the list starts right under them, and the Jev label
 // filter floats above the tab bar as a glass pill. Accounts live in the
-// sidebar. One screen type serves
-// Inbox, Scheduled and Need reply; Search is its own screen.
+// sidebar. One screen type serves Inbox, Scheduled and Need reply; Search
+// is its own screen.
 
 import SwiftUI
 
@@ -43,7 +43,7 @@ struct MailListScreen: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if tab == .inbox && !model.labels.isEmpty { LabelSplitBar() }
+                if tab == .inbox && !model.triageLabels.isEmpty { TriageSplitBar() }
             }
             .refreshable { await model.sync() }
             .navigationDestination(for: ThreadRow.self) { row in
@@ -84,21 +84,23 @@ struct SearchScreen: View {
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }
             }
+            .onChange(of: path) { _, p in if !p.isEmpty { Keyboard.dismiss() } }
         }
     }
 }
 
-/// Floating label filter above the tab bar: Inbox, then the Gmail labels
-/// (Superhuman's "splits"). Accounts switch in the sidebar.
-struct LabelSplitBar: View {
+/// Floating filter above the tab bar: the folder title (no filter), then
+/// the Jev triage labels from Settings — the desktop's label tabs under the
+/// folder title. Accounts switch in the sidebar.
+struct TriageSplitBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
-                segment(.inbox, title: "Inbox")
-                ForEach(model.labels) { l in
-                    segment(.label(id: l.id, name: l.name), title: l.name)
+                segment(nil, title: model.folder.title, count: model.counts[model.folder.countKey] ?? 0)
+                ForEach(model.triageLabels) { l in
+                    segment(l.id, title: l.name, count: 0)
                 }
             }
             .padding(4)
@@ -108,12 +110,10 @@ struct LabelSplitBar: View {
         .padding(.bottom, 6)
     }
 
-    private func segment(_ view: MailView, title: String) -> some View {
-        let on = model.tab == .inbox && model.folder == view
-        let count = model.counts[view.countKey] ?? 0
+    private func segment(_ id: String?, title: String, count: Int) -> some View {
+        let on = model.triageFilterId == id
         return Button {
-            model.tab = .inbox
-            model.folder = view
+            model.triageFilterId = id
             Haptics.light()
         } label: {
             HStack(spacing: 6) {
@@ -128,98 +128,170 @@ struct LabelSplitBar: View {
     }
 }
 
-/// The flat list with the gesture map. Shared by every tab. Day headers
-/// only where they carry meaning (the Scheduled view's due buckets).
+/// The flat list with the gesture map and the desktop's day groups
+/// (Pinned · Today · Last 7 days · Older; due buckets in Scheduled).
 struct ThreadList: View {
     @Binding var path: [ThreadRow]
     @Environment(AppModel.self) private var model
 
-    private var showHeaders: Bool { model.view == .scheduled && !model.isSearching }
-
     var body: some View {
         List {
-            ForEach(model.groupedRows, id: \.title) { group in
+            ForEach(model.groupedRows) { group in
                 Section {
+                    if let s = model.summary(for: group), s.open, s.generating || s.text != nil || s.error != nil {
+                        Text(s.generating ? "Summarizing…" : (s.error ?? s.text ?? ""))
+                            .font(.footnote)
+                            .foregroundStyle(s.error == nil ? Theme.textSecondary : .red)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.navy50, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .padding(.horizontal, 20).padding(.vertical, 4)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Theme.canvas)
+                            .listRowSeparator(.hidden)
+                    }
                     ForEach(group.rows) { row in
                         SwipeableRow(
-                            leading: [
-                                SwipeAction(title: row.isRead ? "Unread" : "Read",
-                                            systemImage: row.isRead ? "envelope.badge" : "envelope.open",
-                                            tint: Theme.navy500) { model.toggleRead(row) },
-                                SwipeAction(title: "Archive", systemImage: "checkmark", tint: Theme.accent) { model.archive(row) },
-                            ],
-                            trailing: [
-                                SwipeAction(title: "Remind", systemImage: "clock", tint: Theme.navy700) { model.pendingRemind = row },
-                                SwipeAction(title: row.needsReply ? "No reply needed" : "Need reply",
-                                            systemImage: "arrowshape.turn.up.left",
-                                            tint: Color(hex: 0x2A6BAE)) { model.toggleNeedsReply(row) },
-                            ]
+                            leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
+                            trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
+                            background: row.isRead ? Theme.rowRead : Theme.rowUnread
                         ) {
                             ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil)
                                 .padding(.horizontal, 20).padding(.vertical, 7)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
+                                    Keyboard.dismiss()
                                     model.markRead(row)
                                     path.append(row)
                                 }
                         }
-                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                            .listRowBackground(Theme.canvas)
-                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-                            .contextMenu { RowMenu(row: row) }
-                            .onAppear { model.loadMoreIfNeeded(current: row) }
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .listRowBackground(row.isRead ? Theme.rowRead : Theme.rowUnread)
+                        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                        .contextMenu { RowMenu(row: row) }
+                        .onAppear { model.loadMoreIfNeeded(current: row) }
                     }
                 } header: {
-                    if showHeaders {
-                        Text(group.title)
-                            .font(Theme.display(13, relativeTo: .caption))
-                            .foregroundStyle(Theme.textTertiary)
-                            .textCase(nil)
-                    }
+                    GroupHeader(group: group)
                 }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.immediately)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
+    }
+
+    private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {
+        switch action {
+        case .done:
+            SwipeAction(title: row.isDone ? "Not done" : "Done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark",
+                        tint: Theme.accent) { model.run(.done, on: row) }
+        case .delete:
+            SwipeAction(title: "Delete", systemImage: "trash", tint: Color(hex: 0xB34E2E)) { model.run(.delete, on: row) }
+        case .remind:
+            SwipeAction(title: "Remind", systemImage: "clock", tint: Theme.navy700) { model.run(.remind, on: row) }
+        case .needReply:
+            SwipeAction(title: row.needsReply ? "No reply needed" : "Need reply", systemImage: "arrowshape.turn.up.left",
+                        tint: Color(hex: 0x2A6BAE)) { model.run(.needReply, on: row) }
+        case .pin:
+            SwipeAction(title: row.isPinned ? "Unpin" : "Pin", systemImage: row.isPinned ? "pin.slash" : "pin",
+                        tint: Color(hex: 0xA9761E)) { model.run(.pin, on: row) }
+        case .read:
+            SwipeAction(title: row.isRead ? "Unread" : "Read", systemImage: row.isRead ? "envelope.badge" : "envelope.open",
+                        tint: Theme.navy500) { model.run(.read, on: row) }
+        }
     }
 }
 
-/// The full action set — the command palette's row actions, on a long press.
+/// Day-group label in the desktop's small grey style, with the AI
+/// "Summarize N active" toggle on the right when a provider is connected.
+struct GroupHeader: View {
+    let group: RowGroup
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack {
+            Text(group.title)
+                .font(Theme.display(13, relativeTo: .caption))
+                .foregroundStyle(group.isPinned ? Theme.textSecondary : Theme.textTertiary)
+                .textCase(nil)
+            Spacer()
+            if model.aiConfigured, !group.active.isEmpty {
+                Button {
+                    model.toggleSummary(group)
+                } label: {
+                    if let s = model.summary(for: group) {
+                        Text(s.generating ? "Summarizing…" : (s.open ? "Hide summary" : "Show summary"))
+                    } else {
+                        Text("Summarize \(group.active.count) active")
+                    }
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Theme.textTertiary)
+                .textCase(nil)
+                .disabled(model.summary(for: group)?.generating == true)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+/// The full action set — the desktop command palette's row actions, on a
+/// long press, in the desktop's words.
 struct RowMenu: View {
     let row: ThreadRow
     @Environment(AppModel.self) private var model
 
+    private var accountLabels: [MailLabelItem] {
+        model.labels.filter { $0.accountId == row.accountId && !$0.id.hasPrefix("CATEGORY_") }
+    }
+
     var body: some View {
-        if row.isArchived {
-            Button { model.unarchive(row) } label: { Label("Move to inbox", systemImage: "tray.and.arrow.down") }
-        } else {
-            Button { model.archive(row) } label: { Label("Archive", systemImage: "checkmark") }
+        Button { model.toggleDone(row) } label: {
+            Label(row.isDone ? "Mark not done" : "Mark done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark")
+        }
+        Button { model.pendingRemind = row } label: {
+            Label(row.scheduledAt == nil ? "Remind me" : "Change reminder", systemImage: "clock")
+        }
+        Button { model.togglePin(row) } label: {
+            Label(row.isPinned ? "Unpin" : "Pin", systemImage: row.isPinned ? "pin.slash" : "pin")
+        }
+        Button { model.toggleNeedsReply(row) } label: {
+            Label(row.needsReply ? "Clear need reply" : "Need reply", systemImage: "arrowshape.turn.up.left")
         }
         Button { model.toggleRead(row) } label: {
             Label(row.isRead ? "Mark unread" : "Mark read", systemImage: row.isRead ? "envelope.badge" : "envelope.open")
         }
-        Button { model.toggleStar(row) } label: {
-            Label(row.isStarred ? "Unstar" : "Star", systemImage: row.isStarred ? "star.slash" : "star")
-        }
-        Button { model.pendingRemind = row } label: {
-            Label(row.scheduledAt == nil ? "Remind me…" : "Change reminder…", systemImage: "clock")
-        }
-        Button { model.toggleNeedsReply(row) } label: {
-            Label(row.needsReply ? "Doesn't need reply" : "Need reply", systemImage: "arrowshape.turn.up.left")
-        }
-        if !model.labels.isEmpty {
+        if !accountLabels.isEmpty {
             Menu {
-                ForEach(model.labels.filter { $0.accountId == row.accountId }) { label in
-                    let on = row.labels.contains(label.id)
-                    Button {
-                        Task { try? await model.engine.perform(.modifyLabel(threadId: row.id, labelId: label.id, add: !on), accountId: row.accountId) }
-                    } label: { Label(label.name, systemImage: on ? "checkmark" : "tag") }
+                ForEach(accountLabels) { label in
+                    Button { model.move(row, to: label) } label: { Label(label.name, systemImage: "tray") }
                 }
-            } label: { Label("Labels", systemImage: "tag") }
+            } label: { Label("Move to folder", systemImage: "folder") }
+            Menu {
+                ForEach(accountLabels) { label in
+                    let on = row.labels.contains(label.id)
+                    Button { model.setLabel(row, label, on: !on) } label: {
+                        Label(on ? "Remove \(label.name)" : label.name, systemImage: on ? "checkmark" : "tag")
+                    }
+                }
+            } label: { Label("Add label", systemImage: "tag") }
+        }
+        if !model.triageLabels.isEmpty {
+            Menu {
+                ForEach(model.triageLabels) { label in
+                    let on = row.triageLabelIds.contains(label.id)
+                    Button {
+                        var ids = row.triageLabelIds
+                        if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
+                        model.setTriageLabels(row, ids)
+                    } label: { Label(label.name, systemImage: on ? "checkmark" : "sparkles") }
+                }
+            } label: { Label("Jev labels", systemImage: "sparkles") }
         }
         Divider()
-        Button(role: .destructive) { model.trash(row) } label: { Label("Trash", systemImage: "trash") }
+        Button(role: .destructive) { model.delete(row) } label: { Label("Delete", systemImage: "trash") }
     }
 }
 

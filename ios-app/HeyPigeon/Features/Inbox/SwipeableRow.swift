@@ -3,9 +3,7 @@
 // the revealed colour/icon changes, so the user always knows what letting go
 // will do. The system's swipeActions can't do distance tiers, hence this.
 //
-// Default map (desktop keys in brackets), see docs/ios.md:
-//   swipe right  short → mark read/unread (u)   long → archive (e)
-//   swipe left   short → remind me (h)          long → need reply (n)
+// Which action sits on which tier comes from Settings (AppModel.swipeActions).
 
 import SwiftUI
 
@@ -21,6 +19,8 @@ struct SwipeableRow<Content: View>: View {
     let leading: [SwipeAction]
     /// Revealed when dragging to the left; index 0 = short, 1 = long.
     let trailing: [SwipeAction]
+    /// Opaque colour behind the content so the revealed panel hides under it.
+    let background: Color
     @ViewBuilder let content: () -> Content
 
     @State private var offset: CGFloat = 0
@@ -42,24 +42,27 @@ struct SwipeableRow<Content: View>: View {
 
     var body: some View {
         ZStack {
+            // The revealed panel fills the whole row height, whatever the
+            // content's height is.
             if let action = armed {
                 HStack {
-                    if tier < 0 { Spacer() }
+                    if tier < 0 { Spacer(minLength: 0) }
                     VStack(spacing: 3) {
                         Image(systemName: action.systemImage).font(.title3.weight(.semibold))
-                        Text(action.title).font(.caption2.weight(.semibold))
+                        Text(action.title).font(.caption2.weight(.semibold)).lineLimit(1)
                     }
                     .foregroundStyle(.white)
-                    .frame(width: max(abs(offset), 60))
-                    if tier > 0 { Spacer() }
+                    .frame(width: max(abs(offset), 64))
+                    if tier > 0 { Spacer(minLength: 0) }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(action.tint)
                 .transition(.opacity)
                 .animation(.easeOut(duration: 0.12), value: tier)
             }
             // The row itself tracks the finger; only the revealed action animates.
             content()
-                .background(Theme.canvas)
+                .background(background)
                 .offset(x: offset)
         }
         .clipped()

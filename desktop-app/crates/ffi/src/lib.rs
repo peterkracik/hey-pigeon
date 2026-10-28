@@ -19,6 +19,7 @@ uniffi::setup_scaffolding!();
 
 mod engine;
 mod secrets;
+mod settings;
 mod types;
 
 pub use engine::*;

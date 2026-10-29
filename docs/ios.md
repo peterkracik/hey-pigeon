@@ -141,6 +141,9 @@ Three lines, flat, hairline separators, no cards and no avatar — about
   Scheduled keeps its due buckets (Overdue · Today · Tomorrow · This week ·
   Later).
 - Pagination is keyset (`before = last row's last_msg_at`), 50 rows a page.
+  Scheduled and Need reply are bounded lists and come back whole (never
+  paged). The loaded rows never hold a thread twice, whatever the engine
+  returns: SwiftUI's `List` aborts the process on duplicate row ids.
 
 ### Liquid Glass (iOS 26)
 

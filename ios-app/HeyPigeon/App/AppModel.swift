@@ -80,7 +80,7 @@ final class AppModel {
         }
     }
     /// Jev label the list is narrowed to (the bottom pill). nil = all.
-    var triageFilterId: String?
+    var triageFilterId: String? { didSet { regroup() } }
 
     /// What the list currently shows, derived from tab + folder.
     var view: MailView {
@@ -91,7 +91,9 @@ final class AppModel {
         }
     }
 
-    private(set) var rows: [ThreadRow] = []
+    /// The loaded page(s) of the current view. Never holds a thread twice:
+    /// SwiftUI's List aborts the process on duplicate row ids.
+    private(set) var rows: [ThreadRow] = [] { didSet { regroup() } }
     private(set) var hasMore = true
     private(set) var isSyncing = false
     private var isBackfillingOlder = false
@@ -101,7 +103,7 @@ final class AppModel {
     var searchText = "" { didSet { runSearch() } }
     /// The Search tab's filter buttons, added to the typed words as operators.
     var searchFilters = SearchFilters() { didSet { runSearch() } }
-    private(set) var searchResults: [ThreadRow] = []
+    private(set) var searchResults: [ThreadRow] = [] { didSet { regroup() } }
     var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty || !searchFilters.isEmpty }
     /// The typed words (hand-typed operators left out), underlined in result rows.
     var searchTerms: [String] {
@@ -125,19 +127,20 @@ final class AppModel {
     var showSidebar = false
     var showSettings = false
 
-    /// Scheduled / Need reply counts for the sidebar and the title.
-    var scheduledCount: Int { scheduledThreads(accountId: selectedAccountId).count }
+    /// Scheduled / Need reply / Drafts totals for the sidebar, the tab
+    /// badges and the list title, and the reminders whose time has passed
+    /// (the Scheduled tab's badge; the app icon badge adds the unified
+    /// count in NewMailNotifier.refreshBadge). Read from the store once per
+    /// reload — as computed properties they hydrated up to 500 rows each
+    /// on every render of the tab bar, the title and the sidebar.
+    private(set) var scheduledCount = 0
+    private(set) var needReplyCount = 0
     /// Drafts are read, so the unread map has none: the sidebar shows how many there are.
-    var draftsCount: Int { (try? engine.threads(in: .drafts, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
-    var needReplyCount: Int { (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
-    /// Reminders whose time has passed — the Scheduled tab's badge. The app
-    /// icon badge adds the unified count (NewMailNotifier.refreshBadge).
-    /// Reads `now` so the badge follows the clock while the app is open.
-    var dueCount: Int { Self.due(scheduledThreads(accountId: selectedAccountId), now: now).count }
+    private(set) var draftsCount = 0
+    private(set) var dueCount = 0
     /// Ticks every 30 s while the app runs, so a reminder coming due raises
     /// `dueCount` and the icon badge without waiting for a reload (the
     /// desktop's `now` in App.svelte).
-    private(set) var now = Date()
     @ObservationIgnored private var clock: Task<Void, Never>?
 
     /// Every scheduled thread still in the inbox (done mail has no
@@ -172,7 +175,10 @@ final class AppModel {
 
     /// Group pinned messages at the top of the inbox.
     var pinListEnabled = true {
-        didSet { savePref(PrefName.pinList, pinListEnabled) }
+        didSet {
+            savePref(PrefName.pinList, pinListEnabled)
+            regroup()
+        }
     }
     /// Generate AI summaries without a click.
     var autoSummarize = false {
@@ -258,11 +264,12 @@ final class AppModel {
         }
     }
 
-    /// A reminder just came due: the tab badge re-reads, and the icon badge
-    /// adds it (the notification carries the same count for the asleep case).
+    /// A reminder just came due: recount so the Scheduled tab badge moves,
+    /// and the icon badge adds it (the notification carries the same count
+    /// for the asleep case).
     private func tick() {
         let before = dueCount
-        now = Date()
+        dueCount = Self.due(scheduledThreads(accountId: selectedAccountId)).count
         if dueCount != before { Task { await NewMailNotifier.refreshBadge(self) } }
     }
 
@@ -283,9 +290,11 @@ final class AppModel {
     }
 
     func reload() {
-        rows = (try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? []
-        hasMore = rows.count == Self.pageSize
+        let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? []
+        rows = Self.unique(page)
+        hasMore = view.isPaged && page.count == Self.pageSize
         counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? [:]
+        refreshCounts()
         hasLoadedOnce = true
         refreshOpenThread()
         if isSearching { runSearch() }
@@ -295,17 +304,43 @@ final class AppModel {
         Task { await NewMailNotifier.refreshBadge(self) }
     }
 
+    /// The sidebar / badge totals, from the store. Reminders and Need reply
+    /// are bounded lists; drafts are capped like the sidebar's other folders.
+    private func refreshCounts() {
+        let scheduled = scheduledThreads(accountId: selectedAccountId)
+        scheduledCount = scheduled.count
+        dueCount = Self.due(scheduled).count
+        needReplyCount = (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0
+        draftsCount = (try? engine.threads(in: .drafts, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0
+    }
+
     func loadMoreIfNeeded(current row: ThreadRow) {
-        guard hasMore, row.id == rows.last?.id, let last = rows.last else { return }
-        let more = (try? engine.threads(in: view, accountId: selectedAccountId, before: last.lastMessageAt, limit: Self.pageSize)) ?? []
-        rows.append(contentsOf: more)
-        hasMore = more.count == Self.pageSize
+        guard hasMore, row.id == rows.last?.id else { return }
+        appendNextPage()
+    }
+
+    /// The page after the last loaded row. The cursor is a timestamp, so a
+    /// thread already on screen is dropped from the page rather than listed
+    /// twice (see `rows`).
+    private func appendNextPage() {
+        guard view.isPaged, let last = rows.last else { hasMore = false; return }
+        let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: last.lastMessageAt, limit: Self.pageSize)) ?? []
+        hasMore = page.count == Self.pageSize
+        let loaded = Set(rows.map(\.id))
+        let fresh = Self.unique(page.filter { !loaded.contains($0.id) })
+        if !fresh.isEmpty { rows.append(contentsOf: fresh) }
+    }
+
+    /// The first occurrence of each thread id, order kept.
+    static func unique(_ rows: [ThreadRow]) -> [ThreadRow] {
+        var seen = Set<String>()
+        return rows.filter { seen.insert($0.id).inserted }
     }
 
     private func runSearch() {
         guard isSearching else { searchResults = []; return }
         let query = (searchFilters.operators + [searchText]).joined(separator: " ")
-        searchResults = (try? engine.search(query, limit: 50)) ?? []
+        searchResults = Self.unique((try? engine.search(query, limit: 50)) ?? [])
     }
 
     // MARK: Search — recent searches and the From / To people
@@ -381,28 +416,46 @@ final class AppModel {
 
     /// The desktop's groups exactly: Pinned (inbox, when enabled) · Today ·
     /// Last 7 days · Older; the Scheduled tab buckets by due date instead.
-    var groupedRows: [RowGroup] {
-        var source = isSearching ? searchResults : rows
-        if let f = triageFilterId, tab == .inbox, !isSearching {
+    /// Stored, not computed: rebuilt when the rows, the search results, the
+    /// label filter or the pin setting change, instead of on every render
+    /// of every view that reads it (the list, the empty state, the title).
+    private(set) var groupedRows: [RowGroup] = []
+
+    private func regroup() {
+        groupedRows = Self.group(
+            isSearching ? searchResults : rows,
+            view: view, searching: isSearching,
+            triageFilterId: tab == .inbox ? triageFilterId : nil,
+            pinList: pinListEnabled
+        )
+    }
+
+    /// Pure grouping; the day boundaries are computed once for the list.
+    static func group(_ rows: [ThreadRow], view: MailView, searching: Bool,
+                      triageFilterId: String?, pinList: Bool, now: Date = Date()) -> [RowGroup] {
+        var source = rows
+        if let f = triageFilterId, !searching {
             source = source.filter { $0.triageLabelIds.contains(f) }
         }
-        if view == .scheduled && !isSearching {
+        if view == .scheduled && !searching {
+            let due = Formatters.dueGrouper(now: now)
             return bucket(source, titles: ["Overdue", "Today", "Tomorrow", "This week", "Later"]) {
-                Formatters.dueGroup($0.scheduledAt ?? $0.lastMessageAt)
+                due($0.scheduledAt ?? $0.lastMessageAt)
             }
         }
         var head: [RowGroup] = []
-        if pinListEnabled && view == .inbox && !isSearching {
+        if pinList && view == .inbox && !searching {
             let pinned = source.filter(\.isPinned)
             if !pinned.isEmpty {
                 head = [RowGroup(title: "Pinned", rows: pinned, isPinned: true)]
                 source = source.filter { !$0.isPinned }
             }
         }
-        return head + bucket(source, titles: ["Today", "Last 7 days", "Older"]) { Formatters.dayGroup($0.lastMessageAt) }
+        let day = Formatters.dayGrouper(now: now)
+        return head + bucket(source, titles: ["Today", "Last 7 days", "Older"]) { day($0.lastMessageAt) }
     }
 
-    private func bucket(_ rows: [ThreadRow], titles: [String], key: (ThreadRow) -> String) -> [RowGroup] {
+    private static func bucket(_ rows: [ThreadRow], titles: [String], key: (ThreadRow) -> String) -> [RowGroup] {
         var groups: [String: [ThreadRow]] = [:]
         for r in rows { groups[key(r), default: []].append(r) }
         return titles.compactMap { t in groups[t].map { RowGroup(title: t, rows: $0, isPinned: false) } }
@@ -453,12 +506,21 @@ final class AppModel {
     /// its end picks it up by scrolling; one that has gets the next page
     /// appended here instead of a reload that would jump the scroll.
     private func appendOlderRows() {
+        guard !rows.isEmpty else { reload(); return }
         counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? counts
-        guard let last = rows.last else { reload(); return }
+        refreshCounts()
+        if !view.isPaged {
+            // Scheduled and Need reply come back whole, so there is no page
+            // to append — appending re-listed every thread on each backfill
+            // step, and the duplicate ids took the List down. A thread whose
+            // reminder synced in before its mail joins here; the list is
+            // replaced, and only when it changed, so the scroll stays put.
+            let whole = Self.unique((try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? rows)
+            if whole != rows { rows = whole }
+            return
+        }
         guard !hasMore else { return }
-        let more = (try? engine.threads(in: view, accountId: selectedAccountId, before: last.lastMessageAt, limit: Self.pageSize)) ?? []
-        rows.append(contentsOf: more)
-        hasMore = more.count == Self.pageSize
+        appendNextPage()
     }
 
     /// Deep link from a notification (reminder or new mail): the inbox tab
@@ -471,13 +533,8 @@ final class AppModel {
     /// Resolve a pending deep link to a row, searching the loaded inbox
     /// first and the store second. Nil clears nothing — the screen decides.
     func row(forThreadId id: String) -> ThreadRow? {
-        if let r = groupedRows.flatMap(\.rows).first(where: { $0.id == id }) { return r }
-        for view in [MailView.inbox, .scheduled, .needReply, .all] {
-            if let r = (try? engine.threads(in: view, accountId: nil, before: nil, limit: 500))?.first(where: { $0.id == id }) {
-                return r
-            }
-        }
-        return nil
+        if let r = rows.first(where: { $0.id == id }) { return r }
+        return try? engine.threadRow(id: id)
     }
 
     func showThread(_ row: ThreadRow) {

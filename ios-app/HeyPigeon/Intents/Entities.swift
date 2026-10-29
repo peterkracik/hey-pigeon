@@ -32,7 +32,10 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
     let senderAddress: String
 
     init(_ row: ThreadRow, account: MailAccount?) {
+        // Plain stored properties first: assigning an @Property goes through
+        // the wrapper, which needs `self` whole (the first compile said so).
         id = row.id
+        senderAddress = row.lastFromAddress
         subject = row.subject.isEmpty ? "(no subject)" : row.subject
         from = row.fromSummary
         snippet = row.snippet
@@ -46,7 +49,6 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
         reminderAt = row.scheduledAt
         isDone = row.isDone
         hasAttachment = row.hasAttachment
-        senderAddress = row.lastFromAddress
     }
 
     var displayRepresentation: DisplayRepresentation {

@@ -84,6 +84,33 @@ struct MailboxQuery: EntityStringQuery {
     }
 }
 
+// MARK: - Category
+
+/// The schema's message category, from Gmail's inbox tabs: Promotions and
+/// Updates map across, Social and Forums count as updates, Primary as
+/// primary. Gmail has no Transactions tab; nothing maps to it.
+@AppEnum(schema: .mail.category)
+enum MailCategory: AppEnum {
+    case primary
+    case transactions
+    case updates
+    case promotions
+
+    static var caseDisplayRepresentations: [MailCategory: DisplayRepresentation] = [
+        .primary: "Primary",
+        .transactions: "Transactions",
+        .updates: "Updates",
+        .promotions: "Promotions",
+    ]
+
+    init?(labels: [String]) {
+        if labels.contains("CATEGORY_PROMOTIONS") { self = .promotions }
+        else if labels.contains("CATEGORY_UPDATES") || labels.contains("CATEGORY_SOCIAL") || labels.contains("CATEGORY_FORUMS") { self = .updates }
+        else if labels.contains("CATEGORY_PERSONAL") { self = .primary }
+        else { return nil }
+    }
+}
+
 // MARK: - Message
 
 @AppEntity(schema: .mail.message)
@@ -110,6 +137,8 @@ struct MailMessageEntity {
     var isFlagged: Bool
     var account: MailAccountEntity
     var mailbox: MailboxEntity
+    /// Gmail's inbox tab, when the thread carries one (MailCategory).
+    var category: MailCategory?
     /// For the Spotlight index only, never a schema property: the message's
     /// own text (quoted history stripped, capped) when the store has it,
     /// and the one-line preview Spotlight shows under the title.
@@ -141,6 +170,7 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
+        category = MailCategory(labels: row.labels)
     }
 
     /// One stored message of a thread.
@@ -170,6 +200,7 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
+        category = MailCategory(labels: row.labels)
     }
 
     /// A stored message (`<threadId>#<messageId>`), as opposed to the

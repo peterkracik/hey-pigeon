@@ -26,6 +26,9 @@ struct MailThreadEntity {
     /// The thread's messages: the stored ones when the store has them,
     /// else the latest-message shape alone (MailSchema.swift).
     var messages: [MailMessageEntity]
+    /// The schema's title and description: the subject and the preview.
+    var title: String
+    var description: String?
     @Property(title: "Subject") var subject: String
     @Property(title: "From") var from: String
     @Property(title: "Preview") var snippet: String
@@ -83,6 +86,8 @@ struct MailThreadEntity {
         } else {
             messages = [MailMessageEntity(row, account: resolved)]
         }
+        title = row.subject.isEmpty ? "(no subject)" : row.subject
+        description = row.snippet.isEmpty ? nil : row.snippet
         subject = row.subject.isEmpty ? "(no subject)" : row.subject
         from = row.fromSummary
         snippet = row.snippet

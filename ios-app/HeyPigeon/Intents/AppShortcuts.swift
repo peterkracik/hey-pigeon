@@ -52,7 +52,9 @@ struct HeyPigeonShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: AskInboxIntent(),
             phrases: [
-                "Ask \(.applicationName) \(\.$question)",
+                // A phrase can only carry an entity or enum parameter;
+                // Siri asks for the question.
+                "Ask \(.applicationName)",
                 "Ask my inbox in \(.applicationName)",
             ],
             shortTitle: "Ask my inbox",

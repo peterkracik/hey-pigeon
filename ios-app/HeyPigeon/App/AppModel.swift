@@ -1115,8 +1115,14 @@ final class AppModel {
 
     /// iOS decides when this runs (a few times a day in practice). It is the
     /// only "push" the phone has in v1 — DESIGN.md's relay stays optional.
+    ///
+    /// The launch handler is written in this main-actor context, so Swift 6
+    /// checks at run time that it runs on the main queue; with `using: nil`
+    /// BGTaskScheduler calls it on its own queue and the check traps
+    /// (_dispatch_assert_queue_fail, every background refresh). `.main`
+    /// keeps the call where the closure says it is.
     static func registerBackgroundRefresh(_ model: AppModel) {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshTaskId, using: nil) { task in
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshTaskId, using: .main) { task in
             guard let task = task as? BGAppRefreshTask else { return }
             let work = Task { @MainActor in
                 await model.sync()

@@ -292,7 +292,10 @@ struct RowMenu: View {
     }
 
     var body: some View {
-        Button { model.toggleDone(row) } label: {
+        Button {
+            if !row.isDone { IntentDonations.archived(row, in: model) }
+            model.toggleDone(row)
+        } label: {
             Label(row.isDone ? "Mark not done" : "Mark done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark")
         }
         Button { model.pendingRemind = row } label: {
@@ -310,13 +313,13 @@ struct RowMenu: View {
         if !accountLabels.isEmpty {
             Menu {
                 ForEach(accountLabels) { label in
-                    Button { model.move(row, to: label) } label: { Label(label.name, systemImage: "tray") }
+                    Button { IntentDonations.labeled(row, label, on: true, in: model); model.move(row, to: label) } label: { Label(label.name, systemImage: "tray") }
                 }
             } label: { Label("Move to folder", systemImage: "folder") }
             Menu {
                 ForEach(accountLabels) { label in
                     let on = row.labels.contains(label.id)
-                    Button { model.setLabel(row, label, on: !on) } label: {
+                    Button { IntentDonations.labeled(row, label, on: !on, in: model); model.setLabel(row, label, on: !on) } label: {
                         Label(on ? "Remove \(label.name)" : label.name, systemImage: on ? "checkmark" : "tag")
                     }
                 }
@@ -335,7 +338,7 @@ struct RowMenu: View {
             } label: { Label("Jev labels", systemImage: "sparkles") }
         }
         Divider()
-        Button(role: .destructive) { model.delete(row) } label: { Label("Delete", systemImage: "trash") }
+        Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: { Label("Delete", systemImage: "trash") }
     }
 }
 

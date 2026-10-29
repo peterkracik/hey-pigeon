@@ -126,13 +126,13 @@ struct ThreadView: View {
                     if !accountLabels.isEmpty {
                         Menu {
                             ForEach(accountLabels) { label in
-                                Button { model.move(current, to: label); onClose() } label: { Label(label.name, systemImage: "tray") }
+                                Button { IntentDonations.labeled(current, label, on: true, in: model); model.move(current, to: label); onClose() } label: { Label(label.name, systemImage: "tray") }
                             }
                         } label: { Label("Move to folder", systemImage: "folder") }
                         Menu {
                             ForEach(accountLabels) { label in
                                 let on = current.labels.contains(label.id)
-                                Button { model.setLabel(current, label, on: !on) } label: {
+                                Button { IntentDonations.labeled(current, label, on: !on, in: model); model.setLabel(current, label, on: !on) } label: {
                                     Label(on ? "Remove \(label.name)" : label.name, systemImage: on ? "checkmark" : "tag")
                                 }
                             }
@@ -142,7 +142,7 @@ struct ThreadView: View {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
                     Divider()
-                    Button(role: .destructive) { model.delete(current); onClose() } label: { Label("Delete", systemImage: "trash") }
+                    Button(role: .destructive) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() } label: { Label("Delete", systemImage: "trash") }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("More")
             }
@@ -290,6 +290,7 @@ struct ThreadView: View {
             HStack(spacing: 0) {
                 bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
                     tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil) {
+                    if !current.isDone { IntentDonations.archived(current, in: model) }
                     model.toggleDone(current); onClose()
                 }
                 bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
@@ -304,7 +305,7 @@ struct ThreadView: View {
                 bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil) {
                     model.togglePin(current)
                 }
-                bar("Delete", "trash", tint: Color(hex: 0xB34E2E)) { model.delete(current); onClose() }
+                bar("Delete", "trash", tint: Color(hex: 0xB34E2E)) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
             }
             .frame(height: 52)
             .glassEffect(.regular, in: .capsule)
@@ -387,6 +388,7 @@ struct ThreadView: View {
     }
 
     private func reply(to m: MessageItem, all: Bool) {
+        IntentDonations.replied(current, all: all, in: model)
         model.composeDraft = replyDraft(to: m, all: all)
     }
 

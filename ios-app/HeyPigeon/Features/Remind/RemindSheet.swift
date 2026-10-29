@@ -86,6 +86,7 @@ struct RemindSheet: View {
     }
 
     private func set(_ date: Date) {
+        IntentDonations.reminded(row, at: date, onlyIfNoReply: onlyIfNoReply, in: model)
         model.remind(row, at: date, onlyIfNoReply: onlyIfNoReply)
         dismiss()
     }

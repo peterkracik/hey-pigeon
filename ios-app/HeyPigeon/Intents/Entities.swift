@@ -158,6 +158,17 @@ struct MailThreadEntity {
 
 extension MailThreadEntity: IndexedEntity {}
 
+/// Gmail thread ids are the same on every device the account is on, so a
+/// Siri conversation started on the iPhone can go on with the iPad or Mac
+/// build later (iOS 27).
+extension MailThreadEntity: SyncableEntity {}
+
+/// Mail is the user's own: private by default, said explicitly, so Siri
+/// asks before shared-content actions only where it should (iOS 27).
+extension MailThreadEntity: OwnershipProvidingEntity {
+    var ownership: EntityOwnership { .unknown }
+}
+
 /// Siri resolves "the one from Anna", "this email" (the open thread) and
 /// free text through the app's own search; Shortcuts pick from the inbox.
 /// Ids resolve with the stored messages (no network); the display

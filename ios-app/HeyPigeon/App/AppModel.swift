@@ -295,6 +295,8 @@ final class AppModel {
         reload()
         push.notify = { [weak self] text in self?.show(text) }
         AppModel.current = self
+        // Donations are system state: not from the sample inbox or the tests.
+        IntentDonations.enabled = !(engine is MockEngine)
         clock = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -823,8 +825,12 @@ final class AppModel {
     /// Swipe tiers and the Settings picker dispatch through here.
     func run(_ action: RowAction, on row: ThreadRow) {
         switch action {
-        case .done: toggleDone(row)
-        case .delete: delete(row)
+        case .done:
+            if !row.isDone { IntentDonations.archived(row, in: self) }
+            toggleDone(row)
+        case .delete:
+            IntentDonations.deleted(row, in: self)
+            delete(row)
         // A thread that already has a reminder: the swipe removes it.
         case .remind:
             if row.scheduledAt != nil { remind(row, at: nil, onlyIfNoReply: false) } else { pendingRemind = row }

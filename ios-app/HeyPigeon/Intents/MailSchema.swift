@@ -273,6 +273,10 @@ struct MailDraftEntity {
     }
 }
 
+/// A draft's key — the composer's, or the Gmail draft's message id — is
+/// what the user's other devices see too (iOS 27 `SyncableEntity`).
+extension MailDraftEntity: SyncableEntity {}
+
 struct MailDraftQuery: EntityQuery {
     @MainActor
     func entities(for identifiers: [String]) async throws -> [MailDraftEntity] {

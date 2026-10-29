@@ -121,11 +121,24 @@ struct TriagePlan: Equatable, Codable {
 /// What the agent is allowed to see and change: the model and the plan
 /// of the run in progress. Tools hold it unowned; the agent outlives them.
 @MainActor
-protocol TriageToolHost: AnyObject {
+protocol TriageToolHost: AnyObject, Sendable {
     var model: AppModel { get }
     var plan: TriagePlan { get set }
     var accountId: String? { get }
     func journal(_ tool: String, _ detail: String)
+}
+
+extension TriageToolHost {
+    /// The engine is main-actor state; tools run off it and get values back.
+    @MainActor
+    func thread(id: String) async throws -> ThreadDetail? {
+        try await model.engine.thread(id: id)
+    }
+
+    @MainActor
+    func draftReply(subject: String, history: String, notes: String) async throws -> String {
+        try await model.engine.aiDraftReply(subject: subject, history: history, notes: notes)
+    }
 }
 
 /// One row as the model reads it: never a body in the scan phase.
@@ -216,8 +229,7 @@ struct ReadThreadTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let model = await host.model
-        guard let detail = try await model.engine.thread(id: arguments.threadId) else { return "That email is gone." }
+        guard let detail = try await host.thread(id: arguments.threadId) else { return "That email is gone." }
         let messages = detail.messages.suffix(6).map { m in
             let text = m.bodyText.map { MessageBodyView.splitQuoted($0)?.main ?? $0 } ?? m.snippet
             return Message(from: m.isMine ? "Me" : m.fromName, date: Formatters.fullDate(m.date), text: String(text.prefix(1_500)))
@@ -340,10 +352,9 @@ struct DraftReplyTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let model = await host.model
-        guard let detail = try await model.engine.thread(id: arguments.threadId) else { return "That email is gone." }
+        guard let detail = try await host.thread(id: arguments.threadId) else { return "That email is gone." }
         let transcript = detail.messages.map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
-        let body = try await model.engine.aiDraftReply(subject: detail.thread.subject, history: transcript, notes: arguments.notes)
+        let body = try await host.draftReply(subject: detail.thread.subject, history: transcript, notes: arguments.notes)
         return await MainActor.run {
             let p = TriageProposal.draft(threadId: detail.thread.id, subject: detail.thread.subject, body: body)
             host.journal(name, p.line)

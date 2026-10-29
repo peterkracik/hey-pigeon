@@ -55,8 +55,8 @@ final class AiUsageLedger: @unchecked Sendable {
 
     /// Every answer passes through here. `usage` is the response's
     /// `usage`; nil (a model that reports none) still counts the request.
-    func record(provider: String, _ usage: LanguageModelSession.Response<some Any>.Usage?) {
-        record(provider: provider, input: usage?.inputTokens ?? 0, output: usage?.outputTokens ?? 0)
+    func record(provider: String, _ usage: LanguageModelSession.Usage?) {
+        record(provider: provider, input: usage?.input.totalTokenCount ?? 0, output: usage?.output.totalTokenCount ?? 0)
     }
 
     func record(provider: String, input: Int, output: Int) {

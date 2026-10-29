@@ -105,22 +105,17 @@ struct PrivateCloudComputeProvider: ModelProvider {
         switch model.availability {
         case .available: return .available
         case .unavailable(.deviceNotEligible): return .unavailable("This device can't use Private Cloud Compute.")
-        case .unavailable(.appleIntelligenceNotEnabled): return .unavailable("Turn on Apple Intelligence in Settings.")
-        case .unavailable(.modelNotReady): return .unavailable("Private Cloud Compute isn't ready yet.")
+        case .unavailable(.systemNotReady): return .unavailable("Private Cloud Compute isn't ready yet.")
         case .unavailable: return .unavailable("Private Cloud Compute isn't reachable right now (offline, or this build lacks the entitlement).")
         }
     }
 
-    /// Light reasoning for drafts, summaries and edits (fast); deep for
-    /// triage, where the verdict is what the user sees in every row.
+    /// The model's default reasoning level. The SDK sets the level per
+    /// request (`respond(to:…, contextOptions:)`), not per session; picking
+    /// light for drafts and deep for triage is a follow-up
+    /// (docs/ios-intelligence.md, "Verify on the first build").
     func session(instructions: String, task: AiTask, tools: [any Tool]) -> LanguageModelSession {
-        let level: ContextOptions.ReasoningLevel = task == .classification ? .deep : .light
-        return LanguageModelSession(
-            model: model,
-            contextOptions: ContextOptions(reasoningLevel: level),
-            tools: tools,
-            instructions: instructions
-        )
+        LanguageModelSession(model: model, tools: tools, instructions: instructions)
     }
 }
 

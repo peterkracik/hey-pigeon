@@ -192,39 +192,7 @@ struct ThreadList: View {
         List {
             ForEach(model.groupedRows) { group in
                 Section {
-                    ForEach(group.rows) { row in
-                        SwipeableRow(
-                            leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
-                            trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
-                            background: Theme.card
-                        ) {
-                            ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
-                                          highlight: model.tab == .search ? model.searchTerms : [])
-                                .padding(.horizontal, 16).padding(.vertical, 7)
-                                .contentShape(Rectangle())
-                                // Unread marker: a bar on the left edge, flush with the screen.
-                                .overlay(alignment: .leading) {
-                                    if !row.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
-                                }
-                                .onTapGesture {
-                                    Keyboard.dismiss()
-                                    if model.view == .drafts { model.openDraft(row); return }
-                                    model.markRead(row)
-                                    path.append(row)
-                                }
-                        }
-                        // View Annotations (iOS 27): Siri sees this row as the
-                        // thread entity, so "mark these done", "remind me about
-                        // the second one" and "archive everything from Lufthansa
-                        // here" resolve against what is on screen.
-                        .appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier: row.id))
-                        .padding(.bottom, 1) // the gap between rows, canvas showing through
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .contextMenu { RowMenu(row: row) }
-                        .onAppear { model.loadMoreIfNeeded(current: row) }
-                    }
+                    ForEach(group.rows) { row in cell(row) }
                 } header: {
                     GroupHeader(group: group)
                 }
@@ -235,8 +203,42 @@ struct ThreadList: View {
         .contentMargins(.top, 0, for: .scrollContent)
         .scrollDismissesKeyboard(.immediately)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
-        // The list is a selection of thread entities for Siri ("these").
-        .appEntityIdentifier(forSelectionType: MailThreadEntity.self)
+    }
+
+    /// One row with its gestures, annotation and menu. Its own builder so
+    /// the list body type-checks in reasonable time.
+    private func cell(_ row: ThreadRow) -> some View {
+        SwipeableRow(
+            leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
+            trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
+            background: Theme.card
+        ) {
+            ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
+                          highlight: model.tab == .search ? model.searchTerms : [])
+                .padding(.horizontal, 16).padding(.vertical, 7)
+                .contentShape(Rectangle())
+                // Unread marker: a bar on the left edge, flush with the screen.
+                .overlay(alignment: .leading) {
+                    if !row.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
+                }
+                .onTapGesture {
+                    Keyboard.dismiss()
+                    if model.view == .drafts { model.openDraft(row); return }
+                    model.markRead(row)
+                    path.append(row)
+                }
+        }
+        // View Annotations (iOS 27): Siri sees this row as the
+        // thread entity, so "mark these done", "remind me about
+        // the second one" and "archive everything from Lufthansa
+        // here" resolve against what is on screen.
+        .appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier: row.id))
+        .padding(.bottom, 1) // the gap between rows, canvas showing through
+        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .contextMenu { RowMenu(row: row) }
+        .onAppear { model.loadMoreIfNeeded(current: row) }
     }
 
     private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {

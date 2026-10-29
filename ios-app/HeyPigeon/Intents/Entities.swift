@@ -189,7 +189,7 @@ struct MailThreadQuery: EntityStringQuery {
     }
 
     @MainActor
-    func displayRepresentations(for identifiers: [String], requestedComponents: DisplayRepresentation.Components) async throws -> [String: DisplayRepresentation] {
+    func displayRepresentations(for identifiers: [String]) async throws -> [String: DisplayRepresentation] {
         let model = try await IntentSupport.model()
         var out: [String: DisplayRepresentation] = [:]
         for id in identifiers {

@@ -12,6 +12,7 @@ import Foundation
 import FoundationModels
 import PDFKit
 import UIKit
+import Vision
 
 /// The typed answer: what the attachment is and the fields worth acting on.
 @Generable

@@ -82,7 +82,7 @@ enum SpotlightIndexer {
 /// an OS update), rebuild these ids, and — iOS 27 — hand back the full
 /// items for ids a search returned, which is how `SpotlightSearchTool`
 /// reads the body text the index only searched.
-final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate {
+final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate, Sendable {
     static let shared = SpotlightIndexDelegate()
 
     func searchableIndex(_ searchableIndex: CSSearchableIndex, reindexAllSearchableItemsWithAcknowledgementHandler acknowledgementHandler: @escaping () -> Void) {

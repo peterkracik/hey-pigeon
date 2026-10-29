@@ -705,6 +705,9 @@ struct WireBody {
     /// (`messages.attachments.get`); small ones carry `data` inline.
     #[serde(default)]
     attachment_id: Option<String>,
+    /// Bytes of the part, as Gmail counts them (0 when absent).
+    #[serde(default)]
+    size: i64,
 }
 
 #[derive(Deserialize)]
@@ -1220,6 +1223,60 @@ impl MailProvider for GmailProvider {
         Ok(draft)
     }
 
+    async fn list_attachments(
+        &self,
+        account_id: &AccountId,
+        thread_id: &ThreadId,
+    ) -> Result<Vec<AttachmentRef>, MailError> {
+        let wire: WireThread = self
+            .get_json(
+                account_id,
+                &format!("{API}/threads/{thread_id}?format=full"),
+            )
+            .await?;
+        Ok(thread_attachments(&wire))
+    }
+
+    /// The part's bytes: `messages.attachments.get` for a real attachment
+    /// id, the message itself for an `inline:<n>` part (Gmail embeds small
+    /// parts in the message payload instead of giving them an id).
+    async fn fetch_attachment(
+        &self,
+        account_id: &AccountId,
+        attachment: &AttachmentRef,
+    ) -> Result<Vec<u8>, MailError> {
+        let message_id = &attachment.message_id;
+        let data = if let Some(n) = attachment.attachment_id.strip_prefix("inline:") {
+            let index: usize = n
+                .parse()
+                .map_err(|_| MailError::Provider("bad inline attachment id".into()))?;
+            let wire: WireMessage = self
+                .get_json(
+                    account_id,
+                    &format!("{API}/messages/{message_id}?format=full"),
+                )
+                .await?;
+            let mut parts = Vec::new();
+            if let Some(p) = wire.payload.as_ref() {
+                collect_attachments(p, &mut parts);
+            }
+            parts
+                .get(index)
+                .and_then(|(_, _, body)| body.data.clone())
+                .ok_or_else(|| MailError::Provider("attachment part is gone".into()))?
+        } else {
+            let aid = &attachment.attachment_id;
+            let body: WireBody = self
+                .get_json(
+                    account_id,
+                    &format!("{API}/messages/{message_id}/attachments/{aid}"),
+                )
+                .await?;
+            body.data.unwrap_or_default()
+        };
+        decode_b64url(&data).ok_or_else(|| MailError::Provider("attachment is not base64".into()))
+    }
+
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
         if let Mutation::Send {
             to,
@@ -1412,6 +1469,37 @@ fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<(String, String, &'
     for p in &part.parts {
         collect_attachments(p, out);
     }
+}
+
+/// Every attachment part of a thread, message by message, in the order the
+/// parts tree lists them. A part Gmail embedded (no `attachmentId`) gets
+/// `inline:<n>`, its index among the message's attachment parts, so
+/// `fetch_attachment` can find it again in the message payload.
+fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
+    let mut out = Vec::new();
+    for m in &wire.messages {
+        let mut parts = Vec::new();
+        if let Some(p) = m.payload.as_ref() {
+            collect_attachments(p, &mut parts);
+        }
+        for (index, (filename, mime_type, body)) in parts.into_iter().enumerate() {
+            out.push(AttachmentRef {
+                message_id: m.id.clone(),
+                attachment_id: body
+                    .attachment_id
+                    .clone()
+                    .unwrap_or_else(|| format!("inline:{index}")),
+                filename,
+                mime_type: if mime_type.is_empty() {
+                    "application/octet-stream".to_string()
+                } else {
+                    mime_type
+                },
+                size: body.size,
+            });
+        }
+    }
+    out
 }
 
 /// Message-ID a saved draft carries, so it can be found again by its
@@ -1873,6 +1961,59 @@ mod tests {
         assert!(
             thread.has_attachment,
             "attachment part nested under multipart/mixed"
+        );
+    }
+
+    #[test]
+    fn wire_thread_lists_attachments_with_inline_fallback_ids() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "messages": [{
+                "id": "m1",
+                "labelIds": ["INBOX"],
+                "internalDate": "1756600000000",
+                "payload": {
+                    "mimeType": "multipart/mixed",
+                    "headers": [],
+                    "parts": [
+                        {"mimeType": "text/plain", "headers": [], "body": {"data": "aGk"}},
+                        {"mimeType": "application/pdf", "filename": "report.pdf", "headers": [],
+                         "body": {"attachmentId": "a1", "size": 4096}},
+                        {"mimeType": "", "filename": "tiny.txt", "headers": [],
+                         "body": {"data": "aGk", "size": 2}}
+                    ]
+                }
+            }, {
+                "id": "m2",
+                "labelIds": ["INBOX"],
+                "internalDate": "1756600001000",
+                "payload": {
+                    "mimeType": "image/png",
+                    "filename": "photo.png",
+                    "headers": [],
+                    "body": {"attachmentId": "a2", "size": 100}
+                }
+            }]
+        });
+        let wire: WireThread = serde_json::from_value(json).unwrap();
+        let list = thread_attachments(&wire);
+        assert_eq!(list.len(), 3);
+        assert_eq!(
+            (
+                list[0].message_id.as_str(),
+                list[0].attachment_id.as_str(),
+                list[0].filename.as_str(),
+                list[0].mime_type.as_str(),
+                list[0].size
+            ),
+            ("m1", "a1", "report.pdf", "application/pdf", 4096)
+        );
+        // An embedded part has no id: it is the second attachment part of m1.
+        assert_eq!(list[1].attachment_id, "inline:1");
+        assert_eq!(list[1].mime_type, "application/octet-stream");
+        assert_eq!(
+            (list[2].message_id.as_str(), list[2].filename.as_str()),
+            ("m2", "photo.png")
         );
     }
 

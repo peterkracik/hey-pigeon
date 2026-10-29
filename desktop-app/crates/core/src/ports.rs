@@ -176,6 +176,30 @@ pub trait MailProvider {
         async { Err(MailError::Provider("drafts not supported".into())) }
     }
 
+    /// The attachments of one thread (filename, type, size, where to fetch
+    /// them), read from the provider's parts tree — the lazy path "what is
+    /// attached here", for the thread view's chips and the on-device
+    /// attachment understanding. Default: none, so providers without
+    /// attachment access keep compiling.
+    fn list_attachments(
+        &self,
+        account_id: &AccountId,
+        thread_id: &ThreadId,
+    ) -> impl std::future::Future<Output = Result<Vec<AttachmentRef>, MailError>> + Send {
+        let _ = (account_id, thread_id);
+        async { Ok(Vec::new()) }
+    }
+
+    /// One attachment's bytes. Default errors, like `get_draft`.
+    fn fetch_attachment(
+        &self,
+        account_id: &AccountId,
+        attachment: &AttachmentRef,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>, MailError>> + Send {
+        let _ = (account_id, attachment);
+        async { Err(MailError::Provider("attachments not supported".into())) }
+    }
+
     /// Apply one local mutation remotely (used by the outbox drain).
     fn apply(
         &self,

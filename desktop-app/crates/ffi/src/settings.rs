@@ -15,7 +15,9 @@ use heypigeon_core::ports::{
     AiProvider, ChatMessage, ChatRole, CompletionRequest, SecretStore, Store,
 };
 
-use crate::ai::{AiBackend, ForeignAiProvider, APPLE_PROVIDER};
+use crate::ai::{
+    AiBackend, ForeignAiProvider, APPLE_CLOUD_PROVIDER, APPLE_PROVIDER, FOREIGN_PROVIDERS,
+};
 use crate::engine::{Engine, ACCOUNT_COLORS, BACKFILL_DAYS};
 use crate::types::*;
 
@@ -29,6 +31,14 @@ const JEV_CLASSIFIER: &str = "jev";
 /// `active_provider` / `active_classifier`.
 const AI_PROVIDER_PREF: &str = "ai.provider";
 const TRIAGE_CLASSIFIER_PREF: &str = "triage.classifier";
+/// Who answers when the preferred provider cannot, in order
+/// (`pref:ai.fallback`, a JSON array of provider ids). Unset means
+/// `DEFAULT_FALLBACK`: on device → Apple's cloud → OpenAI, the order of
+/// "how much leaves the device".
+const AI_FALLBACK_PREF: &str = "ai.fallback";
+const DEFAULT_FALLBACK: &[&str] = &[APPLE_PROVIDER, APPLE_CLOUD_PROVIDER, AI_PROVIDER];
+/// Same for classifiers: the shell backends first, Jev last.
+const DEFAULT_CLASSIFIER_ORDER: &[&str] = &[APPLE_PROVIDER, APPLE_CLOUD_PROVIDER, JEV_CLASSIFIER];
 /// The selected model and the triage switch are synced preferences
 /// (`pref:ai.model`, `pref:triage.enabled`), not secrets: the keys stay
 /// per device, these choices follow the user. Both lived in the secret
@@ -111,8 +121,14 @@ fn ai_err(e: impl std::fmt::Display) -> EngineError {
     EngineError::Ai(e.to_string())
 }
 
-fn check_provider(provider_id: &str) -> Result<(), EngineError> {
-    if provider_id == AI_PROVIDER || provider_id == APPLE_PROVIDER {
+/// The provider ids the settings accept: OpenAI, the known shell
+/// providers (whether or not this device registered them — the choice is
+/// synced) and anything the shell did register.
+fn check_provider(provider_id: &str, registered: &[String]) -> Result<(), EngineError> {
+    if provider_id == AI_PROVIDER
+        || FOREIGN_PROVIDERS.contains(&provider_id)
+        || registered.iter().any(|r| r == provider_id)
+    {
         Ok(())
     } else {
         Err(EngineError::Invalid(format!(
@@ -121,8 +137,11 @@ fn check_provider(provider_id: &str) -> Result<(), EngineError> {
     }
 }
 
-fn check_classifier(classifier_id: &str) -> Result<(), EngineError> {
-    if classifier_id == JEV_CLASSIFIER || classifier_id == APPLE_PROVIDER {
+fn check_classifier(classifier_id: &str, registered: &[String]) -> Result<(), EngineError> {
+    if classifier_id == JEV_CLASSIFIER
+        || FOREIGN_PROVIDERS.contains(&classifier_id)
+        || registered.iter().any(|r| r == classifier_id)
+    {
         Ok(())
     } else {
         Err(EngineError::Invalid(format!(
@@ -133,8 +152,21 @@ fn check_classifier(classifier_id: &str) -> Result<(), EngineError> {
 
 /// Who answers an AI action.
 enum ActiveProvider {
-    Apple(Arc<dyn AiBackend>),
-    OpenAi { key: String, model: String },
+    /// A shell backend ("apple", "apple-cloud", …).
+    Foreign(Arc<dyn AiBackend>),
+    OpenAi {
+        key: String,
+        model: String,
+    },
+}
+
+impl ActiveProvider {
+    fn id(&self) -> String {
+        match self {
+            ActiveProvider::Foreign(b) => b.id(),
+            ActiveProvider::OpenAi { .. } => AI_PROVIDER.to_string(),
+        }
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -198,29 +230,30 @@ impl Engine {
     // ------------------------------------------------------------ AI (OpenAI)
 
     pub fn ai_status(&self) -> Result<AiStatus, EngineError> {
-        let on_device = self.ai_backend.lock().unwrap().is_some();
+        let available = self.backend_ids();
         let openai = matches!(self.secrets.get(AI_KEY), Ok(Some(_)));
         let active = self.active_provider()?;
         Ok(AiStatus {
             configured: active.is_some(),
-            provider_id: active.map(|p| match p {
-                ActiveProvider::Apple(_) => APPLE_PROVIDER.to_string(),
-                ActiveProvider::OpenAi { .. } => AI_PROVIDER.to_string(),
-            }),
+            provider_id: active.map(|p| p.id()),
             model: self.stored_model()?,
             preferred_provider_id: self.preferred_provider()?,
-            on_device_available: on_device,
+            on_device_available: available.iter().any(|id| id == APPLE_PROVIDER),
             openai_configured: openai,
+            available_provider_ids: available,
+            fallback_order: self.fallback_order()?,
         })
     }
 
-    /// Static catalogue for OpenAI (no key needed); the backend's own entry
-    /// for the on-device model.
+    /// Static catalogue for OpenAI (no key needed); the backend's own
+    /// entries for a shell provider (empty when this device lacks it).
     pub fn ai_models(&self, provider_id: String) -> Result<Vec<AiModel>, EngineError> {
-        check_provider(&provider_id)?;
-        if provider_id == APPLE_PROVIDER {
-            let backend = self.ai_backend.lock().unwrap().clone();
-            return Ok(backend.map(|b| b.models()).unwrap_or_default());
+        check_provider(&provider_id, &self.backend_ids())?;
+        if provider_id != AI_PROVIDER {
+            return Ok(self
+                .backend(&provider_id)
+                .map(|b| b.models())
+                .unwrap_or_default());
         }
         Ok(OpenAiProvider::model_catalog()
             .into_iter()
@@ -235,10 +268,31 @@ impl Engine {
     /// the user; a device without the on-device model falls back to the
     /// key on its own (`active_provider`).
     pub fn set_ai_provider(self: &Arc<Self>, provider_id: String) -> Result<(), EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         let value = serde_json::Value::String(provider_id);
         self.store.set_pref(AI_PROVIDER_PREF, Some(&value))?;
         devsync::record_pref(&self.store, AI_PROVIDER_PREF, Some(value))?;
+        self.push_app_wide_later();
+        Ok(())
+    }
+
+    /// Who answers when the preferred provider cannot, in order. Synced.
+    /// Every id must be a known provider; an empty list restores the
+    /// default (on device → Apple's cloud → OpenAI).
+    pub fn set_ai_fallback(self: &Arc<Self>, order: Vec<String>) -> Result<(), EngineError> {
+        let registered = self.backend_ids();
+        for id in &order {
+            check_provider(id, &registered)?;
+        }
+        let value = if order.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Array(
+                order.into_iter().map(serde_json::Value::String).collect(),
+            ))
+        };
+        self.store.set_pref(AI_FALLBACK_PREF, value.as_ref())?;
+        devsync::record_pref(&self.store, AI_FALLBACK_PREF, value)?;
         self.push_app_wide_later();
         Ok(())
     }
@@ -250,7 +304,7 @@ impl Engine {
         provider_id: String,
         api_key: String,
     ) -> Result<(), EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         let key = api_key.trim().to_string();
         if key.is_empty() {
             return Err(EngineError::Invalid("API key is empty".into()));
@@ -267,7 +321,7 @@ impl Engine {
     /// preference shared with the user's other devices, which keep their
     /// own keys.
     pub fn remove_ai_key(&self, provider_id: String) -> Result<(), EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         self.secrets.delete(AI_KEY)?;
         Ok(())
     }
@@ -278,7 +332,7 @@ impl Engine {
         provider_id: String,
         model: String,
     ) -> Result<(), EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         let value = serde_json::Value::String(model);
         self.store.set_pref(AI_MODEL_PREF, Some(&value))?;
         devsync::record_pref(&self.store, AI_MODEL_PREF, Some(value))?;
@@ -296,7 +350,7 @@ impl Engine {
         text: String,
         history: Option<String>,
     ) -> Result<String, EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         let instruction = instruction.trim();
         let text = text.trim();
         if instruction.is_empty() {
@@ -321,7 +375,7 @@ impl Engine {
         provider_id: String,
         items: Vec<SummaryItem>,
     ) -> Result<String, EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         if items.is_empty() {
             return Err(EngineError::Invalid("nothing to summarize".into()));
         }
@@ -336,7 +390,7 @@ impl Engine {
         subject: String,
         items: Vec<ThreadSummaryItem>,
     ) -> Result<String, EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         if items.is_empty() {
             return Err(EngineError::Invalid("nothing to summarize".into()));
         }
@@ -356,7 +410,7 @@ impl Engine {
         history: String,
         notes: Option<String>,
     ) -> Result<String, EngineError> {
-        check_provider(&provider_id)?;
+        check_provider(&provider_id, &self.backend_ids())?;
         if history.trim().is_empty() {
             return Err(EngineError::Invalid("nothing to reply to".into()));
         }
@@ -370,15 +424,19 @@ impl Engine {
     // ------------------------------------------------------------ triage (Jev)
 
     pub fn triage_status(&self) -> Result<TriageStatus, EngineError> {
-        let on_device = self.ai_backend.lock().unwrap().is_some();
+        let mut available = self.backend_ids();
         let jev = matches!(self.secrets.get(JEV_KEY), Ok(Some(_)));
+        if jev {
+            available.push(JEV_CLASSIFIER.to_string());
+        }
         Ok(TriageStatus {
             configured: self.active_classifier()?.is_some(),
             enabled: self.triage_enabled()?,
             last_error: self.triage_last_error.lock().unwrap().clone(),
             classifier_id: self.preferred_classifier()?,
-            on_device_available: on_device,
+            on_device_available: available.iter().any(|id| id == APPLE_PROVIDER),
             jev_configured: jev,
+            available_classifier_ids: available,
         })
     }
 
@@ -388,7 +446,7 @@ impl Engine {
         self: &Arc<Self>,
         classifier_id: String,
     ) -> Result<(), EngineError> {
-        check_classifier(&classifier_id)?;
+        check_classifier(&classifier_id, &self.backend_ids())?;
         let value = serde_json::Value::String(classifier_id);
         self.store.set_pref(TRIAGE_CLASSIFIER_PREF, Some(&value))?;
         devsync::record_pref(&self.store, TRIAGE_CLASSIFIER_PREF, Some(value))?;
@@ -527,71 +585,127 @@ impl Engine {
             .and_then(|v| v.as_str().map(str::to_string)))
     }
 
-    /// `pref:ai.provider`, or "apple" when this device has the on-device
-    /// model and nothing was chosen, else "openai".
+    /// Ids of the shell backends registered on this device, in order.
+    pub(crate) fn backend_ids(&self) -> Vec<String> {
+        self.ai_backends
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|b| b.id())
+            .collect()
+    }
+
+    pub(crate) fn backend(&self, provider_id: &str) -> Option<Arc<dyn AiBackend>> {
+        self.ai_backends
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|b| b.id() == provider_id)
+            .cloned()
+    }
+
+    /// `pref:ai.fallback`, or the default order. Ids this device cannot
+    /// serve are simply skipped at resolution time.
+    fn fallback_order(&self) -> Result<Vec<String>, EngineError> {
+        let stored: Option<Vec<String>> = self.store.get_pref(AI_FALLBACK_PREF)?.and_then(|v| {
+            v.as_array().map(|items| {
+                items
+                    .iter()
+                    .filter_map(|i| i.as_str().map(str::to_string))
+                    .collect()
+            })
+        });
+        Ok(match stored {
+            Some(order) if !order.is_empty() => order,
+            _ => DEFAULT_FALLBACK.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    /// `pref:ai.provider`, or the first shell backend this device has in
+    /// the default order (on device, then Apple's cloud), else "openai".
     fn preferred_provider(&self) -> Result<String, EngineError> {
         if let Some(p) = self.string_pref(AI_PROVIDER_PREF)? {
             return Ok(p);
         }
-        let on_device = self.ai_backend.lock().unwrap().is_some();
-        Ok(if on_device {
-            APPLE_PROVIDER
-        } else {
-            AI_PROVIDER
+        let registered = self.backend_ids();
+        Ok(DEFAULT_FALLBACK
+            .iter()
+            .find(|id| **id != AI_PROVIDER && registered.iter().any(|r| r == *id))
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| AI_PROVIDER.to_string()))
+    }
+
+    /// The provider `provider_id` names, when this device can run it: a
+    /// registered shell backend, or OpenAI with a stored key.
+    fn provider_if_available(
+        &self,
+        provider_id: &str,
+    ) -> Result<Option<ActiveProvider>, EngineError> {
+        if provider_id == AI_PROVIDER {
+            return Ok(self.secrets.get(AI_KEY)?.map(|key| ActiveProvider::OpenAi {
+                key,
+                model: self.stored_model().ok().flatten().unwrap_or_else(|| {
+                    OpenAiProvider::model_catalog()
+                        .into_iter()
+                        .next()
+                        .map(|m| m.id)
+                        .unwrap_or_default()
+                }),
+            }));
         }
-        .to_string())
+        Ok(self.backend(provider_id).map(ActiveProvider::Foreign))
     }
 
     /// The provider that answers now: the preferred one when it can, else
-    /// the other one when it can, else none. A device without Apple
-    /// Intelligence keeps working off the key it has; a device without a
-    /// key keeps working off the model it has.
+    /// the first of the fallback order that can, else none. A device
+    /// without Apple Intelligence keeps working off the key it has; a
+    /// device without a key keeps working off the models it has.
     fn active_provider(&self) -> Result<Option<ActiveProvider>, EngineError> {
-        let backend = self.ai_backend.lock().unwrap().clone();
-        let key = self.secrets.get(AI_KEY)?;
-        let apple = backend.map(ActiveProvider::Apple);
-        let openai = key.map(|key| ActiveProvider::OpenAi {
-            key,
-            model: self.stored_model().ok().flatten().unwrap_or_else(|| {
-                OpenAiProvider::model_catalog()
-                    .into_iter()
-                    .next()
-                    .map(|m| m.id)
-                    .unwrap_or_default()
-            }),
-        });
-        Ok(if self.preferred_provider()? == APPLE_PROVIDER {
-            apple.or(openai)
-        } else {
-            openai.or(apple)
-        })
+        let mut candidates = vec![self.preferred_provider()?];
+        candidates.extend(self.fallback_order()?);
+        for id in candidates {
+            if let Some(p) = self.provider_if_available(&id)? {
+                return Ok(Some(p));
+            }
+        }
+        Ok(None)
     }
 
-    /// `pref:triage.classifier`, or "apple" when this device has the
-    /// on-device model and nothing was chosen, else "jev".
+    /// `pref:triage.classifier`, or the first shell backend this device
+    /// has (on device, then Apple's cloud), else "jev".
     fn preferred_classifier(&self) -> Result<String, EngineError> {
         if let Some(c) = self.string_pref(TRIAGE_CLASSIFIER_PREF)? {
             return Ok(c);
         }
-        let on_device = self.ai_backend.lock().unwrap().is_some();
-        Ok(if on_device {
-            APPLE_PROVIDER
-        } else {
-            JEV_CLASSIFIER
-        }
-        .to_string())
+        let registered = self.backend_ids();
+        Ok(DEFAULT_CLASSIFIER_ORDER
+            .iter()
+            .find(|id| **id != JEV_CLASSIFIER && registered.iter().any(|r| r == *id))
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| JEV_CLASSIFIER.to_string()))
     }
 
-    /// The classifier that runs now, same fallback rule as the provider.
+    fn classifier_if_available(
+        &self,
+        classifier_id: &str,
+    ) -> Result<Option<Classifier>, EngineError> {
+        if classifier_id == JEV_CLASSIFIER {
+            return Ok(self.secrets.get(JEV_KEY)?.map(Classifier::Jev));
+        }
+        Ok(self.backend(classifier_id).map(Classifier::Foreign))
+    }
+
+    /// The classifier that runs now, same fallback rule as the provider:
+    /// the preferred one, then on device, Apple's cloud, Jev.
     fn active_classifier(&self) -> Result<Option<Classifier>, EngineError> {
-        let backend = self.ai_backend.lock().unwrap().clone();
-        let apple = backend.map(Classifier::Apple);
-        let jev = self.secrets.get(JEV_KEY)?.map(Classifier::Jev);
-        Ok(if self.preferred_classifier()? == APPLE_PROVIDER {
-            apple.or(jev)
-        } else {
-            jev.or(apple)
-        })
+        let mut candidates = vec![self.preferred_classifier()?];
+        candidates.extend(DEFAULT_CLASSIFIER_ORDER.iter().map(|s| s.to_string()));
+        for id in candidates {
+            if let Some(c) = self.classifier_if_available(&id)? {
+                return Ok(Some(c));
+            }
+        }
+        Ok(None)
     }
 
     /// One completion through whichever provider answers now.
@@ -610,7 +724,7 @@ impl Engine {
             },
         ];
         let text = match active {
-            ActiveProvider::Apple(backend) => {
+            ActiveProvider::Foreign(backend) => {
                 let model = backend
                     .models()
                     .into_iter()
@@ -697,7 +811,7 @@ impl Engine {
                         .map_err(ai_err)?;
                     (result.label_ids, result.priority)
                 }
-                Classifier::Apple(backend) => {
+                Classifier::Foreign(backend) => {
                     // Same inputs as Jev: subject, snippet and sender,
                     // never the body (Settings says exactly this).
                     let verdict = backend
@@ -728,7 +842,8 @@ impl Engine {
 
 /// Who classifies a thread.
 enum Classifier {
-    Apple(Arc<dyn AiBackend>),
+    /// A shell backend ("apple", "apple-cloud", …).
+    Foreign(Arc<dyn AiBackend>),
     Jev(String),
 }
 
@@ -939,10 +1054,9 @@ mod tests {
         assert!(s.configured && s.on_device_available && !s.openai_configured);
         assert_eq!(s.provider_id.as_deref(), Some("apple"));
         assert_eq!(s.preferred_provider_id, "apple");
-        assert_eq!(
-            e.ai_models("apple".into()).unwrap()[0].id,
-            "apple-on-device"
-        );
+        assert_eq!(e.ai_models("apple".into()).unwrap()[0].id, "apple-model");
+        assert_eq!(s.available_provider_ids, vec!["apple".to_string()]);
+        assert_eq!(s.fallback_order, vec!["apple", "apple-cloud", "openai"]);
 
         let text = e
             .ai_summarize_group(
@@ -974,6 +1088,85 @@ mod tests {
         // The pref is recorded for the user's other devices.
         e.set_ai_backend(None);
         assert!(!e.ai_status().unwrap().configured);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two shell backends (on device and Apple's cloud): the preferred one
+    /// answers; without it the fallback order decides, and the order is a
+    /// synced preference the user can change.
+    #[tokio::test]
+    async fn apple_cloud_is_a_third_provider_with_a_fallback_order() {
+        let (e, dir) = open("cloud");
+        let device =
+            crate::ai::fakes::ScriptedBackend::new("- device", verdict(Priority::Low, &[]));
+        let cloud = crate::ai::fakes::ScriptedBackend::with_id(
+            "apple-cloud",
+            "- cloud",
+            verdict(Priority::Low, &[]),
+        );
+        // The cloud model alone: it is preferred by default and answers.
+        e.add_ai_backend(cloud.clone());
+        let s = e.ai_status().unwrap();
+        assert_eq!(s.preferred_provider_id, "apple-cloud");
+        assert_eq!(s.provider_id.as_deref(), Some("apple-cloud"));
+        assert!(!s.on_device_available);
+        assert_eq!(
+            e.ai_models("apple-cloud".into()).unwrap()[0].id,
+            "apple-cloud-model"
+        );
+
+        // Both: on device comes first in the default order.
+        e.add_ai_backend(device.clone());
+        let s = e.ai_status().unwrap();
+        assert_eq!(s.preferred_provider_id, "apple");
+        assert_eq!(s.available_provider_ids, vec!["apple-cloud", "apple"]);
+        let items = vec![SummaryItem {
+            from: "Priya".into(),
+            subject: "Deck".into(),
+            snippet: "slides".into(),
+        }];
+        assert_eq!(
+            e.ai_summarize_group("apple".into(), items.clone())
+                .await
+                .unwrap(),
+            "- device"
+        );
+
+        // Prefer the cloud explicitly: it answers.
+        e.set_ai_provider("apple-cloud".into()).unwrap();
+        assert_eq!(
+            e.ai_status().unwrap().provider_id.as_deref(),
+            Some("apple-cloud")
+        );
+        assert_eq!(
+            e.ai_summarize_group("apple".into(), items.clone())
+                .await
+                .unwrap(),
+            "- cloud"
+        );
+
+        // The preferred one is gone (offline): the fallback order picks the device.
+        e.remove_ai_backend("apple-cloud".into());
+        assert_eq!(e.ai_status().unwrap().provider_id.as_deref(), Some("apple"));
+        // A custom order with OpenAI first still lands on device without a key…
+        e.set_ai_fallback(vec!["openai".into(), "apple".into()])
+            .unwrap();
+        assert_eq!(
+            e.ai_status().unwrap().fallback_order,
+            vec!["openai", "apple"]
+        );
+        assert_eq!(e.ai_status().unwrap().provider_id.as_deref(), Some("apple"));
+        assert!(e.set_ai_fallback(vec!["other".into()]).is_err());
+        // …and an empty order restores the default.
+        e.set_ai_fallback(vec![]).unwrap();
+        assert_eq!(
+            e.ai_status().unwrap().fallback_order,
+            vec!["apple", "apple-cloud", "openai"]
+        );
+        assert_eq!(
+            cloud.completions.lock().unwrap().len() + device.completions.lock().unwrap().len(),
+            2
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1026,6 +1219,7 @@ mod tests {
         let s = e.triage_status().unwrap();
         assert!(s.configured && s.enabled && s.on_device_available && !s.jev_configured);
         assert_eq!(s.classifier_id, "apple");
+        assert_eq!(s.available_classifier_ids, vec!["apple".to_string()]);
 
         e.classify_pending().await;
         assert_eq!(

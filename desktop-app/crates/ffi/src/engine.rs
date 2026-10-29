@@ -58,6 +58,8 @@ impl Default for SyncState {
 pub struct Engine {
     pub(crate) store: SqliteStore,
     pub(crate) secrets: Arc<dyn SecretStore + Send + Sync>,
+    /// Where the database and the attachment cache live.
+    data_dir: PathBuf,
     oauth_client: ClientConfig,
     pub(crate) provider: RwLock<GmailProvider>,
     pending_oauth: Mutex<Option<AuthRequest>>,
@@ -71,8 +73,10 @@ pub struct Engine {
     pub(crate) classifying: Mutex<bool>,
     /// Last Jev failure; None after a clean run (settings.rs).
     pub(crate) triage_last_error: Mutex<Option<String>>,
-    /// The shell's on-device AI, when the device has one (ai.rs).
-    pub(crate) ai_backend: Mutex<Option<Arc<dyn AiBackend>>>,
+    /// The shell's AI backends, one per provider it can offer on this device
+    /// ("apple" on-device, "apple-cloud" Private Cloud Compute, …), in
+    /// registration order (ai.rs).
+    pub(crate) ai_backends: Mutex<Vec<Arc<dyn AiBackend>>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -112,6 +116,7 @@ impl Engine {
         Ok(Arc::new(Self {
             store,
             secrets,
+            data_dir,
             oauth_client,
             provider: RwLock::new(provider),
             pending_oauth: Mutex::new(None),
@@ -121,7 +126,7 @@ impl Engine {
             sync_status: Mutex::new(HashMap::new()),
             classifying: Mutex::new(false),
             triage_last_error: Mutex::new(None),
-            ai_backend: Mutex::new(None),
+            ai_backends: Mutex::new(Vec::new()),
         }))
     }
 
@@ -131,9 +136,35 @@ impl Engine {
 
     /// The shell's on-device AI (Apple Intelligence), or `None` on a device
     /// without one. With a backend set, AI and triage need no key:
-    /// `ai_status` / `triage_status` say which provider answers.
+    /// `ai_status` / `triage_status` say which provider answers. `None`
+    /// forgets every registered backend; `add_ai_backend` registers more
+    /// than one (the Private Cloud Compute model next to the on-device one).
     pub fn set_ai_backend(&self, backend: Option<Arc<dyn AiBackend>>) {
-        *self.ai_backend.lock().unwrap() = backend;
+        match backend {
+            Some(b) => self.add_ai_backend(b),
+            None => self.ai_backends.lock().unwrap().clear(),
+        }
+    }
+
+    /// Register (or replace, by `id()`) one shell backend. Order of first
+    /// registration is the order `ai_status` lists them in.
+    pub fn add_ai_backend(&self, backend: Arc<dyn AiBackend>) {
+        let id = backend.id();
+        let mut backends = self.ai_backends.lock().unwrap();
+        if let Some(slot) = backends.iter_mut().find(|b| b.id() == id) {
+            *slot = backend;
+        } else {
+            backends.push(backend);
+        }
+    }
+
+    /// Forget one backend (the device lost the model, or the user turned
+    /// the provider off in Settings).
+    pub fn remove_ai_backend(&self, provider_id: String) {
+        self.ai_backends
+            .lock()
+            .unwrap()
+            .retain(|b| b.id() != provider_id);
     }
 
     // ------------------------------------------------------------ reads
@@ -293,6 +324,118 @@ impl Engine {
             thread: thread.into(),
             messages: messages.into_iter().map(Into::into).collect(),
         }))
+    }
+
+    /// Thread + whatever messages the store holds, no network: bodies are
+    /// there only for threads opened before (or synced in full). The
+    /// Spotlight indexer and the message entities read through here so
+    /// indexing a mailbox never costs a fetch per thread.
+    pub fn get_thread_local(
+        &self,
+        thread_id: String,
+    ) -> Result<Option<ThreadWithMessages>, EngineError> {
+        let Some(thread) = self.store.get_thread(&thread_id)? else {
+            return Ok(None);
+        };
+        let messages = self.store.list_messages(&thread_id)?;
+        Ok(Some(ThreadWithMessages {
+            thread: thread.into(),
+            messages: messages.into_iter().map(Into::into).collect(),
+        }))
+    }
+
+    /// The thread's attachments (filename, type, size, where to fetch),
+    /// from the provider. One network read; the thread view asks when a
+    /// message with a paperclip is expanded.
+    pub async fn list_attachments(
+        &self,
+        thread_id: String,
+    ) -> Result<Vec<MailAttachment>, EngineError> {
+        let Some(thread) = self.store.get_thread(&thread_id)? else {
+            return Ok(Vec::new());
+        };
+        let fetched = {
+            let provider = self.provider.read().await;
+            provider
+                .list_attachments(&thread.account_id, &thread_id)
+                .await
+        };
+        let refs = match fetched {
+            Ok(v) => v,
+            Err(MailError::AuthExpired) => {
+                self.mark_disconnected(&thread.account_id);
+                return Err(MailError::AuthExpired.into());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        Ok(refs
+            .into_iter()
+            .map(|a| MailAttachment {
+                thread_id: thread_id.clone(),
+                message_id: a.message_id,
+                attachment_id: a.attachment_id,
+                filename: a.filename,
+                mime_type: a.mime_type,
+                size: a.size,
+            })
+            .collect())
+    }
+
+    /// One attachment's bytes as a file under the data directory
+    /// (`attachments/<hash>/<filename>`), fetched once and reused: the path
+    /// is what Quick Look and the on-device model read. Never auto-fetched.
+    pub async fn fetch_attachment(
+        &self,
+        attachment: MailAttachment,
+    ) -> Result<String, EngineError> {
+        let dir = self
+            .data_dir
+            .join("attachments")
+            .join(attachment_cache_key(&attachment));
+        let safe_name = safe_filename(&attachment.filename);
+        let path = dir.join(&safe_name);
+        if path.is_file() {
+            return Ok(path.to_string_lossy().into_owned());
+        }
+        let Some(thread) = self.store.get_thread(&attachment.thread_id)? else {
+            return Err(EngineError::Invalid(format!(
+                "unknown thread {}",
+                attachment.thread_id
+            )));
+        };
+        let reference = domain::AttachmentRef {
+            message_id: attachment.message_id.clone(),
+            attachment_id: attachment.attachment_id.clone(),
+            filename: attachment.filename.clone(),
+            mime_type: attachment.mime_type.clone(),
+            size: attachment.size,
+        };
+        let fetched = {
+            let provider = self.provider.read().await;
+            provider
+                .fetch_attachment(&thread.account_id, &reference)
+                .await
+        };
+        let bytes = match fetched {
+            Ok(b) => b,
+            Err(MailError::AuthExpired) => {
+                self.mark_disconnected(&thread.account_id);
+                return Err(MailError::AuthExpired.into());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        std::fs::create_dir_all(&dir).map_err(|e| EngineError::Store(e.to_string()))?;
+        std::fs::write(&path, bytes).map_err(|e| EngineError::Store(e.to_string()))?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// Drop the attachment cache (Settings, or an account removal).
+    pub fn clear_attachment_cache(&self) -> Result<(), EngineError> {
+        let dir = self.data_dir.join("attachments");
+        if dir.is_dir() {
+            std::fs::remove_dir_all(&dir).map_err(|e| EngineError::Store(e.to_string()))?;
+        }
+        Ok(())
     }
 
     /// The thread's Gmail draft (its newest DRAFT message), fetched from
@@ -801,6 +944,39 @@ impl Engine {
     }
 }
 
+/// Cache directory name for one attachment: a hash of its coordinates
+/// (Gmail attachment ids run to hundreds of characters, past the path
+/// component limit).
+fn attachment_cache_key(a: &MailAttachment) -> String {
+    // FNV-1a 64, no dependency needed for a cache key.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in format!("{}\n{}\n{}", a.thread_id, a.message_id, a.attachment_id).bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// A filename safe to write under the cache: no separators, no empty name.
+fn safe_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == ':' || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_start_matches('.');
+    if trimmed.is_empty() {
+        "attachment".to_string()
+    } else {
+        trimmed.chars().take(120).collect()
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests_support {
     use heypigeon_core::domain;
@@ -988,5 +1164,70 @@ mod tests {
         e.remove_account("a@x.com".into()).await.unwrap();
         assert!(e.list_accounts().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn get_thread_local_reads_the_store_without_a_fetch() {
+        let dir = temp_dir("local");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        assert!(e.get_thread_local("nope".into()).unwrap().is_none());
+        e.store
+            .upsert_account(&domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        e.store
+            .upsert_thread(&sample_thread("t1", "me@x.com"))
+            .unwrap();
+        e.store
+            .upsert_message(&domain::Message {
+                id: "m1".into(),
+                thread_id: "t1".into(),
+                account_id: "me@x.com".into(),
+                from_addr: "priya@example.com".into(),
+                to_addrs: vec!["me@x.com".into()],
+                date: 1_700_000_000_000,
+                snippet: "hi there".into(),
+                body_html: None,
+                body_text: Some("hi there, full text".into()),
+                label_ids: vec!["INBOX".into()],
+                is_read: false,
+            })
+            .unwrap();
+        let t = e.get_thread_local("t1".into()).unwrap().unwrap();
+        assert_eq!(t.thread.id, "t1");
+        assert_eq!(t.messages.len(), 1);
+        assert_eq!(
+            t.messages[0].body_text.as_deref(),
+            Some("hi there, full text")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn attachment_cache_paths_are_short_and_safe() {
+        let a = MailAttachment {
+            thread_id: "t1".into(),
+            message_id: "m1".into(),
+            attachment_id: "A".repeat(600),
+            filename: "../../etc/passwd:report.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 1,
+        };
+        let key = attachment_cache_key(&a);
+        assert_eq!(key.len(), 16);
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+        let mut b = a.clone();
+        b.attachment_id = "B".repeat(600);
+        assert_ne!(attachment_cache_key(&b), key);
+        assert_eq!(safe_filename(&a.filename), "_.._etc_passwd_report.pdf");
+        assert_eq!(safe_filename("   "), "attachment");
+        assert_eq!(safe_filename(".hidden"), "hidden");
     }
 }

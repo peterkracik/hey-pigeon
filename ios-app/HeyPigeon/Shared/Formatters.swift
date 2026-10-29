@@ -43,21 +43,40 @@ enum Formatters {
     /// Section header for the day groups — the desktop's buckets exactly:
     /// Today · Last 7 days · Older.
     static func dayGroup(_ date: Date, now: Date = Date()) -> String {
-        let cal = Calendar.current
-        let startOfToday = cal.startOfDay(for: now)
-        if date >= startOfToday { return "Today" }
-        if date >= startOfToday.addingTimeInterval(-7 * 86_400) { return "Last 7 days" }
-        return "Older"
+        dayGrouper(now: now)(date)
+    }
+
+    /// `dayGroup` for a whole list: the day boundaries are worked out once,
+    /// not per row (Calendar maths per row on every render added up).
+    static func dayGrouper(now: Date = Date()) -> (Date) -> String {
+        let startOfToday = Calendar.current.startOfDay(for: now)
+        let weekAgo = startOfToday.addingTimeInterval(-7 * 86_400)
+        return { date in
+            if date >= startOfToday { return "Today" }
+            if date >= weekAgo { return "Last 7 days" }
+            return "Older"
+        }
     }
 
     /// Scheduled view buckets.
     static func dueGroup(_ date: Date, now: Date = Date()) -> String {
+        dueGrouper(now: now)(date)
+    }
+
+    /// `dueGroup` for a whole list, boundaries computed once.
+    static func dueGrouper(now: Date = Date()) -> (Date) -> String {
         let cal = Calendar.current
-        if date < cal.startOfDay(for: now) { return "Overdue" }
-        if cal.isDateInToday(date) { return "Today" }
-        if cal.isDateInTomorrow(date) { return "Tomorrow" }
-        if date.timeIntervalSince(now) < 7 * 86_400 { return "This week" }
-        return "Later"
+        let startOfToday = cal.startOfDay(for: now)
+        let startOfTomorrow = cal.date(byAdding: .day, value: 1, to: startOfToday) ?? startOfToday.addingTimeInterval(86_400)
+        let startOfDayAfter = cal.date(byAdding: .day, value: 2, to: startOfToday) ?? startOfTomorrow.addingTimeInterval(86_400)
+        let weekAhead = now.addingTimeInterval(7 * 86_400)
+        return { date in
+            if date < startOfToday { return "Overdue" }
+            if date < startOfTomorrow { return "Today" }
+            if date < startOfDayAfter { return "Tomorrow" }
+            if date < weekAhead { return "This week" }
+            return "Later"
+        }
     }
 
     /// "Tomorrow 09:00", "Sat 18:00", "Oct 30, 09:00" — reminder badges.

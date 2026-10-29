@@ -81,6 +81,8 @@ final class RustEngine: MailEngine {
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow] {
         let rows: [MailThread]
         switch view {
+        // Bounded lists, whole: MailView.isPaged is false for both, so the
+        // model never asks for a page after them.
         case .scheduled:
             rows = try engine.listScheduled().filter { accountId == nil || $0.accountId == accountId }
         case .needReply:

@@ -142,6 +142,9 @@ struct ShareView: View {
 }
 
 private extension NSItemProvider {
+    /// Main-actor like its callers: NSItemProvider is not Sendable, so a
+    /// nonisolated async wrapper would be a hop Swift 6 refuses.
+    @MainActor
     func loadDataRepresentation(for type: UTType) async throws -> Data {
         try await withCheckedThrowingContinuation { cont in
             _ = loadDataRepresentation(for: type) { data, err in

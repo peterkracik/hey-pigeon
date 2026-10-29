@@ -1,15 +1,16 @@
-// The Mail app-intent domain's entities (docs/ios-intelligence.md, step 3):
-// what lets the new Siri understand "reply to Anna's email" with no custom
-// phrase, because the system already knows what a mail app's message,
-// draft, mailbox and account are. `MailAccountEntity` (Entities.swift) is
-// the fourth. `MailThreadEntity` stays a plain entity: the `.mail.thread`
-// schema is iOS 27 only and the app targets 26.
+// The Mail app-intent domain's entities (docs/ios-intelligence.md, step 3
+// and "iOS 27 › the .mail.thread schema"): what lets the new Siri
+// understand "reply to Anna's email" with no custom phrase, because the
+// system already knows what a mail app's message, draft, mailbox, account
+// and — since iOS 27 — thread are. `MailAccountEntity` and the
+// `.mail.thread` `MailThreadEntity` live in Entities.swift.
 //
-// The schema is message-shaped and the app is thread-shaped, so a
-// `MailMessageEntity` is **a thread's latest message**, with the thread id
-// as its id: built from the row alone (no network), it opens, archives,
-// replies and forwards exactly as the thread does. Its body is never
-// filled in — bodies stay in the engine.
+// A `MailMessageEntity` is a real message when the store holds the thread's
+// messages (id `<threadId>#<messageId>`), else the thread's latest message
+// built from the row alone (id = the thread id) — so a thread Siri names
+// before it was ever opened still resolves, with no network. Either way the
+// intents act on the thread (`threadId`), which is what the app does. Its
+// body is never filled in — bodies stay in the engine.
 
 import AppIntents
 import Foundation
@@ -83,8 +84,11 @@ struct MailboxQuery: EntityStringQuery {
 struct MailMessageEntity {
     static let defaultQuery = MailMessageQuery()
 
-    /// The thread's id: this entity is the thread's latest message.
+    /// `<threadId>#<messageId>` for a stored message; the thread id alone
+    /// for the thread-as-latest-message shape.
     let id: String
+    /// The thread the intents act on.
+    let threadId: String
     var to: [IntentPerson]
     var cc: [IntentPerson]
     var bcc: [IntentPerson]
@@ -101,8 +105,10 @@ struct MailMessageEntity {
     var account: MailAccountEntity
     var mailbox: MailboxEntity
 
+    /// The thread's latest message, from the row alone.
     init(_ row: ThreadRow, account: MailAccount) {
         id = row.id
+        threadId = row.id
         to = []
         cc = []
         bcc = []
@@ -117,6 +123,50 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
+    }
+
+    /// One stored message of a thread.
+    init(_ m: MessageItem, in detail: ThreadDetail, account: MailAccount) {
+        let row = detail.thread
+        id = Self.id(threadId: row.id, messageId: m.id)
+        threadId = row.id
+        to = m.to.map { $0 == "me" ? .mail(account.email, name: account.displayName, isMe: true) : .mail($0, name: nil) }
+        cc = []
+        bcc = []
+        subject = row.subject.isEmpty ? nil : row.subject
+        body = nil
+        attachments = []
+        sender = m.isMine ? .mail(account.email, name: account.displayName, isMe: true) : .mail(m.fromAddress, name: m.fromName)
+        dateSent = m.date
+        dateReceived = m.date
+        isRead = m.isRead
+        isJunk = row.labels.contains("SPAM")
+        isFlagged = row.isPinned
+        self.account = MailAccountEntity(account)
+        mailbox = MailboxEntity.of(row, account: account)
+    }
+
+    static func id(threadId: String, messageId: String) -> String { threadId + "#" + messageId }
+
+    /// The thread behind an entity id of either shape.
+    static func threadId(of entityId: String) -> String {
+        entityId.split(separator: "#", maxSplits: 1).first.map(String.init) ?? entityId
+    }
+
+    static func messageId(of entityId: String) -> String? {
+        let parts = entityId.split(separator: "#", maxSplits: 1)
+        return parts.count == 2 ? String(parts[1]) : nil
+    }
+
+    /// The thread's messages as entities when the store has them, else the
+    /// latest-message shape alone.
+    @MainActor
+    static func messages(of row: ThreadRow, in model: AppModel) -> [MailMessageEntity] {
+        guard let account = model.account(for: row) else { return [] }
+        if let detail = try? model.engine.threadLocal(id: row.id), !detail.messages.isEmpty {
+            return detail.messages.map { MailMessageEntity($0, in: detail, account: account) }
+        }
+        return [MailMessageEntity(row, account: account)]
     }
 
     /// "Ana, Me (4)" → "Ana"; the address when the summary has no name.
@@ -139,8 +189,8 @@ struct MailMessageEntity {
     }
 }
 
-/// Resolves ids (thread ids), free text through the engine's search, and
-/// "this email" as the open thread.
+/// Resolves ids of both shapes, free text through the engine's search, and
+/// "this email" as the open thread's latest message.
 struct MailMessageQuery: EntityStringQuery {
     @MainActor
     private func make(_ rows: [ThreadRow], _ model: AppModel) -> [MailMessageEntity] {
@@ -150,7 +200,33 @@ struct MailMessageQuery: EntityStringQuery {
     @MainActor
     func entities(for identifiers: [String]) async throws -> [MailMessageEntity] {
         let model = try await IntentSupport.model()
-        return make(identifiers.compactMap { (try? model.engine.threadRow(id: $0)).flatMap { $0 } }, model)
+        return identifiers.compactMap { id in
+            let threadId = MailMessageEntity.threadId(of: id)
+            guard let row = try? model.engine.threadRow(id: threadId), let account = model.account(for: row) else { return nil }
+            if let messageId = MailMessageEntity.messageId(of: id) {
+                guard let detail = try? model.engine.threadLocal(id: threadId),
+                      let m = detail.messages.first(where: { $0.id == messageId }) else { return nil }
+                return MailMessageEntity(m, in: detail, account: account)
+            }
+            return MailMessageEntity(row, account: account)
+        }
+    }
+
+    /// Siri resolving what is on screen wants titles fast: rows from the
+    /// store, no messages, no network (iOS 27).
+    @MainActor
+    func displayRepresentations(for identifiers: [String], requestedComponents: DisplayRepresentation.Components) async throws -> [String: DisplayRepresentation] {
+        let model = try await IntentSupport.model()
+        var out: [String: DisplayRepresentation] = [:]
+        for id in identifiers {
+            guard let row = try? model.engine.threadRow(id: MailMessageEntity.threadId(of: id)) else { continue }
+            out[id] = DisplayRepresentation(
+                title: "\(row.subject.isEmpty ? "(no subject)" : row.subject)",
+                subtitle: "\(MailMessageEntity.senderName(row)) · \(Formatters.rowTime(row.lastMessageAt))",
+                image: .init(systemName: row.isRead ? "envelope.open" : "envelope.badge")
+            )
+        }
+        return out
     }
 
     @MainActor
@@ -167,8 +243,8 @@ struct MailMessageQuery: EntityStringQuery {
 
     @MainActor
     func defaultResult() async -> MailMessageEntity? {
-        guard let model = AppModel.current, let open = model.openThread, let a = model.account(for: open) else { return nil }
-        return MailMessageEntity(open, account: a)
+        guard let model = AppModel.current, let open = model.openThread else { return nil }
+        return MailMessageEntity.messages(of: open, in: model).last
     }
 }
 
@@ -206,6 +282,10 @@ struct MailDraftEntity {
         return DisplayRepresentation(title: "\(subject ?? "(no subject)")", subtitle: "Draft to \(who)", image: .init(systemName: "doc"))
     }
 }
+
+/// A draft's key — the composer's, or the Gmail draft's message id — is
+/// what the user's other devices see too (iOS 27 `SyncableEntity`).
+extension MailDraftEntity: SyncableEntity {}
 
 struct MailDraftQuery: EntityStringQuery {
     @MainActor
@@ -246,12 +326,13 @@ struct MailDraftQuery: EntityStringQuery {
 // MARK: - People
 
 extension IntentPerson {
-    /// A person from an address and, when known, a display name.
-    static func mail(_ address: String, name: String?) -> IntentPerson {
+    /// A person from an address and, when known, a display name; `isMe`
+    /// marks the user's own account so "mail from me" resolves.
+    static func mail(_ address: String, name: String?, isMe: Bool = false) -> IntentPerson {
         let handle = IntentPerson.Handle(emailAddress: address, label: .other)
         guard let name, !name.isEmpty, name != address else { return IntentPerson(handle: handle) }
         return IntentPerson(identifier: .applicationDefined(address), name: .displayName(name),
-                            handle: handle, aliases: [], isMe: false, image: nil)
+                            handle: handle, aliases: [], isMe: isMe, image: nil)
     }
 
     /// The first email address among the person's handles, if any.

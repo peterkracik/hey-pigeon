@@ -4,7 +4,12 @@ name: HeyPigeon
 options:
   bundleIdPrefix: app.heypigeon
   deploymentTarget:
-    iOS: "26.0" # Liquid Glass is the system look from iOS 26; the UI uses its APIs directly
+    # iOS 27: the Siri, Foundation Models and Core Spotlight additions the
+    # intelligence features use (docs/ios-intelligence.md "iOS 27") are iOS 27
+    # SDK APIs, and the app is only installed on the author's phone, so the
+    # floor moves instead of gating every call with #available. Liquid Glass
+    # (iOS 26) comes along for free.
+    iOS: "27.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
@@ -45,6 +50,17 @@ targets:
         # the widgets and a pending share. Not the database, not the Keychain.
         com.apple.security.application-groups:
           - group.app.heypigeon
+        # Private Cloud Compute model (AI/ModelProviders.swift,
+        # PrivateCloudComputeProvider; docs/ios-intelligence.md "iOS 27").
+        # The entitlement is granted per App ID on request (developer.apple.com
+        # → Identifiers → app.heypigeon.ios → Capabilities → Private Cloud
+        # Compute → request access). Until it is granted the key below must
+        # stay commented out: a profile without it fails the archive, and the
+        # app degrades to the on-device model on its own (Settings › AI says
+        # "isn't reachable"). Once granted, uncomment it; publish-ios regenerates
+        # the App Store profile with sigh on the next run — check the
+        # "Fetch App Store provisioning profile" log shows the capability.
+        # com.apple.developer.foundation-models.private-cloud-compute: true
     dependencies:
       - package: HeyPigeonCore
       - target: HeyPigeonWidgets

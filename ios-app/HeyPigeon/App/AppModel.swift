@@ -31,6 +31,12 @@ struct SummaryPresentation: Identifiable, Equatable {
     let title: String
 }
 
+/// The Ask sheet, optionally opened on a question.
+struct AskPresentation: Identifiable, Equatable {
+    let id = UUID()
+    var question: String?
+}
+
 struct RowGroup: Identifiable {
     let title: String
     let rows: [ThreadRow]
@@ -126,6 +132,8 @@ final class AppModel {
     var composeDraft: SendDraft?
     var showSidebar = false
     var showSettings = false
+    /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
+    var askSheet: AskPresentation?
 
     /// Scheduled / Need reply / Drafts totals for the sidebar, the tab
     /// badges and the list title, and the reminders whose time has passed
@@ -173,6 +181,9 @@ final class AppModel {
         static let swipeActions = "swipe_actions"
         /// Settings › Siri & Search › "Let Siri see your inbox".
         static let siriIndex = "siri_index"
+        /// Settings › Triage › Siri triage: "Dry run" and the user's own rules.
+        static let triageDryRun = "triage.dry_run"
+        static let triageRules = "triage.rules"
     }
 
     /// Group pinned messages at the top of the inbox.
@@ -204,6 +215,17 @@ final class AppModel {
             }
         }
     }
+    /// "Triage my inbox" only reports what it would do; nothing changes.
+    var triageDryRun = false {
+        didSet { savePref(PrefName.triageDryRun, triageDryRun) }
+    }
+    /// The user's own triage rules, in their words, put into the agent's
+    /// instructions ("newsletters are done; anything from the bank is high").
+    var triageRules = "" {
+        didSet { savePref(PrefName.triageRules, triageRules) }
+    }
+    /// The triage run in progress or waiting for confirmation (TriageAgent).
+    var triageAgent: TriageAgent?
     /// Bumped when another device changed a synced setting; views that
     /// cache engine status (Settings' AI and Triage sections) reload on it.
     private(set) var prefsVersion = 0
@@ -240,6 +262,8 @@ final class AppModel {
             if actions.count == 4 { swipeActions = actions }
         }
         if let v = prefs[PrefName.siriIndex] as? Bool { siriIndexEnabled = v }
+        if let v = prefs[PrefName.triageDryRun] as? Bool { triageDryRun = v }
+        if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         adoptingPrefs = false
     }
 
@@ -271,6 +295,8 @@ final class AppModel {
         reload()
         push.notify = { [weak self] text in self?.show(text) }
         AppModel.current = self
+        // Donations are system state: not from the sample inbox or the tests.
+        IntentDonations.enabled = !(engine is MockEngine)
         clock = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -499,6 +525,10 @@ final class AppModel {
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
+        // Which models this device can run follows the network and the
+        // Apple Intelligence switch; re-register before the round so the
+        // triage at its end picks the right one.
+        engine.refreshAIProviders()
         do {
             _ = try await engine.syncAll()
             lastSyncAt = Date()
@@ -795,8 +825,12 @@ final class AppModel {
     /// Swipe tiers and the Settings picker dispatch through here.
     func run(_ action: RowAction, on row: ThreadRow) {
         switch action {
-        case .done: toggleDone(row)
-        case .delete: delete(row)
+        case .done:
+            if !row.isDone { IntentDonations.archived(row, in: self) }
+            toggleDone(row)
+        case .delete:
+            IntentDonations.deleted(row, in: self)
+            delete(row)
         // A thread that already has a reminder: the swipe removes it.
         case .remind:
             if row.scheduledAt != nil { remind(row, at: nil, onlyIfNoReply: false) } else { pendingRemind = row }

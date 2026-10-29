@@ -4,6 +4,7 @@
 // Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
 // Need reply; Search is its own screen (Features/Search).
 
+import AppIntents
 import SwiftUI
 
 struct MailListScreen: View {
@@ -43,6 +44,13 @@ struct MailListScreen: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { model.openViewSummary() } label: { Image(systemName: "sparkles") }
                             .accessibilityLabel("Summarize this view")
+                    }
+                }
+                // "Ask my inbox": on-device questions over the Spotlight index.
+                if tab == .inbox && InboxAsk.isAvailable(model) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { model.askSheet = AskPresentation() } label: { Image(systemName: "questionmark.bubble") }
+                            .accessibilityLabel("Ask my inbox")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -205,6 +213,11 @@ struct ThreadList: View {
                                     path.append(row)
                                 }
                         }
+                        // View Annotations (iOS 27): Siri sees this row as the
+                        // thread entity, so "mark these done", "remind me about
+                        // the second one" and "archive everything from Lufthansa
+                        // here" resolve against what is on screen.
+                        .appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier: row.id))
                         .padding(.bottom, 1) // the gap between rows, canvas showing through
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                         .listRowBackground(Color.clear)
@@ -222,6 +235,8 @@ struct ThreadList: View {
         .contentMargins(.top, 0, for: .scrollContent)
         .scrollDismissesKeyboard(.immediately)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
+        // The list is a selection of thread entities for Siri ("these").
+        .appEntityIdentifier(forSelectionType: MailThreadEntity.self)
     }
 
     private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {
@@ -277,7 +292,10 @@ struct RowMenu: View {
     }
 
     var body: some View {
-        Button { model.toggleDone(row) } label: {
+        Button {
+            if !row.isDone { IntentDonations.archived(row, in: model) }
+            model.toggleDone(row)
+        } label: {
             Label(row.isDone ? "Mark not done" : "Mark done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark")
         }
         Button { model.pendingRemind = row } label: {
@@ -295,13 +313,13 @@ struct RowMenu: View {
         if !accountLabels.isEmpty {
             Menu {
                 ForEach(accountLabels) { label in
-                    Button { model.move(row, to: label) } label: { Label(label.name, systemImage: "tray") }
+                    Button { IntentDonations.labeled(row, label, on: true, in: model); model.move(row, to: label) } label: { Label(label.name, systemImage: "tray") }
                 }
             } label: { Label("Move to folder", systemImage: "folder") }
             Menu {
                 ForEach(accountLabels) { label in
                     let on = row.labels.contains(label.id)
-                    Button { model.setLabel(row, label, on: !on) } label: {
+                    Button { IntentDonations.labeled(row, label, on: !on, in: model); model.setLabel(row, label, on: !on) } label: {
                         Label(on ? "Remove \(label.name)" : label.name, systemImage: on ? "checkmark" : "tag")
                     }
                 }
@@ -320,7 +338,7 @@ struct RowMenu: View {
             } label: { Label("Jev labels", systemImage: "sparkles") }
         }
         Divider()
-        Button(role: .destructive) { model.delete(row) } label: { Label("Delete", systemImage: "trash") }
+        Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: { Label("Delete", systemImage: "trash") }
     }
 }
 

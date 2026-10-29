@@ -13,6 +13,9 @@ struct HeyPigeonApp: App {
         _model = State(initialValue: model)
         AppModel.registerBackgroundRefresh(model)
         Self.installWidgetActions()
+        // Spotlight asks the app for items it should re-index, and the
+        // iOS 27 search tool reads full items back through the same door.
+        SpotlightIndexer.installDelegate()
     }
 
     /// Widget buttons, Live Activity buttons and Controls run their intents
@@ -29,6 +32,8 @@ struct HeyPigeonApp: App {
                 model.snooze(threadId: id, hours: hours)
             case .open(let target):
                 model.handle(DeepLink(target))
+            case .cancelTriage:
+                TriageAgent.current?.cancel()
             }
             // The optimistic row change lands on the next main-actor turn.
             try? await Task.sleep(for: .milliseconds(50))
@@ -129,6 +134,7 @@ struct RootView: View {
             .sheet(item: $model.pendingRemind, onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
             .sheet(item: $model.composeDraft, onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
             .sheet(item: $model.summarySheet) { p in SummarySheet(presentation: p) }
+            .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
             .overlay(alignment: .bottom) { ToastView() }
             .alert(
                 "Account disconnected",

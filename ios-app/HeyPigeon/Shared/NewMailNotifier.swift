@@ -9,6 +9,7 @@
 // usernotifications.communication entitlement and INSendMessageIntent in
 // NSUserActivityTypes (project.yml); without them iOS shows the plain form.
 
+import AppIntents
 import Foundation
 import Intents
 import SwiftUI
@@ -79,6 +80,8 @@ enum NewMailNotifier {
         content.sound = .default
         content.threadIdentifier = row.accountId
         content.userInfo = ["threadId": row.id, "accountId": row.accountId]
+        // iOS 27: Siri can act on "that notification" as the thread entity.
+        content.appEntityIdentifiers = [EntityIdentifier(for: MailThreadEntity.self, identifier: row.id)]
 
         // The intent carries the sender; iOS takes name and image from it.
         // A failed update falls back to the plain banner, same text.

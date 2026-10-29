@@ -164,7 +164,38 @@ final class MockEngine: MailEngine {
         return ThreadDetail(thread: row, messages: bodies[id] ?? [])
     }
 
+    /// Bodies only once `thread(id:)` fetched them, like the store.
+    func threadLocal(id: String) throws -> ThreadDetail? {
+        guard let row = rows[id] else { return nil }
+        return ThreadDetail(thread: row, messages: bodies[id] ?? [])
+    }
+
     func threadRow(id: String) throws -> ThreadRow? { rows[id] }
+
+    /// The rows with a paperclip get a PDF and, for the contract, an image.
+    func attachments(threadId: String) async throws -> [AttachmentItem] {
+        guard let row = rows[threadId], row.hasAttachment else { return [] }
+        var out = [AttachmentItem(threadId: threadId, messageId: "\(threadId)-m0", attachmentId: "a1",
+                                  filename: threadId == "t1" ? "Q4-roadmap.pdf" : "contract-v3.pdf", mimeType: "application/pdf", size: 184_320)]
+        if threadId == "t5" {
+            out.append(AttachmentItem(threadId: threadId, messageId: "\(threadId)-m0", attachmentId: "a2",
+                                      filename: "receipt.png", mimeType: "image/png", size: 2_048))
+        }
+        return out
+    }
+
+    /// A tiny file in the temporary directory stands in for the download.
+    func attachmentFile(_ a: AttachmentItem) async throws -> URL {
+        try? await Task.sleep(for: .milliseconds(200))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mock-\(a.attachmentId)-\(a.filename)")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            // A 1×1 white PNG; the PDF is a minimal one-page document.
+            let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=")!
+            let pdf = Data("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>".utf8)
+            try (a.isPDF ? pdf : png).write(to: url)
+        }
+        return url
+    }
 
     func perform(_ action: MailAction, accountId: String) async throws {
         switch action {
@@ -256,22 +287,47 @@ final class MockEngine: MailEngine {
 
     // MARK: AI
 
-    /// The sample inbox pretends to have no on-device model; set this true
-    /// in a preview to see the on-device rows in Settings.
+    /// The sample inbox pretends to have no on-device model and no reach to
+    /// Apple's cloud; set these true in a preview to see the rows in Settings.
     var onDeviceAI = false
+    var cloudAI = false
     private var aiProvider: AIProvider?
+    private var aiFallback: [AIProvider] = []
     private var triageClassifier: TriageClassifier?
 
-    func aiStatus() throws -> AIStatus {
-        let preferred = aiProvider ?? (onDeviceAI ? .apple : .openai)
-        let active: AIProvider? = switch preferred {
-        case .apple: onDeviceAI ? .apple : (aiKey != nil ? .openai : nil)
-        case .openai: aiKey != nil ? .openai : (onDeviceAI ? .apple : nil)
+    /// The engine's rule (crates/ffi/src/settings.rs active_provider): the
+    /// preferred provider when it can answer, else the first of the
+    /// fallback order that can.
+    private func canAnswer(_ p: AIProvider) -> Bool {
+        switch p {
+        case .apple: onDeviceAI
+        case .appleCloud: cloudAI
+        case .openai: aiKey != nil
+        case .other: false
         }
+    }
+
+    private var availableProviderIds: [String] {
+        (onDeviceAI ? ["apple"] : []) + (cloudAI ? ["apple-cloud"] : [])
+    }
+
+    func aiStatus() throws -> AIStatus {
+        let fallback = aiFallback.isEmpty ? AIProvider.defaultFallback : aiFallback
+        let preferred = aiProvider ?? AIProvider.defaultFallback.first { $0 != .openai && canAnswer($0) } ?? .openai
+        let active = ([preferred] + fallback).first(where: canAnswer)
         return AIStatus(configured: active != nil, providerId: active?.rawValue, model: aiKey == nil ? nil : aiModel,
-                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKey != nil)
+                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKey != nil,
+                        availableProviderIds: availableProviderIds, fallbackOrder: fallback.map(\.rawValue))
     }
     func setAIProvider(_ provider: AIProvider) throws { aiProvider = provider }
+    func setAIFallback(_ order: [AIProvider]) throws { aiFallback = order }
+    func aiProviders() -> [AIProviderInfo] {
+        [AIProviderInfo(id: "apple", title: "On this iPhone", modelLabel: "On this iPhone", leavesDevice: false,
+                        available: onDeviceAI, unavailableReason: onDeviceAI ? nil : "Apple Intelligence isn't available in the sample inbox."),
+         AIProviderInfo(id: "apple-cloud", title: "Apple's cloud", modelLabel: "Private Cloud Compute", leavesDevice: true,
+                        available: cloudAI, unavailableReason: cloudAI ? nil : "Private Cloud Compute isn't reachable in the sample inbox.")]
+    }
+    func refreshAIProviders() {}
     func aiModels() throws -> [AIModel] {
         [AIModel(id: "gpt-4o-mini", label: "GPT-4o mini"), AIModel(id: "gpt-4o", label: "GPT-4o")]
     }
@@ -302,13 +358,25 @@ final class MockEngine: MailEngine {
         return "You've got \(items.count) active emails; \(items.first?.from ?? "someone") wants a look at \"\(items.first?.subject ?? "")\"."
     }
 
+    /// The desktop's prompts, abridged: the evaluation harness only needs
+    /// the format rules it checks for.
+    func aiPrompts() -> AIPrompts {
+        AIPrompts(
+            summary: "You write a factual digest of the user's active emails. Return 1 to 4 bullet points, each on its own line starting with \"- \". Wrap the key facts in **double asterisks** for bold. Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.",
+            threadSummary: "You write a factual recap of one email conversation. Return 1 to 4 bullet points, each on its own line starting with \"- \". Wrap the key facts in **double asterisks** for bold. No headers, no other markdown.",
+            draftReply: "You are drafting an email reply on behalf of the user. Return ONLY the reply body as plain text.",
+            edit: "Apply the user's instruction to the given text and return ONLY the revised text."
+        )
+    }
+
     // MARK: Triage
 
     func triageStatus() throws -> TriageStatus {
-        let preferred = triageClassifier ?? (onDeviceAI ? .apple : .jev)
-        let configured = jevKey != nil || onDeviceAI
-        return TriageStatus(configured: configured, enabled: autoTriage, lastError: nil,
-                            classifierId: preferred.rawValue, onDeviceAvailable: onDeviceAI, jevConfigured: jevKey != nil)
+        let preferred = triageClassifier ?? (onDeviceAI ? .apple : cloudAI ? .appleCloud : .jev)
+        let available = availableProviderIds + (jevKey != nil ? ["jev"] : [])
+        return TriageStatus(configured: !available.isEmpty, enabled: autoTriage, lastError: nil,
+                            classifierId: preferred.rawValue, onDeviceAvailable: onDeviceAI, jevConfigured: jevKey != nil,
+                            availableClassifierIds: available)
     }
     func setTriageClassifier(_ classifier: TriageClassifier) throws { triageClassifier = classifier }
     func setJevKey(_ key: String) async throws {

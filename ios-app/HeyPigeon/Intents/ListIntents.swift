@@ -149,6 +149,33 @@ struct SummarizeInboxIntent: AppIntent {
     }
 }
 
+/// "Ask Hey Pigeon when the Lisbon flight is": the on-device model over
+/// the Spotlight index (AI/InboxAsk.swift). Answers in the background with
+/// the cited threads as the snippet; nothing leaves the device.
+struct AskInboxIntent: AppIntent {
+    static let title: LocalizedStringResource = "Ask My Inbox"
+    static let description = IntentDescription(
+        "Answers a question about your own mail on this iPhone, from the index Siri uses. Nothing is sent anywhere.",
+        categoryName: "Find"
+    )
+
+    @Parameter(title: "Question") var question: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Ask my inbox \(\.$question)")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog & ShowsSnippetView {
+        let model = try await IntentSupport.model()
+        await IntentSupport.syncIfStale(model)
+        let answer = try await InboxAsk.answer(question, model: model)
+        let rows = InboxAsk.validCitations(answer.citedThreadIds, in: model)
+        return .result(value: answer.answer, dialog: IntentDialog(stringLiteral: answer.answer),
+                       view: ThreadsSnippet(rows: Array(rows.prefix(5)), accent: .none))
+    }
+}
+
 struct SyncNowIntent: AppIntent {
     static let title: LocalizedStringResource = "Check for Mail"
     static let description = IntentDescription("Syncs every account now and says how much is unread.", categoryName: "Find")

@@ -3,6 +3,7 @@
 // whenever one is set on this phone and after every sync, so a reminder
 // moved or cleared on another device disappears here too.
 
+import AppIntents
 import Foundation
 import UserNotifications
 
@@ -44,6 +45,9 @@ enum ReminderScheduler {
             content.badge = NSNumber(value: unread + dueByThen)
             content.threadIdentifier = t.accountId
             content.userInfo = ["threadId": t.id]
+            // iOS 27: the notification names its thread entity, so "remind
+            // me about that notification tomorrow" and "open it" resolve.
+            content.appEntityIdentifiers = [EntityIdentifier(for: MailThreadEntity.self, identifier: t.id)]
             // Seconds-precise. A calendar trigger rounded to the minute can
             // land in the past for a reminder due within the minute, and iOS
             // then never fires it.

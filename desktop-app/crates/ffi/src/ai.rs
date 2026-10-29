@@ -17,9 +17,19 @@ use crate::types::*;
 
 /// Provider id of the shell's on-device backend (`pref:ai.provider`).
 pub const APPLE_PROVIDER: &str = "apple";
+/// Provider id of Apple's Private Cloud Compute model, registered by the
+/// shell as a second backend when the device can reach it (iOS 27).
+pub const APPLE_CLOUD_PROVIDER: &str = "apple-cloud";
+/// The foreign (shell-side) provider ids the settings accept even when the
+/// shell has not registered them on this device: the choice is a synced
+/// preference, and another device may well have the backend.
+pub const FOREIGN_PROVIDERS: &[&str] = &[APPLE_PROVIDER, APPLE_CLOUD_PROVIDER];
 
 /// Implemented on the Swift side over `LanguageModelSession`. Called from
-/// engine threads; the implementation hops to whatever actor it needs.
+/// engine threads; the implementation hops to whatever actor it needs. The
+/// shell registers one backend per provider it can offer (`id()`: "apple"
+/// for the on-device model, "apple-cloud" for Private Cloud Compute, …)
+/// through `Engine::add_ai_backend`.
 #[uniffi::export(with_foreign)]
 #[async_trait::async_trait]
 pub trait AiBackend: Send + Sync {
@@ -104,6 +114,7 @@ pub(crate) mod fakes {
 
     /// A backend that answers from a script and records what it was asked.
     pub(crate) struct ScriptedBackend {
+        pub(crate) provider_id: String,
         pub(crate) completions: Mutex<Vec<(String, String)>>,
         pub(crate) classifications: Mutex<Vec<String>>,
         pub(crate) verdict: TriageVerdict,
@@ -112,7 +123,16 @@ pub(crate) mod fakes {
 
     impl ScriptedBackend {
         pub(crate) fn new(answer: &str, verdict: TriageVerdict) -> Arc<Self> {
+            Self::with_id(APPLE_PROVIDER, answer, verdict)
+        }
+
+        pub(crate) fn with_id(
+            provider_id: &str,
+            answer: &str,
+            verdict: TriageVerdict,
+        ) -> Arc<Self> {
             Arc::new(Self {
+                provider_id: provider_id.to_string(),
                 completions: Mutex::new(Vec::new()),
                 classifications: Mutex::new(Vec::new()),
                 verdict,
@@ -124,11 +144,11 @@ pub(crate) mod fakes {
     #[async_trait::async_trait]
     impl AiBackend for ScriptedBackend {
         fn id(&self) -> String {
-            APPLE_PROVIDER.to_string()
+            self.provider_id.clone()
         }
         fn models(&self) -> Vec<AiModel> {
             vec![AiModel {
-                id: "apple-on-device".into(),
+                id: format!("{}-model", self.provider_id),
                 label: "On this device".into(),
             }]
         }

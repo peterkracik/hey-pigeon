@@ -200,6 +200,20 @@ impl From<domain::TriageLabel> for TriageLabel {
     }
 }
 
+/// One attachment of a stored message, where to fetch it and what it is.
+/// Bytes come separately through `Engine::fetch_attachment`, which caches
+/// the file under the data directory.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct MailAttachment {
+    pub thread_id: String,
+    pub message_id: String,
+    pub attachment_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    /// Bytes as the provider reports them; 0 when unknown.
+    pub size: i64,
+}
+
 /// One outgoing attachment (standard base64 content).
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct OutAttachment {
@@ -461,6 +475,13 @@ pub struct AiStatus {
     pub on_device_available: bool,
     /// An OpenAI key is stored on this device.
     pub openai_configured: bool,
+    /// Ids of the shell backends registered on this device, in registration
+    /// order ("apple", "apple-cloud", …). `provider_id` is one of these or
+    /// "openai".
+    pub available_provider_ids: Vec<String>,
+    /// Who answers when the preferred provider cannot, in order
+    /// (`pref:ai.fallback`; default on device → Apple's cloud → OpenAI).
+    pub fallback_order: Vec<String>,
 }
 
 /// One selectable model of an AI provider.
@@ -482,6 +503,9 @@ pub struct TriageStatus {
     pub classifier_id: String,
     pub on_device_available: bool,
     pub jev_configured: bool,
+    /// The shell backends that can classify on this device ("apple",
+    /// "apple-cloud", …); "jev" is added when its key is stored.
+    pub available_classifier_ids: Vec<String>,
 }
 
 /// What the on-device classifier decided for one email.
@@ -501,6 +525,17 @@ impl From<Priority> for domain::Priority {
             Priority::High => Self::High,
         }
     }
+}
+
+/// The system prompts the engine sends, so the shell's evaluation harness
+/// scores the prompt the app really runs (and variants of it) instead of
+/// a copy that drifts.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AiPrompts {
+    pub summary: String,
+    pub thread_summary: String,
+    pub draft_reply: String,
+    pub edit: String,
 }
 
 /// One email's contribution to a group summary — subject + snippet only,

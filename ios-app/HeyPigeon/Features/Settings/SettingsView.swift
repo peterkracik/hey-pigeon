@@ -218,43 +218,62 @@ struct Avatar: View {
 
 // MARK: - AI
 
+/// The providers, in the engine's fallback order: Apple on this iPhone,
+/// Apple's Private Cloud Compute, then ChatGPT with a key. Each Apple row
+/// says whether it answers, is available, or why not; "Prefer" picks the
+/// first choice and "If it can't answer" the order after it. Under the
+/// card, what each provider has cost in tokens since the last reset.
 private struct AISection: View {
     @Environment(AppModel.self) private var model
     @State private var status: AIStatus?
+    @State private var providers: [AIProviderInfo] = []
     @State private var models: [AIModel] = []
     @State private var key = ""
     @State private var saving = false
     @State private var error: String?
     @State private var confirmRemove = false
+    private let usage = AiUsageLedger.shared
 
     private var openaiConfigured: Bool { status?.openaiConfigured == true }
-    private var onDevice: Bool { status?.onDeviceAvailable == true }
+    private var anyApple: Bool { providers.contains { $0.available } }
+    /// What the Prefer picker offers: every Apple provider this device has,
+    /// the one preferred from another device even if it is missing here
+    /// (so the picker never shows a blank), and ChatGPT.
+    private var choices: [AIProvider] {
+        var ids = providers.filter(\.available).map(\.id)
+        if let p = status?.preferredProviderId, !ids.contains(p), p != "openai" { ids.append(p) }
+        return ids.map(AIProvider.init(rawValue:)) + [.openai]
+    }
 
     var body: some View {
         @Bindable var model = model
         Section {
-            // The on-device model, when this iPhone has it: AI with no key.
-            // Which provider answers is the core's call (the preferred one
-            // when it can, else the other); the line under the row says so.
-            if onDevice {
+            ForEach(providers) { p in
                 HStack(spacing: 12) {
-                    mark("AI")
+                    mark(p.id == "apple-cloud" ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("On this iPhone").font(.body.weight(.medium))
-                        Text(status?.answersOnDevice == true ? "Apple Intelligence · answering" : "Apple Intelligence · available")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(p.title).font(.body.weight(.medium))
+                        Text(providerLine(p)).font(.caption).foregroundStyle(p.available ? Theme.textTertiary : Theme.textTertiary.opacity(0.8))
                     }
                     Spacer()
                 }
+            }
+            if anyApple {
                 Picker("Prefer", selection: Binding(
-                    get: { AIProvider(rawValue: status?.preferredProviderId ?? "") ?? .apple },
+                    get: { AIProvider(rawValue: status?.preferredProviderId ?? "openai") },
                     set: { setProvider($0) }
                 )) {
-                    ForEach(AIProvider.allCases) { p in Text(p.title).tag(p) }
+                    ForEach(choices) { p in Text(p.title).tag(p) }
+                }
+                Picker("If it can't answer", selection: Binding(
+                    get: { AIFallbackPreset(order: status?.fallbackOrder ?? []) },
+                    set: { setFallback($0) }
+                )) {
+                    ForEach(AIFallbackPreset.allCases) { f in Text(f.title).tag(f) }
                 }
             }
             HStack(spacing: 12) {
-                mark(onDevice ? "GPT" : "AI")
+                mark(anyApple ? "GPT" : "AI")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ChatGPT (OpenAI)").font(.body.weight(.medium))
                     Text(openaiConfigured ? (status?.providerId == "openai" ? "Connected · \(modelLabel) · answering" : "Connected · \(modelLabel)") : "Not connected")
@@ -293,13 +312,36 @@ private struct AISection: View {
         } header: {
             Text("AI")
         } footer: {
-            Text(onDevice
-                ? "On this iPhone, Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. Which one you prefer follows you to your other devices; a device without Apple Intelligence uses the key."
-                : "Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
+            VStack(alignment: .leading, spacing: 6) {
+                Text(anyApple
+                    ? "On this iPhone, Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own model with a much larger window and deeper reasoning: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. What you prefer and the fallback order follow you to your other devices."
+                    : "Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
+                usageLines
+            }
         }
         .menuCard()
         .task { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
+    }
+
+    /// One line under each Apple row: answering · available · why not.
+    private func providerLine(_ p: AIProviderInfo) -> String {
+        if status?.providerId == p.id { return "\(p.modelLabel) · answering" }
+        if p.available { return p.leavesDevice ? "\(p.modelLabel) · available · Apple-private, never stored" : "\(p.modelLabel) · available" }
+        return p.unavailableReason ?? "Not available"
+    }
+
+    /// Tokens per provider since the last reset (iOS 27 `response.usage`),
+    /// and a Reset when there is anything to reset.
+    @ViewBuilder private var usageLines: some View {
+        let used = usage.byProvider.filter { !$0.value.isEmpty }.sorted { $0.key < $1.key }
+        if !used.isEmpty {
+            ForEach(used, id: \.key) { id, u in
+                Text("\(AIProvider(rawValue: id).title): \(AiUsageLedger.line(u, price: AiUsageLedger.prices[id]))")
+                    .font(.caption2.monospacedDigit())
+            }
+            Button("Reset usage") { usage.reset() }.font(.caption2.weight(.semibold))
+        }
     }
 
     private var modelLabel: String {
@@ -307,7 +349,9 @@ private struct AISection: View {
     }
 
     private func load() {
+        model.engine.refreshAIProviders()
         status = try? model.engine.aiStatus()
+        providers = model.engine.aiProviders()
         models = (try? model.engine.aiModels()) ?? []
     }
 
@@ -342,6 +386,48 @@ private struct AISection: View {
         load()
         model.reloadAccounts()
     }
+
+    private func setFallback(_ f: AIFallbackPreset) {
+        do { try model.engine.setAIFallback(f.order) } catch { self.error = error.localizedDescription }
+        load()
+        model.reloadAccounts()
+    }
+}
+
+/// The fallback orders Settings offers (`pref:ai.fallback`), by how much
+/// may leave the device when the preferred provider cannot answer.
+enum AIFallbackPreset: CaseIterable, Identifiable, Hashable {
+    /// On this iPhone → Apple's cloud → ChatGPT (the engine's default).
+    case privateFirst
+    /// Apple's cloud → on this iPhone → ChatGPT: the big window first.
+    case cloudFirst
+    /// On this iPhone only: never a network hop the user did not pick.
+    case onDeviceOnly
+
+    var id: Self { self }
+
+    var order: [AIProvider] {
+        switch self {
+        case .privateFirst: []  // empty = the engine's default
+        case .cloudFirst: [.appleCloud, .apple, .openai]
+        case .onDeviceOnly: [.apple]
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .privateFirst: "On this iPhone, then Apple's cloud, then ChatGPT"
+        case .cloudFirst: "Apple's cloud, then on this iPhone, then ChatGPT"
+        case .onDeviceOnly: "Stay on this iPhone"
+        }
+    }
+
+    init(order: [String]) {
+        let providers = order.map(AIProvider.init(rawValue:))
+        self = Self.allCases.first { preset in
+            preset != .privateFirst && preset.order == providers
+        } ?? .privateFirst
+    }
 }
 
 // MARK: - Siri & Search
@@ -357,8 +443,13 @@ private struct SiriSection: View {
             Toggle(isOn: $model.siriIndexEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Let Siri see your inbox")
-                    Text("Subject, sender and one preview line of recent mail, indexed on this iPhone so Siri and Spotlight can find a thread. Never the message itself.")
+                    Text("Recent mail indexed on this iPhone — subject, sender, people, labels, and the text of messages you have opened — so Siri and Spotlight can find a thread and \"Ask my inbox\" can answer from it. The index never leaves the device.")
                         .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            if InboxAsk.isAvailable(model) {
+                Button { model.askSheet = AskPresentation() } label: {
+                    Label("Ask my inbox", systemImage: "questionmark.bubble")
                 }
             }
             SiriTipView(intent: WhatNeedsReplyIntent())
@@ -366,7 +457,7 @@ private struct SiriSection: View {
         } header: {
             Text("Siri & Search")
         } footer: {
-            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, or add any action to a Shortcut. Nothing is sent anywhere: Siri reads the index on this iPhone.")
+            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this iPhone.")
         }
         .menuCard()
     }
@@ -386,6 +477,13 @@ private struct TriageSection: View {
 
     private var jevConfigured: Bool { status?.jevConfigured == true }
     private var onDevice: Bool { status?.onDeviceAvailable == true }
+    /// The classifiers this device can run, plus the one chosen elsewhere,
+    /// plus Jev (a key can always be pasted).
+    private var classifierChoices: [TriageClassifier] {
+        var out = TriageClassifier.allCases.filter { $0 == .jev || status?.isAvailable($0) == true }
+        if let c = TriageClassifier(rawValue: status?.classifierId ?? ""), !out.contains(c) { out.insert(c, at: 0) }
+        return out
+    }
 
     var body: some View {
         Section {
@@ -399,11 +497,24 @@ private struct TriageSection: View {
                     }
                     Spacer()
                 }
+            }
+            if status?.isAvailable(.appleCloud) == true {
+                HStack(spacing: 12) {
+                    mark("PCC")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple's cloud").font(.body.weight(.medium))
+                        Text("Private Cloud Compute · deeper reasoning on the same subject, sender and preview; Apple-private, never stored")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                    Spacer()
+                }
+            }
+            if onDevice || status?.isAvailable(.appleCloud) == true {
                 Picker("Classifier", selection: Binding(
                     get: { TriageClassifier(rawValue: status?.classifierId ?? "") ?? .apple },
                     set: { setClassifier($0) }
                 )) {
-                    ForEach(TriageClassifier.allCases) { c in Text(c.title).tag(c) }
+                    ForEach(classifierChoices) { c in Text(c.title).tag(c) }
                 }
             }
             HStack(spacing: 12) {
@@ -444,6 +555,29 @@ private struct TriageSection: View {
                     Button(saving ? "Verifying…" : "Connect") { connect() }
                         .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
                         .font(.footnote.weight(.semibold))
+                }
+            }
+            // "Hey Siri, triage my inbox": the agentic run over the engine
+            // (AI/TriageAgent.swift) — a dry-run switch, the user's own
+            // rules, and the journal of what it did.
+            if onDevice {
+                @Bindable var model = model
+                Toggle(isOn: $model.triageDryRun) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Siri triage: dry run")
+                        Text("\"Triage my inbox\" only reports what it would do.").font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your triage rules")
+                    TextEditor(text: $model.triageRules)
+                        .frame(minHeight: 60)
+                        .font(.subheadline)
+                    Text("In your words, one per line; they win over the built-in ones. \"Newsletters are done. Anything from the bank needs a reply.\"")
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+                NavigationLink { TriageJournalView() } label: {
+                    Label(model.triageAgent == nil ? "Siri triage and journal" : "Siri triage · \(model.triageAgent!.phase.title)", systemImage: "list.bullet.rectangle")
                 }
             }
             // The labels: the categories Jev sorts mail into, and the

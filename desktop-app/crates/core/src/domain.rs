@@ -300,6 +300,22 @@ impl std::fmt::Debug for DraftContent {
     }
 }
 
+/// One attachment of a stored message, as the provider's parts tree names
+/// it: where to fetch it (`message_id` + `attachment_id`), what it is and
+/// how big. Bytes are never kept here — `MailProvider::fetch_attachment`
+/// brings them on demand and the shell caches the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentRef {
+    pub message_id: MessageId,
+    /// Provider id of the part. Gmail hands small parts inline instead;
+    /// those carry `inline:<n>` (the n-th attachment part of the message).
+    pub attachment_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    /// Bytes, as the provider reports it (0 when unknown).
+    pub size: i64,
+}
+
 /// One attachment on an outgoing Send mutation.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutAttachment {

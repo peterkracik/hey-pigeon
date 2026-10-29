@@ -40,6 +40,25 @@ struct HeyPigeonShortcuts: AppShortcutsProvider {
             systemImageName: "sparkles"
         )
         AppShortcut(
+            intent: TriageInboxIntent(),
+            phrases: [
+                "Triage my inbox in \(.applicationName)",
+                "Clean up my inbox in \(.applicationName)",
+                "Sort my mail in \(.applicationName)",
+            ],
+            shortTitle: "Triage inbox",
+            systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: AskInboxIntent(),
+            phrases: [
+                "Ask \(.applicationName) \(\.$question)",
+                "Ask my inbox in \(.applicationName)",
+            ],
+            shortTitle: "Ask my inbox",
+            systemImageName: "questionmark.bubble"
+        )
+        AppShortcut(
             intent: SearchMailIntent(),
             phrases: [
                 "Search \(.applicationName)",

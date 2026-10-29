@@ -152,7 +152,7 @@ text the swipe shows, returned as the Siri dialog.
 | `NeedReplyIntent` | `toggleNeedsReply` → explicit `set` | thread, on/off | "Marked Need reply" |
 | `PinIntent` | `togglePin` → explicit `set` | thread, on/off | "Pinned" |
 | `MarkReadIntent` | `markRead` / `toggleRead` → explicit `set` | thread, read/unread | — |
-| `DeleteIntent` | `delete` | thread | "Deleted" (`isDiscardable`, confirmation on) |
+| `DeleteThreadIntent` | `delete` | thread | "Deleted" (`isDiscardable`, confirmation on) |
 | `AddLabelIntent` | `setLabel` | thread, `MailLabelEntity` (same account) | "Label added · Travel" |
 | `OpenThreadIntent` | `openThread(id:)` | thread | opens the app |
 | `OpenFolderIntent` | `view = …`, `tab = …` | `Folder: AppEnum` (Inbox · Scheduled · Need reply · Starred · Drafts · Sent · Archive · All · Spam · Trash) | opens the app |
@@ -215,7 +215,10 @@ and twelve intent schemas in three **use-case groups** — composing
 (`createDraft` · `updateDraft` · `saveDraft` · `sendDraft`), replying (+
 `replyMail`) and forwarding (+ `forwardMail`) — plus the standalone
 `openMessage`, `openDraft`, `archiveMail`, `deleteMail`, `deleteDraft` and
-`updateMail`. Conforming (`@AppEntity(schema: .mail.message)`,
+`updateMail`. (The iOS 26 SDK has no `openMessage` / `openDraft` members
+yet, so those two are plain `OpenIntent`s over the schema entities; the
+name `DeleteIntent` is taken by the AppIntents protocol the `deleteMail` /
+`deleteDraft` schemas conform to, hence `DeleteThreadIntent` in step 1.) Conforming (`@AppEntity(schema: .mail.message)`,
 `@AppIntent(schema: .mail.replyMail)`) makes the new Siri understand "reply
 to Anna's email saying I'll be late" with **no custom phrase**, because the
 system already knows what a mail app does. Xcode warns for every schema

@@ -67,7 +67,7 @@ final class AppleIntelligenceProvider: AiBackend, @unchecked Sendable {
         do {
             return try await session.respond(to: prompt).content
         } catch let error as LanguageModelSession.GenerationError {
-            throw EngineError.Ai(Self.describe(error))
+            throw EngineError.Ai(message: Self.describe(error))
         }
     }
 
@@ -90,7 +90,7 @@ final class AppleIntelligenceProvider: AiBackend, @unchecked Sendable {
         do {
             verdict = try await session.respond(to: prompt, generating: TriageCall.self).content
         } catch let error as LanguageModelSession.GenerationError {
-            throw EngineError.Ai(Self.describe(error))
+            throw EngineError.Ai(message: Self.describe(error))
         }
         let ids = verdict.labels.compactMap { name in
             labels.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id

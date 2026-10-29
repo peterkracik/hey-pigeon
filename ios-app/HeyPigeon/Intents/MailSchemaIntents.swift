@@ -165,10 +165,18 @@ struct SendDraftIntent {
 }
 
 // MARK: - Opening
+//
+// The Mail domain documents `openMessage` and `openDraft` schemas, but the
+// iOS 26 SDK has no such members (the first compile of this file said so),
+// so these are plain OpenIntents over the schema entities: Shortcuts and
+// the App Shortcut phrases reach them, and they pick up the schema once
+// the toolchain has it.
 
-@AppIntent(schema: .mail.openMessage)
 struct OpenMessageIntent: OpenIntent {
-    var target: MailMessageEntity
+    static let title: LocalizedStringResource = "Open Message"
+    static let description = IntentDescription("Opens an email in Hey Pigeon.", categoryName: "Mail")
+
+    @Parameter(title: "Message") var target: MailMessageEntity
 
     @MainActor
     func perform() async throws -> some IntentResult {
@@ -179,9 +187,11 @@ struct OpenMessageIntent: OpenIntent {
     }
 }
 
-@AppIntent(schema: .mail.openDraft)
 struct OpenDraftIntent: OpenIntent {
-    var target: MailDraftEntity
+    static let title: LocalizedStringResource = "Open Draft"
+    static let description = IntentDescription("Opens a draft in Hey Pigeon's composer.", categoryName: "Mail")
+
+    @Parameter(title: "Draft") var target: MailDraftEntity
 
     @MainActor
     func perform() async throws -> some IntentResult {

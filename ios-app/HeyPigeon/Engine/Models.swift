@@ -201,6 +201,16 @@ enum MailView: Hashable {
         }
     }
 
+    /// Views the engine pages by `before` (keyset on `lastMessageAt`).
+    /// Scheduled and Need reply are bounded lists that come back whole, so
+    /// there is never a next page to ask for.
+    var isPaged: Bool {
+        switch self {
+        case .scheduled, .needReply: false
+        default: true
+        }
+    }
+
     /// Sidebar folders in the desktop's order (Scheduled and Need reply are tabs).
     static let folders: [MailView] = [
         .starred, .sent, .drafts, .archive, .all, .spam, .trash,
@@ -366,6 +376,8 @@ protocol MailEngine: AnyObject {
     func triageLabels() throws -> [TriageLabelItem]
     func unreadCounts(accountId: String?) throws -> [String: Int]
     /// Newest first; `before` is the previous page's last `lastMessageAt`.
+    /// `.scheduled` and `.needReply` are not paged (`MailView.isPaged`):
+    /// the whole list comes back, whatever `before` and `limit` say.
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func search(_ query: String, limit: Int) throws -> [ThreadRow]
     func thread(id: String) async throws -> ThreadDetail?

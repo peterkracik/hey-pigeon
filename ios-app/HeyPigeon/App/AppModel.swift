@@ -285,7 +285,22 @@ final class AppModel {
     private func tick() {
         let before = dueCount
         dueCount = Self.due(scheduledThreads(accountId: selectedAccountId)).count
-        if dueCount != before { Task { await NewMailNotifier.refreshBadge(self) } }
+        if dueCount != before {
+            Task {
+                await NewMailNotifier.refreshBadge(self)
+                // A reminder came due while the app is in front: the Live
+                // Activity and the widgets show it now.
+                await ReminderLiveActivityController.sync(self)
+                WidgetSnapshotWriter.publish(self)
+            }
+        }
+    }
+
+    /// A widget's or the Live Activity's "1 h": the reminder moves ahead,
+    /// keeping its follow-up nature.
+    func snooze(threadId: String, hours: Int) {
+        guard let row = try? engine.threadRow(id: threadId) else { return }
+        remind(row, at: Date().addingTimeInterval(Double(max(1, hours)) * 3600), onlyIfNoReply: row.isFollowUp)
     }
 
     // MARK: Loading
@@ -317,6 +332,8 @@ final class AppModel {
         // Anything that changes the list can change the icon badge: a read,
         // a reminder set for later today, another device's edit.
         Task { await NewMailNotifier.refreshBadge(self) }
+        // The widgets follow the store too (a no-op when nothing they show moved).
+        WidgetSnapshotWriter.publish(self)
     }
 
     /// The sidebar / badge totals, from the store. Reminders and Need reply

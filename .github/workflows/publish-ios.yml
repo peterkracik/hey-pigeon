@@ -27,7 +27,9 @@ name: publish-ios
 #
 # One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
 # in App Store Connect; create the ASC API key; export the distribution
-# certificate as .p12; for EAS, create an expo.dev project and a token.
+# certificate as .p12; for EAS, create an expo.dev project and a token. The
+# extensions' App IDs (…ios.widgets, …ios.share) and the App Group are
+# created through the API on the first run.
 # The App Store provisioning profile is created/refreshed by fastlane sigh
 # through the ASC key on every run (manual signing; no device needed).
 
@@ -70,8 +72,15 @@ concurrency:
 env:
   SCHEME: HeyPigeon
   BUNDLE_ID: app.heypigeon.ios
-  # Name of the App Store provisioning profile sigh creates/refreshes.
+  # The widget and share extensions are their own bundle ids, each with its
+  # own App Store profile; all three share the App Group.
+  WIDGETS_BUNDLE_ID: app.heypigeon.ios.widgets
+  SHARE_BUNDLE_ID: app.heypigeon.ios.share
+  APP_GROUP: group.app.heypigeon
+  # Names of the App Store provisioning profiles sigh creates/refreshes.
   PROFILE_NAME: HeyPigeon AppStore
+  PROFILE_NAME_WIDGETS: HeyPigeon Widgets AppStore
+  PROFILE_NAME_SHARE: HeyPigeon Share AppStore
   ARCHIVE: ios-app/build/HeyPigeon.xcarchive
   EXPORT_DIR: ios-app/build/export
 
@@ -254,14 +263,64 @@ jobs:
               fi
             fi
           done
-          fastlane sigh \
+          # The extensions' App IDs (created once, then a no-op) and the App
+          # Group all three bundle ids share: the widgets read the snapshot
+          # the app writes, the share extension leaves it a pending share.
+          # `produce` is not idempotent on groups either; an "already
+          # exists" answer is the fine outcome.
+          for ext in "$WIDGETS_BUNDLE_ID":"Hey Pigeon Widgets" "$SHARE_BUNDLE_ID":"Hey Pigeon Share"; do
+            id="${ext%%:*}"; name="${ext#*:}"
+            if ! out="$(fastlane produce \
+              --api_key_path "$RUNNER_TEMP/asc.json" \
+              --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+              --app_identifier "$id" \
+              --app_name "$name" \
+              --skip_itc 2>&1)"; then
+              printf '%s\n' "$out" | tail -5
+              echo "::warning::Could not create App ID $id through the API (fine if it already exists)."
+            fi
+          done
+          if ! out="$(fastlane produce group \
             --api_key_path "$RUNNER_TEMP/asc.json" \
             --team_id "${{ secrets.APPLE_TEAM_ID }}" \
-            --app_identifier "$BUNDLE_ID" \
-            --provisioning_name "$PROFILE_NAME" \
-            --force \
-            --output_path "$RUNNER_TEMP/profiles" \
-            --filename "AppStore.mobileprovision"
+            --group_name "Hey Pigeon" \
+            --group_identifier "$APP_GROUP" 2>&1)"; then
+            printf '%s\n' "$out" | tail -5
+            echo "::warning::Could not create App Group $APP_GROUP through the API (fine if it already exists)."
+          fi
+          for id in "$BUNDLE_ID" "$WIDGETS_BUNDLE_ID" "$SHARE_BUNDLE_ID"; do
+            if ! out="$(fastlane produce enable_services --app-group \
+              --api_key_path "$RUNNER_TEMP/asc.json" \
+              --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+              --app_identifier "$id" 2>&1)"; then
+              if grep -q "is not an attribute on the resource 'bundleIdCapabilities'" <<<"$out"; then
+                echo "App Groups already enabled on $id."
+              else
+                printf '%s\n' "$out" | tail -5
+                echo "::warning::Could not enable App Groups on $id through the API. If the archive fails on the entitlement, enable it once by hand: developer.apple.com → Identifiers → $id → App Groups."
+              fi
+            fi
+            if ! out="$(fastlane produce associate_group "$APP_GROUP" \
+              --api_key_path "$RUNNER_TEMP/asc.json" \
+              --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+              --app_identifier "$id" 2>&1)"; then
+              printf '%s\n' "$out" | tail -5
+              echo "::warning::Could not associate $APP_GROUP with $id through the API (fine if it already is)."
+            fi
+          done
+          # One App Store profile per bundle id; the archive step names each
+          # target's profile (project.yml PROVISIONING_PROFILE_SPECIFIER).
+          for pair in "$BUNDLE_ID|$PROFILE_NAME|AppStore" "$WIDGETS_BUNDLE_ID|$PROFILE_NAME_WIDGETS|Widgets" "$SHARE_BUNDLE_ID|$PROFILE_NAME_SHARE|Share"; do
+            IFS='|' read -r id name file <<<"$pair"
+            fastlane sigh \
+              --api_key_path "$RUNNER_TEMP/asc.json" \
+              --team_id "${{ secrets.APPLE_TEAM_ID }}" \
+              --app_identifier "$id" \
+              --provisioning_name "$name" \
+              --force \
+              --output_path "$RUNNER_TEMP/profiles" \
+              --filename "$file.mobileprovision"
+          done
           rm -f "$RUNNER_TEMP/asc.json"
 
       - name: Archive
@@ -277,7 +336,9 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
             CODE_SIGN_IDENTITY="$CERT_SHA" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            PROFILE_APP="$PROFILE_NAME" \
+            PROFILE_WIDGETS="$PROFILE_NAME_WIDGETS" \
+            PROFILE_SHARE="$PROFILE_NAME_SHARE" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}"
 
@@ -294,6 +355,8 @@ jobs:
             <key>signingCertificate</key><string>$CERT_SHA</string>
             <key>provisioningProfiles</key><dict>
               <key>$BUNDLE_ID</key><string>$PROFILE_NAME</string>
+              <key>$WIDGETS_BUNDLE_ID</key><string>$PROFILE_NAME_WIDGETS</string>
+              <key>$SHARE_BUNDLE_ID</key><string>$PROFILE_NAME_SHARE</string>
             </dict>
             <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
             <key>uploadSymbols</key><true/>

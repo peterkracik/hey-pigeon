@@ -12,6 +12,29 @@ struct HeyPigeonApp: App {
         let model = AppModel(engine: engine)
         _model = State(initialValue: model)
         AppModel.registerBackgroundRefresh(model)
+        Self.installWidgetActions()
+    }
+
+    /// Widget buttons, Live Activity buttons and Controls run their intents
+    /// in this process (Shared/WidgetShared/WidgetIntents.swift); this is
+    /// where they reach the model. The snapshot and the Live Activity follow
+    /// so the surface that was tapped shows the result at once.
+    private static func installWidgetActions() {
+        WidgetActions.handler = { action in
+            guard let model = AppModel.current else { return }
+            switch action {
+            case .markDone(let id):
+                if let row = try? model.engine.threadRow(id: id), !row.isDone { model.markDone(row) }
+            case .snooze(let id, let hours):
+                model.snooze(threadId: id, hours: hours)
+            case .open(let target):
+                model.handle(DeepLink(target))
+            }
+            // The optimistic row change lands on the next main-actor turn.
+            try? await Task.sleep(for: .milliseconds(50))
+            model.reload()
+            await ReminderLiveActivityController.sync(model)
+        }
     }
 
     var body: some Scene {
@@ -25,12 +48,21 @@ struct HeyPigeonApp: App {
                     model.push.requestRegistration()
                     await model.sync()
                 }
+                // heypigeon://thread/<id> · compose · folder/<name> — from a
+                // widget, the Live Activity or the share extension.
+                .onOpenURL { url in
+                    if let link = DeepLink(url: url) { model.handle(link) }
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
                 // Refocusing the app is the strongest "is there new mail?" signal.
                 Task { await model.sync() }
+                // The share sheet may have left a draft; a due reminder gets
+                // its Live Activity (only the app in front can start one).
+                model.adoptPendingShare()
+                Task { await ReminderLiveActivityController.sync(model) }
             case .background:
                 model.flushPendingSends()
                 AppModel.scheduleBackgroundRefresh()

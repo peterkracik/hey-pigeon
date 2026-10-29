@@ -360,23 +360,44 @@ desktop needs it.
 
 ## Step 6 — widgets, Live Activities, Controls
 
-Widgets run out of process, so they get a **snapshot, not the engine**:
+Widgets run out of process, so they get a **snapshot, not the engine**
+(`Shared/WidgetShared/`, compiled into the app and both extensions;
+`HeyPigeonWidgets/` is the extension):
 
 - An App Group (`group.app.heypigeon`) with one JSON file,
-  `widget-snapshot.json`: unified unread, per-account unread, the next five
-  reminders (`MailThreadEntity` fields), the Need reply count, the last sync
-  time. Written at the end of `AppModel.sync()` and after each action that
-  changes a count (the badge refresh is already there; this joins it).
-  `WidgetCenter.reloadTimelines` after each write.
-- Widgets: **Unread** (small, the count and the account colours as a bar),
-  **Next reminder** (medium, the thread row with a Done button), **Need
-  reply** (medium, up to three rows). Buttons are the step-1 intents: a Done
-  from the widget is the same `MarkDoneIntent`, executed in the app process.
-- A Live Activity for a reminder that is **due now** (the local notification
-  fires it): the thread row with Done · Snooze 1h · Open on the Lock Screen
-  and in the Dynamic Island. Dismissed by Done or by the next sync that sees
-  it archived.
-- Controls as listed under App Shortcuts.
+  `widget-snapshot.json`: unified unread, per-account unread, the due and
+  the upcoming reminders (five each), the Need reply rows (five) and total,
+  the last sync time. `WidgetSnapshotWriter.publish` runs at the end of
+  every `AppModel.reload()` and writes + `reloadAllTimelines` only when
+  the content changed. The timeline provider schedules one extra entry at
+  the next reminder's time, so "Next reminder" flips to "Due" on its own
+  while the app is asleep.
+- Widgets: **Unread** (small, plus the Lock Screen accessories: the count
+  and one bar per account in its colour), **Next reminder** (medium: the
+  row, Done, and Snooze 1 h when due), **Need reply** (medium and large:
+  up to five rows, each with Done).
+- **Buttons run in the app's process.** `WidgetMarkDoneIntent` and
+  `WidgetSnoozeIntent` are `LiveActivityIntent`s — the one intent kind the
+  system performs in the app rather than the extension without opening the
+  app — so a Done from a widget is `AppModel.markDone`, same optimistic
+  path, same outbox. The intent types are compiled into both targets (the
+  system needs that); their bodies call a hook (`WidgetActions.handler`)
+  the app installs at launch, so the shared file never references
+  `AppModel`.
+- **Live Activity** (`ReminderLiveActivity`): one for all reminders that
+  are due, showing the first — sender, subject, Done · 1 h, tap to open —
+  on the Lock Screen and in the Dynamic Island. iOS lets only the app in
+  front start one, so `ReminderLiveActivityController.sync` runs on every
+  activation and on the 30 s tick that notices a reminder coming due; it
+  updates as the set changes and ends when it empties. The local
+  notification still fires for the asleep case.
+- **Controls** (`Controls.swift`): Compose, Scheduled, Inbox — each an
+  `OpenHeyPigeonIntent` (an `OpenIntent`, as Apple requires for a control
+  that opens the app) with a `ControlTarget` enum, routed through the same
+  hook to `AppModel.handle(DeepLink)`.
+- **Deep links**: `heypigeon://thread/<id>`, `heypigeon://compose`,
+  `heypigeon://folder/<name>` (`Shared/DeepLinks.swift`, `.onOpenURL` in
+  `HeyPigeonApp`). The widgets' taps and the Live Activity use them.
 
 **Not** in this step: moving SQLite into the App Group. The snapshot covers
 every widget above. The move happens if and when an App Intents extension
@@ -384,12 +405,29 @@ is needed for latency, and it is a one-time data-directory migration in
 `HeyPigeonApp.makeEngine` (copy if the group container is empty, then open
 there), with the Keychain items moved to an access group at the same time.
 
+### Signing
+
+The extensions are their own bundle ids (`app.heypigeon.ios.widgets`,
+`app.heypigeon.ios.share`), each with its own App Store profile, and all
+three carry the App Group. `publish-ios.yml` creates the two App IDs and
+the group through the App Store Connect API on the first run (tolerating
+"already exists"), enables and associates the group on all three, fetches
+three profiles with `sigh`, and names each target's profile through
+`PROFILE_APP` / `PROFILE_WIDGETS` / `PROFILE_SHARE` build settings that
+`project.yml` maps onto `PROVISIONING_PROFILE_SPECIFIER` per target (empty
+under local automatic signing).
+
 ## Share extension
 
-Unchanged from ios.md's M3 line, listed here because it shares the plumbing:
-a share extension that receives files or text and opens the app on a
-prefilled composer through `ComposeIntent`'s URL (`heypigeon://compose?…`),
-rather than hosting the composer itself. Sending stays in the app.
+`HeyPigeonShare/`: the share sheet's "Hey Pigeon" for text, links and files
+(images, PDFs, anything, up to the composer's 18 MB cap each). An extension
+cannot send mail and must not try: it writes the items into the App Group
+as a `PendingShare` (files alongside), then opens the app on
+`heypigeon://compose` through the responder chain — and whether or not
+that works on a given iOS, the app turns a pending share into a prefilled
+composer the next time it is in front (`AppModel.adoptPendingShare`). The
+subject is the shared title when there is one; links go under the text;
+nothing is sent until Send.
 
 ## Settings
 
@@ -417,10 +455,12 @@ build of the previous one to be *written*, all need one to be *shipped*.
 | 3 | Mail schema domain | Swift only (the latest-message mapping needs no engine change) | macro acceptance of the extra initialisers; entitlement / distribution requirements |
 | 4 | On-screen awareness, `RemindMe` follow-up, long-running intents | Swift only | iOS 27 multi-turn / long-running protocol names |
 | 5 | Foundation Models provider; triage classifier; provider pref; Settings › AI | Swift + `crates/ffi` (`AiBackend` foreign trait, provider and classifier resolution); `core` untouched | `UnavailableReason` and `GenerationError` case names; `@Guide(.count)` on arrays |
-| 6 | Widget extension, App Group snapshot, Live Activity, Controls | Swift + `project.yml` (second target, App Group entitlement) | nothing iOS-27-specific |
-| 7 | Share extension | Swift + `project.yml` | nothing iOS-27-specific |
+| 6 | Widget extension, App Group snapshot, Live Activity, Controls | Swift + `project.yml` (second target, App Group entitlement) + `publish-ios.yml` (three profiles) | nothing iOS-27-specific; the first CI run creates the App IDs and group |
+| 7 | Share extension | Swift + `project.yml` (third target) | that the responder-chain open still works on iOS 26; the app picks the share up on launch regardless |
 
-Step 1 is the one to do first regardless of what iOS 27 turns out to be:
+All seven steps are implemented in the PR stack that follows #54; none has
+been compiled on a Mac yet. Step 1 was the one to do first regardless of
+what iOS 27 turns out to be:
 it is documented iOS 16–26 API, it is already on the roadmap, and every
 later step builds on its entities. Steps 2 and 5 are where the iOS 27 story
 pays off. Steps 3 and 4 are the ones most exposed to the unverified claims

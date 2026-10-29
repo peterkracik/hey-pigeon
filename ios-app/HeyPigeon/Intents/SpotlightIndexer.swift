@@ -5,8 +5,12 @@
 // the reminder notifications: the newest 500 threads of each account,
 // subject · sender · one preview line · participants · labels, and the
 // text of the newest messages when the store already has it (threads
-// opened before; never a fetch for the index's sake). Trash and spam are
-// dropped. Settings › Siri & Search turns it off and drains it.
+// opened before; never a fetch for the index's sake). Alongside each
+// thread, its stored messages as `.mail.message` items (MailSchema.swift):
+// Siri's model of mail is message-shaped, and a message item is what lets
+// "the email from Anna about the deposit" land on Hey Pigeon's mail rather
+// than Apple Mail's when both are indexed. Trash and spam are dropped.
+// Settings › Siri & Search turns it off and drains it.
 //
 // Body text is searchable but Spotlight returns only the attributes it
 // was given at query time, so the tool reads full items back through the
@@ -23,21 +27,33 @@ enum SpotlightIndexer {
     static func refresh(_ model: AppModel) async {
         guard model.siriIndexEnabled else { return }
         var keep: [MailThreadEntity] = []
+        var keepMessages: [MailMessageEntity] = []
         var drop: [String] = []
+        var dropMessages: [String] = []
         for account in model.accounts {
             let rows = (try? model.engine.threads(in: .all, accountId: account.id, before: nil, limit: perAccount)) ?? []
             for row in rows {
+                let thread = entity(for: row, in: model)
+                let stored = thread.messages.filter(\.isStoredMessage)
                 if row.labels.contains("TRASH") || row.labels.contains("SPAM") {
                     drop.append(row.id)
+                    dropMessages += stored.map(\.id)
                 } else {
-                    keep.append(entity(for: row, in: model))
+                    keep.append(thread)
+                    keepMessages += stored.suffix(messagesPerThread)
                 }
             }
         }
         let index = CSSearchableIndex.default()
         if !keep.isEmpty { try? await index.indexAppEntities(keep) }
+        if !keepMessages.isEmpty { try? await index.indexAppEntities(keepMessages) }
         if !drop.isEmpty { try? await index.deleteAppEntities(identifiedBy: drop, ofType: MailThreadEntity.self) }
+        if !dropMessages.isEmpty { try? await index.deleteAppEntities(identifiedBy: dropMessages, ofType: MailMessageEntity.self) }
     }
+
+    /// The newest stored messages of a thread that go in as message items;
+    /// the thread item carries the rest of the text up to its own cap.
+    static let messagesPerThread = 20
 
     /// One thread as the index sees it: the row, the account, the label
     /// names, and the stored messages (bodies when they are local).
@@ -91,13 +107,20 @@ final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate {
         await Self.items(for: identifiers)
     }
 
+    /// Thread ids and message ids (`<threadId>#<messageId>`) alike.
     @MainActor
     private static func items(for identifiers: [String]) -> [CSSearchableItem] {
         guard let model = AppModel.current, model.siriIndexEnabled else { return [] }
         return identifiers.compactMap { id in
-            guard let row = try? model.engine.threadRow(id: id),
+            let threadId = MailMessageEntity.threadId(of: id)
+            guard let row = try? model.engine.threadRow(id: threadId),
                   !row.labels.contains("TRASH"), !row.labels.contains("SPAM") else { return nil }
-            return SpotlightIndexer.entity(for: row, in: model).searchableItem
+            let thread = SpotlightIndexer.entity(for: row, in: model)
+            guard MailMessageEntity.messageId(of: id) != nil else { return thread.searchableItem }
+            guard let message = thread.messages.first(where: { $0.id == id }) else { return nil }
+            let item = CSSearchableItem(uniqueIdentifier: id, domainIdentifier: message.account.id, attributeSet: message.attributeSet)
+            item.associateAppEntity(message, priority: 0)
+            return item
         }
     }
 }

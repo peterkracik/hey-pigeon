@@ -1,3 +1,4 @@
+import CoreSpotlight
 import SwiftUI
 
 @main
@@ -54,9 +55,23 @@ struct HeyPigeonApp: App {
                     await model.sync()
                 }
                 // heypigeon://thread/<id> · compose · folder/<name> — from a
-                // widget, the Live Activity or the share extension.
+                // widget, the Live Activity or the share extension — and
+                // mailto: links, which iOS routes to the default mail app.
                 .onOpenURL { url in
                     if let link = DeepLink(url: url) { model.handle(link) }
+                }
+                // A Spotlight (or Siri search) result of ours was tapped: the
+                // indexed item is a thread or one of its messages
+                // (`<threadId>#<messageId>`); either opens the thread.
+                .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                    guard let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String else { return }
+                    model.openThread(id: MailMessageEntity.threadId(of: id))
+                }
+                // Spotlight's "Search in Hey Pigeon" row (CoreSpotlightContinuation
+                // in project.yml): the typed words continue in the Search tab.
+                .onContinueUserActivity(CSQueryContinuationActionType) { activity in
+                    guard let query = activity.userInfo?[CSSearchQueryString] as? String else { return }
+                    model.openSearch(query)
                 }
         }
         .onChange(of: scenePhase) { _, phase in

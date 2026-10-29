@@ -307,7 +307,15 @@ The desktop's sections, same order, same wording:
   [ios-intelligence.md](./ios-intelligence.md).
 - **Siri & Search** — *Let Siri see your inbox* (the on-device Spotlight
   index Siri, Spotlight and "Ask my inbox" read), *Ask my inbox*, the Siri
-  tip and the Shortcuts link.
+  tip, the Shortcuts link, and a door to the app's own Siri & Search page in
+  iOS Settings; the footer says how to make Siri and Spotlight answer from
+  Hey Pigeon's mail rather than Apple Mail's (Mail's *Show in Search* off).
+- **Default email app** — one button to iOS Settings › Apps › Default Apps,
+  where Hey Pigeon is offered under Email once the build carries Apple's
+  default-mail-client entitlement (ios-app/README.md "Default mail app").
+  With it chosen, every `mailto:` link on the phone and Siri's "send an
+  email" compose here. The app cannot read which app is the default, so
+  there is no status line.
 - **Triage** — *Classifier*: On this iPhone · Apple's cloud · Jev (key,
   verified); Auto-triage; Reanalyze all emails; the labels (add; swipe to
   remove). Classification runs at the end of every sync round, bounded per

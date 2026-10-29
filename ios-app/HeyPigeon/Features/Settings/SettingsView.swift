@@ -1,12 +1,15 @@
 // Settings: the desktop's sections, same order, same wording — Accounts
 // (name, colour, sync, signature, reconnect, remove), AI (OpenAI key,
-// model, auto-summarize), Triage (Jev key, auto-triage, reanalyze, the
-// labels), Inbox (pinned list, swipe actions — the desktop's hover actions),
-// About. Account removal and anything that deletes asks once. Same sheet
-// look as the sidebar (Theme's menuList / menuCard / menuSheet).
+// model, auto-summarize), Siri & Search, Default email app (the iOS-only
+// doors to the system's Default Apps and Siri & Search pages), Triage (Jev
+// key, auto-triage, reanalyze, the labels), Inbox (pinned list, swipe
+// actions — the desktop's hover actions), About. Account removal and
+// anything that deletes asks once. Same sheet look as the sidebar (Theme's
+// menuList / menuCard / menuSheet).
 
 import AppIntents
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
@@ -21,6 +24,7 @@ struct SettingsView: View {
                 accountsSection
                 AISection()
                 SiriSection()
+                DefaultAppSection()
                 TriageSection()
                 NotificationsSection()
                 Section {
@@ -454,12 +458,50 @@ private struct SiriSection: View {
             }
             SiriTipView(intent: WhatNeedsReplyIntent())
             ShortcutsLink()
+            Button { Self.openSystemSettings() } label: {
+                Label("Siri & Search for Hey Pigeon", systemImage: "gear")
+            }
         } header: {
             Text("Siri & Search")
         } footer: {
-            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this iPhone.")
+            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this iPhone.\n\nTo have Siri and Spotlight answer from Hey Pigeon's mail rather than Apple Mail's: keep the switch above on, make sure \"Show in Search\" and \"Learn from this App\" are on for Hey Pigeon in iOS Settings, and turn the same two off for Mail (iOS Settings › Apps › Mail › Siri & Search).")
         }
         .menuCard()
+    }
+
+    /// iOS Settings on this app's page: its Siri & Search switches live there.
+    static func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+}
+
+// MARK: - Default mail app
+
+/// The door to iOS Settings › Apps › Default Apps, where Hey Pigeon is
+/// offered as the Email app once the build carries the default-mail-client
+/// entitlement (project.yml). The app cannot read which app is the
+/// default, so this is a button and a sentence, not a status line.
+private struct DefaultAppSection: View {
+    var body: some View {
+        Section {
+            Button { open() } label: {
+                Label("Set Hey Pigeon as the default email app", systemImage: "envelope.badge.person.crop")
+            }
+        } header: {
+            Text("Default email app")
+        } footer: {
+            Text("Opens iOS Settings › Apps › Default Apps. Pick Hey Pigeon under Email and every mail link you tap — in Safari, Notes, a contact card, another app — opens a new message here, and \"send an email\" asked of Siri composes here too. Nothing is sent until you tap Send.")
+        }
+        .menuCard()
+    }
+
+    /// `UIApplication.openDefaultApplicationsSettingsURLString` (iOS 18.3+)
+    /// lands on Default Apps; the general Settings URL is the fallback.
+    private func open() {
+        let url = URL(string: UIApplication.openDefaultApplicationsSettingsURLString)
+            ?? URL(string: UIApplication.openSettingsURLString)
+        if let url { UIApplication.shared.open(url) }
     }
 }
 

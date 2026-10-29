@@ -1,7 +1,8 @@
 // Untrusted mail HTML, rendered as safely as a WKWebView allows:
 // JavaScript off, strict CSP, remote images blocked until the user allows
-// the sender, every link handed to Safari. The HTML arrives already
-// sanitized by the core (ammonia); this is the second layer.
+// the sender, every web link handed to Safari and every mailto: link to
+// the app's own composer. The HTML arrives already sanitized by the core
+// (ammonia); this is the second layer.
 
 import SafariServices
 import SwiftUI
@@ -19,6 +20,7 @@ struct MessageBodyView: View {
     @State private var showQuoted = false
     @State private var hasQuote = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(AppModel.self) private var model
 
     private var imagesAllowed: Bool {
         allowedSendersRaw.split(separator: "\n").contains(Substring(senderAddress.lowercased()))
@@ -41,13 +43,13 @@ struct MessageBodyView: View {
                     }
                 }
                 HTMLView(html: html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, showQuoted: showQuoted,
-                         height: $height, hasQuote: $hasQuote) { url in link = url }
+                         height: $height, hasQuote: $hasQuote) { url in open(url) }
                     .frame(height: height)
                 if hasQuote && !showQuoted { quoteButton }
             } else if let split = Self.splitQuoted(text) {
-                SelectableText(text: Self.linkified(split.main)) { url in link = url }
+                SelectableText(text: Self.linkified(split.main)) { url in open(url) }
                 if showQuoted {
-                    SelectableText(text: Self.linkified(split.quoted, style: .subheadline, color: Theme.textSecondary)) { url in link = url }
+                    SelectableText(text: Self.linkified(split.quoted, style: .subheadline, color: Theme.textSecondary)) { url in open(url) }
                         .padding(.leading, 10)
                         .overlay(alignment: .leading) { Rectangle().fill(Theme.separator).frame(width: 2) }
                 } else {
@@ -57,10 +59,22 @@ struct MessageBodyView: View {
                 // A UITextView, not Text + .textSelection: on iOS that only
                 // copies the whole body, with no range selection or the
                 // system edit menu (Look Up, Translate, Share…).
-                SelectableText(text: Self.linkified(text)) { url in link = url }
+                SelectableText(text: Self.linkified(text)) { url in open(url) }
             }
         }
         .sheet(item: $link) { url in SafariView(url: url).ignoresSafeArea() }
+    }
+
+    /// Web links open in the in-app Safari sheet. A mailto: link is a mail
+    /// client's own job: it opens this app's composer, prefilled, never
+    /// Apple Mail — and never bounces through the system, which, with Hey
+    /// Pigeon as the default mail app, would only come straight back here.
+    private func open(_ url: URL) {
+        if url.scheme?.lowercased() == "mailto" {
+            model.compose(SendDraft(mailto: url))
+        } else {
+            link = url
+        }
     }
 
     private var quoteButton: some View {
@@ -363,12 +377,8 @@ private struct HTMLView: UIViewRepresentable {
 private struct SafariView: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> SFSafariViewController {
-        // mailto: can't open in Safari VC; hand it to the system instead.
-        if url.scheme == "mailto" {
-            UIApplication.shared.open(url)
-            return SFSafariViewController(url: URL(string: "about:blank")!)
-        }
-        return SFSafariViewController(url: url)
+        // Only http(s) reaches here: mailto: goes to the composer (MessageBodyView.open).
+        SFSafariViewController(url: url)
     }
     func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
 }

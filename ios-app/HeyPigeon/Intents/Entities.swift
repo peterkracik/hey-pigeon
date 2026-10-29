@@ -131,16 +131,27 @@ struct MailAccountEntity {
     }
 }
 
-struct MailAccountQuery: EntityQuery {
+/// A string query, not a plain one: the Mail-schema intents take an account
+/// as a parameter, and the metadata extractor refuses a schema parameter
+/// Siri cannot resolve from speech ("my work account").
+struct MailAccountQuery: EntityStringQuery {
     @MainActor
-    func entities(for identifiers: [String]) async throws -> [MailAccountEntity] {
-        let model = try await IntentSupport.model()
-        return model.accounts.filter { identifiers.contains($0.id) }.map(MailAccountEntity.init)
+    private func all() async throws -> [MailAccountEntity] {
+        try await IntentSupport.model().accounts.map(MailAccountEntity.init)
     }
 
-    @MainActor
+    func entities(for identifiers: [String]) async throws -> [MailAccountEntity] {
+        try await all().filter { identifiers.contains($0.id) }
+    }
+
+    func entities(matching string: String) async throws -> [MailAccountEntity] {
+        try await all().filter {
+            $0.name.localizedCaseInsensitiveContains(string) || $0.emailAddress.localizedCaseInsensitiveContains(string)
+        }
+    }
+
     func suggestedEntities() async throws -> [MailAccountEntity] {
-        try await IntentSupport.model().accounts.map(MailAccountEntity.init)
+        try await all()
     }
 }
 

@@ -89,10 +89,15 @@ env:
 
 jobs:
   build-and-submit:
-    # macOS 26 image: carries the Xcode releases with the iOS 27 SDK the app
-    # is built against (ios-app/project.yml IPHONEOS_DEPLOYMENT_TARGET 27.0).
-    # The "Select Xcode" step fails fast when the image has no such SDK.
-    runs-on: macos-26
+    # The app is built against the iOS 27 SDK (ios-app/project.yml
+    # IPHONEOS_DEPLOYMENT_TARGET 27.0). GitHub's macos-26 image stops at
+    # Xcode 26.6 / iOS 26.5 (the first run on main said so); the iOS 27 SDK
+    # ships on the `xcode-27` preview image — macOS 27, Xcode 27.0 / 27.1 /
+    # 27.2 RC, Homebrew, Node, rustup and fastlane present
+    # (actions/runner-images#14404). Preview: expect occasional queueing;
+    # move to `macos-27` when GitHub publishes it. The "Select Xcode" step
+    # still fails fast when the image carries no iOS 27 SDK.
+    runs-on: xcode-27
     timeout-minutes: 90
     # Secrets live in the "ios" GitHub environment (synced from Doppler);
     # a job only sees environment secrets when it names the environment.
@@ -107,9 +112,15 @@ jobs:
       - name: Select newest Xcode with the iOS 27 SDK
         run: |
           set -euo pipefail
-          # Newest Xcode 27 on the image; an Xcode 26 that already ships the
-          # iOS 27 SDK would do too, so the check is on the SDK, not the name.
-          xc="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1 || true)"
+          # Newest released Xcode 27 on the image. The xcode-27 image also
+          # carries release candidates and betas (Xcode_27.2_Release_Candidate.app
+          # sorts last and was picked by run 93); App Store Connect wants a
+          # release Xcode, so those count only when no release is there. An
+          # Xcode 26 that already ships the iOS 27 SDK would do too, so the
+          # check below is on the SDK, not the name.
+          all="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V || true)"
+          xc="$(printf '%s\n' "$all" | grep -viE 'beta|release_candidate|_rc' | tail -1 || true)"
+          if [[ -z "$xc" ]]; then xc="$(printf '%s\n' "$all" | tail -1)"; fi
           if [[ -z "$xc" ]]; then
             xc="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
           fi

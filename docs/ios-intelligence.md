@@ -730,7 +730,10 @@ then asked for the schemas' required properties: `.mail.thread` needs
 needs `category`, an `@AppEnum(schema: .mail.category)` (`MailCategory`,
 from Gmail's inbox tabs). An App Shortcut phrase can only carry an
 entity or enum parameter, so "Ask Hey Pigeon" no longer takes the question
-in the phrase; Siri asks for it.
+in the phrase; Siri asks for it. App Store Connect then rejected the
+upload (90626, Invalid Siri Support): an App Intent's title, description
+and phrases cannot name "Siri" or "iPhone" (or other Apple product
+names); say "this device" instead.
 
 | What | Where |
 | --- | --- |

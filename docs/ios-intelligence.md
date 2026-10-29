@@ -1,0 +1,431 @@
+# Hey Pigeon for iOS — Siri, App Intents and on-device AI
+
+Companion to [ios.md](./ios.md), whose iOS-M3 milestone lists "widgets,
+Shortcuts actions, share extension" in one line. This document is that line
+expanded into a plan, and it adds the two things iOS 26/27 make possible on
+top of it: the new Siri reaching into the app, and Apple's on-device model
+as the app's default AI. The principles do not move: **no backend, local
+first, all logic in the Rust core, the UI is a projection** — and now, the
+Siri/Shortcuts surface is a second projection of the same core.
+
+> **Sources.** The App Intents and Foundation Models APIs this plan relies on
+> for iOS 26 are documented. What it says about iOS 27 (SiriKit deprecated,
+> App Intents as the only Siri route, personal context and on-screen
+> awareness fed by app entities and the Spotlight index, multi-turn and
+> long-running intents, Foundation Models with image input, Private Cloud
+> Compute and a pluggable model provider) comes from WWDC26 coverage, not
+> from Apple's reference. Every step below says what to verify before it
+> starts. Nothing in this document has been compiled yet: the Swift side of
+> the app has not been built on a Mac.
+
+## Decision: App Intents in the app process, over `AppModel`
+
+**Every Siri, Shortcuts, Spotlight, widget and Control entry point is an
+`AppIntent` that runs inside the app process and calls the same `AppModel`
+methods the swipes call. No App Intents extension in the first two steps.**
+
+```text
+ Siri · Shortcuts · Spotlight · Action button · Watch · Widgets · Controls
+                                  │
+                        ┌─────────▼──────────┐
+                        │  HeyPigeon/Intents │   AppIntent · AppEntity · AppShortcutsProvider
+                        └─────────┬──────────┘
+                                  │  the same calls the gestures make
+                        ┌─────────▼──────────┐
+                        │      AppModel      │   markDone · remind · toggleNeedsReply · …
+                        └─────────┬──────────┘
+                                  │
+                        ┌─────────▼──────────┐
+                        │ RustEngine ◄─UniFFI│   crates/ffi → core · adapter-gmail · adapter-sqlite
+                        └────────────────────┘
+```
+
+Why in-process:
+
+- **The data is where the app is.** The SQLite store sits in the app's
+  Application Support directory and the OAuth tokens in the app's Keychain
+  items. An extension is a second process that cannot see either until both
+  move into an App Group. In-process intents need no migration.
+- **iOS launches the app for them.** Since iOS 16 an intent without
+  `openAppWhenRun` runs in the app, in the background, with the app launched
+  if it is not running. `HeyPigeonApp.init` already builds the engine with no
+  UI involved, so that launch is cheap and correct.
+- **One code path.** Optimistic update, outbox, undo semantics and the
+  reminder rescheduling all live in `AppModel`. An intent that re-implemented
+  "mark done" against the engine would drift from the swipe the moment
+  either changed.
+
+The cost is latency on a cold launch (the Rust engine opens SQLite before
+the first intent can run — well under a second today) and that widgets,
+which *must* run out of process, see data only through what the app leaves
+for them. Step 6 handles widgets with a snapshot file in an App Group, and
+the App Group migration of the database is deferred to the point where
+something actually needs it.
+
+### What runs where
+
+| Caller | Process | Needs |
+| --- | --- | --- |
+| Siri, Shortcuts, Spotlight actions, Action button, Apple Watch | app, background | nothing new |
+| Compose / Reply / Open intents | app, foreground (`openAppWhenRun`) | the existing deep-link path (`AppModel.openThread`, `composeDraft`) |
+| Spotlight index of threads | app, after every sync | `CoreSpotlight` via `IndexedEntity` |
+| Widgets, Live Activities, Controls that read data | widget extension | App Group with a small JSON snapshot |
+| Interactive widget buttons | widget extension → app | the intents above, marked for in-app execution |
+
+## Entities
+
+Two `AppEntity` types, both thin copies of models the app already has.
+Entities carry **only what the system needs to name and disambiguate**;
+bodies never leave the engine.
+
+```swift
+struct MailThreadEntity: AppEntity, IndexedEntity {
+    let id: String                   // ThreadRow.id
+    @Property var subject: String
+    @Property var from: String       // ThreadRow.fromSummary
+    @Property var snippet: String    // one line, as the row shows it
+    @Property var receivedAt: Date   // lastMessageAt
+    @Property var account: MailAccountEntity
+    @Property var isUnread: Bool
+    @Property var isPinned: Bool
+    @Property var needsReply: Bool
+    @Property var reminderAt: Date?
+    @Property var isDone: Bool
+    // displayRepresentation: title = subject, subtitle = "from · when",
+    // image = the account-coloured initial (Theme), like the row.
+}
+
+struct MailAccountEntity: AppEntity {
+    let id: String                   // MailAccount.id (the address)
+    @Property var email: String
+    @Property var name: String       // displayName
+}
+```
+
+Queries:
+
+- `MailThreadQuery: EntityStringQuery` — `entities(for ids:)` through
+  `engine.threadRow(id:)`; `entities(matching:)` through `engine.search`,
+  which already runs FTS over sender, subject and body; `suggestedEntities()`
+  returns the inbox's first page (the rows a user is most likely to mean).
+- `MailAccountQuery: EntityQuery` with `suggestedEntities()` = all accounts.
+
+The `UniqueEntity`-style singletons (`InboxEntity`, …) are not needed:
+folders are an `AppEnum` (see Open below).
+
+### Indexing (what the new Siri sees)
+
+`MailThreadEntity` conforms to `IndexedEntity`, and the index is rebuilt in
+the same place `ReminderScheduler.reschedule` runs: at the end of
+`AppModel.sync()` and after a reminder is set. Rules:
+
+- Index the **inbox, Scheduled and Need reply** rows that are loaded plus
+  the latest 500 threads of each account from `engine.threads(in: .all …)`.
+  Not the whole archive: Spotlight indexing is per-item work on the main
+  thread's launch budget, and the point is "what Siri should know about",
+  not search (the app's FTS is better at search).
+- Attributes: subject as title, sender as `authorNames`, snippet as
+  `contentDescription`, `receivedAt`, account as `containerIdentifier`.
+  **No body text**, no addresses other than the sender's display name.
+- A thread that is done, trashed or spam is removed from the index (`delete
+  entities with ids`) on the sync that sees it.
+- **Settings › Siri & Search › "Let Siri see your inbox"** (default on for
+  new installs; a pref, synced like the others). Off drains the index. The
+  rationale is the one in the sources note: with iOS 27 Siri may hand entity
+  text to a cloud model to reason about it. The index itself is on-device and
+  inside the app's data protection class; the toggle exists for the step
+  after that, which Apple controls, not us.
+
+## Intents
+
+One intent per verb, in the desktop's words. All of them take a
+`MailThreadEntity` (Siri resolves "this", "the one from Anna", or asks),
+all run in the background except where noted, and all end with the toast
+text the swipe shows, returned as the Siri dialog.
+
+| Intent | Calls | Parameters | Dialog |
+| --- | --- | --- | --- |
+| `MarkDoneIntent` | `markDone` / `markNotDone` | thread | "Marked done" |
+| `RemindMeIntent` | `remind(at:onlyIfNoReply:)` | thread, date (**asked if missing**), onlyIfNoReply (default false) | "Reminder set for Tuesday 09:00" |
+| `NeedReplyIntent` | `toggleNeedsReply` → explicit `set` | thread, on/off | "Marked Need reply" |
+| `PinIntent` | `togglePin` → explicit `set` | thread, on/off | "Pinned" |
+| `MarkReadIntent` | `markRead` / `toggleRead` → explicit `set` | thread, read/unread | — |
+| `DeleteIntent` | `delete` | thread | "Deleted" (`isDiscardable`, confirmation on) |
+| `AddLabelIntent` | `setLabel` | thread, `MailLabelEntity` (same account) | "Label added · Travel" |
+| `OpenThreadIntent` | `openThread(id:)` | thread | opens the app |
+| `OpenFolderIntent` | `view = …`, `tab = …` | `Folder: AppEnum` (Inbox · Scheduled · Need reply · Starred · Drafts · Sent · Archive · All · Spam · Trash) | opens the app |
+| `SearchMailIntent` | `engine.search` | text | returns `[MailThreadEntity]`, snippet list in Siri |
+| `WhatNeedsReplyIntent` | `engine.threads(in: .needReply …)` | — | "3 threads need a reply" + the list |
+| `WhatsDueIntent` | `scheduledThreads` filtered to due | — | "2 reminders are due" + the list |
+| `ComposeIntent` | `composeDraft = SendDraft(to:subject:body:)` | to, subject, body (all optional) | opens the composer, nothing sent |
+| `ReplyIntent` | `openDraft`-style prefill with `replyToThreadId` | thread, body (optional) | opens the composer on the reply |
+| `SummarizeInboxIntent` | `summarize(group)` over today's active rows | account (optional) | the summary text; snippet view with "Open" |
+| `SyncNowIntent` | `sync()` | — | "Up to date" |
+
+Rules that come straight from the app's existing behaviour:
+
+- **Nothing sends mail from an intent.** `ComposeIntent` and `ReplyIntent`
+  open the composer; the 5-second send undo, the outbox and the
+  deferred-commit rules stay the only way out. Siri "send an email" through
+  the Mail schema (step 3) is the one exception, and there the schema's own
+  confirmation step is the undo window.
+- **Toggles become explicit sets** (`on: Bool`) so a Shortcut is
+  idempotent; the swipe keeps toggling.
+- The `RowAction` enum is the source of truth for which verbs exist. The
+  Settings "Swipe actions" picker and the intents enumerate the same cases;
+  a new verb lands in both or in neither.
+- Intents are `@MainActor` and reach `AppModel.current` (the static the
+  `AppDelegate` already uses). They never touch `RustEngine` directly.
+- `SummarizeInboxIntent` is only offered when `aiConfigured` is true (step 5
+  makes it true by default on Apple Intelligence devices).
+
+### App Shortcuts (zero-setup phrases)
+
+`AppShortcutsProvider` with the verbs a user would say with the app closed.
+Phrases use the app name; the other words come from the app's vocabulary.
+
+```text
+"What needs a reply in Hey Pigeon"        → WhatNeedsReplyIntent
+"What's due in Hey Pigeon"                → WhatsDueIntent
+"Summarize my inbox in Hey Pigeon"        → SummarizeInboxIntent
+"Search Hey Pigeon for ${text}"           → SearchMailIntent
+"Compose in Hey Pigeon"                   → ComposeIntent
+"Open Scheduled in Hey Pigeon"            → OpenFolderIntent(.scheduled)
+"Check Hey Pigeon"                        → SyncNowIntent
+```
+
+Thread-bound verbs (Done, Remind, Need reply, Pin) are not App Shortcuts:
+without a thread in hand they only make sense through on-screen awareness
+(step 4), in Shortcuts flows after `SearchMailIntent`, or from a widget.
+
+### Controls and the Action button
+
+`ControlWidget` buttons for `ComposeIntent`, `OpenFolderIntent(.scheduled)`
+and `SyncNowIntent` land in Control Center, the Lock Screen and the Action
+button list for free once the intents exist. They live in the widget
+extension (step 6) but need no data: they only fire intents.
+
+## Step 3 — the Mail app schema domain
+
+Apple ships a `.mail` App Intent domain: entity schemas for `message`,
+`mailbox` and `account`, and intents such as `replyMail`, `deleteMail`,
+`openMessage`, `openDraft` and `updateDraft`. Conforming makes the new Siri
+understand "reply to Anna's email saying I'll be late" with **no custom
+phrase**, because the system already knows what a mail app does.
+
+What it costs here:
+
+- **Thread vs message.** The schema is message-shaped; the app is
+  thread-shaped. Each schema entity maps to the thread's latest message,
+  with the thread id as the stable id. `MailThreadEntity` grows the
+  schema's required properties (sender address, recipients, body preview)
+  or a second `MailMessageEntity` is derived from `MessageItem` for the
+  open thread only. Decide after reading the iOS 27 schema: if it demands
+  body text on the entity, prefer the second type and populate it lazily.
+- **Xcode checks completeness.** Adopting a schema group means implementing
+  every intent in it. Reply and delete map onto existing `AppModel` calls;
+  `updateDraft` maps onto `saveDraft`; `openDraft` onto `openDraft(row)`.
+  Anything the engine cannot do today (a schema that wants to send without
+  a composer) gets a `supportedModes` that opens the app and the composer
+  prefilled, which the schema allows.
+- **Verify first** the iOS 27 macro form (`@AppIntent(schema: .mail.…)` or
+  the older `AssistantIntent(schema:)`) and whether the domain requires the
+  Apple Intelligence entitlement or App Store distribution; the app ships
+  through TestFlight only.
+
+The step is worth doing only once step 1 is in daily use, and it is the
+first one that touches `crates/ffi`: the engine gains `message(id:)` and a
+per-message `reply_to(message_id)` prefill if the schema needs them.
+
+## Step 4 — on-screen awareness and conversation
+
+Two small additions make "Hey Siri, remind me about this tomorrow" work on
+the open thread:
+
+- `ThreadView` publishes the entity it shows: `.userActivity` with the
+  thread's `EntityIdentifier` (`appEntityIdentifier`) so the system knows
+  what "this" is. `MailListScreen` publishes the folder entity the same way
+  for "summarize this".
+- `RemindMeIntent` asks for the date when it is missing
+  (`requestValue` / `needsValueError`) with the Remind sheet's presets as
+  suggestions — *Later today*, *Tomorrow*, *This weekend*, *Next week*. iOS
+  27's multi-turn intents reportedly make the follow-up conversational
+  ("When?" — "Friday"); on iOS 26 it is the same API, shown as a picker.
+
+Long-running work (a full `sync()` on a cold engine, `SummarizeInbox` over
+a slow provider) adopts the iOS 27 long-running / streaming intent protocol
+if it holds, with a progress dialog; on iOS 26 it stays a plain await under
+the 30-second background budget, same as `BGAppRefreshTask`.
+
+## Step 5 — Foundation Models as the zero-key default
+
+Today AI is bring-your-own OpenAI key. Apple's on-device model turns that
+into **AI with no key, no account and no network** on an Apple Intelligence
+device, which is a stronger version of this app's privacy thesis than BYO.
+OpenAI stays as the opt-in upgrade.
+
+### Where it plugs in
+
+`core::ports::AiProvider` is a Rust trait and Foundation Models is a Swift
+framework, so the adapter is **Swift code the Rust core calls back into**,
+through a UniFFI foreign trait exactly like `EngineListener`:
+
+```text
+core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_foreign──►  Swift AppleIntelligenceProvider
+                                                                          └─ LanguageModelSession
+```
+
+- `crates/ffi` gains `AiBackend` (a `#[uniffi::export(with_foreign)]`
+  trait: `id`, `models`, `complete(request) async`) and a
+  `ForeignAiProvider` that implements `core::AiProvider` over it. Feature
+  code in `core` keeps calling `AiProvider::complete`; it never learns
+  which side of the bridge answered.
+- `Engine.open` takes an optional `AiBackend`; the Swift side passes
+  `AppleIntelligenceProvider` when `SystemLanguageModel.default.availability
+  == .available`, else nothing, and the engine falls back to the configured
+  key provider or to "AI off". `aiStatus()` reports which is active so
+  Settings › AI can show "On this iPhone (Apple Intelligence)" above the
+  OpenAI row.
+- **Provider selection is a pref** (`ai_provider`: `apple` | `openai`),
+  synced like the others, defaulting to `apple` where available. The desktop
+  reads the same pref and ignores `apple` until a macOS adapter exists (the
+  same Swift provider would compile for the Mac, but the desktop shell is
+  Tauri; that is a later decision).
+
+### What changes per feature
+
+| Feature | Today | With the on-device model |
+| --- | --- | --- |
+| Summarize thread / group | one completion | same prompt; **chunk by the model's context** (4,096 tokens on iOS 26, `contextSize` on 26.4+): summarize per message or per 10 rows, then summarize the summaries. The group summarizer's "active rows" bound already keeps most groups under the limit. |
+| Draft reply | one completion over the transcript | same, with the transcript truncated to the newest messages that fit |
+| Edit with AI (tone presets, instruction) | one completion | same; short inputs, fits comfortably |
+| Jev triage (priority + labels) | `adapter-jev`, BYO key | **new**: a `@Generable` struct `{ priority: TriageLevel, labels: [String] }` constrained to the Settings label names, run at the end of each sync round under the same per-round bound. Becomes a second `Classifier` behind the triage port; Jev stays selectable. |
+| Attachments | none | later, if iOS 27 image input holds: "what is this attachment" on an image attachment from Quick Look |
+| Longer threads | — | iOS 27's Private Cloud Compute option, **behind its own toggle, default off**: it is Apple's cloud, not ours, but it is a network hop the README promises does not exist by default |
+
+Quality expectation to set in Settings copy: the on-device model is small.
+Summaries and edits are good; drafting a careful reply is where OpenAI stays
+better. Streaming: `AiProvider::complete` returns a whole string by design;
+the summary sheet is the first place a `Stream` would pay off, and the port
+comment already names it as the one call site to widen.
+
+### Verify first
+
+`SystemLanguageModel` availability cases and the `contextSize` /
+`tokenCount` additions; the iOS 27 provider protocol (if real, the OpenAI
+adapter could move behind it too, but the Rust adapter already works and
+the desktop needs it, so this is not a goal); whether `@Generable` can be
+constrained to a runtime list of label names (if not, generate a free
+label string and match it case-insensitively against the Settings list).
+
+## Step 6 — widgets, Live Activities, Controls
+
+Widgets run out of process, so they get a **snapshot, not the engine**:
+
+- An App Group (`group.app.heypigeon`) with one JSON file,
+  `widget-snapshot.json`: unified unread, per-account unread, the next five
+  reminders (`MailThreadEntity` fields), the Need reply count, the last sync
+  time. Written at the end of `AppModel.sync()` and after each action that
+  changes a count (the badge refresh is already there; this joins it).
+  `WidgetCenter.reloadTimelines` after each write.
+- Widgets: **Unread** (small, the count and the account colours as a bar),
+  **Next reminder** (medium, the thread row with a Done button), **Need
+  reply** (medium, up to three rows). Buttons are the step-1 intents: a Done
+  from the widget is the same `MarkDoneIntent`, executed in the app process.
+- A Live Activity for a reminder that is **due now** (the local notification
+  fires it): the thread row with Done · Snooze 1h · Open on the Lock Screen
+  and in the Dynamic Island. Dismissed by Done or by the next sync that sees
+  it archived.
+- Controls as listed under App Shortcuts.
+
+**Not** in this step: moving SQLite into the App Group. The snapshot covers
+every widget above. The move happens if and when an App Intents extension
+is needed for latency, and it is a one-time data-directory migration in
+`HeyPigeonApp.makeEngine` (copy if the group container is empty, then open
+there), with the Keychain items moved to an access group at the same time.
+
+## Share extension
+
+Unchanged from ios.md's M3 line, listed here because it shares the plumbing:
+a share extension that receives files or text and opens the app on a
+prefilled composer through `ComposeIntent`'s URL (`heypigeon://compose?…`),
+rather than hosting the composer itself. Sending stays in the app.
+
+## Settings
+
+A new section, between **AI** and **Triage**:
+
+- **Siri & Search** — *Let Siri see your inbox* (the Spotlight index);
+  *Siri Shortcuts* (opens the system's App Shortcuts page); a line that
+  says what leaves the device: "Nothing. Siri reads the index on this
+  iPhone." updated if iOS 27's cloud reasoning turns out to apply.
+- **AI** gains the provider row at the top: *On this iPhone* (Apple
+  Intelligence, when available) · *ChatGPT (OpenAI)*; *Use Apple's Private
+  Cloud Compute for long threads* (off); the existing key, model and
+  Auto-summarize rows apply to the OpenAI provider only.
+- **Triage** gains *Classifier*: *On this iPhone* · *Jev*.
+
+## Milestones
+
+Ordered by what unlocks what. Each step is its own PR; none needs a Mac
+build of the previous one to be *written*, all need one to be *shipped*.
+
+| # | Step | Touches | Verify before starting |
+| --- | --- | --- | --- |
+| 1 | Entities, the intent table, `AppShortcutsProvider`; `Intents/` folder; `NSUserActivityTypes` and the App Shortcuts entries in `project.yml` | Swift only | that in-process intents launch the app in the background on iOS 26 as documented (they have since 16) |
+| 2 | `IndexedEntity` + index refresh in `sync()`; the Siri & Search setting | Swift only | `IndexedEntity` attribute set; indexing budget on cold launch |
+| 3 | Mail schema domain | Swift + `crates/ffi` (`message(id)`, per-message reply prefill) | the iOS 27 macro form; entitlement / distribution requirements; thread-vs-message shape |
+| 4 | On-screen awareness, `RemindMe` follow-up, long-running intents | Swift only | iOS 27 multi-turn / long-running protocol names |
+| 5 | Foundation Models provider; triage classifier; provider pref; Settings › AI | Swift + `crates/ffi` (`AiBackend` foreign trait) + `core` (provider pref, second classifier behind the triage port) | availability API, `contextSize`, `@Generable` constraints; PCC option |
+| 6 | Widget extension, App Group snapshot, Live Activity, Controls | Swift + `project.yml` (second target, App Group entitlement) | nothing iOS-27-specific |
+| 7 | Share extension | Swift + `project.yml` | nothing iOS-27-specific |
+
+Step 1 is the one to do first regardless of what iOS 27 turns out to be:
+it is documented iOS 16–26 API, it is already on the roadmap, and every
+later step builds on its entities. Steps 2 and 5 are where the iOS 27 story
+pays off. Steps 3 and 4 are the ones most exposed to the unverified claims
+and should be re-planned against Apple's docs when they start.
+
+### Testing without a Mac
+
+- Entities and intents are pure Swift over `MailEngine`; `MockEngine`
+  stands in, as it does for the UI. Unit tests target the intent `perform`
+  bodies through `AppModel` with the mock, same as any action.
+- The `crates/ffi` additions (`AiBackend`, `message(id)`) are tested on Linux
+  CI like the rest of the bridge: a Rust test implements the foreign trait
+  in Rust and drives `ForeignAiProvider` through `core`.
+- Siri phrases, Spotlight and widgets need a device. That is the Mac step,
+  with the existing TestFlight workflow.
+
+## Risks and the things that stay as they are
+
+- **`NewMailNotifier` uses SiriKit's `INSendMessageIntent`** for
+  communication-style banners. It is still the documented way to get the
+  sender's name and avatar on a notification; keep it, expect deprecation
+  warnings, and check whether iOS 27 moved communication notifications to
+  App Intents. If it did, that is a two-file change in the notifier.
+- **Siri and privacy.** The index carries subject, sender and a snippet.
+  That is what a notification shows on the Lock Screen already, so it is
+  not new exposure to the device; the new exposure, if any, is Siri's own
+  reasoning path, which is why the setting exists and defaults can be
+  revisited once Apple documents it.
+- **Cold-launch latency** for background intents: the engine opens
+  SQLite and the Gmail adapter before `perform` runs. Measure on device; if
+  it is over a second, an App Intents extension with the App Group move is
+  the fix, not a cache.
+- **Model quality** on-device is a step down from GPT for drafting. The
+  Settings copy says so; the provider pref makes the upgrade one tap.
+- **Context limit** on-device is small. The chunking in step 5 is required,
+  not optional; a thread that does not fit must degrade to "summary of the
+  newest messages", never to an error in the summary card.
+- **Nothing here adds a server.** Private Cloud Compute is Apple's, off by
+  default; Siri's cloud path is Apple's, behind the index toggle. The
+  README's promise holds.
+
+## Out of scope
+
+macOS Siri (the desktop shell is Tauri; App Intents need a native target —
+a future Swift menu-bar helper could reuse every entity above, but nobody
+is asking), visionOS and watchOS apps (the Watch gets the App Shortcuts for
+free), Visual Intelligence lookups (no mail entity is a thing you point a
+camera at), and any custom Siri voice UI beyond the snippet views above.

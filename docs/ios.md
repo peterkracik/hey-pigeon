@@ -387,6 +387,11 @@ a Mac.
 3. **iOS-M3 — polish**: iPad split view and keyboard map, widgets (unread
    count, next reminder), Shortcuts actions, share extension ("send this
    file"), optional push relay.
+4. **iOS-M4 — Siri and on-device AI**: App Intents over `AppModel`, the
+   Spotlight index the new Siri reads, the Mail schema domain, on-screen
+   awareness, Foundation Models as the zero-key AI default, widgets and
+   Controls. Planned in [ios-intelligence.md](./ios-intelligence.md); the
+   widgets, Shortcuts and share-extension items of M3 are specified there.
 
 ## Out of scope
 

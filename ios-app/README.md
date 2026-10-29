@@ -12,8 +12,11 @@ ios-app/
     Features/           Inbox · Thread · Remind · Accounts · Compose · Settings
     Intents/            App Intents: entities, the verbs as intents, the Mail schema domain, App Shortcuts, Spotlight index
     AI/                 Apple Intelligence as the AI provider the Rust core calls back into (no key)
-    Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets
-  HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets)
+    Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets, widget snapshot, Live Activity, deep links
+      WidgetShared/     Compiled into the app and both extensions: App Group, snapshot, widget intents, pending share
+  HeyPigeonWidgets/     Widget extension: Unread · Next reminder · Need reply, the reminder Live Activity, Controls
+  HeyPigeonShare/       Share extension: text, links and files → a pending share the app opens as a draft
+  HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets, snapshot, deep links)
   HeyPigeonCore/        Swift package wrapping the Rust core (generated, git-ignored contents)
   scripts/build-rust.sh cargo → uniffi → xcframework
   project.yml           XcodeGen spec (the .xcodeproj is generated)

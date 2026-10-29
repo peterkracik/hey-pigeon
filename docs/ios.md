@@ -149,7 +149,8 @@ Three lines, flat, hairline separators, no cards and no avatar — about
 
 The deployment target is **iOS 27** (`ios-app/project.yml`,
 `HeyPigeonCore/Package.swift`, and `publish-ios.yml` archives against the
-iOS 27 SDK). The app is installed on one phone, so the floor moves with the
+iOS 27 SDK on GitHub's `xcode-27` runner image — the `macos-26` image stops
+at Xcode 26.6 / iOS 26.5). The app is installed on one phone, so the floor moves with the
 phone instead of gating every call with `#available`. What iOS 27 buys is
 the intelligence layer in [ios-intelligence.md](./ios-intelligence.md): the
 `.mail.thread` schema and View Annotations for Siri, `SpotlightSearchTool`

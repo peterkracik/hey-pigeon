@@ -137,6 +137,16 @@ struct ComposeView: View {
             }
             // A swipe down closes like the X: whatever changed is kept as a draft.
             .onDisappear { if !finished { saveDraft() } }
+            // The model's copy follows the editor, so Siri's "send it" sends
+            // what is on screen, not what the composer opened with.
+            .onChange(of: snapshot) { _, _ in
+                if !finished, model.composeDraft?.draftKey == draft.draftKey { model.composeDraft = composed }
+            }
+            // Siri's "update draft" changed the model's copy: take its fields.
+            .onChange(of: model.composeDraft?.externalRevision) { _, _ in
+                guard let d = model.composeDraft, d.draftKey == draft.draftKey, d.externalRevision != draft.externalRevision else { return }
+                adopt(d)
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background, !finished { saveDraft() }
             }
@@ -425,6 +435,19 @@ struct ComposeView: View {
         Keyboard.dismiss()
         dismiss()
         model.send(d, from: from)
+    }
+
+    /// Take the fields of a draft changed outside the editor (an intent).
+    private func adopt(_ d: SendDraft) {
+        draft = d
+        to = d.to
+        cc = d.cc
+        bcc = d.bcc
+        showCc = showCc || !d.cc.isEmpty || !d.bcc.isEmpty
+        body_ = d.bodyRich ?? AttributedString(d.bodyText)
+        attachments = d.attachments
+        if let from = d.fromAccountId, !from.isEmpty { fromId = from }
+        pristine = false
     }
 
     /// X: close, keeping the message as a Gmail draft (saved on disappear).

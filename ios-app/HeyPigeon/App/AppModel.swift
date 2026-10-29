@@ -583,6 +583,61 @@ final class AppModel {
         compose(draft)
     }
 
+    /// Open the composer on a forward of the thread's latest message.
+    func openForward(of row: ThreadRow) async throws {
+        let detail = try await engine.thread(id: row.id)
+        guard let detail, let last = detail.messages.last else { throw IntentError.noSuchThread }
+        compose(SendDraft.forward(of: last, in: detail.thread))
+    }
+
+    /// Change the open composer's draft from outside it (Siri's "update
+    /// draft"). The composer adopts the fields on the revision bump. False
+    /// when no composer is open on that draft.
+    @discardableResult
+    func updateComposeDraft(key: String, _ change: (inout SendDraft) -> Void) -> Bool {
+        guard var d = composeDraft, d.draftKey == key else { return false }
+        change(&d)
+        d.externalRevision += 1
+        composeDraft = d
+        return true
+    }
+
+    /// Siri's "send it" on the open composer: the composer closes and the
+    /// draft goes through the same 5-second undo as the Send button.
+    func sendComposeDraft(key: String) throws {
+        guard let d = composeDraft, d.draftKey == key else { throw IntentError.draftGone }
+        guard !(d.to.isEmpty && d.cc.isEmpty && d.bcc.isEmpty) else { throw IntentError.noRecipients }
+        guard let from = d.fromAccountId ?? selectedAccountId ?? accounts.first?.id else { throw IntentError.noAccount }
+        composeDraft = nil
+        send(d, from: from)
+    }
+
+    /// Close the composer and delete its Gmail draft, if one was saved.
+    func discardComposeDraft(key: String) -> Bool {
+        guard let d = composeDraft, d.draftKey == key else { return false }
+        if d.draftSaved, let from = d.fromAccountId { deleteDraft(d.draftKey, from: from) }
+        composeDraft = nil
+        return true
+    }
+
+    /// The Drafts folder as composer drafts, each read from Gmail (cached by
+    /// the engine after the first time). Capped: this is for Siri picking a
+    /// draft, not for listing them all.
+    func gmailDrafts(accountId: String? = nil, limit: Int = 20) async -> [(row: ThreadRow, draft: SendDraft)] {
+        let rows = (try? engine.threads(in: .drafts, accountId: accountId, before: nil, limit: limit)) ?? []
+        var out: [(ThreadRow, SendDraft)] = []
+        for row in rows {
+            if let d = try? await engine.draft(threadId: row.id) { out.append((row, d)) }
+        }
+        return out
+    }
+
+    /// One Gmail draft by its key (the draft's message id) or its thread id.
+    func gmailDraft(key: String) async -> (row: ThreadRow, draft: SendDraft)? {
+        if let row = try? engine.threadRow(id: key), let d = try? await engine.draft(threadId: key) { return (row, d) }
+        return await gmailDrafts(limit: 50).first { $0.draft.draftKey == key }
+    }
+
     /// The account a row belongs to, for entities and the index.
     func account(for row: ThreadRow) -> MailAccount? {
         accounts.first { $0.id == row.accountId }

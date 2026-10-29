@@ -338,6 +338,19 @@ struct SendDraft: Hashable {
     var draftKey = UUID().uuidString
     /// A Gmail draft was saved for it (a send or a discard deletes it).
     var draftSaved = false
+    /// Bumped when something other than the composer changed the open
+    /// draft (Siri's "update draft"); the composer adopts the new fields.
+    var externalRevision = 0
+
+    /// A forward of one message: the subject with one "Fwd:", the message
+    /// quoted under a header, recipients left to the user.
+    static func forward(of m: MessageItem, in thread: ThreadRow) -> SendDraft {
+        var d = SendDraft()
+        d.subject = thread.subject.lowercased().hasPrefix("fwd:") ? thread.subject : "Fwd: \(thread.subject)"
+        d.bodyText = "\n\n---------- Forwarded message ----------\nFrom: \(m.fromName) <\(m.fromAddress)>\nDate: \(Formatters.fullDate(m.date))\n\n\(m.bodyText ?? m.snippet)"
+        d.fromAccountId = thread.accountId
+        return d
+    }
 
     /// A reply to one message of a thread: to its sender (or, for a message
     /// of ours, its recipients), everyone else in Cc for Reply all, the

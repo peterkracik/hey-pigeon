@@ -15,6 +15,10 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
     case aiOff
     case noDate
     case wrongAccount(label: String)
+    case draftGone
+    case noRecipients
+    case scheduledSendUnsupported
+    case unsupportedMailbox(name: String)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
@@ -23,6 +27,10 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
         case .noAccount: "Connect a Google account in Hey Pigeon first."
         case .aiOff: "Connect an AI provider in Hey Pigeon's settings to summarize."
         case .noDate: "I need a date for the reminder."
+        case .draftGone: "That draft isn't open any more. Open it from Drafts first."
+        case .noRecipients: "The draft has no recipient yet."
+        case .scheduledSendUnsupported: "Hey Pigeon can't schedule a send. It can send it now."
+        case .unsupportedMailbox(let name): "Hey Pigeon can't move mail to \(name). It can archive, trash or mark as spam."
         case .wrongAccount(let label): "The label \(label) belongs to another account."
         }
     }
@@ -44,7 +52,11 @@ enum IntentSupport {
     /// The thread's row as the store has it now (never the entity's copy,
     /// which may be minutes old by the time Siri hands it back).
     static func row(_ entity: MailThreadEntity, in model: AppModel) throws -> ThreadRow {
-        guard let row = try? model.engine.threadRow(id: entity.id) else { throw IntentError.noSuchThread }
+        try row(id: entity.id, in: model)
+    }
+
+    static func row(id: String, in model: AppModel) throws -> ThreadRow {
+        guard let row = try? model.engine.threadRow(id: id) else { throw IntentError.noSuchThread }
         return row
     }
 

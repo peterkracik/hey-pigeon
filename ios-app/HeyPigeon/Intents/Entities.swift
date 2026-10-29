@@ -30,8 +30,20 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
 
     /// The sender's address, for the Spotlight index only.
     let senderAddress: String
+    /// For the Spotlight index only (never shown by Siri as a property):
+    /// the participants with their addresses, the Gmail label names, and
+    /// the body text of the newest messages when the store has it — what
+    /// makes "what did the landlord say about the deposit" answerable by
+    /// `SpotlightSearchTool` on device. Capped so one thread cannot swamp
+    /// the index.
+    let participantNames: [String]
+    let participantAddresses: [String]
+    let labelNames: [String]
+    let bodyText: String?
 
-    init(_ row: ThreadRow, account: MailAccount?) {
+    static let bodyTextCap = 4_000
+
+    init(_ row: ThreadRow, account: MailAccount?, detail: ThreadDetail? = nil, labelNames: [String] = []) {
         id = row.id
         subject = row.subject.isEmpty ? "(no subject)" : row.subject
         from = row.fromSummary
@@ -47,6 +59,41 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
         isDone = row.isDone
         hasAttachment = row.hasAttachment
         senderAddress = row.lastFromAddress
+        self.labelNames = labelNames
+        let messages = detail?.messages ?? []
+        var names: [String] = []
+        var addresses: [String] = []
+        for m in messages {
+            if !m.isMine, !m.fromAddress.isEmpty, !addresses.contains(m.fromAddress) {
+                addresses.append(m.fromAddress)
+                names.append(m.fromName)
+            }
+            for a in m.to where a != "me" && !a.isEmpty && !addresses.contains(a) {
+                addresses.append(a)
+                names.append(a)
+            }
+        }
+        participantNames = names
+        participantAddresses = addresses
+        bodyText = Self.indexableBody(messages)
+    }
+
+    /// Newest messages first, plain text, until the cap: the end of a long
+    /// thread is what a question is usually about.
+    static func indexableBody(_ messages: [MessageItem]) -> String? {
+        var out: [String] = []
+        var used = 0
+        for m in messages.reversed() {
+            guard let text = m.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
+            let main = MessageBodyView.splitQuoted(text)?.main ?? text
+            let line = "\(m.isMine ? "Me" : m.fromName): \(main)"
+            let room = bodyTextCap - used
+            guard room > 40 else { break }
+            let piece = line.count > room ? String(line.prefix(room)) : line
+            out.insert(piece, at: 0)
+            used += piece.count + 2
+        }
+        return out.isEmpty ? nil : out.joined(separator: "\n\n")
     }
 
     var displayRepresentation: DisplayRepresentation {
@@ -57,8 +104,12 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
         )
     }
 
-    /// What Spotlight (and, through it, Siri's personal context) learns:
-    /// subject, sender, one preview line, when, which account. No body.
+    /// What Spotlight (and, through it, Siri's personal context and the
+    /// on-device "Ask my inbox" tool) learns: subject, sender, one preview
+    /// line, when, which account, the participants and labels, and — when
+    /// the store has it — the text of the newest messages as `textContent`
+    /// (searchable, read back only through the index delegate). All on
+    /// this device, behind Settings › Siri & Search.
     var attributeSet: CSSearchableItemAttributeSet {
         let a = CSSearchableItemAttributeSet(contentType: .emailMessage)
         a.title = subject
@@ -70,7 +121,24 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
         a.containerIdentifier = account.id
         a.containerTitle = account.name
         a.domainIdentifier = account.id
+        a.accountIdentifier = account.id
+        a.accountHandles = [account.emailAddress]
+        if !participantNames.isEmpty {
+            a.recipientNames = participantNames
+            a.recipientEmailAddresses = participantAddresses
+        }
+        if !labelNames.isEmpty { a.keywords = labelNames }
+        a.mailboxIdentifiers = [isDone ? "archive" : "inbox"]
+        a.textContent = bodyText
         return a
+    }
+
+    /// The item the index delegate hands back for `SpotlightSearchTool`:
+    /// the full attribute set, associated with this entity.
+    var searchableItem: CSSearchableItem {
+        let item = CSSearchableItem(uniqueIdentifier: id, domainIdentifier: account.id, attributeSet: attributeSet)
+        item.associateAppEntity(self, priority: 0)
+        return item
     }
 }
 

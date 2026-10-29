@@ -19,9 +19,13 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
     case noRecipients
     case scheduledSendUnsupported
     case unsupportedMailbox(name: String)
+    case askOff
+    case askFailed(String)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
+        case .askOff: "Turn on \"Let Siri see your inbox\" in Hey Pigeon's settings to ask about your mail."
+        case .askFailed(let why): "Hey Pigeon couldn't answer: \(why)"
         case .notReady: "Hey Pigeon isn't ready yet. Try again in a moment."
         case .noSuchThread: "That email isn't in Hey Pigeon any more."
         case .noAccount: "Connect a Google account in Hey Pigeon first."

@@ -164,6 +164,12 @@ final class MockEngine: MailEngine {
         return ThreadDetail(thread: row, messages: bodies[id] ?? [])
     }
 
+    /// Bodies only once `thread(id:)` fetched them, like the store.
+    func threadLocal(id: String) throws -> ThreadDetail? {
+        guard let row = rows[id] else { return nil }
+        return ThreadDetail(thread: row, messages: bodies[id] ?? [])
+    }
+
     func threadRow(id: String) throws -> ThreadRow? { rows[id] }
 
     func perform(_ action: MailAction, accountId: String) async throws {

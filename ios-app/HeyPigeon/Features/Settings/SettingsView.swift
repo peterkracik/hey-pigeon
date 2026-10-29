@@ -443,8 +443,13 @@ private struct SiriSection: View {
             Toggle(isOn: $model.siriIndexEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Let Siri see your inbox")
-                    Text("Subject, sender and one preview line of recent mail, indexed on this iPhone so Siri and Spotlight can find a thread. Never the message itself.")
+                    Text("Recent mail indexed on this iPhone — subject, sender, people, labels, and the text of messages you have opened — so Siri and Spotlight can find a thread and \"Ask my inbox\" can answer from it. The index never leaves the device.")
                         .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            if InboxAsk.isAvailable(model) {
+                Button { model.askSheet = AskPresentation() } label: {
+                    Label("Ask my inbox", systemImage: "questionmark.bubble")
                 }
             }
             SiriTipView(intent: WhatNeedsReplyIntent())
@@ -452,7 +457,7 @@ private struct SiriSection: View {
         } header: {
             Text("Siri & Search")
         } footer: {
-            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, or add any action to a Shortcut. Nothing is sent anywhere: Siri reads the index on this iPhone.")
+            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this iPhone.")
         }
         .menuCard()
     }

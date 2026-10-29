@@ -31,6 +31,12 @@ struct SummaryPresentation: Identifiable, Equatable {
     let title: String
 }
 
+/// The Ask sheet, optionally opened on a question.
+struct AskPresentation: Identifiable, Equatable {
+    let id = UUID()
+    var question: String?
+}
+
 struct RowGroup: Identifiable {
     let title: String
     let rows: [ThreadRow]
@@ -126,6 +132,8 @@ final class AppModel {
     var composeDraft: SendDraft?
     var showSidebar = false
     var showSettings = false
+    /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
+    var askSheet: AskPresentation?
 
     /// Scheduled / Need reply / Drafts totals for the sidebar, the tab
     /// badges and the list title, and the reminders whose time has passed

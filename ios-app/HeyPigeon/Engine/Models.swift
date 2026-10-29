@@ -512,6 +512,10 @@ protocol MailEngine: AnyObject {
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func search(_ query: String, limit: Int) throws -> [ThreadRow]
     func thread(id: String) async throws -> ThreadDetail?
+    /// The thread with whatever messages the store already holds — bodies
+    /// only when it was opened before. No network: what the Spotlight index
+    /// and the message entities read.
+    func threadLocal(id: String) throws -> ThreadDetail?
     /// The thread's saved Gmail draft, ready for the composer (keyed so its
     /// saves update that draft). Nil when the thread holds none.
     func draft(threadId: String) async throws -> SendDraft?

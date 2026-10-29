@@ -45,6 +45,13 @@ struct MailListScreen: View {
                             .accessibilityLabel("Summarize this view")
                     }
                 }
+                // "Ask my inbox": on-device questions over the Spotlight index.
+                if tab == .inbox && InboxAsk.isAvailable(model) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { model.askSheet = AskPresentation() } label: { Image(systemName: "questionmark.bubble") }
+                            .accessibilityLabel("Ask my inbox")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { model.composeDraft = SendDraft() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("Compose")

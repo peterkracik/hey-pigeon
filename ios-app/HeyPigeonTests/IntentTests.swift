@@ -182,6 +182,46 @@ struct IntentTests {
         #expect(attrs.containerIdentifier == "me@work.test")
     }
 
+    /// The index gets the participants, labels and body text when the store
+    /// has them (a thread opened before), newest messages first and capped;
+    /// a thread never opened indexes no body.
+    @Test func entityIndexesLocalBodiesParticipantsAndLabels() async throws {
+        let row = try #require(try engine.threadRow(id: "t5"))
+        #expect(try engine.threadLocal(id: "t5")?.messages.isEmpty == true)
+        #expect(SpotlightIndexer.entity(for: row, in: model).bodyText == nil)
+        _ = try await engine.thread(id: "t5") // the first open brings the bodies
+        let e = SpotlightIndexer.entity(for: row, in: model)
+        let body = try #require(e.bodyText)
+        #expect(body.contains("Ana:") && body.contains("Me:"))
+        #expect(body.hasSuffix(row.snippet)) // the newest message ends the text
+        #expect(e.participantAddresses.contains("ana@acme.test"))
+        #expect(!e.participantAddresses.contains("me@work.test"))
+        let attrs = e.attributeSet
+        #expect(attrs.textContent == body)
+        #expect(attrs.accountIdentifier == "me@work.test")
+        #expect(attrs.recipientEmailAddresses?.contains("ana@acme.test") == true)
+        #expect(e.searchableItem.uniqueIdentifier == "t5")
+    }
+
+    @Test func indexableBodyIsCappedNewestFirst() {
+        func m(_ i: Int, _ text: String) -> MessageItem {
+            MessageItem(id: "m\(i)", fromName: "A", fromAddress: "a@x", to: ["me"], date: Date(timeIntervalSince1970: Double(i)),
+                        snippet: "", bodyHTML: nil, bodyText: text, isRead: true, isMine: false)
+        }
+        let long = String(repeating: "x", count: MailThreadEntity.bodyTextCap)
+        let body = try? #require(MailThreadEntity.indexableBody([m(1, "first"), m(2, long), m(3, "last")]))
+        #expect(body?.hasSuffix("A: last") == true)
+        #expect(body?.contains("A: first") == false) // no room left after the long one
+        #expect((body?.count ?? 0) <= MailThreadEntity.bodyTextCap + 10)
+        #expect(MailThreadEntity.indexableBody([m(1, "   ")]) == nil)
+    }
+
+    @Test func askCitationsKeepOnlyKnownThreadsOnce() {
+        let rows = InboxAsk.validCitations(["t2", "nope", "t2", "t1"], in: model)
+        #expect(rows.map(\.id) == ["t2", "t1"])
+        #expect(!InboxAsk.isAvailable(model) || AppleIntelligenceProvider.isAvailable)
+    }
+
     @Test func threadQueryResolvesIdsSearchAndTheOpenThread() async throws {
         let q = MailThreadQuery()
         #expect(try await q.entities(for: ["t1", "nope"]).map(\.id) == ["t1"])

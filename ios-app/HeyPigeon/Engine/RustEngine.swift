@@ -134,6 +134,12 @@ final class RustEngine: MailEngine {
         return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
     }
 
+    func threadLocal(id: String) throws -> ThreadDetail? {
+        guard let t = try engine.getThreadLocal(threadId: id) else { return nil }
+        let me = t.thread.accountId
+        return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
+    }
+
     func draft(threadId: String) async throws -> SendDraft? {
         guard let d = try await engine.loadDraft(threadId: threadId) else { return nil }
         var draft = SendDraft()

@@ -138,6 +138,10 @@ final class AppModel {
     /// Drafts are read, so the unread map has none: the sidebar shows how many there are.
     private(set) var draftsCount = 0
     private(set) var dueCount = 0
+    /// Ticks every 30 s while the app runs, so a reminder coming due raises
+    /// `dueCount` and the icon badge without waiting for a reload (the
+    /// desktop's `now` in App.svelte).
+    @ObservationIgnored private var clock: Task<Void, Never>?
 
     /// Every scheduled thread still in the inbox (done mail has no
     /// reminder), one account or all.
@@ -252,6 +256,21 @@ final class AppModel {
         reload()
         push.notify = { [weak self] text in self?.show(text) }
         AppModel.current = self
+        clock = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                self?.tick()
+            }
+        }
+    }
+
+    /// A reminder just came due: recount so the Scheduled tab badge moves,
+    /// and the icon badge adds it (the notification carries the same count
+    /// for the asleep case).
+    private func tick() {
+        let before = dueCount
+        dueCount = Self.due(scheduledThreads(accountId: selectedAccountId)).count
+        if dueCount != before { Task { await NewMailNotifier.refreshBadge(self) } }
     }
 
     // MARK: Loading
@@ -453,7 +472,7 @@ final class AppModel {
             lastSyncAt = Date()
             reloadAccounts()
             reload()
-            await ReminderScheduler.reschedule((try? engine.threads(in: .scheduled, accountId: nil, before: nil, limit: 500)) ?? [])
+            await rescheduleReminders()
         } catch {
             show("Sync failed: \(error.localizedDescription)")
         }
@@ -605,7 +624,17 @@ final class AppModel {
                 show("Reminder removed")
             }
             reload()
+            // Hand it to iOS now, not at the next sync: a reminder set and
+            // left alone until it is due would otherwise never fire.
+            Task { await rescheduleReminders() }
         } catch { show(error.localizedDescription) }
+    }
+
+    /// The next 7 days of reminders, across accounts, as local notifications
+    /// — after a reminder set here and after every sync (another device's).
+    func rescheduleReminders() async {
+        let unread = (try? engine.unreadCounts(accountId: nil))?["inbox"] ?? 0
+        await ReminderScheduler.reschedule(scheduledThreads(accountId: nil), unread: unread)
     }
 
     /// Desktop `l`: add or remove one Gmail label.

@@ -68,13 +68,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    /// Nothing is shown while the app is in front: the list is live, and the
-    /// badge follows the sync. (Same as before this delegate existed.)
+    /// A reminder shows in front too — the user asked to be interrupted at
+    /// that time. New-mail banners stay silent while the app is in front:
+    /// the list is live, and the badge follows the sync.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([])
+        let isReminder = notification.request.identifier.hasPrefix(ReminderScheduler.prefix)
+        completionHandler(isReminder ? [.banner, .list, .sound, .badge] : [])
     }
 }

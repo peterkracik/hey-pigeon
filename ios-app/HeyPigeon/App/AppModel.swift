@@ -171,6 +171,8 @@ final class AppModel {
         static let autoSummarize = "auto_summarize"
         /// Separate from the desktop's `hover_actions`: the gesture sets differ.
         static let swipeActions = "swipe_actions"
+        /// Settings › Siri & Search › "Let Siri see your inbox".
+        static let siriIndex = "siri_index"
     }
 
     /// Group pinned messages at the top of the inbox.
@@ -190,6 +192,18 @@ final class AppModel {
         didSet { savePref(PrefName.swipeActions, swipeActions.map(\.rawValue)) }
     }
     static let defaultSwipeActions: [RowAction] = [.read, .done, .remind, .needReply]
+    /// Keep the Spotlight index (subject · sender · preview, never a body)
+    /// that Siri's personal context and Spotlight read. Off drains it.
+    var siriIndexEnabled = true {
+        didSet {
+            savePref(PrefName.siriIndex, siriIndexEnabled)
+            guard !adoptingPrefs, siriIndexEnabled != oldValue else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                if siriIndexEnabled { await SpotlightIndexer.refresh(self) } else { await SpotlightIndexer.clear() }
+            }
+        }
+    }
     /// Bumped when another device changed a synced setting; views that
     /// cache engine status (Settings' AI and Triage sections) reload on it.
     private(set) var prefsVersion = 0
@@ -225,6 +239,7 @@ final class AppModel {
             let actions = raw.compactMap(RowAction.init(rawValue:))
             if actions.count == 4 { swipeActions = actions }
         }
+        if let v = prefs[PrefName.siriIndex] as? Bool { siriIndexEnabled = v }
         adoptingPrefs = false
     }
 
@@ -473,6 +488,9 @@ final class AppModel {
             reloadAccounts()
             reload()
             await rescheduleReminders()
+            // What Siri and Spotlight know follows the store, same cadence
+            // as the reminder notifications.
+            await SpotlightIndexer.refresh(self)
         } catch {
             show("Sync failed: \(error.localizedDescription)")
         }
@@ -528,6 +546,46 @@ final class AppModel {
     func openThread(id: String) {
         tab = .inbox
         pendingThreadId = id
+    }
+
+    /// Siri / a widget asked for a folder or tab: Scheduled and Need reply
+    /// are tabs, everything else shows in the Inbox tab. Sheets close so
+    /// the list is what the user sees.
+    func show(_ view: MailView) {
+        showSidebar = false
+        showSettings = false
+        switch view {
+        case .scheduled: tab = .scheduled
+        case .needReply: tab = .needReply
+        default:
+            tab = .inbox
+            if folder != view { folder = view }
+        }
+    }
+
+    /// Open the composer on a draft (Compose intent, share extension).
+    func compose(_ draft: SendDraft) {
+        showSidebar = false
+        showSettings = false
+        composeDraft = draft
+    }
+
+    /// Open the composer on a reply to the thread's latest message, the
+    /// thread view's own draft shape, with `body` as the text. Never sends.
+    func openReply(to row: ThreadRow, all: Bool, body: String?) async throws {
+        let detail = try await engine.thread(id: row.id)
+        guard let detail, let last = detail.messages.last else { throw IntentError.noSuchThread }
+        let transcript = detail.messages
+            .map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }
+            .joined(separator: "\n\n")
+        var draft = SendDraft.reply(to: last, in: detail.thread, all: all, history: transcript)
+        if let body, !body.isEmpty { draft.bodyText = body }
+        compose(draft)
+    }
+
+    /// The account a row belongs to, for entities and the index.
+    func account(for row: ThreadRow) -> MailAccount? {
+        accounts.first { $0.id == row.accountId }
     }
 
     /// Resolve a pending deep link to a row, searching the loaded inbox
@@ -913,6 +971,9 @@ final class AppModel {
             reloadAccounts()
             reload()
             push.refreshStatus()
+            // Its threads leave Spotlight with it.
+            await SpotlightIndexer.clear()
+            await SpotlightIndexer.refresh(self)
         } catch { show(error.localizedDescription) }
     }
 

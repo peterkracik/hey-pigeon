@@ -338,6 +338,26 @@ struct SendDraft: Hashable {
     var draftKey = UUID().uuidString
     /// A Gmail draft was saved for it (a send or a discard deletes it).
     var draftSaved = false
+
+    /// A reply to one message of a thread: to its sender (or, for a message
+    /// of ours, its recipients), everyone else in Cc for Reply all, the
+    /// subject with one "Re:", from the thread's account. The thread view
+    /// and the Siri Reply intent build the same draft.
+    static func reply(to m: MessageItem, in thread: ThreadRow, all: Bool, history: String?) -> SendDraft {
+        var d = SendDraft()
+        let others = m.to.filter { $0 != "me" && !$0.isEmpty }
+        if m.isMine {
+            d.to = others
+        } else {
+            d.to = [m.fromAddress]
+            if all { d.cc = others }
+        }
+        d.subject = thread.subject.lowercased().hasPrefix("re:") ? thread.subject : "Re: \(thread.subject)"
+        d.replyToThreadId = thread.id
+        d.fromAccountId = thread.accountId
+        d.history = history
+        return d
+    }
 }
 
 /// Optimistic changes queued for Gmail — same set as the desktop IPC.

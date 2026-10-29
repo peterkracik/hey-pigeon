@@ -12,7 +12,6 @@ struct RemindSheet: View {
     let row: ThreadRow
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("dayStartsAtHour") private var dayStart = 9
     @State private var onlyIfNoReply: Bool
     @State private var custom = Date().addingTimeInterval(86_400)
     @State private var showPicker = false
@@ -22,23 +21,10 @@ struct RemindSheet: View {
         _onlyIfNoReply = State(initialValue: row.isFollowUp)
     }
 
+    /// The presets as dates, from ReminderPresets (shared with the Siri
+    /// intent so both land on the same minute).
     private var presets: [(String, Date)] {
-        let cal = Calendar.current
-        let now = Date()
-        var out: [(String, Date)] = []
-        if let evening = cal.date(bySettingHour: 18, minute: 0, second: 0, of: now), evening > now {
-            out.append(("Later today", evening))
-        }
-        let tomorrow = cal.date(bySettingHour: dayStart, minute: 0, second: 0, of: cal.date(byAdding: .day, value: 1, to: now)!)!
-        out.append(("Tomorrow", tomorrow))
-        var sat = now
-        repeat { sat = cal.date(byAdding: .day, value: 1, to: sat)! } while cal.component(.weekday, from: sat) != 7
-        out.append(("This weekend", cal.date(bySettingHour: dayStart, minute: 0, second: 0, of: sat)!))
-        var mon = now
-        repeat { mon = cal.date(byAdding: .day, value: 1, to: mon)! } while cal.component(.weekday, from: mon) != 2
-        out.append(("Next week", cal.date(bySettingHour: dayStart, minute: 0, second: 0, of: mon)!))
-        out.append(("In a month", cal.date(bySettingHour: dayStart, minute: 0, second: 0, of: cal.date(byAdding: .month, value: 1, to: now)!)!))
-        return out
+        ReminderPreset.available().map { ($0.preset.title, $0.date) }
     }
 
     var body: some View {

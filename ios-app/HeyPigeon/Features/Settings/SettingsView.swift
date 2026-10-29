@@ -5,6 +5,7 @@
 // About. Account removal and anything that deletes asks once. Same sheet
 // look as the sidebar (Theme's menuList / menuCard / menuSheet).
 
+import AppIntents
 import SwiftUI
 
 struct SettingsView: View {
@@ -19,6 +20,7 @@ struct SettingsView: View {
             List {
                 accountsSection
                 AISection()
+                SiriSection()
                 TriageSection()
                 NotificationsSection()
                 Section {
@@ -305,6 +307,34 @@ private struct AISection: View {
     private func select(_ id: String) {
         do { try model.engine.setAIModel(id) } catch { self.error = error.localizedDescription }
         load()
+    }
+}
+
+// MARK: - Siri & Search
+
+/// The Spotlight index Siri's personal context and Spotlight read, and a
+/// door to the app's Siri phrases. What leaves the device is stated plainly.
+private struct SiriSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Section {
+            Toggle(isOn: $model.siriIndexEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Let Siri see your inbox")
+                    Text("Subject, sender and one preview line of recent mail, indexed on this iPhone so Siri and Spotlight can find a thread. Never the message itself.")
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            SiriTipView(intent: WhatNeedsReplyIntent())
+            ShortcutsLink()
+        } header: {
+            Text("Siri & Search")
+        } footer: {
+            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, or add any action to a Shortcut. Nothing is sent anywhere: Siri reads the index on this iPhone.")
+        }
+        .menuCard()
     }
 }
 

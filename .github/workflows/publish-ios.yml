@@ -28,8 +28,11 @@ name: publish-ios
 # One-time setup outside CI: create the app record (bundle id app.heypigeon.ios)
 # in App Store Connect; create the ASC API key; export the distribution
 # certificate as .p12; for EAS, create an expo.dev project and a token. The
-# extensions' App IDs (…ios.widgets, …ios.share) and the App Group are
-# created through the API on the first run.
+# extensions' App IDs (…ios.widgets, …ios.share) and the App Groups
+# capability are created through the API on the first run; the App Group
+# group.app.heypigeon itself and its assignment to the three identifiers are
+# a one-time portal step (the API has none) — the profile step fails with
+# the exact clicks until it is done.
 # The App Store provisioning profile is created/refreshed by fastlane sigh
 # through the ASC key on every run (manual signing; no device needed).
 
@@ -264,10 +267,13 @@ jobs:
             fi
           done
           # The extensions' App IDs (created once, then a no-op) and the App
-          # Group all three bundle ids share: the widgets read the snapshot
-          # the app writes, the share extension leaves it a pending share.
-          # `produce` is not idempotent on groups either; an "already
-          # exists" answer is the fine outcome.
+          # Groups capability on all three bundle ids: the widgets read the
+          # snapshot the app writes, the share extension leaves it a pending
+          # share. The group itself (group.app.heypigeon) and its assignment
+          # to the three identifiers are a ONE-TIME PORTAL STEP: the App Store
+          # Connect API has no App Groups resource, and fastlane's `produce
+          # group` / `associate_group` need an Apple ID session. The check
+          # after `sigh` below fails fast, with the clicks, until it is done.
           for ext in "$WIDGETS_BUNDLE_ID":"Hey Pigeon Widgets" "$SHARE_BUNDLE_ID":"Hey Pigeon Share"; do
             id="${ext%%:*}"; name="${ext#*:}"
             if ! out="$(fastlane produce \
@@ -280,14 +286,6 @@ jobs:
               echo "::warning::Could not create App ID $id through the API (fine if it already exists)."
             fi
           done
-          if ! out="$(fastlane produce group \
-            --api_key_path "$RUNNER_TEMP/asc.json" \
-            --team_id "${{ secrets.APPLE_TEAM_ID }}" \
-            --group_name "Hey Pigeon" \
-            --group_identifier "$APP_GROUP" 2>&1)"; then
-            printf '%s\n' "$out" | tail -5
-            echo "::warning::Could not create App Group $APP_GROUP through the API (fine if it already exists)."
-          fi
           for id in "$BUNDLE_ID" "$WIDGETS_BUNDLE_ID" "$SHARE_BUNDLE_ID"; do
             if ! out="$(fastlane produce enable_services --app-group \
               --api_key_path "$RUNNER_TEMP/asc.json" \
@@ -300,16 +298,10 @@ jobs:
                 echo "::warning::Could not enable App Groups on $id through the API. If the archive fails on the entitlement, enable it once by hand: developer.apple.com → Identifiers → $id → App Groups."
               fi
             fi
-            if ! out="$(fastlane produce associate_group "$APP_GROUP" \
-              --api_key_path "$RUNNER_TEMP/asc.json" \
-              --team_id "${{ secrets.APPLE_TEAM_ID }}" \
-              --app_identifier "$id" 2>&1)"; then
-              printf '%s\n' "$out" | tail -5
-              echo "::warning::Could not associate $APP_GROUP with $id through the API (fine if it already is)."
-            fi
           done
           # One App Store profile per bundle id; the archive step names each
           # target's profile (project.yml PROVISIONING_PROFILE_SPECIFIER).
+          missing=()
           for pair in "$BUNDLE_ID|$PROFILE_NAME|AppStore" "$WIDGETS_BUNDLE_ID|$PROFILE_NAME_WIDGETS|Widgets" "$SHARE_BUNDLE_ID|$PROFILE_NAME_SHARE|Share"; do
             IFS='|' read -r id name file <<<"$pair"
             fastlane sigh \
@@ -320,8 +312,18 @@ jobs:
               --force \
               --output_path "$RUNNER_TEMP/profiles" \
               --filename "$file.mobileprovision"
+            # A profile only carries the App Group once the group is assigned
+            # to the identifier in the portal; xcodebuild would otherwise fail
+            # on the entitlement with a less helpful message.
+            if ! security cms -D -i "$RUNNER_TEMP/profiles/$file.mobileprovision" | grep -q "$APP_GROUP"; then
+              missing+=("$id")
+            fi
           done
           rm -f "$RUNNER_TEMP/asc.json"
+          if (( ${#missing[@]} )); then
+            echo "::error::The App Store profile(s) for ${missing[*]} do not carry the App Group $APP_GROUP. One-time setup in the Apple Developer portal (the App Store Connect API cannot do it): developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → filter 'App Groups' → + → Description 'Hey Pigeon', Identifier '$APP_GROUP' → Register. Then for each of $BUNDLE_ID, $WIDGETS_BUNDLE_ID and $SHARE_BUNDLE_ID: Identifiers → the App ID → App Groups → Configure → tick '$APP_GROUP' → Save. Re-run this workflow afterwards: sigh regenerates the profiles."
+            exit 1
+          fi
 
       - name: Archive
         working-directory: ios-app

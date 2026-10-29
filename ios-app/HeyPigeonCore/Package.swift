@@ -15,7 +15,13 @@ let package = Package(
         .target(
             name: "HeyPigeonCore",
             dependencies: ["HeyPigeonCoreFFI"],
-            path: "Sources/HeyPigeonCore"
+            path: "Sources/HeyPigeonCore",
+            // The generated bindings are UniFFI's code, not ours: its async
+            // callback-interface scaffolding (`uniffiTraitInterfaceCallAsync`,
+            // used by the AiBackend trait) passes a non-Sendable closure into a
+            // Task, which Swift 6 language mode rejects outright. Swift 5 mode
+            // keeps that a warning; the app target itself stays on Swift 6.
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
 )

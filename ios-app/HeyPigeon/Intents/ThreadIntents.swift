@@ -52,7 +52,7 @@ struct RemindMeIntent: AppIntent {
     @Parameter(title: "Only if nobody replies", default: false) var onlyIfNoReply: Bool
 
     static var parameterSummary: some ParameterSummary {
-        When(\.$when, .equalTo, .pickDate) {
+        When(\.$when, .equalTo, RemindWhen.pickDate) {
             Summary("Remind me about \(\.$thread) on \(\.$date)") {
                 \.$onlyIfNoReply
             }

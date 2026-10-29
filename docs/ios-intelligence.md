@@ -410,12 +410,21 @@ there), with the Keychain items moved to an access group at the same time.
 The extensions are their own bundle ids (`app.heypigeon.ios.widgets`,
 `app.heypigeon.ios.share`), each with its own App Store profile, and all
 three carry the App Group. `publish-ios.yml` creates the two App IDs and
-the group through the App Store Connect API on the first run (tolerating
-"already exists"), enables and associates the group on all three, fetches
-three profiles with `sigh`, and names each target's profile through
-`PROFILE_APP` / `PROFILE_WIDGETS` / `PROFILE_SHARE` build settings that
-`project.yml` maps onto `PROVISIONING_PROFILE_SPECIFIER` per target (empty
-under local automatic signing).
+enables the App Groups capability on all three through the App Store
+Connect API (tolerating "already exists"), fetches three profiles with
+`sigh`, and names each target's profile through `PROFILE_APP` /
+`PROFILE_WIDGETS` / `PROFILE_SHARE` build settings that `project.yml` maps
+onto `PROVISIONING_PROFILE_SPECIFIER` per target (empty under local
+automatic signing).
+
+**One-time portal step.** The App Store Connect API has no App Groups
+resource, and fastlane's `produce group` / `associate_group` need an Apple
+ID session, so the group itself is made by hand once: developer.apple.com →
+Certificates, Identifiers & Profiles → Identifiers → App Groups → register
+`group.app.heypigeon`; then on each of the three App IDs → App Groups →
+Configure → tick it. Until that is done the workflow's profile step fails
+fast with these clicks (it decodes each profile and looks for the group),
+and the next run regenerates the profiles with it.
 
 ## Share extension
 

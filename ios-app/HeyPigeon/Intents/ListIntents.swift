@@ -155,7 +155,7 @@ struct SummarizeInboxIntent: AppIntent {
 struct AskInboxIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask My Inbox"
     static let description = IntentDescription(
-        "Answers a question about your own mail on this iPhone, from the index Siri uses. Nothing is sent anywhere.",
+        "Answers a question about your own mail from the search index on this device. Nothing is sent anywhere.",
         categoryName: "Find"
     )
 

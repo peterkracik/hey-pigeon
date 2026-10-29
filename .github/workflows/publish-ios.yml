@@ -112,11 +112,15 @@ jobs:
       - name: Select newest Xcode with the iOS 27 SDK
         run: |
           set -euo pipefail
-          # Newest Xcode 27 on the image (the default on xcode-27 is the
-          # latest release, the RC sorts after it); an Xcode 26 that already
-          # ships the iOS 27 SDK would do too, so the check is on the SDK,
-          # not the name.
-          xc="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1 || true)"
+          # Newest released Xcode 27 on the image. The xcode-27 image also
+          # carries release candidates and betas (Xcode_27.2_Release_Candidate.app
+          # sorts last and was picked by run 93); App Store Connect wants a
+          # release Xcode, so those count only when no release is there. An
+          # Xcode 26 that already ships the iOS 27 SDK would do too, so the
+          # check below is on the SDK, not the name.
+          all="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V || true)"
+          xc="$(printf '%s\n' "$all" | grep -viE 'beta|release_candidate|_rc' | tail -1 || true)"
+          if [[ -z "$xc" ]]; then xc="$(printf '%s\n' "$all" | tail -1)"; fi
           if [[ -z "$xc" ]]; then
             xc="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
           fi

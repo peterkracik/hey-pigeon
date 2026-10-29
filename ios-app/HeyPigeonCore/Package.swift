@@ -1,4 +1,6 @@
-// swift-tools-version:6.2
+// swift-tools-version:6.4
+// 6.4: the first PackageDescription with `.iOS(.v27)` / `.macOS(.v27)`
+// (Xcode 27). 6.2 rejected them as unavailable (publish-ios run 93).
 // Wraps the Rust core for Swift: the generated UniFFI bindings
 // (Sources/HeyPigeonCore/HeyPigeonCore.swift) over the static library
 // xcframework. Both are produced by ../scripts/build-rust.sh and git-ignored.

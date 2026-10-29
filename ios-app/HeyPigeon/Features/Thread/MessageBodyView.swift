@@ -1,10 +1,9 @@
 // Untrusted mail HTML, rendered as safely as a WKWebView allows:
 // JavaScript off, strict CSP, remote images blocked until the user allows
-// the sender, every web link handed to Safari and every mailto: link to
-// the app's own composer. The HTML arrives already sanitized by the core
+// the sender, every web link handed to the default browser and every
+// mailto: link to the app's own composer. The HTML arrives already sanitized by the core
 // (ammonia); this is the second layer.
 
-import SafariServices
 import SwiftUI
 import WebKit
 
@@ -14,13 +13,13 @@ struct MessageBodyView: View {
     let senderAddress: String
     @AppStorage("allowedImageSenders") private var allowedSendersRaw = ""
     @State private var height: CGFloat = 80
-    @State private var link: URL?
     /// The trailing quoted history ("On … wrote:") stays folded behind a
     /// ••• button, like the desktop's quote pill.
     @State private var showQuoted = false
     @State private var hasQuote = false
     @Environment(\.colorScheme) private var scheme
     @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
 
     private var imagesAllowed: Bool {
         allowedSendersRaw.split(separator: "\n").contains(Substring(senderAddress.lowercased()))
@@ -62,18 +61,17 @@ struct MessageBodyView: View {
                 SelectableText(text: Self.linkified(text)) { url in open(url) }
             }
         }
-        .sheet(item: $link) { url in SafariView(url: url).ignoresSafeArea() }
     }
 
-    /// Web links open in the in-app Safari sheet. A mailto: link is a mail
-    /// client's own job: it opens this app's composer, prefilled, never
+    /// Web links leave the app for the user's default browser. A mailto:
+    /// link is a mail client's own job: it opens this app's composer, prefilled, never
     /// Apple Mail — and never bounces through the system, which, with Hey
     /// Pigeon as the default mail app, would only come straight back here.
     private func open(_ url: URL) {
         if url.scheme?.lowercased() == "mailto" {
             model.compose(SendDraft(mailto: url))
         } else {
-            link = url
+            openURL(url)
         }
     }
 
@@ -125,11 +123,9 @@ struct MessageBodyView: View {
     }
 }
 
-extension URL: Identifiable { public var id: String { absoluteString } }
-
 /// Read-only, selectable plain-text body: long-press or double-tap selects a
 /// range and brings up the native edit menu. Link taps go to `onLink` (the
-/// in-app Safari sheet, same as HTML mail), not the Safari app.
+/// default browser, same as HTML mail).
 private struct SelectableText: UIViewRepresentable {
     let text: NSAttributedString
     let onLink: (URL) -> Void
@@ -249,7 +245,7 @@ private struct HTMLView: UIViewRepresentable {
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void)
         {
             // Only the initial loadHTMLString navigates in place. Every click
-            // leaves through Safari — never in-app navigation (DESIGN.md).
+            // leaves for the default browser — never in-app navigation (DESIGN.md).
             if action.navigationType == .other, action.request.url?.scheme == "about" {
                 decisionHandler(.allow)
                 return
@@ -372,13 +368,4 @@ private struct HTMLView: UIViewRepresentable {
         })();
         """#
     }
-}
-
-private struct SafariView: UIViewControllerRepresentable {
-    let url: URL
-    func makeUIViewController(context: Context) -> SFSafariViewController {
-        // Only http(s) reaches here: mailto: goes to the composer (MessageBodyView.open).
-        SFSafariViewController(url: url)
-    }
-    func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
 }

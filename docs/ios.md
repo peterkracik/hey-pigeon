@@ -232,8 +232,9 @@ messages before the last two stays visible.
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
   "Load" line per sender remembers the choice. The HTML is the
-  ammonia-sanitized body the core already stores. Links open in
-  `SFSafariViewController`; the real URL is shown in a long-press preview.
+  ammonia-sanitized body the core already stores. Web links open in
+  the user's default browser (never in-app); the real URL is shown in a
+  long-press preview.
   The trailing quoted history (`div.gmail_quote`, Outlook's reference
   container, a trailing `<blockquote>`, or `>` lines in plain text) folds
   behind a ••• button, same rules as desktop.
@@ -372,7 +373,7 @@ Not an M1 goal, but the structure above does not have to change for it.
 | Sync cadence | 30 s poll loop in Rust | **The shell owns cadence.** Foreground: sync on launch, on every foreground, on pull. Background: `BGAppRefreshTask` (iOS decides when; expect a few times a day). No loop inside the engine. |
 | New-mail push | Polling | **Optional relay** (issue #16, `relay/`, `terraform/`): Gmail `users.watch` → Pub/Sub → Cloud Run → silent APNs push → the phone runs one delta sync and composes the notification locally; badge = unified unread + reminders due today. The relay sees email + historyId, never mail. Off by default — local-first still means the inbox is current the moment the app opens. Settings → Notifications → "New mail (push)" + relay URL. |
 | Reminder notifications | Posted from the poll loop | **Local notifications**, scheduled ahead from `list_scheduled()` when a reminder is set and on every sync (next 7 days, replaced wholesale each time). Each carries the icon badge it should leave behind (unread + reminders due by then), so the badge moves while the app is asleep. Shown in front too. Works fully offline, no server. Follow-ups cancel on the next sync that sees a reply. |
-| Mail HTML | Sandboxed iframe, CSP | `WKWebView` with scripts off, CSP meta, remote images blocked, links to Safari VC. Same sanitized HTML. |
+| Mail HTML | Sandboxed iframe, CSP | `WKWebView` with scripts off, CSP meta, remote images blocked, links to the default browser. Same sanitized HTML. |
 | Attachments | Disk LRU cache | Same core logic; cache in the app container, relative paths. |
 | Cross-device state | Drive `appDataFolder` | Identical — the same adapter runs; reminders, flags, account name/colour/signature, triage labels and prefs (`pref:<name>`: pinned list, auto-summarize, swipe actions, AI model, triage switch) set on the phone show on the Mac within a poll, and back. `AppModel` prefs are engine-backed (`prefs()` / `setPref`); UserDefaults only seeds a pre-sync install's values once. API keys stay in each device's keychain. |
 | Distribution | Signed DMG via CI | Personal: Xcode run on device / TestFlight. The App Store is not a goal. |

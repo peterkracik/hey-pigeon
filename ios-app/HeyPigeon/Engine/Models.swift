@@ -122,8 +122,10 @@ struct PushAccountState: Identifiable, Hashable {
     let watchExpiresAt: Date?
 }
 
-/// Which AI provider answers (`providerId`: "apple" on device, "openai"
-/// with a key), which one is preferred, and what this device has.
+/// Which AI provider answers (`providerId`: "apple" on device,
+/// "apple-cloud" for Apple's Private Cloud Compute, "openai" with a key),
+/// which one is preferred, what this device has, and who is next when the
+/// preferred one cannot answer.
 struct AIStatus: Hashable {
     let configured: Bool
     let providerId: String?
@@ -132,28 +134,67 @@ struct AIStatus: Hashable {
     var preferredProviderId = "openai"
     var onDeviceAvailable = false
     var openaiConfigured = false
+    /// Shell backends registered on this device, in registration order.
+    var availableProviderIds: [String] = []
+    /// `pref:ai.fallback`: on device → Apple's cloud → OpenAI unless changed.
+    var fallbackOrder: [String] = AIProvider.defaultFallback.map(\.rawValue)
 
     var answersOnDevice: Bool { providerId == AIProvider.apple.rawValue }
-}
-
-/// The two AI providers and the two triage classifiers, by their synced ids.
-enum AIProvider: String, CaseIterable, Identifiable {
-    case apple, openai
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .apple: "On this iPhone"
-        case .openai: "ChatGPT (OpenAI)"
-        }
+    var answersInAppleCloud: Bool { providerId == AIProvider.appleCloud.rawValue }
+    func isAvailable(_ p: AIProvider) -> Bool {
+        p == .openai ? openaiConfigured : availableProviderIds.contains(p.rawValue)
     }
 }
 
-enum TriageClassifier: String, CaseIterable, Identifiable {
-    case apple, jev
+/// The AI providers by their synced ids: Apple on device, Apple's Private
+/// Cloud Compute, OpenAI. Third-party packages registered in
+/// `ModelProviderRegistry` arrive as `.other(id)`.
+enum AIProvider: Hashable, Identifiable {
+    case apple, appleCloud, openai
+    case other(String)
+
+    init(rawValue: String) {
+        switch rawValue {
+        case "apple": self = .apple
+        case "apple-cloud": self = .appleCloud
+        case "openai": self = .openai
+        default: self = .other(rawValue)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .apple: "apple"
+        case .appleCloud: "apple-cloud"
+        case .openai: "openai"
+        case .other(let id): id
+        }
+    }
+
     var id: String { rawValue }
     var title: String {
         switch self {
         case .apple: "On this iPhone"
+        case .appleCloud: "Apple's cloud"
+        case .openai: "ChatGPT (OpenAI)"
+        case .other(let id): id.capitalized
+        }
+    }
+
+    /// Who answers when the preferred provider cannot, least data leaving
+    /// the device first.
+    static let defaultFallback: [AIProvider] = [.apple, .appleCloud, .openai]
+    static let allCases: [AIProvider] = defaultFallback
+}
+
+/// The triage classifiers by their synced ids: the two Apple models and Jev.
+enum TriageClassifier: String, CaseIterable, Identifiable {
+    case apple, appleCloud = "apple-cloud", jev
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .apple: "On this iPhone"
+        case .appleCloud: "Apple's cloud"
         case .jev: "Jev"
         }
     }
@@ -171,6 +212,21 @@ struct TriageStatus: Hashable {
     var classifierId = TriageClassifier.jev.rawValue
     var onDeviceAvailable = false
     var jevConfigured = false
+    /// Classifiers this device can run ("apple", "apple-cloud", "jev").
+    var availableClassifierIds: [String] = []
+
+    func isAvailable(_ c: TriageClassifier) -> Bool { availableClassifierIds.contains(c.rawValue) }
+}
+
+/// One model provider as Settings lists it: the engine's id, the row
+/// title, and whether this device can run it (with the reason when not).
+struct AIProviderInfo: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let modelLabel: String
+    let leavesDevice: Bool
+    let available: Bool
+    let unavailableReason: String?
 }
 
 /// What the root list shows. The folder set mirrors the desktop sidebar.
@@ -488,6 +544,15 @@ protocol MailEngine: AnyObject {
     /// Prefer the on-device model or the key (synced; a device that cannot
     /// run the preferred one falls back on its own).
     func setAIProvider(_ provider: AIProvider) throws
+    /// Who answers when the preferred provider cannot, in order (synced).
+    /// Empty restores the default: on device → Apple's cloud → OpenAI.
+    func setAIFallback(_ order: [AIProvider]) throws
+    /// The model providers the shell knows (Apple on device, Apple's cloud,
+    /// registered packages), available or not, for Settings › AI.
+    func aiProviders() -> [AIProviderInfo]
+    /// Re-check which providers this device can run (Apple Intelligence
+    /// turned on, the network came back) and register the backends anew.
+    func refreshAIProviders()
     func aiEditText(instruction: String, text: String, history: String?) async throws -> String
     func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String

@@ -50,6 +50,17 @@ targets:
         # the widgets and a pending share. Not the database, not the Keychain.
         com.apple.security.application-groups:
           - group.app.heypigeon
+        # Private Cloud Compute model (AI/ModelProviders.swift,
+        # PrivateCloudComputeProvider; docs/ios-intelligence.md "iOS 27").
+        # The entitlement is granted per App ID on request (developer.apple.com
+        # → Identifiers → app.heypigeon.ios → Capabilities → Private Cloud
+        # Compute → request access). Until it is granted the key below must
+        # stay commented out: a profile without it fails the archive, and the
+        # app degrades to the on-device model on its own (Settings › AI says
+        # "isn't reachable"). Once granted, uncomment it; publish-ios regenerates
+        # the App Store profile with sigh on the next run — check the
+        # "Fetch App Store provisioning profile" log shows the capability.
+        # com.apple.developer.foundation-models.private-cloud-compute: true
     dependencies:
       - package: HeyPigeonCore
       - target: HeyPigeonWidgets

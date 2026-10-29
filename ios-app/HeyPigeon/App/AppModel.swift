@@ -499,6 +499,10 @@ final class AppModel {
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
+        // Which models this device can run follows the network and the
+        // Apple Intelligence switch; re-register before the round so the
+        // triage at its end picks the right one.
+        engine.refreshAIProviders()
         do {
             _ = try await engine.syncAll()
             lastSyncAt = Date()

@@ -1,0 +1,92 @@
+// What each model provider cost: requests and tokens, per provider id,
+// since the user last reset it. `response.usage` (iOS 27) feeds it after
+// every answer; Settings › AI shows one line per provider under the rows.
+// Apple's models are free of charge under the Small Business Program, so
+// the line is tokens only; a third-party provider adds a cost estimate
+// when its price per million tokens is known.
+
+import Foundation
+import FoundationModels
+import Observation
+
+struct TokenUsage: Codable, Equatable, Sendable {
+    var requests = 0
+    var inputTokens = 0
+    var outputTokens = 0
+
+    var isEmpty: Bool { requests == 0 }
+
+    mutating func add(input: Int, output: Int) {
+        requests += 1
+        inputTokens += input
+        outputTokens += output
+    }
+}
+
+/// Price per million tokens (USD) for providers that bill; nil = free.
+struct TokenPrice: Sendable {
+    let inputPerMillion: Double
+    let outputPerMillion: Double
+
+    func cost(_ u: TokenUsage) -> Double {
+        Double(u.inputTokens) / 1_000_000 * inputPerMillion + Double(u.outputTokens) / 1_000_000 * outputPerMillion
+    }
+}
+
+@Observable
+final class AiUsageLedger: @unchecked Sendable {
+    static let shared = AiUsageLedger()
+
+    private let defaults: UserDefaults
+    private let key = "ai.usage"
+    private let lock = NSLock()
+    private(set) var byProvider: [String: TokenUsage]
+    /// Prices for providers that bill; the Apple models are not listed.
+    nonisolated(unsafe) static var prices: [String: TokenPrice] = [:]
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: key), let saved = try? JSONDecoder().decode([String: TokenUsage].self, from: data) {
+            byProvider = saved
+        } else {
+            byProvider = [:]
+        }
+    }
+
+    /// Every answer passes through here. `usage` is the response's
+    /// `usage`; nil (a model that reports none) still counts the request.
+    func record(provider: String, _ usage: LanguageModelSession.Response<some Any>.Usage?) {
+        record(provider: provider, input: usage?.inputTokens ?? 0, output: usage?.outputTokens ?? 0)
+    }
+
+    func record(provider: String, input: Int, output: Int) {
+        lock.lock()
+        var u = byProvider[provider] ?? TokenUsage()
+        u.add(input: input, output: output)
+        byProvider[provider] = u
+        save()
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        byProvider = [:]
+        save()
+        lock.unlock()
+    }
+
+    private func save() {
+        defaults.set(try? JSONEncoder().encode(byProvider), forKey: key)
+    }
+
+    /// "12 requests · 8.4K in / 1.2K out" (+ " · $0.03" when billed).
+    static func line(_ u: TokenUsage, price: TokenPrice?) -> String {
+        func k(_ n: Int) -> String {
+            n >= 10_000 ? String(format: "%.0fK", Double(n) / 1000)
+                : n >= 1_000 ? String(format: "%.1fK", Double(n) / 1000) : "\(n)"
+        }
+        var s = "\(u.requests) request\(u.requests == 1 ? "" : "s") · \(k(u.inputTokens)) in / \(k(u.outputTokens)) out"
+        if let price { s += String(format: " · $%.2f", price.cost(u)) }
+        return s
+    }
+}

@@ -25,10 +25,31 @@ final class RustEngine: MailEngine {
         let l = Listener(owner: self)
         listener = l
         engine.setListener(listener: l)
-        // Apple Intelligence, when this device has it: AI and triage with no
-        // key. The core decides who answers (Settings › AI shows it).
-        if AppleIntelligenceProvider.isAvailable {
-            engine.setAiBackend(backend: AppleIntelligenceProvider())
+        // Apple Intelligence on device, Apple's Private Cloud Compute and
+        // any registered package model: AI and triage with no key. One
+        // backend per provider; the core decides who answers (Settings › AI
+        // shows it) and falls back along pref:ai.fallback.
+        refreshAIProviders()
+    }
+
+    /// Register a backend for every provider this device can run now and
+    /// drop the ones it cannot (the cloud model offline, Apple Intelligence
+    /// turned off). Called at open and on every foreground sync.
+    func refreshAIProviders() {
+        for provider in ModelProviderRegistry.all {
+            if provider.availability.isAvailable {
+                engine.addAiBackend(backend: FoundationModelsBackend(provider: provider))
+            } else {
+                engine.removeAiBackend(providerId: provider.id)
+            }
+        }
+    }
+
+    func aiProviders() -> [AIProviderInfo] {
+        ModelProviderRegistry.all.map { p in
+            let a = p.availability
+            return AIProviderInfo(id: p.id, title: p.label, modelLabel: p.modelLabel, leavesDevice: p.leavesDevice,
+                                  available: a.isAvailable, unavailableReason: a.reason)
         }
     }
 
@@ -246,9 +267,11 @@ final class RustEngine: MailEngine {
         let s = try engine.aiStatus()
         return AIStatus(configured: s.configured, providerId: s.providerId, model: s.model,
                         preferredProviderId: s.preferredProviderId, onDeviceAvailable: s.onDeviceAvailable,
-                        openaiConfigured: s.openaiConfigured)
+                        openaiConfigured: s.openaiConfigured, availableProviderIds: s.availableProviderIds,
+                        fallbackOrder: s.fallbackOrder)
     }
     func setAIProvider(_ provider: AIProvider) throws { try engine.setAiProvider(providerId: provider.rawValue) }
+    func setAIFallback(_ order: [AIProvider]) throws { try engine.setAiFallback(order: order.map(\.rawValue)) }
     func aiModels() throws -> [AIModel] {
         try engine.aiModels(providerId: provider).map { AIModel(id: $0.id, label: $0.label) }
     }
@@ -281,7 +304,8 @@ final class RustEngine: MailEngine {
     func triageStatus() throws -> TriageStatus {
         let s = try engine.triageStatus()
         return TriageStatus(configured: s.configured, enabled: s.enabled, lastError: s.lastError,
-                            classifierId: s.classifierId, onDeviceAvailable: s.onDeviceAvailable, jevConfigured: s.jevConfigured)
+                            classifierId: s.classifierId, onDeviceAvailable: s.onDeviceAvailable, jevConfigured: s.jevConfigured,
+                            availableClassifierIds: s.availableClassifierIds)
     }
     func setTriageClassifier(_ classifier: TriageClassifier) throws {
         try engine.setTriageClassifier(classifierId: classifier.rawValue)

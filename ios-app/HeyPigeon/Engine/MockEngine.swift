@@ -256,22 +256,47 @@ final class MockEngine: MailEngine {
 
     // MARK: AI
 
-    /// The sample inbox pretends to have no on-device model; set this true
-    /// in a preview to see the on-device rows in Settings.
+    /// The sample inbox pretends to have no on-device model and no reach to
+    /// Apple's cloud; set these true in a preview to see the rows in Settings.
     var onDeviceAI = false
+    var cloudAI = false
     private var aiProvider: AIProvider?
+    private var aiFallback: [AIProvider] = []
     private var triageClassifier: TriageClassifier?
 
-    func aiStatus() throws -> AIStatus {
-        let preferred = aiProvider ?? (onDeviceAI ? .apple : .openai)
-        let active: AIProvider? = switch preferred {
-        case .apple: onDeviceAI ? .apple : (aiKey != nil ? .openai : nil)
-        case .openai: aiKey != nil ? .openai : (onDeviceAI ? .apple : nil)
+    /// The engine's rule (crates/ffi/src/settings.rs active_provider): the
+    /// preferred provider when it can answer, else the first of the
+    /// fallback order that can.
+    private func canAnswer(_ p: AIProvider) -> Bool {
+        switch p {
+        case .apple: onDeviceAI
+        case .appleCloud: cloudAI
+        case .openai: aiKey != nil
+        case .other: false
         }
+    }
+
+    private var availableProviderIds: [String] {
+        (onDeviceAI ? ["apple"] : []) + (cloudAI ? ["apple-cloud"] : [])
+    }
+
+    func aiStatus() throws -> AIStatus {
+        let fallback = aiFallback.isEmpty ? AIProvider.defaultFallback : aiFallback
+        let preferred = aiProvider ?? AIProvider.defaultFallback.first { $0 != .openai && canAnswer($0) } ?? .openai
+        let active = ([preferred] + fallback).first(where: canAnswer)
         return AIStatus(configured: active != nil, providerId: active?.rawValue, model: aiKey == nil ? nil : aiModel,
-                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKey != nil)
+                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKey != nil,
+                        availableProviderIds: availableProviderIds, fallbackOrder: fallback.map(\.rawValue))
     }
     func setAIProvider(_ provider: AIProvider) throws { aiProvider = provider }
+    func setAIFallback(_ order: [AIProvider]) throws { aiFallback = order }
+    func aiProviders() -> [AIProviderInfo] {
+        [AIProviderInfo(id: "apple", title: "On this iPhone", modelLabel: "On this iPhone", leavesDevice: false,
+                        available: onDeviceAI, unavailableReason: onDeviceAI ? nil : "Apple Intelligence isn't available in the sample inbox."),
+         AIProviderInfo(id: "apple-cloud", title: "Apple's cloud", modelLabel: "Private Cloud Compute", leavesDevice: true,
+                        available: cloudAI, unavailableReason: cloudAI ? nil : "Private Cloud Compute isn't reachable in the sample inbox.")]
+    }
+    func refreshAIProviders() {}
     func aiModels() throws -> [AIModel] {
         [AIModel(id: "gpt-4o-mini", label: "GPT-4o mini"), AIModel(id: "gpt-4o", label: "GPT-4o")]
     }
@@ -305,10 +330,11 @@ final class MockEngine: MailEngine {
     // MARK: Triage
 
     func triageStatus() throws -> TriageStatus {
-        let preferred = triageClassifier ?? (onDeviceAI ? .apple : .jev)
-        let configured = jevKey != nil || onDeviceAI
-        return TriageStatus(configured: configured, enabled: autoTriage, lastError: nil,
-                            classifierId: preferred.rawValue, onDeviceAvailable: onDeviceAI, jevConfigured: jevKey != nil)
+        let preferred = triageClassifier ?? (onDeviceAI ? .apple : cloudAI ? .appleCloud : .jev)
+        let available = availableProviderIds + (jevKey != nil ? ["jev"] : [])
+        return TriageStatus(configured: !available.isEmpty, enabled: autoTriage, lastError: nil,
+                            classifierId: preferred.rawValue, onDeviceAvailable: onDeviceAI, jevConfigured: jevKey != nil,
+                            availableClassifierIds: available)
     }
     func setTriageClassifier(_ classifier: TriageClassifier) throws { triageClassifier = classifier }
     func setJevKey(_ key: String) async throws {

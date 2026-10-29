@@ -295,40 +295,51 @@ OpenAI stays as the opt-in upgrade.
 
 `core::ports::AiProvider` is a Rust trait and Foundation Models is a Swift
 framework, so the adapter is **Swift code the Rust core calls back into**,
-through a UniFFI foreign trait exactly like `EngineListener`:
+through a UniFFI foreign trait exactly like `EngineListener`
+(`crates/ffi/src/ai.rs`, `ios-app/HeyPigeon/AI/AppleIntelligenceProvider.swift`):
 
 ```text
 core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_foreign──►  Swift AppleIntelligenceProvider
                                                                           └─ LanguageModelSession
 ```
 
-- `crates/ffi` gains `AiBackend` (a `#[uniffi::export(with_foreign)]`
-  trait: `id`, `models`, `complete(request) async`) and a
-  `ForeignAiProvider` that implements `core::AiProvider` over it. Feature
-  code in `core` keeps calling `AiProvider::complete`; it never learns
-  which side of the bridge answered.
-- `Engine.open` takes an optional `AiBackend`; the Swift side passes
-  `AppleIntelligenceProvider` when `SystemLanguageModel.default.availability
-  == .available`, else nothing, and the engine falls back to the configured
-  key provider or to "AI off". `aiStatus()` reports which is active so
-  Settings › AI can show "On this iPhone (Apple Intelligence)" above the
-  OpenAI row.
-- **Provider selection is a pref** (`ai_provider`: `apple` | `openai`),
-  synced like the others, defaulting to `apple` where available. The desktop
-  reads the same pref and ignores `apple` until a macOS adapter exists (the
-  same Swift provider would compile for the Mac, but the desktop shell is
-  Tauri; that is a later decision).
+- `crates/ffi` has `AiBackend`, a `#[uniffi::export(with_foreign)]` trait:
+  `id`, `models`, `complete(system, user) async` and
+  `classify(subject, snippet, from, labels) async → TriageVerdict`. A
+  `ForeignAiProvider` implements `core::AiProvider` over it. Feature code
+  keeps calling `AiProvider::complete`; it never learns which side of the
+  bridge answered.
+- `Engine.open` is unchanged (the CI grep pins its signature); the shell
+  calls `set_ai_backend` right after it when
+  `SystemLanguageModel.default.availability == .available`, else nothing.
+  `ai_status()` says which provider answers and what the device has, so
+  Settings › AI shows "On this iPhone (Apple Intelligence) · answering"
+  above the OpenAI row.
+- **Provider selection is a pref** (`ai.provider`: `apple` | `openai`),
+  synced like the others; unset means "on device when this device can,
+  else the key". The engine resolves the **active** provider as the
+  preferred one when it can answer, else the other one when it can: a
+  device without Apple Intelligence keeps working off its key, a device
+  without a key off its model. The desktop reads the same pref and ignores
+  `apple` until a macOS adapter exists (the same Swift provider would
+  compile for the Mac, but the desktop shell is Tauri; a later decision).
+- **Triage** has the same shape: `triage.classifier` (`apple` | `jev`),
+  the same fallback, and the on-device classifier runs at the end of each
+  sync round under the same per-round bound, on the same inputs Jev gets
+  (subject, snippet, sender — never the body). The model fills a
+  `@Generable` struct — a priority and label *names* from the list it was
+  given — and the engine keeps only ids it knows.
 
 ### What changes per feature
 
 | Feature | Today | With the on-device model |
 | --- | --- | --- |
-| Summarize thread / group | one completion | same prompt; **chunk by the model's context** (4,096 tokens on iOS 26, `contextSize` on 26.4+): summarize per message or per 10 rows, then summarize the summaries. The group summarizer's "active rows" bound already keeps most groups under the limit. |
+| Summarize thread / group | one completion | same prompt; the Swift provider **splits a prompt that does not fit** (4,096 tokens on iOS 26; ~9,000 characters of prompt budgeted) on its blank lines, answers each part under the same instruction, then answers the answers — a summary of summaries, never an error. The group summarizer's "active rows" bound keeps most groups under the limit. |
 | Draft reply | one completion over the transcript | same, with the transcript truncated to the newest messages that fit |
 | Edit with AI (tone presets, instruction) | one completion | same; short inputs, fits comfortably |
-| Jev triage (priority + labels) | `adapter-jev`, BYO key | **new**: a `@Generable` struct `{ priority: TriageLevel, labels: [String] }` constrained to the Settings label names, run at the end of each sync round under the same per-round bound. Becomes a second `Classifier` behind the triage port; Jev stays selectable. |
+| Jev triage (priority + labels) | `adapter-jev`, BYO key | **done**: `TriageCall`, a `@Generable` struct `{ priority, labels: [String] }` with the Settings label names in the prompt; the engine maps names to ids and drops the rest. Jev stays selectable (Settings › Triage › Classifier). |
 | Attachments | none | later, if iOS 27 image input holds: "what is this attachment" on an image attachment from Quick Look |
-| Longer threads | — | iOS 27's Private Cloud Compute option, **behind its own toggle, default off**: it is Apple's cloud, not ours, but it is a network hop the README promises does not exist by default |
+| Longer threads | — | **later**: iOS 27's Private Cloud Compute option, behind its own toggle, default off — it is Apple's cloud, not ours, but it is a network hop the README promises does not exist by default. Not built until the API is confirmed; today a long thread is summarized in parts (below). |
 
 Quality expectation to set in Settings copy: the on-device model is small.
 Summaries and edits are good; drafting a careful reply is where OpenAI stays
@@ -336,14 +347,16 @@ better. Streaming: `AiProvider::complete` returns a whole string by design;
 the summary sheet is the first place a `Stream` would pay off, and the port
 comment already names it as the one call site to widen.
 
-### Verify first
+### Verify on the first build
 
-`SystemLanguageModel` availability cases and the `contextSize` /
-`tokenCount` additions; the iOS 27 provider protocol (if real, the OpenAI
-adapter could move behind it too, but the Rust adapter already works and
-the desktop needs it, so this is not a goal); whether `@Generable` can be
-constrained to a runtime list of label names (if not, generate a free
-label string and match it case-insensitively against the Settings list).
+`SystemLanguageModel.Availability.UnavailableReason` case names used in
+`AppleIntelligenceProvider.unavailableReason`; the
+`LanguageModelSession.GenerationError` cases named in `describe`; that
+`@Guide(.count(0...3))` on a `[String]` compiles. The label names are put
+in the prompt and matched case-insensitively against the Settings list
+afterwards (a runtime `anyOf` constraint was not relied on). The iOS 27
+provider protocol is not a goal: the Rust adapter already works and the
+desktop needs it.
 
 ## Step 6 — widgets, Live Activities, Controls
 
@@ -403,7 +416,7 @@ build of the previous one to be *written*, all need one to be *shipped*.
 | 2 | `IndexedEntity` + index refresh in `sync()`; the Siri & Search setting | Swift only | `IndexedEntity` attribute set; indexing budget on cold launch |
 | 3 | Mail schema domain | Swift only (the latest-message mapping needs no engine change) | macro acceptance of the extra initialisers; entitlement / distribution requirements |
 | 4 | On-screen awareness, `RemindMe` follow-up, long-running intents | Swift only | iOS 27 multi-turn / long-running protocol names |
-| 5 | Foundation Models provider; triage classifier; provider pref; Settings › AI | Swift + `crates/ffi` (`AiBackend` foreign trait) + `core` (provider pref, second classifier behind the triage port) | availability API, `contextSize`, `@Generable` constraints; PCC option |
+| 5 | Foundation Models provider; triage classifier; provider pref; Settings › AI | Swift + `crates/ffi` (`AiBackend` foreign trait, provider and classifier resolution); `core` untouched | `UnavailableReason` and `GenerationError` case names; `@Guide(.count)` on arrays |
 | 6 | Widget extension, App Group snapshot, Live Activity, Controls | Swift + `project.yml` (second target, App Group entitlement) | nothing iOS-27-specific |
 | 7 | Share extension | Swift + `project.yml` | nothing iOS-27-specific |
 

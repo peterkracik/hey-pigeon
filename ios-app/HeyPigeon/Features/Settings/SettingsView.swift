@@ -227,33 +227,59 @@ private struct AISection: View {
     @State private var error: String?
     @State private var confirmRemove = false
 
+    private var openaiConfigured: Bool { status?.openaiConfigured == true }
+    private var onDevice: Bool { status?.onDeviceAvailable == true }
+
     var body: some View {
         @Bindable var model = model
         Section {
+            // The on-device model, when this iPhone has it: AI with no key.
+            // Which provider answers is the core's call (the preferred one
+            // when it can, else the other); the line under the row says so.
+            if onDevice {
+                HStack(spacing: 12) {
+                    mark("AI")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("On this iPhone").font(.body.weight(.medium))
+                        Text(status?.answersOnDevice == true ? "Apple Intelligence · answering" : "Apple Intelligence · available")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                    Spacer()
+                }
+                Picker("Prefer", selection: Binding(
+                    get: { AIProvider(rawValue: status?.preferredProviderId ?? "") ?? .apple },
+                    set: { setProvider($0) }
+                )) {
+                    ForEach(AIProvider.allCases) { p in Text(p.title).tag(p) }
+                }
+            }
             HStack(spacing: 12) {
-                mark("AI")
+                mark(onDevice ? "GPT" : "AI")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ChatGPT (OpenAI)").font(.body.weight(.medium))
-                    Text(status?.configured == true ? "Connected · \(modelLabel)" : "Not connected")
+                    Text(openaiConfigured ? (status?.providerId == "openai" ? "Connected · \(modelLabel) · answering" : "Connected · \(modelLabel)") : "Not connected")
                         .font(.caption).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer()
-                if status?.configured == true {
+                if openaiConfigured {
                     Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
                         if confirmRemove { remove() } else { confirmRemove = true }
                     }
                     .font(.footnote.weight(.semibold))
                 }
             }
-            if status?.configured == true {
+            if openaiConfigured {
                 Picker("Model", selection: Binding(
                     get: { status?.model ?? models.first?.id ?? "" },
                     set: { select($0) }
                 )) {
                     ForEach(models) { m in Text(m.label).tag(m.id) }
                 }
+            }
+            if status?.configured == true {
                 Toggle("Auto-summarize", isOn: $model.autoSummarize)
-            } else {
+            }
+            if !openaiConfigured {
                 HStack {
                     SecureField("sk-…", text: $key)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -267,7 +293,9 @@ private struct AISection: View {
         } header: {
             Text("AI")
         } footer: {
-            Text("Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
+            Text(onDevice
+                ? "On this iPhone, Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. Which one you prefer follows you to your other devices; a device without Apple Intelligence uses the key."
+                : "Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
         }
         .menuCard()
         .task { load() }
@@ -307,6 +335,12 @@ private struct AISection: View {
     private func select(_ id: String) {
         do { try model.engine.setAIModel(id) } catch { self.error = error.localizedDescription }
         load()
+    }
+
+    private func setProvider(_ p: AIProvider) {
+        do { try model.engine.setAIProvider(p) } catch { self.error = error.localizedDescription }
+        load()
+        model.reloadAccounts()
     }
 }
 
@@ -350,17 +384,37 @@ private struct TriageSection: View {
     @State private var newLabel = ""
     @State private var reanalyzeQueued = false
 
+    private var jevConfigured: Bool { status?.jevConfigured == true }
+    private var onDevice: Bool { status?.onDeviceAvailable == true }
+
     var body: some View {
         Section {
+            if onDevice {
+                HStack(spacing: 12) {
+                    mark("AI")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("On this iPhone").font(.body.weight(.medium))
+                        Text("Apple Intelligence · sorts and prioritizes with nothing leaving the device")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                    Spacer()
+                }
+                Picker("Classifier", selection: Binding(
+                    get: { TriageClassifier(rawValue: status?.classifierId ?? "") ?? .apple },
+                    set: { setClassifier($0) }
+                )) {
+                    ForEach(TriageClassifier.allCases) { c in Text(c.title).tag(c) }
+                }
+            }
             HStack(spacing: 12) {
                 mark("TS")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Jev").font(.body.weight(.medium))
-                    Text(status?.configured == true ? "Connected" : "Not connected")
+                    Text(jevConfigured ? "Connected" : "Not connected")
                         .font(.caption).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer()
-                if status?.configured == true {
+                if jevConfigured {
                     Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
                         if confirmRemove { remove() } else { confirmRemove = true }
                     }
@@ -381,7 +435,8 @@ private struct TriageSection: View {
                 if let last = status?.lastError {
                     Text("Last run failed: \(last)").font(.footnote).foregroundStyle(.red)
                 }
-            } else {
+            }
+            if !jevConfigured {
                 HStack {
                     SecureField("API key", text: $key)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -412,7 +467,9 @@ private struct TriageSection: View {
         } header: {
             Text("Triage")
         } footer: {
-            Text("Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
+            Text(onDevice
+                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this iPhone that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. Swipe a label left to remove it."
+                : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
         }
         .menuCard()
         .task { load() }
@@ -442,6 +499,11 @@ private struct TriageSection: View {
 
     private func setEnabled(_ on: Bool) {
         do { try model.engine.setAutoTriage(on) } catch { self.error = error.localizedDescription }
+        load()
+    }
+
+    private func setClassifier(_ c: TriageClassifier) {
+        do { try model.engine.setTriageClassifier(c) } catch { self.error = error.localizedDescription }
         load()
     }
 

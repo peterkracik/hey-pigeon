@@ -25,6 +25,11 @@ final class RustEngine: MailEngine {
         let l = Listener(owner: self)
         listener = l
         engine.setListener(listener: l)
+        // Apple Intelligence, when this device has it: AI and triage with no
+        // key. The core decides who answers (Settings › AI shows it).
+        if AppleIntelligenceProvider.isAvailable {
+            engine.setAiBackend(backend: AppleIntelligenceProvider())
+        }
     }
 
     // Engine callbacks arrive on Rust threads; hop to the main actor.
@@ -232,14 +237,18 @@ final class RustEngine: MailEngine {
         try await engine.finishOauth(callbackUrl: callbackURL.absoluteString)
     }
 
-    // MARK: AI (only "openai" exists today, same as the desktop)
+    // MARK: AI — the key paths name "openai"; the core picks who answers
+    // (Engine::active_provider), so the on-device model needs no call here.
 
     private let provider = "openai"
 
     func aiStatus() throws -> AIStatus {
         let s = try engine.aiStatus()
-        return AIStatus(configured: s.configured, providerId: s.providerId, model: s.model)
+        return AIStatus(configured: s.configured, providerId: s.providerId, model: s.model,
+                        preferredProviderId: s.preferredProviderId, onDeviceAvailable: s.onDeviceAvailable,
+                        openaiConfigured: s.openaiConfigured)
     }
+    func setAIProvider(_ provider: AIProvider) throws { try engine.setAiProvider(providerId: provider.rawValue) }
     func aiModels() throws -> [AIModel] {
         try engine.aiModels(providerId: provider).map { AIModel(id: $0.id, label: $0.label) }
     }
@@ -271,7 +280,11 @@ final class RustEngine: MailEngine {
 
     func triageStatus() throws -> TriageStatus {
         let s = try engine.triageStatus()
-        return TriageStatus(configured: s.configured, enabled: s.enabled, lastError: s.lastError)
+        return TriageStatus(configured: s.configured, enabled: s.enabled, lastError: s.lastError,
+                            classifierId: s.classifierId, onDeviceAvailable: s.onDeviceAvailable, jevConfigured: s.jevConfigured)
+    }
+    func setTriageClassifier(_ classifier: TriageClassifier) throws {
+        try engine.setTriageClassifier(classifierId: classifier.rawValue)
     }
     func setJevKey(_ key: String) async throws { try await engine.setJevKey(apiKey: key) }
     func removeJevKey() throws { try engine.removeJevKey() }

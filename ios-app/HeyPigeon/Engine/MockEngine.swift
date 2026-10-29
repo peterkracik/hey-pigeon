@@ -256,9 +256,22 @@ final class MockEngine: MailEngine {
 
     // MARK: AI
 
+    /// The sample inbox pretends to have no on-device model; set this true
+    /// in a preview to see the on-device rows in Settings.
+    var onDeviceAI = false
+    private var aiProvider: AIProvider?
+    private var triageClassifier: TriageClassifier?
+
     func aiStatus() throws -> AIStatus {
-        AIStatus(configured: aiKey != nil, providerId: aiKey == nil ? nil : "openai", model: aiKey == nil ? nil : aiModel)
+        let preferred = aiProvider ?? (onDeviceAI ? .apple : .openai)
+        let active: AIProvider? = switch preferred {
+        case .apple: onDeviceAI ? .apple : (aiKey != nil ? .openai : nil)
+        case .openai: aiKey != nil ? .openai : (onDeviceAI ? .apple : nil)
+        }
+        return AIStatus(configured: active != nil, providerId: active?.rawValue, model: aiKey == nil ? nil : aiModel,
+                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKey != nil)
     }
+    func setAIProvider(_ provider: AIProvider) throws { aiProvider = provider }
     func aiModels() throws -> [AIModel] {
         [AIModel(id: "gpt-4o-mini", label: "GPT-4o mini"), AIModel(id: "gpt-4o", label: "GPT-4o")]
     }
@@ -292,8 +305,12 @@ final class MockEngine: MailEngine {
     // MARK: Triage
 
     func triageStatus() throws -> TriageStatus {
-        TriageStatus(configured: jevKey != nil, enabled: autoTriage, lastError: nil)
+        let preferred = triageClassifier ?? (onDeviceAI ? .apple : .jev)
+        let configured = jevKey != nil || onDeviceAI
+        return TriageStatus(configured: configured, enabled: autoTriage, lastError: nil,
+                            classifierId: preferred.rawValue, onDeviceAvailable: onDeviceAI, jevConfigured: jevKey != nil)
     }
+    func setTriageClassifier(_ classifier: TriageClassifier) throws { triageClassifier = classifier }
     func setJevKey(_ key: String) async throws {
         try? await Task.sleep(for: .milliseconds(400))
         jevKey = key

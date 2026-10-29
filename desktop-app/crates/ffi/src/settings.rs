@@ -1,7 +1,9 @@
-//! The Settings surface of the engine: per-account edits, the AI provider
-//! (BYO OpenAI key), and Jev auto-triage with its local labels. Mirrors
-//! `src-tauri/src/ai.rs` + `autolabel.rs` + `mail::update_account` one to
-//! one so the phone's Settings screen is the desktop's.
+//! The Settings surface of the engine: per-account edits, the AI providers
+//! (the shell's on-device backend when the device has one, else a BYO
+//! OpenAI key), and auto-triage (on device, or Jev) with its local labels.
+//! Mirrors `src-tauri/src/ai.rs` + `autolabel.rs` + `mail::update_account`
+//! so the phone's Settings screen is the desktop's, plus the on-device rows
+//! the desktop does not have yet.
 
 use std::sync::Arc;
 
@@ -13,12 +15,20 @@ use heypigeon_core::ports::{
     AiProvider, ChatMessage, ChatRole, CompletionRequest, SecretStore, Store,
 };
 
+use crate::ai::{AiBackend, ForeignAiProvider, APPLE_PROVIDER};
 use crate::engine::{Engine, ACCOUNT_COLORS, BACKFILL_DAYS};
 use crate::types::*;
 
 const AI_PROVIDER: &str = "openai";
 const AI_KEY: &str = "ai.openai.api_key";
 const JEV_KEY: &str = "triage.jev.api_key";
+const JEV_CLASSIFIER: &str = "jev";
+/// Which provider answers AI actions and which classifier triages: synced
+/// preferences (`pref:ai.provider`, `pref:triage.classifier`). Unset means
+/// "on device when this device can, else the keyed service" — see
+/// `active_provider` / `active_classifier`.
+const AI_PROVIDER_PREF: &str = "ai.provider";
+const TRIAGE_CLASSIFIER_PREF: &str = "triage.classifier";
 /// The selected model and the triage switch are synced preferences
 /// (`pref:ai.model`, `pref:triage.enabled`), not secrets: the keys stay
 /// per device, these choices follow the user. Both lived in the secret
@@ -102,13 +112,29 @@ fn ai_err(e: impl std::fmt::Display) -> EngineError {
 }
 
 fn check_provider(provider_id: &str) -> Result<(), EngineError> {
-    if provider_id == AI_PROVIDER {
+    if provider_id == AI_PROVIDER || provider_id == APPLE_PROVIDER {
         Ok(())
     } else {
         Err(EngineError::Invalid(format!(
             "unknown AI provider {provider_id}"
         )))
     }
+}
+
+fn check_classifier(classifier_id: &str) -> Result<(), EngineError> {
+    if classifier_id == JEV_CLASSIFIER || classifier_id == APPLE_PROVIDER {
+        Ok(())
+    } else {
+        Err(EngineError::Invalid(format!(
+            "unknown triage classifier {classifier_id}"
+        )))
+    }
+}
+
+/// Who answers an AI action.
+enum ActiveProvider {
+    Apple(Arc<dyn AiBackend>),
+    OpenAi { key: String, model: String },
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -172,17 +198,30 @@ impl Engine {
     // ------------------------------------------------------------ AI (OpenAI)
 
     pub fn ai_status(&self) -> Result<AiStatus, EngineError> {
-        let configured = matches!(self.secrets.get(AI_KEY), Ok(Some(_)));
+        let on_device = self.ai_backend.lock().unwrap().is_some();
+        let openai = matches!(self.secrets.get(AI_KEY), Ok(Some(_)));
+        let active = self.active_provider()?;
         Ok(AiStatus {
-            configured,
-            provider_id: configured.then(|| AI_PROVIDER.to_string()),
+            configured: active.is_some(),
+            provider_id: active.map(|p| match p {
+                ActiveProvider::Apple(_) => APPLE_PROVIDER.to_string(),
+                ActiveProvider::OpenAi { .. } => AI_PROVIDER.to_string(),
+            }),
             model: self.stored_model()?,
+            preferred_provider_id: self.preferred_provider()?,
+            on_device_available: on_device,
+            openai_configured: openai,
         })
     }
 
-    /// Static catalogue; no key needed.
+    /// Static catalogue for OpenAI (no key needed); the backend's own entry
+    /// for the on-device model.
     pub fn ai_models(&self, provider_id: String) -> Result<Vec<AiModel>, EngineError> {
         check_provider(&provider_id)?;
+        if provider_id == APPLE_PROVIDER {
+            let backend = self.ai_backend.lock().unwrap().clone();
+            return Ok(backend.map(|b| b.models()).unwrap_or_default());
+        }
         Ok(OpenAiProvider::model_catalog()
             .into_iter()
             .map(|m| AiModel {
@@ -190,6 +229,18 @@ impl Engine {
                 label: m.label,
             })
             .collect())
+    }
+
+    /// Prefer the on-device model or the key. Synced: the choice follows
+    /// the user; a device without the on-device model falls back to the
+    /// key on its own (`active_provider`).
+    pub fn set_ai_provider(self: &Arc<Self>, provider_id: String) -> Result<(), EngineError> {
+        check_provider(&provider_id)?;
+        let value = serde_json::Value::String(provider_id);
+        self.store.set_pref(AI_PROVIDER_PREF, Some(&value))?;
+        devsync::record_pref(&self.store, AI_PROVIDER_PREF, Some(value))?;
+        self.push_app_wide_later();
+        Ok(())
     }
 
     /// Verify a pasted key with one live call before persisting it, so a
@@ -261,7 +312,7 @@ impl Engine {
             user.push_str("\n\n");
         }
         user.push_str(&format!("Instruction: {instruction}\n\nText:\n{text}"));
-        self.openai_complete(EDIT_SYSTEM_PROMPT, user).await
+        self.complete(EDIT_SYSTEM_PROMPT, user).await
     }
 
     /// A few lines about a group of active (not done) emails.
@@ -274,7 +325,7 @@ impl Engine {
         if items.is_empty() {
             return Err(EngineError::Invalid("nothing to summarize".into()));
         }
-        self.openai_complete(SUMMARY_SYSTEM_PROMPT, build_summary_prompt(&items))
+        self.complete(SUMMARY_SYSTEM_PROMPT, build_summary_prompt(&items))
             .await
     }
 
@@ -289,7 +340,7 @@ impl Engine {
         if items.is_empty() {
             return Err(EngineError::Invalid("nothing to summarize".into()));
         }
-        self.openai_complete(
+        self.complete(
             THREAD_SUMMARY_SYSTEM_PROMPT,
             build_thread_summary_prompt(&subject, &items),
         )
@@ -309,7 +360,7 @@ impl Engine {
         if history.trim().is_empty() {
             return Err(EngineError::Invalid("nothing to reply to".into()));
         }
-        self.openai_complete(
+        self.complete(
             DRAFT_REPLY_SYSTEM_PROMPT,
             build_draft_reply_prompt(&subject, &history, notes.as_deref()),
         )
@@ -319,11 +370,30 @@ impl Engine {
     // ------------------------------------------------------------ triage (Jev)
 
     pub fn triage_status(&self) -> Result<TriageStatus, EngineError> {
+        let on_device = self.ai_backend.lock().unwrap().is_some();
+        let jev = matches!(self.secrets.get(JEV_KEY), Ok(Some(_)));
         Ok(TriageStatus {
-            configured: matches!(self.secrets.get(JEV_KEY), Ok(Some(_))),
+            configured: self.active_classifier()?.is_some(),
             enabled: self.triage_enabled()?,
             last_error: self.triage_last_error.lock().unwrap().clone(),
+            classifier_id: self.preferred_classifier()?,
+            on_device_available: on_device,
+            jev_configured: jev,
         })
+    }
+
+    /// Prefer the on-device classifier or Jev. Synced like the AI provider;
+    /// a device that cannot run the preferred one falls back on its own.
+    pub fn set_triage_classifier(
+        self: &Arc<Self>,
+        classifier_id: String,
+    ) -> Result<(), EngineError> {
+        check_classifier(&classifier_id)?;
+        let value = serde_json::Value::String(classifier_id);
+        self.store.set_pref(TRIAGE_CLASSIFIER_PREF, Some(&value))?;
+        devsync::record_pref(&self.store, TRIAGE_CLASSIFIER_PREF, Some(value))?;
+        self.push_app_wide_later();
+        Ok(())
     }
 
     /// Verify the key with one trivial request before persisting it.
@@ -450,35 +520,114 @@ impl Engine {
             .and_then(|v| v.as_str().map(str::to_string)))
     }
 
-    async fn openai_complete(&self, system: &str, user: String) -> Result<String, EngineError> {
-        let key = self.secrets.get(AI_KEY)?.ok_or_else(|| {
+    fn string_pref(&self, name: &str) -> Result<Option<String>, EngineError> {
+        Ok(self
+            .store
+            .get_pref(name)?
+            .and_then(|v| v.as_str().map(str::to_string)))
+    }
+
+    /// `pref:ai.provider`, or "apple" when this device has the on-device
+    /// model and nothing was chosen, else "openai".
+    fn preferred_provider(&self) -> Result<String, EngineError> {
+        if let Some(p) = self.string_pref(AI_PROVIDER_PREF)? {
+            return Ok(p);
+        }
+        let on_device = self.ai_backend.lock().unwrap().is_some();
+        Ok(if on_device {
+            APPLE_PROVIDER
+        } else {
+            AI_PROVIDER
+        }
+        .to_string())
+    }
+
+    /// The provider that answers now: the preferred one when it can, else
+    /// the other one when it can, else none. A device without Apple
+    /// Intelligence keeps working off the key it has; a device without a
+    /// key keeps working off the model it has.
+    fn active_provider(&self) -> Result<Option<ActiveProvider>, EngineError> {
+        let backend = self.ai_backend.lock().unwrap().clone();
+        let key = self.secrets.get(AI_KEY)?;
+        let apple = backend.map(ActiveProvider::Apple);
+        let openai = key.map(|key| ActiveProvider::OpenAi {
+            key,
+            model: self.stored_model().ok().flatten().unwrap_or_else(|| {
+                OpenAiProvider::model_catalog()
+                    .into_iter()
+                    .next()
+                    .map(|m| m.id)
+                    .unwrap_or_default()
+            }),
+        });
+        Ok(if self.preferred_provider()? == APPLE_PROVIDER {
+            apple.or(openai)
+        } else {
+            openai.or(apple)
+        })
+    }
+
+    /// `pref:triage.classifier`, or "apple" when this device has the
+    /// on-device model and nothing was chosen, else "jev".
+    fn preferred_classifier(&self) -> Result<String, EngineError> {
+        if let Some(c) = self.string_pref(TRIAGE_CLASSIFIER_PREF)? {
+            return Ok(c);
+        }
+        let on_device = self.ai_backend.lock().unwrap().is_some();
+        Ok(if on_device {
+            APPLE_PROVIDER
+        } else {
+            JEV_CLASSIFIER
+        }
+        .to_string())
+    }
+
+    /// The classifier that runs now, same fallback rule as the provider.
+    fn active_classifier(&self) -> Result<Option<Classifier>, EngineError> {
+        let backend = self.ai_backend.lock().unwrap().clone();
+        let apple = backend.map(Classifier::Apple);
+        let jev = self.secrets.get(JEV_KEY)?.map(Classifier::Jev);
+        Ok(if self.preferred_classifier()? == APPLE_PROVIDER {
+            apple.or(jev)
+        } else {
+            jev.or(apple)
+        })
+    }
+
+    /// One completion through whichever provider answers now.
+    async fn complete(&self, system: &str, user: String) -> Result<String, EngineError> {
+        let active = self.active_provider()?.ok_or_else(|| {
             EngineError::Invalid("connect an AI provider in Settings first".into())
         })?;
-        let model = self.stored_model()?.unwrap_or_else(|| {
-            OpenAiProvider::model_catalog()
-                .into_iter()
-                .next()
-                .map(|m| m.id)
-                .unwrap_or_default()
-        });
-        let req = CompletionRequest {
-            model,
-            messages: vec![
-                ChatMessage {
-                    role: ChatRole::System,
-                    content: system.to_string(),
-                },
-                ChatMessage {
-                    role: ChatRole::User,
-                    content: user,
-                },
-            ],
+        let messages = vec![
+            ChatMessage {
+                role: ChatRole::System,
+                content: system.to_string(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                content: user,
+            },
+        ];
+        let text = match active {
+            ActiveProvider::Apple(backend) => {
+                let model = backend
+                    .models()
+                    .into_iter()
+                    .next()
+                    .map(|m| m.id)
+                    .unwrap_or_default();
+                ForeignAiProvider::new(backend)
+                    .complete(CompletionRequest { model, messages })
+                    .await
+            }
+            ActiveProvider::OpenAi { key, model } => {
+                OpenAiProvider::new(key)
+                    .complete(CompletionRequest { model, messages })
+                    .await
+            }
         };
-        OpenAiProvider::new(key)
-            .complete(req)
-            .await
-            .map(|s| s.trim().to_string())
-            .map_err(ai_err)
+        text.map(|s| s.trim().to_string()).map_err(ai_err)
     }
 
     /// Classify up to `TRIAGE_BATCH` stale threads. Called at the end of
@@ -511,7 +660,7 @@ impl Engine {
         if !self.triage_enabled()? {
             return Ok(0);
         }
-        let Some(api_key) = self.secrets.get(JEV_KEY)? else {
+        let Some(classifier) = self.active_classifier()? else {
             return Ok(0);
         };
         // Only mail inside the sync window: the archive walk brings in years
@@ -527,7 +676,6 @@ impl Engine {
             return Ok(0);
         }
         let labels = self.store.list_triage_labels()?;
-        let classifier = JevClassifier::new(api_key);
         let mut n = 0;
         for thread in pending {
             let messages = self.store.list_messages(&thread.id)?;
@@ -536,22 +684,52 @@ impl Engine {
             let Some(last) = messages.last() else {
                 continue;
             };
-            let input = ClassifyInput {
-                subject: &thread.subject,
-                snippet: &thread.snippet,
-                from: &last.from_addr,
+            let (label_ids, priority) = match &classifier {
+                Classifier::Jev(api_key) => {
+                    let input = ClassifyInput {
+                        subject: &thread.subject,
+                        snippet: &thread.snippet,
+                        from: &last.from_addr,
+                    };
+                    let result = JevClassifier::new(api_key.clone())
+                        .classify(&input, &labels)
+                        .await
+                        .map_err(ai_err)?;
+                    (result.label_ids, result.priority)
+                }
+                Classifier::Apple(backend) => {
+                    // Same inputs as Jev: subject, snippet and sender,
+                    // never the body (Settings says exactly this).
+                    let verdict = backend
+                        .classify(
+                            thread.subject.clone(),
+                            thread.snippet.clone(),
+                            last.from_addr.clone(),
+                            labels.iter().cloned().map(Into::into).collect(),
+                        )
+                        .await?;
+                    // Only ids it was given count: the model is told the
+                    // names, and anything else it says is dropped.
+                    let known: Vec<String> = verdict
+                        .label_ids
+                        .into_iter()
+                        .filter(|id| labels.iter().any(|l| &l.id == id))
+                        .collect();
+                    (known, verdict.priority.into())
+                }
             };
-            let result = classifier.classify(&input, &labels).await.map_err(ai_err)?;
-            self.store.set_thread_triage(
-                &thread.id,
-                &result.label_ids,
-                result.priority,
-                thread.msg_count,
-            )?;
+            self.store
+                .set_thread_triage(&thread.id, &label_ids, priority, thread.msg_count)?;
             n += 1;
         }
         Ok(n)
     }
+}
+
+/// Who classifies a thread.
+enum Classifier {
+    Apple(Arc<dyn AiBackend>),
+    Jev(String),
 }
 
 #[cfg(test)]
@@ -733,6 +911,143 @@ mod tests {
             snippet: "x".into(),
         }]);
         assert!(s.contains("From: a@b\nSubject: S\nx"));
+    }
+
+    fn verdict(priority: Priority, ids: &[&str]) -> TriageVerdict {
+        TriageVerdict {
+            priority,
+            label_ids: ids.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// With the shell's on-device backend set and no key, AI is configured
+    /// and answers through the backend; the choice follows the pref and
+    /// falls back to whatever can answer.
+    #[tokio::test]
+    async fn on_device_backend_answers_without_a_key() {
+        let (e, dir) = open("backend");
+        let before = e.ai_status().unwrap();
+        assert!(!before.configured && !before.on_device_available);
+        assert_eq!(before.preferred_provider_id, "openai");
+
+        let backend = crate::ai::fakes::ScriptedBackend::new(
+            "- **Priya** sent the deck.",
+            verdict(Priority::Low, &[]),
+        );
+        e.set_ai_backend(Some(backend.clone()));
+        let s = e.ai_status().unwrap();
+        assert!(s.configured && s.on_device_available && !s.openai_configured);
+        assert_eq!(s.provider_id.as_deref(), Some("apple"));
+        assert_eq!(s.preferred_provider_id, "apple");
+        assert_eq!(
+            e.ai_models("apple".into()).unwrap()[0].id,
+            "apple-on-device"
+        );
+
+        let text = e
+            .ai_summarize_group(
+                "apple".into(),
+                vec![SummaryItem {
+                    from: "Priya".into(),
+                    subject: "Deck".into(),
+                    snippet: "slides 4-7".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(text, "- **Priya** sent the deck.");
+        let calls = backend.completions.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, SUMMARY_SYSTEM_PROMPT);
+        assert!(calls[0]
+            .1
+            .contains("From: Priya\nSubject: Deck\nslides 4-7"));
+        drop(calls);
+
+        // Preferring OpenAI without a key still answers on device.
+        e.set_ai_provider("openai".into()).unwrap();
+        let s = e.ai_status().unwrap();
+        assert_eq!(s.preferred_provider_id, "openai");
+        assert_eq!(s.provider_id.as_deref(), Some("apple"));
+        assert!(e.set_ai_provider("other".into()).is_err());
+
+        // The pref is recorded for the user's other devices.
+        e.set_ai_backend(None);
+        assert!(!e.ai_status().unwrap().configured);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Triage runs on device with no Jev key: labels the model names come
+    /// back as ids, unknown ids are dropped, the priority lands.
+    #[tokio::test]
+    async fn on_device_triage_classifies_pending_threads() {
+        let (e, dir) = open("triage-device");
+        e.store
+            .upsert_account(&heypigeon_core::domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        let bills = e.create_triage_label("Bills".into()).unwrap();
+        let mut thread = crate::engine::tests_support::sample_thread("t1", "me@x.com");
+        thread.last_msg_at = now_ms();
+        e.store.upsert_thread(&thread).unwrap();
+        e.store
+            .upsert_message(&heypigeon_core::domain::Message {
+                id: "m1".into(),
+                thread_id: "t1".into(),
+                account_id: "me@x.com".into(),
+                from_addr: "billing@acme.test".into(),
+                to_addrs: vec!["me@x.com".into()],
+                date: now_ms(),
+                snippet: "Invoice 42 is due".into(),
+                body_html: None,
+                body_text: Some("Invoice 42 is due".into()),
+                label_ids: vec!["INBOX".into()],
+                is_read: false,
+            })
+            .unwrap();
+
+        let before = e.triage_status().unwrap();
+        assert!(!before.configured && !before.enabled);
+        assert_eq!(before.classifier_id, "jev");
+
+        let backend = crate::ai::fakes::ScriptedBackend::new(
+            "",
+            verdict(Priority::High, &[bills.id.as_str(), "not-a-label"]),
+        );
+        e.set_ai_backend(Some(backend.clone()));
+        e.set_autolabel_enabled(true).unwrap();
+        let s = e.triage_status().unwrap();
+        assert!(s.configured && s.enabled && s.on_device_available && !s.jev_configured);
+        assert_eq!(s.classifier_id, "apple");
+
+        e.classify_pending().await;
+        assert_eq!(
+            backend.classifications.lock().unwrap().as_slice(),
+            ["Hello"]
+        );
+        let rows = e.list_threads(ThreadFilter::Inbox, None, None, 10).unwrap();
+        assert_eq!(rows[0].priority, Some(Priority::High));
+        assert_eq!(rows[0].triage_label_ids, vec![bills.id.clone()]);
+        assert!(e.triage_status().unwrap().last_error.is_none());
+
+        // Nothing stale left: a second round asks nothing.
+        e.classify_pending().await;
+        assert_eq!(backend.classifications.lock().unwrap().len(), 1);
+
+        // Preferring Jev without a key keeps classifying on device.
+        e.set_triage_classifier("jev".into()).unwrap();
+        let s = e.triage_status().unwrap();
+        assert_eq!(s.classifier_id, "jev");
+        assert!(s.configured);
+        assert!(e.set_triage_classifier("other".into()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Both summary prompts must ask for the subset SummaryMarkup.swift

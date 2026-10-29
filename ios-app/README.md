@@ -10,7 +10,8 @@ ios-app/
     App/                HeyPigeonApp, AppModel (state + actions + background refresh)
     Engine/             MailEngine protocol, MockEngine, RustEngine (UniFFI adapter), OAuth
     Features/           Inbox · Thread · Remind · Accounts · Compose · Settings
-    Intents/            App Intents: entities, the verbs as intents, App Shortcuts, Spotlight index
+    Intents/            App Intents: entities, the verbs as intents, the Mail schema domain, App Shortcuts, Spotlight index
+    AI/                 Apple Intelligence as the AI provider the Rust core calls back into (no key)
     Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets
   HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets)
   HeyPigeonCore/        Swift package wrapping the Rust core (generated, git-ignored contents)

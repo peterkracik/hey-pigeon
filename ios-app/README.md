@@ -19,12 +19,13 @@ ios-app/
     AI/                 The model layer the Rust core calls back into: FoundationModelsBackend over ModelProviders
                         (on device · Private Cloud Compute · package models), the triage prompt, the agentic triage
                         (tools + agent + journal), Ask my inbox over SpotlightSearchTool, attachment understanding, usage
-    Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets, widget snapshot, Live Activities, deep links
+    Shared/             Platform (the UIKit/AppKit door), Theme (tokens), Formatters, ReminderScheduler, ReminderPresets,
+                        widget snapshot, Live Activities, deep links
       WidgetShared/     Compiled into the app and both extensions: App Group, snapshot, widget intents, activity attributes, pending share
   HeyPigeonWidgets/     Widget extension: Unread · Next reminder · Need reply, the reminder and triage Live Activities, Controls
   HeyPigeonShare/       Share extension: text, links and files → a pending share the app opens as a draft
-  HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets, snapshot, deep links, triage plan,
-                        attachment chips) and Evaluations/ (the triage and summary prompt harnesses)
+  HeyPigeonTests/       Swift Testing over the mock engine (AppModel, models and helpers, intents, entities, presets,
+                        snapshot, deep links, triage plan, attachment chips) and Evaluations/ (the prompt harnesses)
   HeyPigeonCore/        Swift package wrapping the Rust core (generated, git-ignored contents)
   scripts/build-rust.sh cargo → uniffi → xcframework
   project.yml           XcodeGen spec (the .xcodeproj is generated)
@@ -49,6 +50,23 @@ the app runs against an in-memory sample inbox.
 Fonts: drop `Manrope-SemiBold.ttf`, `Manrope-Bold.ttf`, `Manrope-ExtraBold.ttf`
 into `HeyPigeon/Resources/Fonts/` for the brand typeface; without them SwiftUI
 silently falls back to the system font.
+
+## Tests (CI)
+
+`.github/workflows/ios-ci.yml` runs on every pull request that touches the
+app or the Rust crates: `xcodebuild test` on an iPhone simulator and
+`xcodebuild build` for an iPad, unsigned and with no OAuth client, so the
+app runs on the sample inbox. No secrets are involved. Locally:
+
+```sh
+scripts/build-rust.sh && xcodegen generate
+xcodebuild test -project HeyPigeon.xcodeproj -scheme HeyPigeon \
+  -destination 'platform=iOS Simulator,name=<an iPhone>' CODE_SIGNING_ALLOWED=NO
+```
+
+Conventions for changing the app (state, platform code, privacy copy,
+tests) are in [CLAUDE.md](CLAUDE.md); the iPad and Mac plan in
+[docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
 
 ## Publishing (CI)
 
@@ -164,3 +182,4 @@ deliver` step, if that ever becomes a chore.
 | Default mail app: `mailto:` links → the composer, the Settings door | `HeyPigeon/Shared/DeepLinks.swift`, `HeyPigeon/Features/Settings/SettingsView.swift`, `project.yml` |
 | "Triage my inbox" | `HeyPigeon/AI/TriageTools.swift`, `HeyPigeon/AI/TriageAgent.swift`, `HeyPigeon/Intents/TriageIntents.swift`, `HeyPigeonWidgets/TriageLiveActivity.swift` |
 | Settings | `HeyPigeon/Features/Settings/SettingsView.swift`, `TriageJournalView.swift` |
+| UIKit / AppKit calls (haptics, keyboard, clipboard, settings links, device name) | `HeyPigeon/Shared/Platform.swift` |

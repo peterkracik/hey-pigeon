@@ -9,6 +9,7 @@ import Foundation
 import FoundationModels
 import Observation
 
+/// Requests and tokens for one provider since the last reset.
 struct TokenUsage: Codable, Equatable, Sendable {
     var requests = 0
     var inputTokens = 0

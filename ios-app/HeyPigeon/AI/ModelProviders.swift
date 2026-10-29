@@ -18,6 +18,8 @@ enum AiTask: Sendable {
     case classification
 }
 
+/// Whether a provider can answer on this device now, and if not, why
+/// (shown under its Settings row).
 enum ProviderAvailability: Equatable, Sendable {
     case available
     case unavailable(String)

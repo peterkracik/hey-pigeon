@@ -19,6 +19,7 @@ import Foundation
 import FoundationModels
 import Observation
 
+/// Where a triage run is; the Live Activity shows `title`.
 enum TriagePhase: String, Codable, Sendable {
     case scan, decide, act, confirm, apply, done, cancelled, failed
 
@@ -289,6 +290,7 @@ final class TriageAgent: TriageToolHost {
 
 // MARK: - Journal
 
+/// One journaled step of a triage run (a tool call or a phase note).
 struct TriageJournalEntry: Codable, Identifiable, Equatable {
     var id = UUID()
     let runId: UUID

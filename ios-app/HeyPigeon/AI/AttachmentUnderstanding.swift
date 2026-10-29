@@ -86,6 +86,7 @@ enum AttachmentAction: Equatable, Identifiable {
     }
 }
 
+/// The on-device read of one image or PDF, and the chips derived from it.
 enum AttachmentUnderstanding {
     /// Longest side after downscaling: enough to read a receipt, a fraction
     /// of the tokens of a 12-megapixel photo.
@@ -228,6 +229,7 @@ private extension DateComponents {
     }
 }
 
+/// Why an attachment could not be explained, in words for the sheet.
 enum AttachmentError: LocalizedError {
     case modelUnavailable
     case notExplainable

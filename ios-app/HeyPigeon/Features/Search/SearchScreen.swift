@@ -68,6 +68,7 @@ private struct ResultCount: View {
 
 // MARK: Filters
 
+/// Which person filter the picker sets.
 enum PersonField: String, Identifiable {
     case from, to
     var id: Self { self }

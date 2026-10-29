@@ -47,6 +47,7 @@ enum TriageProposal: Equatable, Identifiable, Codable {
     }
 }
 
+/// The proposals of one run, confirmed (or declined) as one batch.
 struct TriagePlan: Equatable, Codable {
     var proposals: [TriageProposal] = []
     /// What the model said about the run, for the dialog.
@@ -168,6 +169,7 @@ struct TriageRowView: Codable {
     }
 }
 
+/// What the tools hand back to the model: compact, key-sorted JSON.
 enum TriageToolOutput {
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()

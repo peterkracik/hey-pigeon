@@ -555,6 +555,7 @@ private struct DraftRow: View {
     }
 }
 
+/// The reply button's three choices.
 enum ReplyKind: String, CaseIterable, Identifiable {
     case reply, replyAll, forward
     var id: String { rawValue }

@@ -4,10 +4,12 @@
 
 import Foundation
 
+/// An account's tag colour (synced). Theme maps it to the desktop's five tag tokens.
 enum AccountColor: String, CaseIterable, Hashable {
     case sky, lavender, mint, amber, coral
 }
 
+/// A connected Google account. `id` is the engine's account id (today the address).
 struct MailAccount: Identifiable, Hashable {
     let id: String
     let email: String
@@ -31,6 +33,8 @@ enum TriageLevel: String, Hashable, Comparable {
     static func < (lhs: TriageLevel, rhs: TriageLevel) -> Bool { lhs.rank < rhs.rank }
 }
 
+/// One thread as the lists show it: the store's row, no bodies. Immutable;
+/// a change is a fresh row from the engine.
 struct ThreadRow: Identifiable, Hashable {
     let id: String
     let accountId: String
@@ -72,6 +76,8 @@ struct ThreadRow: Identifiable, Hashable {
     var isPinned: Bool { isStarred }
 }
 
+/// One message of an open thread, with its body when the store has it.
+/// `to` holds addresses, the account's own as "me".
 struct MessageItem: Identifiable, Hashable {
     let id: String
     let fromName: String
@@ -90,6 +96,7 @@ struct MessageItem: Identifiable, Hashable {
     var isDraft = false
 }
 
+/// An open thread: its row and every stored message, drafts included.
 struct ThreadDetail: Hashable {
     let thread: ThreadRow
     let messages: [MessageItem]
@@ -209,6 +216,7 @@ struct TriageLabelItem: Identifiable, Hashable {
     let name: String
 }
 
+/// An account's connection and sync health, for Settings and the sidebar.
 struct AccountState: Identifiable, Hashable {
     let id: String
     let isConnected: Bool
@@ -228,6 +236,7 @@ struct PushState: Hashable {
     let accounts: [PushAccountState]
 }
 
+/// One account's Gmail watch lease at the relay.
 struct PushAccountState: Identifiable, Hashable {
     let id: String
     let watchExpiresAt: Date?
@@ -311,11 +320,14 @@ enum TriageClassifier: String, CaseIterable, Identifiable {
     }
 }
 
+/// An OpenAI model the Settings picker offers.
 struct AIModel: Identifiable, Hashable {
     let id: String
     let label: String
 }
 
+/// Who classifies new mail (the Apple models or Jev), whether auto-triage
+/// is on, and what this device can run.
 struct TriageStatus: Hashable {
     let configured: Bool
     let enabled: Bool
@@ -517,6 +529,7 @@ enum RowAction: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// A file attached in the composer (or a loaded draft), as base64.
 struct DraftAttachment: Hashable, Identifiable {
     var id: String { filename + "\(size)" }
     let filename: String
@@ -526,6 +539,9 @@ struct DraftAttachment: Hashable, Identifiable {
     let dataBase64: String
 }
 
+/// Everything the composer edits and the outbox sends; also the Gmail
+/// draft it is saved as. Built by the composer, Siri, the share sheet and
+/// mailto: links alike.
 struct SendDraft: Hashable {
     var to: [String] = []
     var cc: [String] = []
@@ -595,6 +611,7 @@ enum MailAction: Hashable {
     case deleteDraft(key: String)
 }
 
+/// The consent URL the engine built and the scheme its redirect comes back on.
 struct OAuthStart: Hashable {
     let url: URL
     let callbackScheme: String

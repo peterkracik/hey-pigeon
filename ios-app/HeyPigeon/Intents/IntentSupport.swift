@@ -8,6 +8,7 @@
 import AppIntents
 import Foundation
 
+/// The failures Siri reads out, in the app's words.
 enum IntentError: Error, CustomLocalizedStringResourceConvertible {
     case notReady
     case noSuchThread

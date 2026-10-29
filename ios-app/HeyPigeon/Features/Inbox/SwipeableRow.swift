@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// One swipe tier: what the revealed panel shows and what letting go does.
 struct SwipeAction {
     let title: String
     let systemImage: String

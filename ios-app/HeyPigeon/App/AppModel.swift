@@ -8,6 +8,8 @@ import Foundation
 import Observation
 import SwiftUI
 
+/// The bottom toast: a line of text and, for reversible actions, Undo.
+/// Equal by id, so a new toast with the same text still re-shows.
 struct Toast: Identifiable, Equatable {
     let id = UUID()
     let text: String
@@ -36,6 +38,7 @@ struct AskPresentation: Identifiable, Equatable {
     var question: String?
 }
 
+/// One section of the list (Pinned, Today, Overdue, …) with its rows.
 struct RowGroup: Identifiable {
     let title: String
     let rows: [ThreadRow]

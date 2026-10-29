@@ -44,7 +44,11 @@ struct WidgetSharedTests {
         let s = WidgetSnapshot.placeholder
         let data = try JSONEncoder.shared.encode(s)
         let back = try JSONDecoder.shared.decode(WidgetSnapshot.self, from: data)
-        #expect(back.due == s.due)
+        // ISO 8601 keeps whole seconds: the placeholder's `Date()`s lose
+        // their fraction, so compare what was written, not the originals.
+        #expect(try JSONEncoder.shared.encode(back) == data)
+        #expect(back.due.map(\.id) == s.due.map(\.id))
+        #expect(abs(back.due[0].at.timeIntervalSince(s.due[0].at)) < 1)
         #expect(back.accounts == s.accounts)
     }
 

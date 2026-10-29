@@ -1,0 +1,148 @@
+name: ios-ci
+
+# Compile and test the iOS app on every pull request that touches it, so a
+# Swift change is checked before it reaches main (where publish-ios uploads
+# whatever main holds to TestFlight). No secrets and no signing: the app is
+# built for the simulator with CODE_SIGNING_ALLOWED=NO and an empty OAuth
+# client id, so it runs on the in-memory MockEngine (HeyPigeonApp.makeEngine).
+#
+#   test-iphone  `xcodebuild test` on an iPhone simulator: the unit tests in
+#                ios-app/HeyPigeonTests (the Evaluations' model runs skip
+#                themselves without Apple Intelligence).
+#   build-ipad   `xcodebuild build` for an iPad simulator: TARGETED_DEVICE_FAMILY
+#                is "1,2", so the iPad build must keep compiling too.
+
+on:
+  pull_request:
+    paths:
+      - "ios-app/**"
+      - "!ios-app/**/*.md"
+      - "desktop-app/crates/**"
+      - "desktop-app/Cargo.toml"
+      - "desktop-app/Cargo.lock"
+      - ".github/workflows/ios-ci.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "ios-app/**"
+      - "!ios-app/**/*.md"
+      - "desktop-app/crates/**"
+      - ".github/workflows/ios-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: ${{ matrix.job }}
+    # Same image as publish-ios: the iOS 27 SDK is the deployment floor.
+    runs-on: xcode-27
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job: test-iphone
+            device: iPhone
+            action: test
+          - job: build-ipad
+            device: iPad
+            action: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode with the iOS 27 SDK
+        run: |
+          set -euo pipefail
+          all="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V || true)"
+          xc="$(printf '%s\n' "$all" | grep -viE 'beta|release_candidate|_rc' | tail -1 || true)"
+          if [[ -z "$xc" ]]; then xc="$(printf '%s\n' "$all" | tail -1)"; fi
+          if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
+          xcodebuild -version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-app
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # No OAuth client: the app falls back to the sample inbox. The
+      # reversed id only has to be a valid URL scheme.
+      - name: Write Local.xcconfig (CI placeholders)
+        run: |
+          cat > ios-app/Config/Local.xcconfig <<'EOF'
+          DEVELOPMENT_TEAM =
+          GOOGLE_IOS_CLIENT_ID =
+          GOOGLE_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.ci
+          HEYPIGEON_RELAY_URL =
+          EOF
+
+      # The package's binary target must exist before Xcode resolves it;
+      # the pre-build phase re-runs the script, which is then incremental.
+      - name: Build Rust core for the simulator + Swift bindings
+        env:
+          RUST_PROFILE: release
+          PLATFORM_NAME: iphonesimulator
+          ARCHS: arm64
+        run: ios-app/scripts/build-rust.sh
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          id="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          kind = sys.argv[1]
+          runtimes = json.load(sys.stdin)["devices"]
+          ios = sorted((r for r in runtimes if "iOS" in r), reverse=True)
+          for r in ios:
+              for d in runtimes[r]:
+                  if d["name"].startswith(kind):
+                      print(d["udid"]); sys.exit(0)
+          sys.exit("no %s simulator on this image" % kind)
+          ' "${{ matrix.device }}")"
+          echo "Using $(xcrun simctl list devices | grep "$id")"
+          echo "udid=$id" >> "$GITHUB_OUTPUT"
+
+      - name: xcodebuild ${{ matrix.action }} (${{ matrix.device }})
+        working-directory: ios-app
+        run: |
+          # The full log goes to a file (uploaded on failure); the job log
+          # keeps errors, our own warnings and the test lines. xcodebuild's
+          # exit status decides, not grep's.
+          set +e
+          xcodebuild ${{ matrix.action }} \
+            -project HeyPigeon.xcodeproj \
+            -scheme HeyPigeon \
+            -configuration Debug \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath "$RUNNER_TEMP/HeyPigeon-${{ matrix.job }}.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" \
+            | grep -E "error:|warning: .*/HeyPigeon[A-Za-z]*/|Test (Suite|Case)|[✔✘◇]|\*\* "
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.job }}-xcresult
+          path: |
+            ${{ runner.temp }}/HeyPigeon-${{ matrix.job }}.xcresult
+            ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7

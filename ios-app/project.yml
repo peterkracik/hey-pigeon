@@ -75,9 +75,12 @@ targets:
             CFBundleURLName: app.heypigeon.oauth
             CFBundleURLSchemes:
               - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
-        # The intent new-mail banners are built from (communication notifications).
+        # The intent new-mail banners are built from (communication
+        # notifications), and the open thread (ThreadView.activityType) that
+        # Siri's on-screen awareness resolves "this email" against.
         NSUserActivityTypes:
           - INSendMessageIntent
+          - app.heypigeon.thread
         UIBackgroundModes:
           - fetch
           - remote-notification # silent push from the optional relay
@@ -107,3 +110,19 @@ targets:
       environmentVariables:
         # Set to 1 to run against the in-memory sample inbox (no OAuth, no Rust).
         HEYPIGEON_MOCK: "0"
+      testTargets:
+        - HeyPigeonTests
+
+  # Unit tests over the mock engine: the intents' perform bodies, the
+  # entities and the reminder presets. No OAuth, no Rust, no device.
+  HeyPigeonTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: HeyPigeonTests
+    dependencies:
+      - target: HeyPigeon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.ios.tests
+        GENERATE_INFOPLIST_FILE: true

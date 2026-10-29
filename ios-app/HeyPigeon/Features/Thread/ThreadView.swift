@@ -7,9 +7,13 @@
 // the AI draft circle beside it, and one triage bar in the desktop's words:
 // Done · Remind · Need reply · Pin · Delete.
 
+import AppIntents
 import SwiftUI
 
 struct ThreadView: View {
+    /// NSUserActivity type for the open thread (project.yml NSUserActivityTypes).
+    static let activityType = "app.heypigeon.thread"
+
     let row: ThreadRow
     let onClose: () -> Void
     @Environment(AppModel.self) private var model
@@ -132,6 +136,13 @@ struct ThreadView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { bottomBars }
+        // On-screen awareness: "Hey Siri, remind me about this tomorrow"
+        // resolves to this thread (MailThreadQuery.defaultResult is the
+        // fallback when Siri cannot read the activity).
+        .userActivity(ThreadView.activityType) { activity in
+            activity.title = row.subject.isEmpty ? row.fromSummary : row.subject
+            activity.appEntityIdentifier = EntityIdentifier(for: MailThreadEntity(current, account: model.account(for: current)))
+        }
         .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
         .task(id: row.id) {
@@ -347,19 +358,7 @@ struct ThreadView: View {
     }
 
     private func replyDraft(to m: MessageItem, all: Bool) -> SendDraft {
-        var d = SendDraft()
-        let others = m.to.filter { $0 != "me" && !$0.isEmpty }
-        if m.isMine {
-            d.to = others
-        } else {
-            d.to = [m.fromAddress]
-            if all { d.cc = others }
-        }
-        d.subject = row.subject.lowercased().hasPrefix("re:") ? row.subject : "Re: \(row.subject)"
-        d.replyToThreadId = row.id
-        d.fromAccountId = current.accountId
-        d.history = transcript
-        return d
+        SendDraft.reply(to: m, in: current, all: all, history: transcript)
     }
 
     private func forward(_ m: MessageItem) {

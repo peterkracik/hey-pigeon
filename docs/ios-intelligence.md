@@ -119,16 +119,18 @@ folders are an `AppEnum` (see Open below).
 the same place `ReminderScheduler.reschedule` runs: at the end of
 `AppModel.sync()` and after a reminder is set. Rules:
 
-- Index the **inbox, Scheduled and Need reply** rows that are loaded plus
-  the latest 500 threads of each account from `engine.threads(in: .all …)`.
-  Not the whole archive: Spotlight indexing is per-item work on the main
-  thread's launch budget, and the point is "what Siri should know about",
-  not search (the app's FTS is better at search).
+- Index the latest 500 threads of each account from `engine.threads(in:
+  .all …)` — inbox, Scheduled, Need reply and done mail alike (done mail is
+  still mail Siri should know about). Not the whole archive: Spotlight
+  indexing is per-item work on the main thread's launch budget, and the
+  point is "what Siri should know about", not search (the app's FTS is
+  better at search).
 - Attributes: subject as title, sender as `authorNames`, snippet as
   `contentDescription`, `receivedAt`, account as `containerIdentifier`.
   **No body text**, no addresses other than the sender's display name.
-- A thread that is done, trashed or spam is removed from the index (`delete
-  entities with ids`) on the sync that sees it.
+- A thread in Trash or Spam is removed from the index (`delete entities
+  with ids`) on the sync that sees it; removing an account drops the whole
+  index and rebuilds it from the accounts left.
 - **Settings › Siri & Search › "Let Siri see your inbox"** (default on for
   new installs; a pref, synced like the others). Off drains the index. The
   rationale is the one in the sources note: with iOS 27 Siri may hand entity
@@ -146,7 +148,7 @@ text the swipe shows, returned as the Siri dialog.
 | Intent | Calls | Parameters | Dialog |
 | --- | --- | --- | --- |
 | `MarkDoneIntent` | `markDone` / `markNotDone` | thread | "Marked done" |
-| `RemindMeIntent` | `remind(at:onlyIfNoReply:)` | thread, date (**asked if missing**), onlyIfNoReply (default false) | "Reminder set for Tuesday 09:00" |
+| `RemindMeIntent` | `remind(at:onlyIfNoReply:)` | thread, when (preset or *Pick a date…*, **asked if missing**), date, onlyIfNoReply (default false) | "Reminder set for Tuesday 09:00" |
 | `NeedReplyIntent` | `toggleNeedsReply` → explicit `set` | thread, on/off | "Marked Need reply" |
 | `PinIntent` | `togglePin` → explicit `set` | thread, on/off | "Pinned" |
 | `MarkReadIntent` | `markRead` / `toggleRead` → explicit `set` | thread, read/unread | — |
@@ -158,7 +160,7 @@ text the swipe shows, returned as the Siri dialog.
 | `WhatNeedsReplyIntent` | `engine.threads(in: .needReply …)` | — | "3 threads need a reply" + the list |
 | `WhatsDueIntent` | `scheduledThreads` filtered to due | — | "2 reminders are due" + the list |
 | `ComposeIntent` | `composeDraft = SendDraft(to:subject:body:)` | to, subject, body (all optional) | opens the composer, nothing sent |
-| `ReplyIntent` | `openDraft`-style prefill with `replyToThreadId` | thread, body (optional) | opens the composer on the reply |
+| `ReplyIntent` | `openReply(to:all:body:)` — `SendDraft.reply`, the thread view's own draft | thread, body (optional), replyAll | opens the composer on the reply |
 | `SummarizeInboxIntent` | `summarize(group)` over today's active rows | account (optional) | the summary text; snippet view with "Open" |
 | `SyncNowIntent` | `sync()` | — | "Up to date" |
 
@@ -246,11 +248,14 @@ the open thread:
   thread's `EntityIdentifier` (`appEntityIdentifier`) so the system knows
   what "this" is. `MailListScreen` publishes the folder entity the same way
   for "summarize this".
-- `RemindMeIntent` asks for the date when it is missing
-  (`requestValue` / `needsValueError`) with the Remind sheet's presets as
-  suggestions — *Later today*, *Tomorrow*, *This weekend*, *Next week*. iOS
-  27's multi-turn intents reportedly make the follow-up conversational
-  ("When?" — "Friday"); on iOS 26 it is the same API, shown as a picker.
+- `RemindMeIntent` takes a required `When` enum — the Remind sheet's
+  presets (*Later today*, *Tomorrow*, *This weekend*, *Next week*, *In a
+  month*) plus *Pick a date…*, which asks for a `Date` with `requestValue`.
+  A required enum is what makes Siri ask with the list when it was not
+  said ("When?" — "Tomorrow"). iOS 27's multi-turn intents reportedly make
+  that follow-up conversational; on iOS 26 it is the same API, shown as a
+  picker. The preset maths live in `Shared/ReminderPresets.swift`, shared
+  with the sheet, so both land on the same minute.
 
 Long-running work (a full `sync()` on a cold engine, `SummarizeInbox` over
 a slow provider) adopts the iOS 27 long-running / streaming intent protocol

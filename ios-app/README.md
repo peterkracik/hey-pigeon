@@ -10,7 +10,9 @@ ios-app/
     App/                HeyPigeonApp, AppModel (state + actions + background refresh)
     Engine/             MailEngine protocol, MockEngine, RustEngine (UniFFI adapter), OAuth
     Features/           Inbox · Thread · Remind · Accounts · Compose · Settings
-    Shared/             Theme (tokens), Formatters, ReminderScheduler
+    Intents/            App Intents: entities, the verbs as intents, App Shortcuts, Spotlight index
+    Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets
+  HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets)
   HeyPigeonCore/        Swift package wrapping the Rust core (generated, git-ignored contents)
   scripts/build-rust.sh cargo → uniffi → xcframework
   project.yml           XcodeGen spec (the .xcodeproj is generated)

@@ -284,8 +284,11 @@ struct TriageAgentTests {
     @Test func planDedupesAndSummarizesTheBatch() {
         var plan = TriagePlan()
         #expect(plan.confirmationSummary == "Nothing to change.")
-        #expect(plan.add(.markDone(threadId: "t3", subject: "CI")))
-        #expect(!plan.add(.markDone(threadId: "t3", subject: "CI")))
+        // `add` is mutating: #expect cannot call it on its captured copy.
+        let first = plan.add(.markDone(threadId: "t3", subject: "CI"))
+        let again = plan.add(.markDone(threadId: "t3", subject: "CI"))
+        #expect(first)
+        #expect(!again)
         plan.add(.markDone(threadId: "t6", subject: "Receipt"))
         plan.add(.label(threadId: "t8", subject: "Invoice", labelId: "Label_2", labelName: "Travel", on: true))
         plan.add(.remind(threadId: "t4", subject: "Lisbon", at: Date().addingTimeInterval(86_400), onlyIfNoReply: false))

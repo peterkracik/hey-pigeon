@@ -86,6 +86,7 @@ enum AttachmentAction: Equatable, Identifiable {
     }
 }
 
+/// The on-device read of one image or PDF, and the chips derived from it.
 enum AttachmentUnderstanding {
     /// Longest side after downscaling: enough to read a receipt, a fraction
     /// of the tokens of a 12-megapixel photo.
@@ -104,7 +105,7 @@ enum AttachmentUnderstanding {
     static func explain(file: URL, mimeType: String, filename: String) async throws -> AttachmentInsight {
         guard isAvailable else { throw AttachmentError.modelUnavailable }
         guard let image = try image(for: file, mimeType: mimeType) else { throw AttachmentError.notExplainable }
-        let session = SystemModelProvider().session(instructions: instructions, task: .completion, tools: [OCRTool(), BarcodeReaderTool()])
+        let session = SystemModelProvider().session(instructions: instructions, task: .completion, tools: visionTools)
         do {
             let response = try await session.respond(to: Prompt {
                 "The attachment is named \(filename)."
@@ -115,6 +116,17 @@ enum AttachmentUnderstanding {
         } catch let error as LanguageModelSession.GenerationError {
             throw AttachmentError.model(FoundationModelsBackend.describe(error))
         }
+    }
+
+    /// The Vision-backed tools the model reads text and codes with. They
+    /// ship in the device SDK only; the simulator build (CI) goes without,
+    /// where the model is not there to call them anyway.
+    private static var visionTools: [any Tool] {
+        #if targetEnvironment(simulator)
+        return []
+        #else
+        return [OCRTool(), BarcodeReaderTool()]
+        #endif
     }
 
     /// The image the model gets: the file, or the PDF's first page, scaled
@@ -188,7 +200,7 @@ enum AttachmentUnderstanding {
         f.formatOptions = [.withInternetDateTime]
         if let d = f.date(from: t + (t.contains("+") || t.hasSuffix("Z") ? "" : "Z")) {
             // A local time without a zone: read it as local.
-            return cal.date(from: cal.dateComponents(in: TimeZone(identifier: "UTC")!, from: d).settingZone(cal.timeZone))
+            return cal.date(from: cal.dateComponents(in: .gmt, from: d).settingZone(cal.timeZone))
         }
         f.formatOptions = [.withFullDate]
         return f.date(from: t)
@@ -217,6 +229,7 @@ private extension DateComponents {
     }
 }
 
+/// Why an attachment could not be explained, in words for the sheet.
 enum AttachmentError: LocalizedError {
     case modelUnavailable
     case notExplainable
@@ -224,7 +237,7 @@ enum AttachmentError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .modelUnavailable: "Apple Intelligence isn't available on this iPhone."
+        case .modelUnavailable: "Apple Intelligence isn't available on this \(Device.name)."
         case .notExplainable: "Only images and PDFs can be explained."
         case .model(let why): why
         }

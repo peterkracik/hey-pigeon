@@ -1,4 +1,7 @@
 // Date presentation, mirroring fmtTime / fmtFull and the desktop day groups.
+// The formatters are built once (DateFormatter is expensive to make) and
+// follow the user's locale and time zone; everything that depends on
+// "today" takes a `now` so the tests can pin it.
 
 import Foundation
 
@@ -29,11 +32,15 @@ enum Formatters {
         return f
     }()
 
-    /// Row time: "10:42", "Yesterday", "Mon", "Oct 3".
+    /// Row time: "10:42", "Yesterday", "Mon", "Oct 3". Every comparison is
+    /// against `now` (it used to read the clock for today / yesterday and
+    /// `now` only for the week, so a test's `now` was half ignored).
     static func rowTime(_ date: Date, now: Date = Date()) -> String {
         let cal = Calendar.current
-        if cal.isDateInToday(date) { return time.string(from: date) }
-        if cal.isDateInYesterday(date) { return "Yesterday" }
+        if cal.isDate(date, inSameDayAs: now) { return time.string(from: date) }
+        if let yesterday = cal.date(byAdding: .day, value: -1, to: now), cal.isDate(date, inSameDayAs: yesterday) {
+            return "Yesterday"
+        }
         if now.timeIntervalSince(date) < 7 * 86_400 { return weekday.string(from: date) }
         return monthDay.string(from: date)
     }
@@ -79,13 +86,16 @@ enum Formatters {
         }
     }
 
-    /// "Tomorrow 09:00", "Sat 18:00", "Oct 30, 09:00" — reminder badges.
-    static func reminder(_ date: Date) -> String {
+    /// "09:00" (today), "Tomorrow 09:00", "Sat 18:00", "Oct 30, 09:00" —
+    /// reminder badges, relative to `now`.
+    static func reminder(_ date: Date, now: Date = Date()) -> String {
         let cal = Calendar.current
         let t = time.string(from: date)
-        if cal.isDateInToday(date) { return t }
-        if cal.isDateInTomorrow(date) { return "Tomorrow \(t)" }
-        if date.timeIntervalSinceNow < 7 * 86_400 { return "\(weekday.string(from: date)) \(t)" }
+        if cal.isDate(date, inSameDayAs: now) { return t }
+        if let tomorrow = cal.date(byAdding: .day, value: 1, to: now), cal.isDate(date, inSameDayAs: tomorrow) {
+            return "Tomorrow \(t)"
+        }
+        if date.timeIntervalSince(now) < 7 * 86_400 { return "\(weekday.string(from: date)) \(t)" }
         return "\(monthDay.string(from: date)), \(t)"
     }
 }

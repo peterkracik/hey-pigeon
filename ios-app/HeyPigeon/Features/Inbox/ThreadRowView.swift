@@ -117,6 +117,7 @@ struct ThreadRowView: View {
     }
 }
 
+/// A small label pill: Jev labels, the reminder and need-reply badges.
 struct Chip: View {
     let text: String
     var systemImage: String? = nil

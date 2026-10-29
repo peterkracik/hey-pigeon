@@ -42,8 +42,7 @@ struct RecipientField<Field: Hashable>: View {
                 // Next to chips the input only needs room for a caret, so the
                 // first chip does not push it onto a line of its own.
                 TextField(addresses.isEmpty ? "Email address" : "", text: $text)
-                    .textContentType(.emailAddress).keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .textContentType(.emailAddress).plainInput(.email)
                     .submitLabel(.next)
                     .focused(focused, equals: field)
                     .foregroundStyle(Theme.textPrimary)
@@ -89,10 +88,15 @@ struct RecipientField<Field: Hashable>: View {
         focused.wrappedValue = field
     }
 
+    /// The typed text becomes a chip when it looks like an address. Text
+    /// that does not ("ana@", a name with no match) stays in the field for
+    /// the user to finish, instead of vanishing or becoming a bad chip.
     private func commit() {
         let a = text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;")).lowercased()
+        guard !a.isEmpty else { text = ""; return }
+        guard EmailAddress.isPlausible(a) else { return }
         text = ""
-        guard !a.isEmpty, a.contains("@"), !addresses.contains(a) else { return }
+        guard !addresses.contains(a) else { return }
         addresses.append(a)
     }
 }

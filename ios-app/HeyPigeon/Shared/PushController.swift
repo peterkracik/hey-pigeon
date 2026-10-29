@@ -7,7 +7,6 @@
 
 import Foundation
 import Observation
-import UIKit
 
 @MainActor
 @Observable
@@ -83,7 +82,7 @@ final class PushController {
     func requestRegistration() {
         guard enabled, canEnable else { return }
         lastError = nil
-        UIApplication.shared.registerForRemoteNotifications()
+        RemoteNotifications.register()
     }
 
     /// The toggle. On: register with the system, which calls back with a
@@ -97,7 +96,7 @@ final class PushController {
         } else {
             busy = true
             defer { busy = false }
-            UIApplication.shared.unregisterForRemoteNotifications()
+            RemoteNotifications.unregister()
             do {
                 try await engine.disablePush()
             } catch {

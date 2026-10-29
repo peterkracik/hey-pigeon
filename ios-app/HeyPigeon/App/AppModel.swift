@@ -7,8 +7,9 @@ import BackgroundTasks
 import Foundation
 import Observation
 import SwiftUI
-import UIKit
 
+/// The bottom toast: a line of text and, for reversible actions, Undo.
+/// Equal by id, so a new toast with the same text still re-shows.
 struct Toast: Identifiable, Equatable {
     let id = UUID()
     let text: String
@@ -37,6 +38,7 @@ struct AskPresentation: Identifiable, Equatable {
     var question: String?
 }
 
+/// One section of the list (Pinned, Today, Overdue, …) with its rows.
 struct RowGroup: Identifiable {
     let title: String
     let rows: [ThreadRow]
@@ -70,20 +72,37 @@ final class AppModel {
     private(set) var aiConfigured = false
 
     /// nil = unified across accounts (desktop's `0`).
-    var selectedAccountId: String? { didSet { reload() } }
+    var selectedAccountId: String? { didSet { reloadUnlessHeld() } }
     /// Bottom bar selection.
     var tab: MainTab = .inbox {
         didSet {
             Keyboard.dismiss()
-            reload()
+            reloadUnlessHeld()
         }
     }
     /// Folder/label the Inbox tab shows; the other tabs have fixed views.
     var folder: MailView = .inbox {
         didSet {
             triageFilterId = nil
-            reload()
+            reloadUnlessHeld()
         }
+    }
+    /// Set while `navigate` changes the tab and the folder together, so the
+    /// two didSets above do not reload twice.
+    @ObservationIgnored private var holdReload = false
+
+    private func reloadUnlessHeld() {
+        if !holdReload { reload() }
+    }
+
+    /// Switch tab (and, for the Inbox tab, the folder) with one reload;
+    /// assigning them one after the other reloaded the store twice.
+    func navigate(to tab: MainTab, folder: MailView? = nil) {
+        holdReload = true
+        self.tab = tab
+        if let folder, self.folder != folder { self.folder = folder }
+        holdReload = false
+        reload()
     }
     /// Jev label the list is narrowed to (the bottom pill). nil = all.
     var triageFilterId: String? { didSet { regroup() } }
@@ -105,6 +124,9 @@ final class AppModel {
     private var isBackfillingOlder = false
     private(set) var lastSyncAt: Date?
     private(set) var hasLoadedOnce = false
+
+    /// The core caps a search at this many threads (Search shows "50+").
+    static let searchLimit = 50
 
     var searchText = "" { didSet { runSearch() } }
     /// The Search tab's filter buttons, added to the typed words as operators.
@@ -146,6 +168,11 @@ final class AppModel {
     /// Drafts are read, so the unread map has none: the sidebar shows how many there are.
     private(set) var draftsCount = 0
     private(set) var dueCount = 0
+    /// Every scheduled thread across accounts as of the last reload. The
+    /// 30-second tick, the icon badge and the widget snapshot read it
+    /// instead of asking the store again: reminders come due with time,
+    /// and every change to the list itself goes through `reload`.
+    @ObservationIgnored private(set) var scheduledAcrossAccounts: [ThreadRow] = []
     /// Ticks every 30 s while the app runs, so a reminder coming due raises
     /// `dueCount` and the icon badge without waiting for a reload (the
     /// desktop's `now` in App.svelte).
@@ -160,6 +187,12 @@ final class AppModel {
     /// Reminders that have come due (their time is now or past).
     static func due(_ threads: [ThreadRow], now: Date = Date()) -> [ThreadRow] {
         threads.filter { t in t.scheduledAt.map { $0 <= now } ?? false }
+    }
+
+    /// The rows of one account, or all of them for the unified view.
+    static func scoped(_ rows: [ThreadRow], to accountId: String?) -> [ThreadRow] {
+        guard let accountId else { return rows }
+        return rows.filter { $0.accountId == accountId }
     }
 
     var disconnectedAccountId: String?
@@ -221,8 +254,10 @@ final class AppModel {
     }
     /// The user's own triage rules, in their words, put into the agent's
     /// instructions ("newsletters are done; anything from the bank is high").
+    /// Typed into a text editor, so saved a moment after the last
+    /// keystroke rather than on each one (every save is a synced write).
     var triageRules = "" {
-        didSet { savePref(PrefName.triageRules, triageRules) }
+        didSet { savePrefSoon(PrefName.triageRules, triageRules) }
     }
     /// The triage run in progress or waiting for confirmation (TriageAgent).
     var triageAgent: TriageAgent?
@@ -238,9 +273,38 @@ final class AppModel {
         do { try engine.setPref(name, value) } catch { show("Couldn't save setting: \(error.localizedDescription)") }
     }
 
+    /// Free-text prefs waiting for `savePrefSoon`'s pause, by name.
+    @ObservationIgnored private var pendingPrefs: [String: String] = [:]
+    @ObservationIgnored private var pendingPrefsTask: Task<Void, Never>?
+    static let prefSaveDelay: Duration = .milliseconds(700)
+
+    /// Save once typing pauses; `flushPendingPrefs` saves at once.
+    private func savePrefSoon(_ name: String, _ value: String) {
+        guard !adoptingPrefs else { return }
+        pendingPrefs[name] = value
+        pendingPrefsTask?.cancel()
+        pendingPrefsTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.prefSaveDelay)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingPrefs()
+        }
+    }
+
+    /// Write whatever is still waiting — before prefs are re-read (so a
+    /// remote change cannot roll back what is being typed) and when the
+    /// app goes to the background.
+    func flushPendingPrefs() {
+        pendingPrefsTask?.cancel()
+        pendingPrefsTask = nil
+        let pending = pendingPrefs
+        pendingPrefs = [:]
+        for (name, value) in pending { savePref(name, value) }
+    }
+
     /// Read the synced prefs; a name the engine has never seen but
     /// UserDefaults has (a pre-sync install) is migrated in, once.
     private func loadPrefs() {
+        flushPendingPrefs()
         var prefs = (try? engine.prefs()) ?? [:]
         let defaults = UserDefaults.standard
         let legacy: [(name: String, key: String, value: Any?)] = [
@@ -310,7 +374,7 @@ final class AppModel {
     /// for the asleep case).
     private func tick() {
         let before = dueCount
-        dueCount = Self.due(scheduledThreads(accountId: selectedAccountId)).count
+        dueCount = Self.due(Self.scoped(scheduledAcrossAccounts, to: selectedAccountId)).count
         if dueCount != before {
             Task {
                 await NewMailNotifier.refreshBadge(self)
@@ -355,17 +419,33 @@ final class AppModel {
         refreshOpenThread()
         if isSearching { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }
-        // Anything that changes the list can change the icon badge: a read,
-        // a reminder set for later today, another device's edit.
-        Task { await NewMailNotifier.refreshBadge(self) }
-        // The widgets follow the store too (a no-op when nothing they show moved).
-        WidgetSnapshotWriter.publish(self)
+        refreshStoreSurfaces()
+    }
+
+    @ObservationIgnored private var storeSurfacesPending = false
+
+    /// Anything that changes the list can change the icon badge (a read, a
+    /// reminder set for later today, another device's edit) and what the
+    /// widgets show. Done once per main-actor turn: a burst of reloads (a
+    /// sync applying several changes, a tab and a folder switch) used to
+    /// rebuild the badge and the widget snapshot from the store each time.
+    private func refreshStoreSurfaces() {
+        guard !storeSurfacesPending else { return }
+        storeSurfacesPending = true
+        Task { [weak self] in
+            guard let self else { return }
+            storeSurfacesPending = false
+            await NewMailNotifier.refreshBadge(self)
+            // A no-op when nothing the widgets show moved.
+            WidgetSnapshotWriter.publish(self)
+        }
     }
 
     /// The sidebar / badge totals, from the store. Reminders and Need reply
     /// are bounded lists; drafts are capped like the sidebar's other folders.
     private func refreshCounts() {
-        let scheduled = scheduledThreads(accountId: selectedAccountId)
+        scheduledAcrossAccounts = scheduledThreads(accountId: nil)
+        let scheduled = Self.scoped(scheduledAcrossAccounts, to: selectedAccountId)
         scheduledCount = scheduled.count
         dueCount = Self.due(scheduled).count
         needReplyCount = (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0
@@ -398,7 +478,7 @@ final class AppModel {
     private func runSearch() {
         guard isSearching else { searchResults = []; return }
         let query = (searchFilters.operators + [searchText]).joined(separator: " ")
-        searchResults = Self.unique((try? engine.search(query, limit: 50)) ?? [])
+        searchResults = Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? [])
     }
 
     // MARK: Search — recent searches and the From / To people
@@ -443,33 +523,32 @@ final class AppModel {
     func searchPeople() -> [PersonSuggestion] {
         let mine = Set(accounts.map { $0.email.lowercased() })
         let source = (try? engine.threads(in: .all, accountId: nil, before: nil, limit: 500)) ?? rows
-        var order: [String] = []
-        var seen: [String: (name: String, accountId: String, count: Int)] = [:]
-        for row in source {
+        return Self.people(from: source, excluding: mine)
+    }
+
+    /// `searchPeople` without the store: senders of `rows` (newest first)
+    /// minus `mine`, by how often they wrote, the most recent first on a tie.
+    static func people(from rows: [ThreadRow], excluding mine: Set<String>) -> [PersonSuggestion] {
+        struct Tally {
+            let name: String
+            let accountId: String
+            /// Position of the newest row from this person: the tie-break.
+            let firstSeen: Int
+            var count = 1
+        }
+        var tallies: [String: Tally] = [:]
+        for row in rows {
             let address = row.lastFromAddress.lowercased()
             guard !address.isEmpty, !mine.contains(address) else { continue }
-            if var entry = seen[address] {
-                entry.count += 1
-                seen[address] = entry
+            if tallies[address] != nil {
+                tallies[address]?.count += 1
             } else {
-                // "Ana, Me (4)" → "Ana"; fall back to the address.
-                let first = row.fromSummary.components(separatedBy: ",").first?
-                    .trimmingCharacters(in: .whitespaces) ?? ""
-                let name = first.isEmpty || first == "Me" ? address : first
-                seen[address] = (name: name, accountId: row.accountId, count: 1)
-                order.append(address)
+                tallies[address] = Tally(name: row.leadSenderName ?? address, accountId: row.accountId, firstSeen: tallies.count)
             }
         }
-        let rank = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
-        return order
-            .sorted { a, b in
-                let ca = seen[a]!.count, cb = seen[b]!.count
-                return ca != cb ? ca > cb : rank[a]! < rank[b]!
-            }
-            .map { address in
-                let entry = seen[address]!
-                return PersonSuggestion(person: SearchPerson(name: entry.name, address: address), accountId: entry.accountId)
-            }
+        return tallies
+            .sorted { a, b in a.value.count != b.value.count ? a.value.count > b.value.count : a.value.firstSeen < b.value.firstSeen }
+            .map { PersonSuggestion(person: SearchPerson(name: $0.value.name, address: $0.key), accountId: $0.value.accountId) }
     }
 
     /// The desktop's groups exactly: Pinned (inbox, when enabled) · Today ·
@@ -545,7 +624,7 @@ final class AppModel {
         // reminders — with or without push. Awaited here so a background
         // refresh finishes it before the task is marked complete.
         await NewMailNotifier.refreshBadge(self)
-        if UIApplication.shared.applicationState == .active {
+        if AppLifecycle.isActive {
             Task { await backfillOlder() }
         }
     }
@@ -558,7 +637,7 @@ final class AppModel {
         guard !isBackfillingOlder else { return }
         isBackfillingOlder = true
         defer { isBackfillingOlder = false }
-        while UIApplication.shared.applicationState == .active {
+        while AppLifecycle.isActive {
             guard let more = try? await engine.backfillOlder() else { break }
             appendOlderRows()
             if !more { break }
@@ -591,7 +670,7 @@ final class AppModel {
     /// Deep link from a notification (reminder or new mail): the inbox tab
     /// pushes the thread when it sees `pendingThreadId`.
     func openThread(id: String) {
-        tab = .inbox
+        navigate(to: .inbox)
         pendingThreadId = id
     }
 
@@ -602,11 +681,9 @@ final class AppModel {
         showSidebar = false
         showSettings = false
         switch view {
-        case .scheduled: tab = .scheduled
-        case .needReply: tab = .needReply
-        default:
-            tab = .inbox
-            if folder != view { folder = view }
+        case .scheduled: navigate(to: .scheduled)
+        case .needReply: navigate(to: .needReply)
+        default: navigate(to: .inbox, folder: view)
         }
     }
 
@@ -622,10 +699,7 @@ final class AppModel {
     func openReply(to row: ThreadRow, all: Bool, body: String?) async throws {
         let detail = try await engine.thread(id: row.id)
         guard let detail, let last = detail.mail.last else { throw IntentError.noSuchThread }
-        let transcript = detail.mail
-            .map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }
-            .joined(separator: "\n\n")
-        var draft = SendDraft.reply(to: last, in: detail.thread, all: all, history: transcript)
+        var draft = SendDraft.reply(to: last, in: detail.thread, all: all, history: detail.transcript)
         if let body, !body.isEmpty { draft.bodyText = body }
         compose(draft)
     }
@@ -1033,7 +1107,15 @@ final class AppModel {
         summarySheet = SummaryPresentation(id: storeKey, title: viewTitle)
     }
 
-    private func threadKey(_ row: ThreadRow) -> String { "thread:\(row.id)" }
+    /// How much of each message's text a thread summary sends (the sheet's
+    /// footnote says so).
+    static let threadSummaryCharsPerMessage = 1_500
+
+    /// Summary-cache keys of open threads start with this; the sheet tells
+    /// a thread summary (message text) from a list one (subject + preview).
+    static let threadSummaryPrefix = "thread:"
+
+    private func threadKey(_ row: ThreadRow) -> String { Self.threadSummaryPrefix + row.id }
 
     func threadSummary(_ row: ThreadRow, messages: [MessageItem]) -> GroupSummary? {
         let key = messages.map(\.id).joined(separator: ",")
@@ -1046,7 +1128,7 @@ final class AppModel {
         let key = messages.map(\.id).joined(separator: ",")
         let storeKey = threadKey(row)
         groupSummaries[storeKey] = GroupSummary(cacheKey: key, generating: true)
-        let items = messages.map { (from: $0.isMine ? "Me" : $0.fromName, snippet: String(($0.bodyText ?? $0.snippet).prefix(1500))) }
+        let items = messages.map { (from: $0.isMine ? "Me" : $0.fromName, snippet: String(($0.bodyText ?? $0.snippet).prefix(Self.threadSummaryCharsPerMessage))) }
         Task {
             do {
                 let text = try await engine.aiSummarizeThread(subject: row.subject, items: items)

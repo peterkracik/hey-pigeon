@@ -3,7 +3,12 @@
 
 import Foundation
 import HeyPigeonCore
-import UIKit // NSAttributedString's html import
+// NSAttributedString's HTML import (`plainText`) lives in the UI framework.
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @MainActor
 final class RustEngine: MailEngine {
@@ -148,9 +153,11 @@ final class RustEngine: MailEngine {
         draft.bcc = d.bcc
         draft.subject = d.subject
         draft.bodyText = d.bodyText ?? d.bodyHtml.map(Self.plainText) ?? ""
+        // The size from the base64 length: decoding an 18 MB attachment
+        // only to count its bytes cost a copy of it on every draft open.
         draft.attachments = d.attachments.map {
             DraftAttachment(filename: $0.filename, mimeType: $0.mimeType,
-                            size: Data(base64Encoded: $0.dataB64)?.count ?? 0, dataBase64: $0.dataB64)
+                            size: Base64.decodedLength($0.dataB64), dataBase64: $0.dataB64)
         }
         draft.replyToThreadId = d.replyToThread
         draft.fromAccountId = d.accountId
@@ -230,7 +237,6 @@ final class RustEngine: MailEngine {
         try engine.setPref(name: name, valueJson: json)
     }
 
-
     func removeAccount(id: String) async throws {
         try await engine.removeAccount(accountId: id)
     }
@@ -264,7 +270,7 @@ final class RustEngine: MailEngine {
             relayURL: s.relayUrl,
             topic: s.topic,
             accounts: s.accounts.map {
-                PushAccountState(id: $0.accountId, watchExpiresAt: $0.watchExpiresAtMs.map { Date(timeIntervalSince1970: Double($0) / 1000) })
+                PushAccountState(id: $0.accountId, watchExpiresAt: $0.watchExpiresAtMs.map(Date.init(epochMs:)))
             }
         )
     }
@@ -396,30 +402,21 @@ private extension ThreadRow {
 }
 
 private extension MessageItem {
+    /// `myEmail` is the account's address: recipients matching it become
+    /// "me", and the message is the user's own when its sender is that
+    /// address exactly (a substring test made "hana@…" the user's own
+    /// mail on the "ana@…" account).
     init(_ m: MailMessage, myEmail: String) {
-        let address = m.fromAddr.firstMatchInAngleBrackets ?? m.fromAddr
-        let name = m.fromAddr.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
         self.init(
             id: m.id,
-            fromName: name.isEmpty ? address : name.trimmingCharacters(in: CharacterSet(charactersIn: "\"")),
-            fromAddress: address,
-            to: m.toAddrs.map { a in
-                let addr = a.firstMatchInAngleBrackets ?? a
-                return addr.caseInsensitiveCompare(myEmail) == .orderedSame ? "me" : addr
-            },
+            fromName: EmailAddress.displayName(in: m.fromAddr),
+            fromAddress: EmailAddress.address(in: m.fromAddr),
+            to: m.toAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) },
             date: Date(epochMs: m.date), snippet: m.snippet,
             bodyHTML: m.bodyHtml, bodyText: m.bodyText, isRead: m.isRead,
-            isMine: m.fromAddr.localizedCaseInsensitiveContains(myEmail),
+            isMine: EmailAddress.same(m.fromAddr, myEmail),
             isDraft: m.labelIds.contains("DRAFT")
         )
-    }
-}
-
-private extension String {
-    var firstMatchInAngleBrackets: String? {
-        guard let open = firstIndex(of: "<"), let close = self[open...].firstIndex(of: ">") else { return nil }
-        return String(self[index(after: open)..<close])
     }
 }
 

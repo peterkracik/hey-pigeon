@@ -85,6 +85,7 @@ struct HeyPigeonApp: App {
                 Task { await ReminderLiveActivityController.sync(model) }
             case .background:
                 model.flushPendingSends()
+                model.flushPendingPrefs()
                 AppModel.scheduleBackgroundRefresh()
             default:
                 break

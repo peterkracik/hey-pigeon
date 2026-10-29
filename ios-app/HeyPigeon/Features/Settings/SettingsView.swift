@@ -9,7 +9,6 @@
 
 import AppIntents
 import SwiftUI
-import UIKit
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
@@ -67,7 +66,7 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .barTrailing) {
                     Button(role: .close) { Keyboard.dismiss(); dismiss() }
                 }
             }
@@ -159,7 +158,15 @@ private struct AccountRow: View {
                 TextEditor(text: $signature)
                     .frame(minHeight: 60)
                     .font(.subheadline)
-                    .onChange(of: signature) { _, s in model.updateAccount(account, signature: s) }
+                    // Saved once typing pauses: every save is a synced write
+                    // plus a reload of every account (it used to be one per
+                    // keystroke). Closing Settings saves what is left.
+                    .task(id: signature) {
+                        try? await Task.sleep(for: AppModel.prefSaveDelay)
+                        guard !Task.isCancelled else { return }
+                        saveSignature()
+                    }
+                    .onDisappear { saveSignature() }
                 Text("Appended to new messages from this account").font(.caption).foregroundStyle(Theme.textTertiary)
             }
             if disconnected {
@@ -181,6 +188,10 @@ private struct AccountRow: View {
         // Renamed or re-signed on another device while this row is open.
         .onChange(of: account.displayName) { _, v in name = v }
         .onChange(of: account.signature) { _, v in if v != signature { signature = v } }
+    }
+
+    private func saveSignature() {
+        if signature != account.signature { model.updateAccount(account, signature: signature) }
     }
 
     private var syncLine: String {
@@ -305,7 +316,7 @@ private struct AISection: View {
             if !openaiConfigured {
                 HStack {
                     SecureField("sk-…", text: $key)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .plainInput()
                         .onSubmit { connect() }
                     Button(saving ? "Verifying…" : "Connect") { connect() }
                         .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
@@ -318,7 +329,7 @@ private struct AISection: View {
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(anyApple
-                    ? "On this iPhone, Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own model with a much larger window and deeper reasoning: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. What you prefer and the fallback order follow you to your other devices."
+                    ? "On this \(Device.name), Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own model with a much larger window and deeper reasoning: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. What you prefer and the fallback order follow you to your other devices."
                     : "Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
                 usageLines
             }
@@ -420,9 +431,9 @@ enum AIFallbackPreset: CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
-        case .privateFirst: "On this iPhone, then Apple's cloud, then ChatGPT"
-        case .cloudFirst: "Apple's cloud, then on this iPhone, then ChatGPT"
-        case .onDeviceOnly: "Stay on this iPhone"
+        case .privateFirst: "On this \(Device.name), then Apple's cloud, then ChatGPT"
+        case .cloudFirst: "Apple's cloud, then on this \(Device.name), then ChatGPT"
+        case .onDeviceOnly: "Stay on this \(Device.name)"
         }
     }
 
@@ -447,7 +458,7 @@ private struct SiriSection: View {
             Toggle(isOn: $model.siriIndexEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Let Siri see your inbox")
-                    Text("Recent mail indexed on this iPhone — subject, sender, people, labels, and the text of messages you have opened — so Siri and Spotlight can find a thread and \"Ask my inbox\" can answer from it. The index never leaves the device.")
+                    Text("Recent mail indexed on this \(Device.name) — subject, sender, people, labels, and the text of messages you have opened — so Siri and Spotlight can find a thread and \"Ask my inbox\" can answer from it. The index never leaves the device.")
                         .font(.caption).foregroundStyle(Theme.textTertiary)
                 }
             }
@@ -458,21 +469,15 @@ private struct SiriSection: View {
             }
             SiriTipView(intent: WhatNeedsReplyIntent())
             ShortcutsLink()
-            Button { Self.openSystemSettings() } label: {
+            Button { SystemSettings.openAppSettings() } label: {
                 Label("Siri & Search for Hey Pigeon", systemImage: "gear")
             }
         } header: {
             Text("Siri & Search")
         } footer: {
-            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this iPhone.\n\nTo have Siri and Spotlight answer from Hey Pigeon's mail rather than Apple Mail's: keep the switch above on, make sure \"Show in Search\" and \"Learn from this App\" are on for Hey Pigeon in iOS Settings, and turn the same two off for Mail (iOS Settings › Apps › Mail › Siri & Search).")
+            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this \(Device.name).\n\nTo have Siri and Spotlight answer from Hey Pigeon's mail rather than Apple Mail's: keep the switch above on, make sure \"Show in Search\" and \"Learn from this App\" are on for Hey Pigeon in iOS Settings, and turn the same two off for Mail (iOS Settings › Apps › Mail › Siri & Search).")
         }
         .menuCard()
-    }
-
-    /// iOS Settings on this app's page: its Siri & Search switches live there.
-    static func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
     }
 }
 
@@ -485,7 +490,7 @@ private struct SiriSection: View {
 private struct DefaultAppSection: View {
     var body: some View {
         Section {
-            Button { open() } label: {
+            Button { SystemSettings.openDefaultApps() } label: {
                 Label("Set Hey Pigeon as the default email app", systemImage: "envelope.badge.person.crop")
             }
         } header: {
@@ -494,14 +499,6 @@ private struct DefaultAppSection: View {
             Text("Opens iOS Settings › Apps › Default Apps. Pick Hey Pigeon under Email and every mail link you tap — in Safari, Notes, a contact card, another app — opens a new message here, and \"send an email\" asked of Siri composes here too. Nothing is sent until you tap Send.")
         }
         .menuCard()
-    }
-
-    /// `UIApplication.openDefaultApplicationsSettingsURLString` (iOS 18.3+)
-    /// lands on Default Apps; the general Settings URL is the fallback.
-    private func open() {
-        let url = URL(string: UIApplication.openDefaultApplicationsSettingsURLString)
-            ?? URL(string: UIApplication.openSettingsURLString)
-        if let url { UIApplication.shared.open(url) }
     }
 }
 
@@ -533,7 +530,7 @@ private struct TriageSection: View {
                 HStack(spacing: 12) {
                     mark("AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("On this iPhone").font(.body.weight(.medium))
+                        Text("On this \(Device.name)").font(.body.weight(.medium))
                         Text("Apple Intelligence · sorts and prioritizes with nothing leaving the device")
                             .font(.caption).foregroundStyle(Theme.textTertiary)
                     }
@@ -592,7 +589,7 @@ private struct TriageSection: View {
             if !jevConfigured {
                 HStack {
                     SecureField("API key", text: $key)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .plainInput()
                         .onSubmit { connect() }
                     Button(saving ? "Verifying…" : "Connect") { connect() }
                         .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
@@ -644,7 +641,7 @@ private struct TriageSection: View {
             Text("Triage")
         } footer: {
             Text(onDevice
-                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this iPhone that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. Swipe a label left to remove it."
+                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this \(Device.name) that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. Swipe a label left to remove it."
                 : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
         }
         .menuCard()

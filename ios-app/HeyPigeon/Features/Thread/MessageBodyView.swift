@@ -3,6 +3,10 @@
 // the sender, every web link handed to the default browser and every
 // mailto: link to the app's own composer. The HTML arrives already sanitized by the core
 // (ammonia); this is the second layer.
+//
+// UIKit-backed (UITextView, WKWebView as UIViewRepresentable): the Mac port
+// needs NSViewRepresentable twins of SelectableText and HTMLView; the rules
+// (CSP, link policy, the injected scripts) carry over unchanged.
 
 import SwiftUI
 import WebKit
@@ -28,7 +32,9 @@ struct MessageBodyView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let html, !html.isEmpty {
-                if !imagesAllowed && html.localizedCaseInsensitiveContains("<img") {
+                // A plain case-insensitive scan: the locale-aware variant was
+                // far slower on long newsletters, on every render.
+                if !imagesAllowed && html.range(of: "<img", options: .caseInsensitive) != nil {
                     HStack(spacing: 6) {
                         Text("Remote images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
                         Spacer()
@@ -160,7 +166,10 @@ private struct SelectableText: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? UIScreen.main.bounds.width
+        // UIScreen.main is deprecated (and meaningless with several
+        // windows on iPad); the view's own window is the fallback width.
+        // A width is almost always proposed; 320 pt is the narrowest phone.
+        let width = proposal.width ?? uiView.window?.bounds.width ?? 320
         let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         return CGSize(width: width, height: ceil(fit.height))
     }

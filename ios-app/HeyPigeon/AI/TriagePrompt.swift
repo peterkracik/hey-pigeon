@@ -6,6 +6,8 @@
 import Foundation
 import HeyPigeonCore
 
+/// The shipped triage prompt and the helpers both the backend and the
+/// evaluation use.
 enum TriagePrompt {
     /// The instruction the shipped classifier runs with.
     static var instructions: String { TriagePromptVariant.shipped.instructions }

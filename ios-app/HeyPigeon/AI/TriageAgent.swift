@@ -19,6 +19,7 @@ import Foundation
 import FoundationModels
 import Observation
 
+/// Where a triage run is; the Live Activity shows `title`.
 enum TriagePhase: String, Codable, Sendable {
     case scan, decide, act, confirm, apply, done, cancelled, failed
 
@@ -72,8 +73,10 @@ struct TriageProfile {
     /// can reach it, else on device.
     static func current() -> TriageProfile {
         let device = SystemModelProvider()
-        let cloud = ModelProviderRegistry.provider(id: "apple-cloud")
-        let decide: any ModelProvider = (cloud?.availability.isAvailable == true) ? cloud! : device
+        var decide: any ModelProvider = device
+        if let cloud = ModelProviderRegistry.provider(id: PrivateCloudComputeProvider().id), cloud.availability.isAvailable {
+            decide = cloud
+        }
         return TriageProfile(scanProvider: device, decideProvider: decide, actProvider: device)
     }
 }
@@ -287,6 +290,7 @@ final class TriageAgent: TriageToolHost {
 
 // MARK: - Journal
 
+/// One journaled step of a triage run (a tool call or a phase note).
 struct TriageJournalEntry: Codable, Identifiable, Equatable {
     var id = UUID()
     let runId: UUID

@@ -33,7 +33,7 @@ struct MailListScreen: View {
             .navigationTitle(tab == .inbox ? model.folder.title : tab.title)
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .barLeading) {
                     Button { model.showSidebar = true } label: { Image(systemName: "line.3.horizontal") }
                         .accessibilityLabel("Folders and accounts")
                 }
@@ -41,20 +41,21 @@ struct MailListScreen: View {
                 // and which account — tap to switch account (desktop 0/1/2).
                 ToolbarItem(placement: .principal) { ListTitle(tab: tab) }
                 if model.aiConfigured {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .barTrailing) {
                         Button { model.openViewSummary() } label: { Image(systemName: "sparkles") }
                             .accessibilityLabel("Summarize this view")
                     }
                 }
                 // "Ask my inbox": on-device questions over the Spotlight index.
                 if tab == .inbox && InboxAsk.isAvailable(model) {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .barTrailing) {
                         Button { model.askSheet = AskPresentation() } label: { Image(systemName: "questionmark.bubble") }
                             .accessibilityLabel("Ask my inbox")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .barTrailing) {
                     Button { model.composeDraft = SendDraft() } label: { Image(systemName: "square.and.pencil") }
+                        .keyboardShortcut("n", modifiers: .command)
                         .accessibilityLabel("Compose")
                 }
             }
@@ -232,7 +233,7 @@ struct ThreadList: View {
         // thread entity, so "mark these done", "remind me about
         // the second one" and "archive everything from Lufthansa
         // here" resolve against what is on screen.
-        .appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier: row.id))
+        .appEntityIdentifier(MailThreadEntity.identifier(row.id))
         .padding(.bottom, 1) // the gap between rows, canvas showing through
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         .listRowBackground(Color.clear)

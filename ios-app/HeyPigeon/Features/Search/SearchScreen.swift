@@ -49,13 +49,13 @@ struct SearchScreen: View {
     }
 }
 
-/// "3 results" over the list; the core returns at most 50.
+/// "3 results" over the list; the core returns at most `AppModel.searchLimit`.
 private struct ResultCount: View {
     let count: Int
 
     var body: some View {
         HStack {
-            Text(count >= 50 ? "50+ results" : count == 1 ? "1 result" : "\(count) results")
+            Text(count >= AppModel.searchLimit ? "\(AppModel.searchLimit)+ results" : count == 1 ? "1 result" : "\(count) results")
                 .font(Theme.display(13, relativeTo: .caption))
                 .foregroundStyle(Theme.textTertiary)
             Spacer()
@@ -68,6 +68,7 @@ private struct ResultCount: View {
 
 // MARK: Filters
 
+/// Which person filter the picker sets.
 enum PersonField: String, Identifiable {
     case from, to
     var id: Self { self }
@@ -239,10 +240,9 @@ private struct PersonPicker: View {
             .scrollContentBackground(.hidden)
             .background(Theme.canvas)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Name or email")
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .plainInput()
             .navigationTitle(field.title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 if current != nil {
                     ToolbarItem(placement: .cancellationAction) {

@@ -82,6 +82,8 @@ enum Theme {
 }
 
 extension Color {
+    /// `0xRRGGBB`, sRGB, opaque. The light/dark pair is `Color(light:dark:)`
+    /// in Platform.swift.
     init(hex: UInt32) {
         self.init(
             .sRGB,
@@ -91,19 +93,13 @@ extension Color {
             opacity: 1
         )
     }
-
-    init(light: Color, dark: Color) {
-        self.init(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
-        })
-    }
 }
 
 /// The menu sheets (sidebar, Settings): the app's canvas, sections on
 /// cards, close in the nav bar — one look for both.
 extension View {
     func menuList() -> some View {
-        listStyle(.insetGrouped)
+        groupedListStyle()
             .listSectionSpacing(16)
             // The inset-grouped default leaves a wide gutter in a sheet; keep
             // the cards close to the edges like the inbox rows.
@@ -111,6 +107,17 @@ extension View {
             .contentMargins(.top, 4, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .background(Theme.canvas)
+    }
+
+    /// Inset-grouped on iOS / iPadOS; the Mac has no inset-grouped list,
+    /// and its plain inset style is the nearest.
+    @ViewBuilder
+    func groupedListStyle() -> some View {
+        #if os(iOS)
+        listStyle(.insetGrouped)
+        #else
+        listStyle(.inset)
+        #endif
     }
 
     /// A section of a menu sheet, on a card.
@@ -135,21 +142,4 @@ enum Appearance: String, CaseIterable, Identifiable {
         case .dark: .dark
         }
     }
-}
-
-/// The keyboard does not always go away on its own when a sheet closes or
-/// a tab switches; this resigns whatever has focus.
-@MainActor
-enum Keyboard {
-    static func dismiss() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-}
-
-@MainActor
-enum Haptics {
-    static func archive() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-    static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-    static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
-    static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
 }

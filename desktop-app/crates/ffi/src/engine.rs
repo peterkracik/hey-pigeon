@@ -204,9 +204,9 @@ impl Engine {
         Ok(out)
     }
 
-    /// Every scheduled ("remind me") thread, even archived / outside the
-    /// inbox window — the Scheduled view, and the source for local
-    /// reminder notifications.
+    /// Every scheduled ("remind me") thread still in the inbox, past the
+    /// inbox page window too — the Scheduled view, and the source for
+    /// local reminder notifications.
     pub fn list_scheduled(&self) -> Result<Vec<MailThread>, EngineError> {
         Ok(self
             .store
@@ -216,7 +216,8 @@ impl Engine {
             .collect())
     }
 
-    /// Every "needs reply" thread, even archived / outside the inbox window.
+    /// Every "needs reply" thread still in the inbox, past the inbox page
+    /// window too.
     pub fn list_needs_reply(&self) -> Result<Vec<MailThread>, EngineError> {
         Ok(self
             .store
@@ -335,7 +336,10 @@ impl Engine {
         account_id: String,
         mutation: Mutation,
     ) -> Result<(), EngineError> {
-        outbox::enqueue(&self.store, &account_id, mutation.into())?;
+        // Done/delete also clears the reminder and "needs reply" flag.
+        if outbox::enqueue(&self.store, &account_id, mutation.into())? {
+            self.push_devsync_later(account_id.clone());
+        }
         self.notify_threads_updated();
         self.drain_outbox().await
     }
@@ -905,6 +909,20 @@ mod tests {
             .upsert_thread(&sample_thread("t1", "a@x.com"))
             .unwrap();
 
+        Arc::clone(&e)
+            .set_schedule("t1".into(), Some(now_ms() + 86_400_000), true)
+            .unwrap();
+        let scheduled = e.list_scheduled().unwrap();
+        assert_eq!(scheduled.len(), 1);
+        assert!(scheduled[0].follow_up_since.is_some());
+        Arc::clone(&e).set_needs_reply("t1".into(), true).unwrap();
+        assert_eq!(e.list_needs_reply().unwrap().len(), 1);
+        // Flagged mail lives in those lists, not the inbox.
+        assert!(e
+            .list_threads(ThreadFilter::Inbox, None, None, 50)
+            .unwrap()
+            .is_empty());
+
         // No refresh token stored → the drain hits AuthExpired without any
         // network, the row is still archived locally and stays queued.
         Arc::clone(&e)
@@ -916,23 +934,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let inbox = e.list_threads(ThreadFilter::Inbox, None, None, 50).unwrap();
-        assert!(inbox.is_empty());
         let archived = e
             .list_threads(ThreadFilter::Archive, None, None, 50)
             .unwrap();
         assert_eq!(archived.len(), 1);
         assert!(archived[0].is_archived);
         assert_eq!(e.store.outbox_list(10).unwrap().len(), 1);
-
-        Arc::clone(&e)
-            .set_schedule("t1".into(), Some(now_ms() + 86_400_000), true)
-            .unwrap();
-        let scheduled = e.list_scheduled().unwrap();
-        assert_eq!(scheduled.len(), 1);
-        assert!(scheduled[0].follow_up_since.is_some());
-        Arc::clone(&e).set_needs_reply("t1".into(), true).unwrap();
-        assert_eq!(e.list_needs_reply().unwrap().len(), 1);
+        // Done ends the reminder and the "needs reply" flag.
+        assert!(archived[0].scheduled_at.is_none() && !archived[0].needs_reply);
+        assert!(e.list_scheduled().unwrap().is_empty());
+        assert!(e.list_needs_reply().unwrap().is_empty());
 
         let status = e.account_status().unwrap();
         assert_eq!(status.len(), 1);
@@ -942,13 +953,19 @@ mod tests {
         assert_eq!(status[0].sync, SyncState::Pending);
 
         // Reopen: the account has no refresh token → starts out disconnected,
-        // and the local state (archive, reminder, flag) survived.
+        // and the local state (archive, cleared flags) survived.
         drop(e);
         let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
         let status = e.account_status().unwrap();
         assert_eq!(status[0].connection, ConnectionState::Disconnected);
-        assert_eq!(e.list_scheduled().unwrap().len(), 1);
-        assert_eq!(e.list_needs_reply().unwrap().len(), 1);
+        assert_eq!(
+            e.list_threads(ThreadFilter::Archive, None, None, 50)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(e.list_scheduled().unwrap().is_empty());
+        assert!(e.list_needs_reply().unwrap().is_empty());
         assert_eq!(e.store.outbox_list(10).unwrap().len(), 1);
 
         e.remove_account("a@x.com".into()).await.unwrap();

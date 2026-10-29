@@ -86,13 +86,14 @@ final class MockEngine: MailEngine {
     }
 
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow] {
-        let now = Date()
         var list = rows.values.filter { accountId == nil || $0.accountId == accountId }
+        // Same rules as the core: a reminder or Need reply moves an inbox
+        // thread into those lists; done mail is in neither.
         switch view {
         case .inbox:
-            list = list.filter { !$0.isArchived && ($0.scheduledAt.map { $0 <= now } ?? true) }
-        case .scheduled: list = list.filter { $0.scheduledAt != nil }
-        case .needReply: list = list.filter { $0.needsReply }
+            list = list.filter { !$0.isArchived && $0.scheduledAt == nil && !$0.needsReply }
+        case .scheduled: list = list.filter { !$0.isArchived && $0.scheduledAt != nil }
+        case .needReply: list = list.filter { !$0.isArchived && $0.needsReply }
         case .starred: list = list.filter { $0.isStarred }
         case .archive: list = list.filter { $0.isArchived }
         case .all: break
@@ -167,7 +168,7 @@ final class MockEngine: MailEngine {
 
     func perform(_ action: MailAction, accountId: String) async throws {
         switch action {
-        case .archive(let id): update(id) { $0.isArchived = true }
+        case .archive(let id): update(id) { $0.isArchived = true; $0.scheduledAt = nil; $0.isFollowUp = false; $0.needsReply = false }
         case .unarchive(let id): update(id) { $0.isArchived = false }
         case .markRead(let id, let read): update(id) { $0.isRead = read }
         case .trash(let id): rows.removeValue(forKey: id)

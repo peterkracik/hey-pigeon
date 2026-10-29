@@ -76,23 +76,18 @@ impl MemStore {
     }
 }
 
-/// Same folder semantics as the SQLite adapter's SQL (keep in lockstep).
-/// True while a thread's "remind me" schedule is still in the future.
-fn is_snoozed(t: &Thread) -> bool {
-    t.scheduled_at.is_some_and(|at| at > now_ms())
-}
-
 fn matches_filter(t: &Thread, filter: &ThreadFilter) -> bool {
     let has = |l: &str| t.labels.iter().any(|x| x == l);
     // Junk only when trashed/spam AND out of the inbox — a partially-trashed
     // thread keeps INBOX and stays in All/Starred/Sent/label views.
     let junk = (has("TRASH") || has("SPAM")) && !has("INBOX");
     match filter {
-        // "Remind me later" = snooze: a thread scheduled for a future
-        // instant stays out of the inbox until that instant passes (it
-        // still lives in Scheduled / All). Keep in lockstep with the SQLite
-        // adapter's thread_filter_sql.
-        ThreadFilter::Inbox => t.is_inbox && !t.is_archived && !is_snoozed(t),
+        // A reminder or "needs reply" moves a thread out of the inbox into
+        // Scheduled / Need reply (it stays in All). Keep in lockstep with
+        // the SQLite adapter's thread_filter_sql.
+        ThreadFilter::Inbox => {
+            t.is_inbox && !t.is_archived && t.scheduled_at.is_none() && !t.needs_reply
+        }
         ThreadFilter::All => !junk,
         ThreadFilter::Starred => has("STARRED") && !junk,
         ThreadFilter::Sent => has("SENT") && !junk,
@@ -1053,10 +1048,11 @@ mod tests {
     }
 
     #[test]
-    fn future_schedule_hides_thread_from_inbox_until_due() {
+    fn reminder_or_needs_reply_moves_thread_out_of_inbox() {
         let s = MemStore::default();
-        s.upsert_thread(&thread("later", &["INBOX"])).unwrap();
-        s.upsert_thread(&thread("now", &["INBOX"])).unwrap();
+        for id in ["later", "due", "reply", "plain"] {
+            s.upsert_thread(&thread(id, &["INBOX"])).unwrap();
+        }
         let inbox = |s: &MemStore| {
             let mut v: Vec<String> = s
                 .list_threads(None, &ThreadFilter::Inbox, None, 10)
@@ -1069,21 +1065,24 @@ mod tests {
         };
         s.set_schedule(&"later".to_string(), Some(now_ms() + 86_400_000))
             .unwrap();
-        s.set_schedule(&"now".to_string(), Some(now_ms() - 60_000))
+        // A reminder that came due stays in Scheduled, not the inbox.
+        s.set_schedule(&"due".to_string(), Some(now_ms() - 60_000))
             .unwrap();
-        assert_eq!(inbox(&s), ["now"], "snoozed thread leaves the inbox");
+        s.set_needs_reply(&"reply".to_string(), true).unwrap();
+        assert_eq!(inbox(&s), ["plain"]);
         assert_eq!(
             s.list_threads(None, &ThreadFilter::All, None, 10)
                 .unwrap()
                 .len(),
-            2,
-            "All mail still shows it"
+            4,
+            "All mail still shows them"
         );
         s.set_schedule(&"later".to_string(), None).unwrap();
+        s.set_needs_reply(&"reply".to_string(), false).unwrap();
         assert_eq!(
             inbox(&s),
-            ["later", "now"],
-            "clearing the schedule restores it"
+            ["later", "plain", "reply"],
+            "clearing the flag restores it"
         );
     }
 }

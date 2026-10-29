@@ -287,21 +287,22 @@ fn not_junk_sql(col: &str) -> String {
 /// is the SQL parameter placeholder to interpolate for `ThreadFilter::Label`
 /// (callers differ on which positional slot is free). Keep in lockstep with
 /// fakes::matches_filter.
+/// Mail still waiting in the inbox: not done, not deleted. The Scheduled
+/// and Need reply lists hold only these.
+const INBOX_SQL: &str = "is_inbox = 1 AND is_archived = 0";
+
 fn thread_filter_sql<'a>(filter: &'a ThreadFilter, label_bind: &str) -> (String, Option<&'a str>) {
     let has = |label: &str| has_label_sql("threads.labels", label);
     let not_junk = not_junk_sql("threads.labels");
     match filter {
         // Flag-based, not label-based: the optimistic local apply flips
         // the flags instantly, before any provider round-trip.
-        // "Remind me later" = snooze: a thread scheduled for a future
-        // instant is hidden from the inbox (list and unread badge) until
-        // that instant passes. It stays in Scheduled / All / Archive.
+        // A thread with a reminder (due or not) or flagged "needs reply"
+        // lives in the Scheduled / Need reply lists instead of the inbox
+        // (list and unread badge), until the flag is cleared or the thread
+        // is done. It stays in All mail.
         ThreadFilter::Inbox => (
-            format!(
-                "is_inbox = 1 AND is_archived = 0
-                 AND (scheduled_at IS NULL OR scheduled_at <= {})",
-                now_ms()
-            ),
+            format!("{INBOX_SQL} AND scheduled_at IS NULL AND needs_reply = 0"),
             None,
         ),
         // Archive semantics: see sync::derive_is_archived — no INBOX/
@@ -461,14 +462,15 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Every scheduled thread, regardless of inbox/archive state — the
-    /// calendar view must keep showing reminders after the thread is
-    /// archived out of the inbox window (and past the inbox page limit).
+    /// Every scheduled thread still in the inbox, past the inbox page
+    /// limit too (the inbox list itself leaves them out). Done mail has no
+    /// reminder: archiving clears it (`devsync::clear_on_done`), and this
+    /// filter covers mail archived elsewhere, e.g. in Gmail.
     pub fn list_scheduled(&self) -> Result<Vec<Thread>, StoreError> {
         self.with(|c| {
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
-                 WHERE scheduled_at IS NOT NULL
+                 WHERE scheduled_at IS NOT NULL AND {INBOX_SQL}
                  ORDER BY scheduled_at ASC"
             ))?;
             let rows = stmt.query_map([], row_to_thread)?;
@@ -476,16 +478,14 @@ impl SqliteStore {
         })
     }
 
-    /// Every thread flagged "needs reply", regardless of inbox/archive state
-    /// or the inbox page window — same reasoning as `list_scheduled`: the
-    /// Need reply view must keep showing a flagged thread after it is
-    /// archived or scrolls past the inbox page limit. Newest first, matching
-    /// the inbox's natural order.
+    /// Every thread flagged "needs reply" still in the inbox — same rules
+    /// as `list_scheduled`. Newest first, matching the inbox's natural
+    /// order.
     pub fn list_needs_reply(&self) -> Result<Vec<Thread>, StoreError> {
         self.with(|c| {
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
-                 WHERE needs_reply = 1
+                 WHERE needs_reply = 1 AND {INBOX_SQL}
                  ORDER BY last_msg_at DESC"
             ))?;
             let rows = stmt.query_map([], row_to_thread)?;
@@ -1727,9 +1727,7 @@ mod tests {
         );
 
         // Listing exposes it too (drives the calendar view).
-        let listed = store
-            .list_threads(None, &ThreadFilter::Inbox, None, 10)
-            .unwrap();
+        let listed = store.list_scheduled().unwrap();
         assert_eq!(
             listed.iter().find(|t| t.id == id).unwrap().scheduled_at,
             Some(1_756_700_000_000)
@@ -1744,88 +1742,91 @@ mod tests {
         );
     }
 
-    /// "Remind me later" = snooze: while the schedule is in the future the
-    /// thread is out of the inbox list and badge; once due (or cleared) it
-    /// is back. Scheduled / All keep showing it throughout.
+    /// A reminder (due or not) or "needs reply" moves the thread out of
+    /// the inbox list and badge into Scheduled / Need reply; clearing the
+    /// flag brings it back. All mail keeps showing it throughout.
     #[test]
-    fn future_schedule_hides_thread_from_inbox_until_due() {
+    fn reminder_or_needs_reply_moves_thread_out_of_inbox() {
         let s = store();
         seed_labelled(&s, "later", &["INBOX"], true, false, 8000);
-        seed_labelled(&s, "now", &["INBOX"], true, false, 7000);
+        seed_labelled(&s, "due", &["INBOX"], true, false, 7000);
+        seed_labelled(&s, "reply", &["INBOX"], true, false, 6000);
+        seed_labelled(&s, "plain", &["INBOX"], true, false, 5000);
         s.with(|c| {
             c.execute("UPDATE threads SET is_read = 0", [])?;
             Ok(())
         })
         .unwrap();
-        let far_future = now_ms() + 86_400_000;
-        s.set_schedule(&"later".to_string(), Some(far_future))
+        s.set_schedule(&"later".to_string(), Some(now_ms() + 86_400_000))
             .unwrap();
-        // Due already (one minute ago) — a reminder that fired stays visible.
-        s.set_schedule(&"now".to_string(), Some(now_ms() - 60_000))
+        s.set_schedule(&"due".to_string(), Some(now_ms() - 60_000))
             .unwrap();
+        s.set_needs_reply(&"reply".to_string(), true).unwrap();
 
-        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["now"]);
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["plain"]);
         assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 1);
-        // Other views are untouched by the snooze.
-        assert_eq!(ids(&s, &ThreadFilter::All), ["later", "now"]);
+        assert_eq!(
+            ids(&s, &ThreadFilter::All),
+            ["due", "later", "plain", "reply"]
+        );
         assert_eq!(
             s.list_scheduled()
                 .unwrap()
                 .iter()
                 .map(|t| t.id.as_str())
                 .collect::<Vec<_>>(),
-            ["now", "later"]
+            ["due", "later"]
         );
 
-        // Removing the schedule brings the thread straight back.
         s.set_schedule(&"later".to_string(), None).unwrap();
-        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["later", "now"]);
-        assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 2);
+        s.set_needs_reply(&"reply".to_string(), false).unwrap();
+        assert_eq!(ids(&s, &ThreadFilter::Inbox), ["later", "plain", "reply"]);
+        assert_eq!(s.count_unread(None, &ThreadFilter::Inbox).unwrap(), 3);
     }
 
     #[tokio::test]
-    async fn list_scheduled_includes_archived_threads() {
+    async fn done_drops_thread_from_scheduled_and_need_reply() {
         let store = store();
         let provider = FakeProvider::with_sample_data("a1", 3, 10);
         sync::backfill(&provider, &store, &"a1".to_string(), 30)
             .await
             .unwrap();
-        let id = store
-            .list_threads(None, &ThreadFilter::Inbox, None, 1)
-            .unwrap()[0]
-            .id
-            .clone();
-        store.set_schedule(&id, Some(42)).unwrap();
+        let ids: Vec<_> = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 2)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        let (done, elsewhere) = (&ids[0], &ids[1]);
+        for id in [done, elsewhere] {
+            store.set_schedule(id, Some(42)).unwrap();
+            store.set_needs_reply(id, true).unwrap();
+        }
 
-        // "Remind later" flow: schedule, then archive to clear the inbox.
+        // Done in the app clears the flags.
         outbox::enqueue(
             &store,
             &"a1".to_string(),
             Mutation::Archive {
-                thread_id: id.clone(),
+                thread_id: done.clone(),
             },
         )
         .unwrap();
-        assert!(
-            !store
-                .list_threads(None, &ThreadFilter::Inbox, None, 10)
-                .unwrap()
-                .iter()
-                .any(|t| t.id == id),
-            "archived thread leaves the inbox list"
-        );
+        let t = store.get_thread(done).unwrap().unwrap();
+        assert_eq!((t.scheduled_at, t.needs_reply), (None, false));
 
-        // ...but the calendar feed still shows it.
-        let scheduled = store.list_scheduled().unwrap();
-        assert_eq!(scheduled.iter().filter(|t| t.id == id).count(), 1);
-        assert_eq!(
-            scheduled.iter().find(|t| t.id == id).unwrap().scheduled_at,
-            Some(42)
-        );
-
-        // Clearing the schedule removes it from the feed.
-        store.set_schedule(&id, None).unwrap();
-        assert!(!store.list_scheduled().unwrap().iter().any(|t| t.id == id));
+        // Archived elsewhere (Gmail): the flags remain, but the lists only
+        // hold mail still in the inbox.
+        store
+            .with(|c| {
+                c.execute(
+                    "UPDATE threads SET is_inbox = 0, is_archived = 1 WHERE id = ?1",
+                    params![elsewhere],
+                )
+            })
+            .unwrap();
+        assert!(store.list_scheduled().unwrap().is_empty());
+        assert!(store.list_needs_reply().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1893,25 +1894,12 @@ mod tests {
             store.get_thread(&id).unwrap().unwrap().needs_reply,
             "needs_reply survives provider re-upsert"
         );
-        assert!(
-            store
-                .list_threads(None, &ThreadFilter::Inbox, None, 10)
-                .unwrap()
-                .iter()
-                .find(|t| t.id == id)
-                .unwrap()
-                .needs_reply
-        );
-
-        // Archiving clears the inbox but not the Need reply feed.
-        outbox::enqueue(
-            &store,
-            &"a1".to_string(),
-            Mutation::Archive {
-                thread_id: id.clone(),
-            },
-        )
-        .unwrap();
+        // It moves from the inbox to the Need reply feed.
+        assert!(!store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()
+            .iter()
+            .any(|t| t.id == id));
         let flagged = store.list_needs_reply().unwrap();
         assert_eq!(flagged.iter().filter(|t| t.id == id).count(), 1);
         assert!(flagged.iter().all(|t| t.needs_reply));

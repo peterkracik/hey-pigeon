@@ -1,6 +1,6 @@
 // "Remind me" (desktop `h`): presets, a date picker, and the follow-up
-// toggle ("only if nobody replies"). Setting a reminder hides the thread
-// from the inbox until then — that is also the snooze.
+// toggle ("only if nobody replies"). Setting a reminder moves the thread
+// from the inbox to Scheduled until it is removed or the thread is done.
 //
 // A plain iOS 26 sheet: the system draws the glass background and the
 // grabber; the content is a grouped list with a title row and a close

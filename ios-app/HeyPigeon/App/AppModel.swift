@@ -130,22 +130,19 @@ final class AppModel {
     /// Drafts are read, so the unread map has none: the sidebar shows how many there are.
     var draftsCount: Int { (try? engine.threads(in: .drafts, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
     var needReplyCount: Int { (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0 }
-    /// Reminders due today — the Scheduled tab's badge. The app icon badge
-    /// adds the unified count (NewMailNotifier.refreshBadge).
-    var dueTodayCount: Int { Self.dueToday(scheduledThreads(accountId: selectedAccountId)).count }
+    /// Reminders whose time has passed — the Scheduled tab's badge. The app
+    /// icon badge adds the unified count (NewMailNotifier.refreshBadge).
+    var dueCount: Int { Self.due(scheduledThreads(accountId: selectedAccountId)).count }
 
-    /// Every scheduled thread (archived and snoozed ones too, like the
-    /// Scheduled tab), one account or all.
+    /// Every scheduled thread still in the inbox (done mail has no
+    /// reminder), one account or all.
     func scheduledThreads(accountId: String?) -> [ThreadRow] {
         (try? engine.threads(in: .scheduled, accountId: accountId, before: nil, limit: 500)) ?? []
     }
 
-    /// "Scheduled for today": the reminder's time falls on today's calendar
-    /// day, fired already or not. Overdue from earlier days is not today's
-    /// badge, and tomorrow's is not yet.
-    static func dueToday(_ threads: [ThreadRow], now: Date = Date()) -> [ThreadRow] {
-        let cal = Calendar.current
-        return threads.filter { t in t.scheduledAt.map { cal.isDate($0, inSameDayAs: now) } ?? false }
+    /// Reminders that have come due (their time is now or past).
+    static func due(_ threads: [ThreadRow], now: Date = Date()) -> [ThreadRow] {
+        threads.filter { t in t.scheduledAt.map { $0 <= now } ?? false }
     }
 
     var disconnectedAccountId: String?
@@ -481,11 +478,23 @@ final class AppModel {
     // engine applies locally before returning)
 
     /// Desktop `e`: archive is "done".
+    /// Done also ends the reminder and Need reply (the engine clears them);
+    /// Undo puts them back.
     func markDone(_ row: ThreadRow) {
         Haptics.archive()
         perform(.archive(threadId: row.id), on: row, toast: "Marked done") { [weak self] in
             self?.perform(.unarchive(threadId: row.id), on: row)
+            self?.restoreFlags(row)
         }
+    }
+
+    private func restoreFlags(_ row: ThreadRow) {
+        do {
+            if let at = row.scheduledAt {
+                try engine.setReminder(threadId: row.id, at: at, onlyIfNoReply: row.isFollowUp)
+            }
+            if row.needsReply { try engine.setNeedsReply(threadId: row.id, true) }
+        } catch { show(error.localizedDescription) }
     }
 
     func markNotDone(_ row: ThreadRow) {
@@ -571,7 +580,9 @@ final class AppModel {
         switch action {
         case .done: toggleDone(row)
         case .delete: delete(row)
-        case .remind: pendingRemind = row
+        // A thread that already has a reminder: the swipe removes it.
+        case .remind:
+            if row.scheduledAt != nil { remind(row, at: nil, onlyIfNoReply: false) } else { pendingRemind = row }
         case .needReply: toggleNeedsReply(row)
         case .pin: togglePin(row)
         case .read: toggleRead(row)

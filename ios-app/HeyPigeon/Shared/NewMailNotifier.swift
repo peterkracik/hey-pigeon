@@ -1,6 +1,6 @@
 // A silent push arrived: sync that account, tell the user about threads
 // that are new since the last look, keep the badge honest (unread inbox +
-// reminders due today). Text is composed here from the local database —
+// reminders that came due). Text is composed here from the local database —
 // the relay never had it.
 
 import Foundation
@@ -46,14 +46,14 @@ enum NewMailNotifier {
         return changed || !fresh.isEmpty ? .newData : .noData
     }
 
-    /// Badge = unread in the unified inbox + reminders due today, across
+    /// Badge = unread in the unified inbox + reminders that came due, across
     /// every account. Also called after every sync and reload, so it is
     /// right with the relay off too.
     @MainActor
     static func refreshBadge(_ model: AppModel) async {
         let unread = (try? model.engine.unreadCounts(accountId: nil))?["inbox"] ?? 0
-        let dueToday = AppModel.dueToday(model.scheduledThreads(accountId: nil)).count
-        try? await UNUserNotificationCenter.current().setBadgeCount(unread + dueToday)
+        let due = AppModel.due(model.scheduledThreads(accountId: nil)).count
+        try? await UNUserNotificationCenter.current().setBadgeCount(unread + due)
     }
 
     @MainActor

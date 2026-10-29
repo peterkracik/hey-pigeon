@@ -74,14 +74,6 @@
     labelColors = { ...labelColors, [key]: tag };
     savePref("sidebarLabelColors", labelColors);
   }
-  // Schedule view filter: everything, or hide completed reminders (the
-  // still-outstanding ones are what matter — isolating only-done made no
-  // sense as the switcher's second option).
-  let schedFilter: "all" | "active" = $state(readJson("schedFilter", "all"));
-  function setSchedFilter(v: string) {
-    schedFilter = v as "all" | "active";
-    localStorage.setItem("schedFilter", JSON.stringify(schedFilter));
-  }
   // Inbox/folder view filter: everything, or only unread.
   let inboxFilter: "all" | "unread" = $state(readJson("inboxFilter", "all"));
   function setInboxFilter(v: string) {
@@ -382,26 +374,15 @@
     if (f.startsWith("label:")) return f as ipc.ThreadFilter;
     return FOLDER_FILTERS[f] ?? null;
   }
-  // "Remind me later" = snooze: a thread scheduled for a future instant is
-  // hidden from the inbox until then (the backend's inbox query and unread
+  // A reminder (due or not) or "needs reply" moves a thread out of the
+  // inbox into Scheduled / Need reply until the flag is cleared or the
+  // thread is done (done clears both). The backend's inbox query and unread
   // badge apply the same rule; this covers the optimistic window right after
-  // scheduling, rows merged in from list_scheduled, and browser mock mode).
-  // It stays in Scheduled, All mail and Need reply.
-  const isSnoozed = (scheduledAt: number | null | undefined): boolean =>
-    scheduledAt !== null && scheduledAt !== undefined && scheduledAt > Date.now();
-  // "Scheduled for today": the reminder's time falls on today's calendar
-  // day, already fired or not. Overdue from earlier days is not today's
-  // badge, and tomorrow's is not yet.
-  const isDueToday = (scheduledAt: number | null | undefined): boolean => {
-    if (scheduledAt === null || scheduledAt === undefined) return false;
-    const startOfToday = new Date().setHours(0, 0, 0, 0);
-    return scheduledAt >= startOfToday && scheduledAt < startOfToday + 86_400_000;
-  };
-  // Folder key for a thread merged in from outside the active folder page
-  // (list_scheduled / list_needs_reply): never "inbox" for a thread the
-  // inbox must not show.
-  const liveFolderFor = (t: ipc.BackendThread): string =>
-    !t.is_inbox || t.is_archived ? "archive" : isSnoozed(t.scheduled_at) ? "scheduled" : "inbox";
+  // flagging, and browser mock mode. All mail still lists them.
+  const isParked = (e: Email): boolean => e.scheduledAt !== undefined || !!e.needsReply;
+  // Scheduled and Need reply hold only mail still waiting in the inbox.
+  // Mail archived elsewhere (Gmail) keeps its flags but leaves both lists.
+  const inInbox = (e: Email): boolean => !e.done && (e.labels?.includes("INBOX") ?? e.folder === "inbox");
   // Last fetched rows per folder — shown instantly on folder switch while
   // the refetch runs.
   const folderCache = new Map<string, Email[]>();
@@ -487,17 +468,14 @@
     // (inbox + starred, say) must render in the open view.
     for (const t of folderThreads) push(t, f);
     for (const t of threads) push(t, "inbox");
-    // Scheduled threads that left the inbox window (archived, snoozed until
-    // a future date, or beyond the list_threads page limit) must still feed
-    // the calendar view. Ones the inbox must not show (archived, snoozed)
-    // must not leak into the inbox folder view.
+    // Scheduled / flagged inbox threads: the inbox list leaves them out, so
+    // they come from their own feeds (isParked keeps them out of the inbox
+    // view).
     for (const t of scheduled) {
-      if (!seen.has(t.id)) push(t, liveFolderFor(t));
+      if (!seen.has(t.id)) push(t, "inbox");
     }
-    // Same for flagged threads — the Need reply view must keep showing a
-    // thread after it is archived, snoozed, or scrolled past the inbox page.
     for (const t of needsReply) {
-      if (!seen.has(t.id)) push(t, liveFolderFor(t));
+      if (!seen.has(t.id)) push(t, "inbox");
     }
     emailsData = rows;
     folderCache.set(f, rows.filter((e) => f === "all" || e.folder === f));
@@ -621,23 +599,22 @@
     const base =
       view === "calendar"
         ? emailsData
-            .filter((e) => e.scheduledAt !== undefined)
-            .filter((e) => schedFilter === "all" || !e.done)
+            .filter((e) => e.scheduledAt !== undefined && inInbox(e))
             .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter))
             .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0))
         : view === "needreply"
-          ? // Need reply view: every flagged thread whatever its folder,
-            // newest mail first (same natural order as the inbox).
+          ? // Need reply view: every flagged inbox thread, newest mail
+            // first (same natural order as the inbox).
             emailsData
-              .filter((e) => e.needsReply)
+              .filter((e) => e.needsReply && inInbox(e))
               .filter((e) => inboxFilter === "all" || e.unread)
               .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter))
               .sort((a, b) => (b.lastMsgAt ?? 0) - (a.lastMsgAt ?? 0))
           : emailsData
               .filter((e) => (folder === "all" ? true : e.folder === folder))
-              // Snoozed ("remind me later") threads stay out of the inbox
-              // until their date; All mail still lists them.
-              .filter((e) => folder !== "inbox" || !isSnoozed(e.scheduledAt))
+              // Scheduled / Need reply threads stay out of the inbox; All
+              // mail still lists them.
+              .filter((e) => folder !== "inbox" || !isParked(e))
               .filter((e) => inboxFilter === "all" || e.unread)
               .filter((e) => activeTriageFilter === null || (e.triageLabelIds ?? []).includes(activeTriageFilter));
     const mapped = base
@@ -690,19 +667,25 @@
   // Backend-computed unread counts in live mode (every folder + label,
   // account-scoped like the rest of the view); a small inbox-only mock in
   // browser dev mode.
-  // Reminders due today, scoped like the view (unified or one account) —
-  // the badge on the rail's Scheduled button and the sidebar's Scheduled
-  // row. list_scheduled feeds every scheduled thread into emailsData, so
-  // archived and snoozed ones are counted too, like the Scheduled view.
-  const dueTodayCount = $derived(
-    emailsData.filter((e) => isDueToday(e.scheduledAt) && (unified || e.accountId === activeAccountId)).length,
+  // Rail / sidebar badges, scoped like the view (unified or one account):
+  // Inbox = unread, Scheduled = reminders whose time has passed, Need
+  // reply = every flagged thread. `now` ticks so a reminder coming due
+  // raises the badge without waiting for a refresh.
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(t);
+  });
+  const inView = (e: Email) => inInbox(e) && (unified || e.accountId === activeAccountId);
+  const overdueCount = $derived(
+    emailsData.filter((e) => e.scheduledAt !== undefined && e.scheduledAt <= now && inView(e)).length,
   );
-  const counts = $derived({
+  const needReplyCount = $derived(emailsData.filter((e) => e.needsReply && inView(e)).length);
+  const counts: Record<string, number> = $derived({
     ...(ipc.isTauri && liveAccounts.length
       ? liveCounts
-      : { inbox: EMAILS_SEED.filter((e) => e.folder === "inbox" && e.unread).length }),
-    // Scheduled has no unread count; its badge is what is due today.
-    scheduled: dueTodayCount,
+      : { inbox: EMAILS_SEED.filter((e) => e.folder === "inbox" && e.unread && !isParked(e)).length }),
+    scheduled: overdueCount,
   });
   const title = $derived.by(() =>
     view === "calendar"
@@ -882,10 +865,10 @@
     emailsData = emailsData.map((e) =>
       e.id === id ? { ...e, scheduledAt: scheduledAt ?? undefined, followUp: isFollowUp || undefined } : e,
     );
-    // A future schedule snoozes the thread out of the inbox: the row leaves
-    // the list right away, so drop the selection like archive does rather
-    // than keep a preview of a row that is no longer there.
-    if (selectedId === id && view === "mail" && folder === "inbox" && isSnoozed(scheduledAt)) {
+    // A schedule moves the thread out of the inbox: the row leaves the
+    // list right away, so drop the selection like archive does rather than
+    // keep a preview of a row that is no longer there.
+    if (selectedId === id && view === "mail" && folder === "inbox" && scheduledAt !== null) {
       selectedId = null;
     }
     const confirm = () =>
@@ -1640,6 +1623,9 @@
           size={17}
           fill={view === "mail" ? "currentColor" : "none"}
         />
+        {#if (counts.inbox ?? 0) > 0}
+          <span class="rail-badge" aria-label="{counts.inbox} unread">{counts.inbox}</span>
+        {/if}
       </button>
       <button
         class="rail-btn"
@@ -1651,8 +1637,8 @@
           d="M8 3v3M16 3v3M4 9h17M6 5h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2z"
           size={17}
         />
-        {#if dueTodayCount > 0}
-          <span class="rail-badge" aria-label="{dueTodayCount} due today">{dueTodayCount}</span>
+        {#if overdueCount > 0}
+          <span class="rail-badge" aria-label="{overdueCount} due">{overdueCount}</span>
         {/if}
       </button>
       <button
@@ -1662,6 +1648,9 @@
         onclick={() => switchView("needreply")}
       >
         <Icon d={NEED_REPLY_D} size={17} />
+        {#if needReplyCount > 0}
+          <span class="rail-badge" aria-label="{needReplyCount} need reply">{needReplyCount}</span>
+        {/if}
       </button>
       <button class="rail-btn" class:active={view === "search"} title="Search" onclick={openSearch}>
         <Icon d="M11 3a8 8 0 100 16 8 8 0 000-16zM21 21l-4.35-4.35" size={17} />
@@ -1785,19 +1774,7 @@
             {#if !threadOpen}
               <div class="topbar-actions">
                 <div class="topbar-actions-col">
-                  {#if view === "calendar"}
-                    <span class="topbar-filter">
-                      <SegmentedControl
-                        size="sm"
-                        options={[
-                          { value: "all", d: "M4 6h16M4 12h16M4 18h16", title: "All" },
-                          { value: "active", d: "M12 5a7 7 0 100 14 7 7 0 000-14z", title: "Hide done" },
-                        ]}
-                        value={schedFilter}
-                        onchange={setSchedFilter}
-                      />
-                    </span>
-                  {:else if view === "mail" || view === "needreply"}
+                  {#if view === "mail" || view === "needreply"}
                     <span class="topbar-filter">
                       <SegmentedControl
                         size="sm"

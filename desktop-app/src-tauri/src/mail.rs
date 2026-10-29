@@ -234,15 +234,15 @@ pub fn unread_counts(
     Ok(out)
 }
 
-/// Calendar feed: every scheduled thread, regardless of inbox/archive state
-/// or the inbox page window — a schedule must stay visible after archiving.
+/// Calendar feed: every scheduled thread still in the inbox, past the inbox
+/// page window too (the inbox list leaves them out). Done mail has none.
 #[tauri::command]
 pub fn list_scheduled(state: State<'_, MailState>) -> Result<Vec<Thread>, String> {
     state.store.list_scheduled().map_err(estr)
 }
 
 /// Need reply feed: every thread the user flagged as waiting on their
-/// answer, regardless of inbox/archive state or the inbox page window.
+/// answer that is still in the inbox, past the inbox page window too.
 #[tauri::command]
 pub fn list_needs_reply(state: State<'_, MailState>) -> Result<Vec<Thread>, String> {
     state.store.list_needs_reply().map_err(estr)
@@ -305,8 +305,12 @@ pub async fn mutate(
     account_id: AccountId,
     mutation: Mutation,
 ) -> Result<(), String> {
-    outbox::enqueue(&state.store, &account_id, mutation).map_err(estr)?;
+    // Done/delete also clears the reminder and "needs reply" flag.
+    let cleared = outbox::enqueue(&state.store, &account_id, mutation).map_err(estr)?;
     let _ = app.emit(THREADS_UPDATED, ());
+    if cleared {
+        spawn_devsync_push(app.clone(), account_id.clone());
+    }
     let backend = state.backend.read().await;
     let (applied, failed) =
         with_provider!(&*backend, p => outbox::drain(p, &state.store, 20).await).map_err(estr)?;
@@ -1010,9 +1014,8 @@ fn notify_due_reminders(handle: &AppHandle) {
     let still_scheduled: std::collections::HashSet<&ThreadId> =
         scheduled.iter().map(|t| &t.id).collect();
     notified.retain(|id, _| still_scheduled.contains(id));
-    // A reminder coming due also ends its snooze: the thread is hidden from
-    // the inbox until `scheduled_at`, so the list must refetch now that
-    // the inbox query includes it again.
+    // A reminder coming due raises the Scheduled badge (past-due
+    // reminders), so the webview must refetch.
     let mut newly_due = false;
     for thread in &scheduled {
         let Some(due_at) = thread.scheduled_at else {

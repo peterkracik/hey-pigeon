@@ -234,6 +234,28 @@ pub fn record_follow_up<S: Store>(
     )
 }
 
+/// Marking a thread done (archive or delete) ends its reminder, follow-up
+/// and "needs reply" flag, here and — through the sync map — on the other
+/// devices. Returns true when anything was set.
+pub fn clear_on_done<S: Store>(store: &S, thread_id: &ThreadId) -> Result<bool, StoreError> {
+    let Some(t) = store.get_thread(thread_id)? else {
+        return Ok(false);
+    };
+    if t.scheduled_at.is_some() {
+        store.set_schedule(thread_id, None)?;
+        record_reminder(store, &t.account_id, thread_id, None)?;
+    }
+    if t.follow_up_since.is_some() {
+        store.set_follow_up(thread_id, None)?;
+        record_follow_up(store, &t.account_id, thread_id, None)?;
+    }
+    if t.needs_reply {
+        store.set_needs_reply(thread_id, false)?;
+        record_needs_reply(store, &t.account_id, thread_id, false)?;
+    }
+    Ok(t.scheduled_at.is_some() || t.follow_up_since.is_some() || t.needs_reply)
+}
+
 /// Convenience for the manual thread-triage key family: `Some(ids)` pins
 /// the thread's labels on every device, a tombstone lifts the pin.
 pub fn record_thread_triage<S: Store>(

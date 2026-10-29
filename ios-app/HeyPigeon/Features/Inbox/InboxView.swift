@@ -232,7 +232,9 @@ struct ThreadList: View {
         case .delete:
             SwipeAction(title: "Delete", systemImage: "trash", tint: Color(hex: 0xB34E2E)) { model.run(.delete, on: row) }
         case .remind:
-            SwipeAction(title: "Remind", systemImage: "clock", tint: Theme.navy700) { model.run(.remind, on: row) }
+            SwipeAction(title: row.scheduledAt == nil ? "Remind" : "Remove reminder",
+                        systemImage: row.scheduledAt == nil ? "clock" : "clock.badge.xmark",
+                        tint: Theme.navy700) { model.run(.remind, on: row) }
         case .needReply:
             SwipeAction(title: row.needsReply ? "No reply needed" : "Need reply", systemImage: "arrowshape.turn.up.left",
                         tint: Color(hex: 0x2A6BAE)) { model.run(.needReply, on: row) }

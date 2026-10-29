@@ -1,6 +1,7 @@
 //! Optimistic mutations: apply locally now, queue for the provider, drain later.
 //! This is the entire "feels instant" trick (DESIGN.md).
 
+use crate::devsync;
 use crate::domain::{AccountId, Mutation};
 use crate::ports::{MailError, MailProvider, Store, StoreError};
 
@@ -12,14 +13,25 @@ pub enum OutboxError {
 
 /// Apply a mutation to the local store and enqueue it for the provider.
 /// Returns immediately — the UI never waits for the network.
+///
+/// Done (archive) and delete also end the thread's reminder, follow-up and
+/// "needs reply" flag: those lists only hold mail still waiting in the
+/// inbox. Returns true when it cleared one, so the caller can push the
+/// cross-device sync map now rather than on the next round.
 pub fn enqueue<S: Store>(
     store: &S,
     account_id: &AccountId,
     mutation: Mutation,
-) -> Result<(), OutboxError> {
+) -> Result<bool, OutboxError> {
     store.apply_local(&mutation)?;
     store.outbox_push(account_id, &mutation)?;
-    Ok(())
+    let cleared = match &mutation {
+        Mutation::Archive { thread_id } | Mutation::Trash { thread_id } => {
+            devsync::clear_on_done(store, thread_id)?
+        }
+        _ => false,
+    };
+    Ok(cleared)
 }
 
 /// Drain pending mutations against the provider. Items that fail stay queued
@@ -97,6 +109,60 @@ mod tests {
         assert!(t2.is_archived);
         assert!(!t2.is_inbox);
         assert_eq!(store.outbox_list(10).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn done_clears_reminder_follow_up_and_needs_reply() {
+        let store = seeded_store();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        crate::sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let ids: Vec<_> = store
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        let (flagged, plain) = (&ids[0], &ids[1]);
+        store.set_schedule(flagged, Some(1)).unwrap();
+        store.set_follow_up(flagged, Some(1)).unwrap();
+        store.set_needs_reply(flagged, true).unwrap();
+
+        let a1 = "a1".to_string();
+        assert!(enqueue(
+            &store,
+            &a1,
+            Mutation::Archive {
+                thread_id: flagged.clone()
+            }
+        )
+        .unwrap());
+        let t = store.get_thread(flagged).unwrap().unwrap();
+        assert_eq!(
+            (t.scheduled_at, t.follow_up_since, t.needs_reply),
+            (None, None, false)
+        );
+        // The clears travel to the other devices as tombstones.
+        let keys: Vec<_> = store
+            .sync_entries(&a1)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.value.is_none())
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(keys.len(), 3, "{keys:?}");
+
+        // Nothing to clear: no sync entries, nothing to push.
+        assert!(!enqueue(
+            &store,
+            &a1,
+            Mutation::Trash {
+                thread_id: plain.clone()
+            }
+        )
+        .unwrap());
+        assert_eq!(store.sync_entries(&a1).unwrap().len(), 3);
     }
 
     #[tokio::test]

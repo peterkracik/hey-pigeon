@@ -63,7 +63,10 @@ Submit** (expo.dev), which accepts any signed IPA. A manual run from the
 Actions tab can pick `uploader: xcrun` (Apple's `altool`, no Expo account) or
 `none` (IPA as a workflow artifact only).
 
-One-time setup, then the secrets listed at the top of the workflow, in the
+One-time setup (plus, since the widget and share extensions, the App Group
+`group.app.heypigeon` registered in the developer portal and assigned to the
+three App IDs — the workflow says exactly where until it is done), then the
+secrets listed at the top of the workflow, in the
 GitHub environment `ios` (synced there from Doppler):
 
 1. **App Store Connect**: an app record for bundle id `app.heypigeon.ios`

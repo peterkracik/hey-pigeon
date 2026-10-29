@@ -621,8 +621,8 @@ final class AppModel {
     /// thread view's own draft shape, with `body` as the text. Never sends.
     func openReply(to row: ThreadRow, all: Bool, body: String?) async throws {
         let detail = try await engine.thread(id: row.id)
-        guard let detail, let last = detail.messages.last else { throw IntentError.noSuchThread }
-        let transcript = detail.messages
+        guard let detail, let last = detail.mail.last else { throw IntentError.noSuchThread }
+        let transcript = detail.mail
             .map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }
             .joined(separator: "\n\n")
         var draft = SendDraft.reply(to: last, in: detail.thread, all: all, history: transcript)
@@ -633,7 +633,7 @@ final class AppModel {
     /// Open the composer on a forward of the thread's latest message.
     func openForward(of row: ThreadRow) async throws {
         let detail = try await engine.thread(id: row.id)
-        guard let detail, let last = detail.messages.last else { throw IntentError.noSuchThread }
+        guard let detail, let last = detail.mail.last else { throw IntentError.noSuchThread }
         compose(SendDraft.forward(of: last, in: detail.thread))
     }
 
@@ -890,11 +890,24 @@ final class AppModel {
 
     // MARK: Drafts — the composer's Gmail draft
 
-    /// Create or update the composer's Gmail draft (queued like any change).
+    /// Reply drafts saved from the composer that the store has not synced
+    /// back yet, by the thread they answer: the thread shows them at once.
+    private(set) var unsyncedDrafts: [String: SendDraft] = [:]
+    /// Bumped once saved or deleted drafts are in the store, so an open
+    /// thread reloads and shows (or drops) them.
+    private(set) var draftsRevision = 0
+
+    /// Create or update the composer's Gmail draft (queued like any change),
+    /// then sync it back so the thread and the Drafts folder show it.
     func saveDraft(_ draft: SendDraft, from accountId: String) {
+        var d = draft
+        d.fromAccountId = accountId
+        d.draftSaved = true
+        if let thread = d.replyToThreadId { unsyncedDrafts[thread] = d }
         Task {
-            do { try await engine.perform(.saveDraft(draft), accountId: accountId) }
+            do { try await engine.perform(.saveDraft(d), accountId: accountId) }
             catch { show("Couldn't save draft: \(error.localizedDescription)") }
+            await syncDrafts()
         }
     }
 
@@ -912,7 +925,22 @@ final class AppModel {
     }
 
     func deleteDraft(_ key: String, from accountId: String) {
-        Task { try? await engine.perform(.deleteDraft(key: key), accountId: accountId) }
+        unsyncedDrafts = unsyncedDrafts.filter { $0.value.draftKey != key }
+        Task {
+            try? await engine.perform(.deleteDraft(key: key), accountId: accountId)
+            await syncDrafts()
+        }
+    }
+
+    /// Pull a draft change into the store (Gmail's push only covers the
+    /// inbox), then let the open thread reload. A draft saved again while
+    /// this ran stays shown until its own sync.
+    private func syncDrafts() async {
+        while isSyncing { try? await Task.sleep(for: .milliseconds(250)) }
+        let shown = unsyncedDrafts
+        await sync()
+        for (thread, d) in shown where unsyncedDrafts[thread] == d { unsyncedDrafts[thread] = nil }
+        draftsRevision += 1
     }
 
     /// Leaving the app inside the undo window: commit now rather than risk

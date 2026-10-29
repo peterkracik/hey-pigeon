@@ -77,11 +77,19 @@ struct MessageItem: Identifiable, Hashable {
     let bodyText: String?
     let isRead: Bool
     let isMine: Bool
+    /// An unsent Gmail draft (DRAFT label): shown under the thread as one,
+    /// never replied to or read as part of the conversation.
+    var isDraft = false
 }
 
 struct ThreadDetail: Hashable {
     let thread: ThreadRow
     let messages: [MessageItem]
+
+    /// The conversation without its unsent drafts: what replies answer,
+    /// what the AI reads.
+    var mail: [MessageItem] { messages.filter { !$0.isDraft } }
+    var drafts: [MessageItem] { messages.filter(\.isDraft) }
 }
 
 /// One attachment of a message, as the provider names it; the bytes come

@@ -5,7 +5,9 @@
 // floating glass bars at the bottom: the Reply button — tap for the default
 // action, chevron for Reply · Reply all · Forward, as in Superhuman — with
 // the AI draft circle beside it, and one triage bar in the desktop's words:
-// Done · Remind · Need reply · Pin · Delete.
+// Done · Remind · Need reply · Pin · Delete. Unsent reply drafts sit under
+// the messages, marked as drafts, to edit or delete; the Reply button then
+// continues the draft.
 
 import AppIntents
 import SwiftUI
@@ -32,6 +34,8 @@ struct ThreadView: View {
     /// read on device as soon as the thread opens; the chips sit under the
     /// subject line. Nil until (and unless) there is something to offer.
     @State private var hintActions: [AttachmentAction] = []
+    /// The draft the delete confirmation is asking about.
+    @State private var deletingDraft: ThreadDraft?
 
     /// Live from the store (AppModel.openThread), never the copy this view
     /// was opened with: that one goes stale with the first action.
@@ -41,7 +45,7 @@ struct ThreadView: View {
     }
 
     private var participants: String {
-        guard let msgs = detail?.messages else { return row.fromSummary }
+        guard let msgs = detail?.mail else { return row.fromSummary }
         var seen: [String] = []
         for m in msgs where !m.isMine && !seen.contains(m.fromName) { seen.append(m.fromName) }
         return seen.isEmpty ? row.fromSummary : seen.joined(separator: ", ")
@@ -50,7 +54,7 @@ struct ThreadView: View {
     /// Reply all when someone besides the sender is on the last message,
     /// else Reply.
     private var defaultReply: ReplyKind {
-        guard let last = detail?.messages.last, !last.isMine else { return .reply }
+        guard let last = detail?.mail.last, !last.isMine else { return .reply }
         return last.to.contains { $0 != "me" && !$0.isEmpty } ? .replyAll : .reply
     }
 
@@ -62,7 +66,18 @@ struct ThreadView: View {
 
     /// Plain-text transcript, oldest first, "Me" for own messages (AI context).
     private var transcript: String {
-        (detail?.messages ?? []).map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
+        (detail?.mail ?? []).map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
+    }
+
+    /// The thread's unsent drafts, oldest first. A draft saved a moment ago
+    /// and not synced back yet stands in for the stored copy it updates.
+    private var drafts: [ThreadDraft] {
+        let local = model.unsyncedDrafts[row.id]
+        var out = (detail?.drafts ?? [])
+            .filter { $0.id != local?.draftKey }
+            .map { ThreadDraft(stored: $0, accountId: current.accountId) }
+        if let local { out.append(ThreadDraft(unsynced: local, accountId: current.accountId)) }
+        return out
     }
 
     var body: some View {
@@ -81,7 +96,16 @@ struct ThreadView: View {
                 }
 
                 if let detail {
-                    messageList(detail.messages).padding(.top, 14)
+                    messageList(detail.mail).padding(.top, 14)
+                    let pending = drafts
+                    if !pending.isEmpty {
+                        VStack(spacing: 8) {
+                            ForEach(pending) { d in
+                                DraftRow(draft: d) { edit(d) } onDelete: { deletingDraft = d }
+                            }
+                        }
+                        .padding(.horizontal, 12).padding(.top, 10)
+                    }
                 } else if let failed {
                     ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(failed))
                 } else {
@@ -108,7 +132,7 @@ struct ThreadView: View {
             if model.aiConfigured {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        if let d = detail { model.openThreadSummary(current, messages: d.messages) }
+                        if let d = detail { model.openThreadSummary(current, messages: d.mail) }
                     } label: { Image(systemName: "sparkles") }
                     .disabled(detail == nil)
                     .accessibilityLabel("Summarize thread")
@@ -138,7 +162,7 @@ struct ThreadView: View {
                             }
                         } label: { Label("Add label", systemImage: "tag") }
                     }
-                    Button { if let last = detail?.messages.last { forward(last) } } label: {
+                    Button { if let last = detail?.mail.last { forward(last) } } label: {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
                     Divider()
@@ -148,6 +172,10 @@ struct ThreadView: View {
             }
         }
         .safeAreaInset(edge: .bottom) { bottomBars }
+        .confirmationDialog("Delete this draft?", isPresented: Binding(get: { deletingDraft != nil }, set: { if !$0 { deletingDraft = nil } }),
+                            titleVisibility: .visible, presenting: deletingDraft) { d in
+            Button("Delete draft", role: .destructive) { deleteDraft(d) }
+        }
         // On-screen awareness: "Hey Siri, remind me about this tomorrow"
         // resolves to this thread (MailThreadQuery.defaultResult is the
         // fallback when Siri cannot read the activity).
@@ -162,10 +190,14 @@ struct ThreadView: View {
                 detail = try await model.engine.thread(id: row.id)
                 if detail == nil { failed = "This thread is no longer available." }
                 else if model.autoSummarize && model.aiConfigured, let d = detail {
-                    model.summarizeThread(current, messages: d.messages)
+                    model.summarizeThread(current, messages: d.mail)
                 }
             } catch { failed = error.localizedDescription }
             await loadAttachments()
+        }
+        // A draft was saved, edited or deleted and is now in the store.
+        .onChange(of: model.draftsRevision) { _, _ in
+            Task { if let fresh = try? await model.engine.thread(id: row.id) { detail = fresh } }
         }
     }
 
@@ -255,7 +287,7 @@ struct ThreadView: View {
                      background: Theme.tagBackground(Self.replyTone), foreground: Theme.tagForeground(Self.replyTone), capsule: true)
             }
             Spacer(minLength: 4)
-            let count = detail?.messages.count ?? row.messageCount
+            let count = detail?.mail.count ?? row.messageCount
             if count > 1 {
                 Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
                     .accessibilityLabel("\(count) messages")
@@ -336,8 +368,8 @@ struct ThreadView: View {
             }
             .accessibilityLabel("Choose reply type")
             Rectangle().fill(Theme.separator).frame(width: 1, height: 22)
-            Button { run(replyKind) } label: {
-                Text(replyKind.title)
+            Button { if let d = drafts.last { edit(d) } else { run(replyKind) } } label: {
+                Text(drafts.isEmpty ? replyKind.title : "Continue draft")
                     .padding(.horizontal, 14)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -352,7 +384,7 @@ struct ThreadView: View {
 
     /// Who a reply kind goes to, for the menu's second line.
     private func recipients(_ kind: ReplyKind) -> String {
-        guard let last = detail?.messages.last else { return "" }
+        guard let last = detail?.mail.last else { return "" }
         switch kind {
         case .forward: return "Choose recipients"
         case .reply, .replyAll:
@@ -379,7 +411,7 @@ struct ThreadView: View {
 
     /// Runs a reply kind on one message; the latest when none is given.
     private func run(_ kind: ReplyKind, on message: MessageItem? = nil) {
-        guard let m = message ?? detail?.messages.last else { return }
+        guard let m = message ?? detail?.mail.last else { return }
         switch kind {
         case .reply: reply(to: m, all: false)
         case .replyAll: reply(to: m, all: true)
@@ -403,7 +435,7 @@ struct ThreadView: View {
     /// Desktop "Draft with AI" in the inline reply: writes the reply body,
     /// the user edits and sends.
     private func draftReply() async {
-        guard let last = detail?.messages.last else { return }
+        guard let last = detail?.mail.last else { return }
         drafting = true
         defer { drafting = false }
         do {
@@ -411,6 +443,114 @@ struct ThreadView: View {
             reply(to: last, all: false)
             model.composeDraft?.bodyText = text
         } catch { model.show(error.localizedDescription) }
+    }
+
+    // MARK: Drafts
+
+    /// Reopen a draft in the composer: one not synced yet as it was saved,
+    /// a stored one read from Gmail (recipients, body, attachments).
+    private func edit(_ d: ThreadDraft) {
+        if let local = d.unsynced { model.composeDraft = local } else { model.openDraft(current) }
+    }
+
+    private func deleteDraft(_ d: ThreadDraft) {
+        model.deleteDraft(d.id, from: d.accountId)
+        if let detail {
+            self.detail = ThreadDetail(thread: detail.thread, messages: detail.messages.filter { $0.id != d.id })
+        }
+        model.show("Draft deleted")
+    }
+}
+
+/// An unsent reply under the thread: the stored DRAFT message, or the
+/// composer's copy while its save syncs back.
+struct ThreadDraft: Identifiable {
+    /// The draft's key: the Gmail message id, or the composer's own.
+    let id: String
+    let accountId: String
+    let to: [String]
+    let text: String
+    let date: Date
+    var unsynced: SendDraft?
+
+    init(stored m: MessageItem, accountId: String) {
+        id = m.id
+        self.accountId = accountId
+        to = m.to
+        text = m.bodyText ?? m.snippet
+        date = m.date
+    }
+
+    init(unsynced d: SendDraft, accountId: String) {
+        id = d.draftKey
+        self.accountId = d.fromAccountId ?? accountId
+        to = d.to + d.cc
+        text = d.bodyText
+        date = Date()
+        unsynced = d
+    }
+}
+
+/// A draft as a card under the messages: the Draft badge in the alert
+/// colour, who it goes to, the start of the text, and Edit · Delete.
+/// Tapping the card edits it too.
+private struct DraftRow: View {
+    let draft: ThreadDraft
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    private static let tone = AccountColor.coral
+
+    private var preview: String {
+        let t = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? "Empty draft" : t
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Chip(text: "Draft", systemImage: "pencil",
+                             background: Theme.tagBackground(Self.tone), foreground: Theme.tagForeground(Self.tone), capsule: true)
+                        Text(draft.to.isEmpty ? "No recipients" : "to \(draft.to.joined(separator: ", "))")
+                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(Formatters.rowTime(draft.date))
+                            .font(.footnote).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                    }
+                    Text(preview)
+                        .font(.subheadline)
+                        .foregroundStyle(draft.text.isEmpty ? Theme.textTertiary : Theme.textSecondary)
+                        .lineLimit(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button(action: onEdit) { Label("Edit", systemImage: "square.and.pencil") }
+                Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
+                    .tint(Color(hex: 0xB34E2E))
+                Spacer()
+            }
+            .font(.footnote.weight(.semibold))
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Theme.tagForeground(Self.tone).opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+        }
+        .contextMenu {
+            Button(action: onEdit) { Label("Edit draft", systemImage: "square.and.pencil") }
+            Button(role: .destructive, action: onDelete) { Label("Delete draft", systemImage: "trash") }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Draft")
     }
 }
 

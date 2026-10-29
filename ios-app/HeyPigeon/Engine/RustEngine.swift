@@ -410,7 +410,8 @@ private extension MessageItem {
             },
             date: Date(epochMs: m.date), snippet: m.snippet,
             bodyHTML: m.bodyHtml, bodyText: m.bodyText, isRead: m.isRead,
-            isMine: m.fromAddr.localizedCaseInsensitiveContains(myEmail)
+            isMine: m.fromAddr.localizedCaseInsensitiveContains(myEmail),
+            isDraft: m.labelIds.contains("DRAFT")
         )
     }
 }

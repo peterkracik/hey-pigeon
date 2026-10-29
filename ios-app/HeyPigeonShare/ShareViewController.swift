@@ -13,7 +13,7 @@ final class ShareViewController: UIViewController {
         let host = UIHostingController(rootView: ShareView(
             items: extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? [],
             onDone: { [weak self] opened in self?.finish(opened: opened) },
-            openApp: { [weak self] url in self?.open(url) }
+            openApp: { [weak self] url in self?.open(url) ?? false }
         ))
         addChild(host)
         view.addSubview(host.view)

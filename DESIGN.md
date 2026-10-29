@@ -230,7 +230,9 @@ millions of rows at millisecond latency, works on iOS, zero moving parts.
 ## AI features (BYO key, provider-pluggable, ChatGPT first)
 
 Still no server: the Rust core calls the provider API directly with the **user's own
-API key**, stored in the OS keychain next to the OAuth tokens.
+API key**, stored in the OS keychain next to the OAuth tokens. On iOS the
+default needs no key at all: Apple Intelligence on the device answers through
+the shell (below), with Apple's Private Cloud Compute and OpenAI as opt-ins.
 
 **Providers are pluggable by design** — OpenAI ships first, more will be added.
 Everything AI-facing is written against one core trait, never against OpenAI:
@@ -252,6 +254,16 @@ trait AiProvider {
   implementation #2 is mostly a base-URL + auth-header variant.
 - Settings: paste key, pick provider + model (default a `gpt-4o-mini`-class model
   for cost).
+- **Shell-side providers (iOS).** Foundation Models is a Swift framework, so the
+  iOS shell implements the `AiBackend` foreign trait in `crates/ffi` and
+  registers one backend per provider it can run (`apple` on device,
+  `apple-cloud` Private Cloud Compute, any Swift package's `LanguageModel`);
+  `ForeignAiProvider` wraps each as an `AiProvider`, so feature code never
+  learns which side of the bridge answered. The active provider is the
+  preferred one (`pref:ai.provider`, synced), then the first of the fallback
+  order (`pref:ai.fallback`, default on device → Apple's cloud → OpenAI) that
+  can answer; triage classifiers follow the same rule with Jev last. Design:
+  [docs/ios-intelligence.md](./docs/ios-intelligence.md).
 - **v1 AI set (M3)**:
   - **Summarize thread** (`s` in thread view) — a few factual bullets (key names, dates, amounts in bold) ending with the current status.
   - **Draft reply** — generate a reply draft in the user's tone into the composer;
@@ -327,8 +339,17 @@ Tauri iOS build.** Full design, UX spec and milestones in
   (Google's iOS OAuth clients have none).
 - The shell owns sync cadence on iOS (foreground, pull, `BGAppRefreshTask`);
   the engine exposes `sync_all` and never loops. Reminders are local
-  notifications scheduled from `list_scheduled`. New-mail push stays out
-  until someone wants the optional relay.
+  notifications scheduled from `list_scheduled`. New-mail push is the
+  optional, self-hosted relay (`relay/`), off by default.
+- **Siri and on-device AI** ([docs/ios-intelligence.md](./docs/ios-intelligence.md)):
+  every Siri, Shortcuts, Spotlight, widget and Control entry point is an
+  App Intent over `AppModel` (the Mail schema domain included); Apple
+  Intelligence is the zero-key AI through the `AiBackend` foreign trait;
+  iOS 27 adds "Ask my inbox" over the on-device Spotlight index, an agentic
+  "triage my inbox" with tools over the engine and one batch confirmation,
+  attachment understanding (image input, OCR and barcode tools), the
+  `.mail.thread` schema and View Annotations. All of it stays on the device
+  or on Apple's servers; nothing here adds a server of ours.
 
 ## Cross-device sync (multiple Macs, later iOS)
 
@@ -493,7 +514,7 @@ Ports (traits) in v1 — and what each one future-proofs:
 | `MailProvider` | Gmail REST | Outlook/Graph, JMAP, IMAP — someday |
 | `Store` | SQLite/FTS5 | schema v2, different engine |
 | `SecretStore` | OS keychain | iOS keychain, encrypted file fallback |
-| `AiProvider` | OpenAI | Anthropic, Ollama, any OpenAI-compatible |
+| `AiProvider` | OpenAI; on iOS also the shell's Apple on-device and Private Cloud Compute backends over `AiBackend` | Anthropic, Ollama, any OpenAI-compatible; on iOS any Swift `LanguageModel` package |
 | `AuthFlow` | loopback redirect | iOS custom-URL-scheme redirect |
 | `SyncTransport` | Drive `appDataFolder` | iCloud KVS, WebDAV, any blob store |
 
@@ -556,4 +577,4 @@ Ports (traits) in v1 — and what each one future-proofs:
 | UI | Svelte + TypeScript |
 | Auth | OAuth 2 PKCE loopback, tokens in OS keychain |
 | Mail API | Gmail REST v1 (users.threads / messages / history / labels) |
-| AI | OpenAI API, BYO key in keychain, provider trait for future backends |
+| AI | OpenAI API, BYO key in keychain, provider trait for future backends; iOS: Apple Intelligence on device / Private Cloud Compute through the shell's `AiBackend` |

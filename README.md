@@ -23,9 +23,13 @@ OAuth grant:
   cross-device reminder sync.
 - Everything the app reads is cached in a local SQLite database on your
   device, purely for instant local search/browsing.
-- AI features (optional) are bring-your-own-API-key: requests go straight
-  from your device to the provider (OpenAI first) — the developer never sees
-  that traffic or holds your key.
+- AI features (optional) never go through the developer. On the Mac they
+  are bring-your-own-API-key: requests go straight from your device to the
+  provider (OpenAI) — the developer never sees that traffic or holds your
+  key. On the iPhone the default is **Apple Intelligence on the device**
+  (no key, no network), with Apple's Private Cloud Compute (Apple's own
+  servers, never stored, no key) and OpenAI as opt-ins; which one answers,
+  and the order they fall back in, is yours to set.
 
 Because there's no backend and no third-party data store, there's no
 "Hey Pigeon got breached" risk model to worry about — your data's exposure
@@ -57,9 +61,15 @@ release build (macOS) which ships with a default client baked in — see
 
 ## iOS
 
-A native SwiftUI app over the same Rust core is taking shape in
-[`ios-app/`](./ios-app) — design in [docs/ios.md](./docs/ios.md). Scaffold
-stage: not yet daily-drivable.
+A native SwiftUI app over the same Rust core lives in
+[`ios-app/`](./ios-app) — design in [docs/ios.md](./docs/ios.md), the Siri
+and on-device AI layer in [docs/ios-intelligence.md](./docs/ios-intelligence.md).
+It targets iOS 27 and ships through TestFlight to the author's phone: the
+inbox and gestures, compose, widgets and Live Activities, Siri through App
+Intents and the Mail schema, Apple Intelligence as the zero-key AI with
+Apple's cloud and OpenAI as opt-ins, "Ask my inbox" over the on-device
+Spotlight index, an agentic "triage my inbox", and attachment
+understanding. Personal, not a product; rough edges expected.
 
 ## License
 

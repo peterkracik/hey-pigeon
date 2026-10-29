@@ -299,11 +299,13 @@ OpenAI stays as the opt-in upgrade.
 `core::ports::AiProvider` is a Rust trait and Foundation Models is a Swift
 framework, so the adapter is **Swift code the Rust core calls back into**,
 through a UniFFI foreign trait exactly like `EngineListener`
-(`crates/ffi/src/ai.rs`, `ios-app/HeyPigeon/AI/AppleIntelligenceProvider.swift`):
+(`crates/ffi/src/ai.rs`, `ios-app/HeyPigeon/AI/FoundationModelsBackend.swift`
+over `AI/ModelProviders.swift` — one backend per model the device can run,
+see "iOS 27 › One model layer" below):
 
 ```text
-core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_foreign──►  Swift AppleIntelligenceProvider
-                                                                          └─ LanguageModelSession
+core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_foreign──►  Swift FoundationModelsBackend
+                                                                          └─ ModelProvider.session → LanguageModelSession
 ```
 
 - `crates/ffi` has `AiBackend`, a `#[uniffi::export(with_foreign)]` trait:
@@ -341,8 +343,8 @@ core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_forei
 | Draft reply | one completion over the transcript | same, with the transcript truncated to the newest messages that fit |
 | Edit with AI (tone presets, instruction) | one completion | same; short inputs, fits comfortably |
 | Jev triage (priority + labels) | `adapter-jev`, BYO key | **done**: `TriageCall`, a `@Generable` struct `{ priority, labels: [String] }` with the Settings label names in the prompt; the engine maps names to ids and drops the rest. Jev stays selectable (Settings › Triage › Classifier). |
-| Attachments | none | later, if iOS 27 image input holds: "what is this attachment" on an image attachment from Quick Look |
-| Longer threads | — | **later**: iOS 27's Private Cloud Compute option, behind its own toggle, default off — it is Apple's cloud, not ours, but it is a network hop the README promises does not exist by default. Not built until the API is confirmed; today a long thread is summarized in parts (below). |
+| Attachments | none | **done** (iOS 27): "Explain attachment" and the receipt / ticket / shipment chips — image input with the OCR and barcode tools, on device only ("Attachment understanding" below) |
+| Longer threads | — | **done** (iOS 27): Apple's Private Cloud Compute as the `apple-cloud` provider, a 32K-token window, Apple-private and never stored; a network hop the user opts into through *Prefer* / *If it can't answer*, with "Stay on this iPhone" as the no-hop setting ("One model layer" below). A long thread still summarizes in parts on the device model. |
 
 Quality expectation to set in Settings copy: the on-device model is small.
 Summaries and edits are good; drafting a careful reply is where OpenAI stays
@@ -353,7 +355,7 @@ comment already names it as the one call site to widen.
 ### Verify on the first build
 
 `SystemLanguageModel.Availability.UnavailableReason` case names used in
-`AppleIntelligenceProvider.unavailableReason`; the
+`SystemModelProvider.availability` (the `AppleIntelligenceProvider.unavailableReason` shim keeps the old call sites); the
 `LanguageModelSession.GenerationError` cases named in `describe`; that
 `@Guide(.count(0...3))` on a `[String]` compiles. The label names are put
 in the prompt and matched case-insensitively against the Settings list
@@ -449,11 +451,13 @@ A new section, between **AI** and **Triage**:
   *Siri Shortcuts* (opens the system's App Shortcuts page); a line that
   says what leaves the device: "Nothing. Siri reads the index on this
   iPhone." updated if iOS 27's cloud reasoning turns out to apply.
-- **AI** gains the provider row at the top: *On this iPhone* (Apple
-  Intelligence, when available) · *ChatGPT (OpenAI)*; *Use Apple's Private
-  Cloud Compute for long threads* (off); the existing key, model and
-  Auto-summarize rows apply to the OpenAI provider only.
-- **Triage** gains *Classifier*: *On this iPhone* · *Jev*.
+- **AI** gains the provider rows at the top: *On this iPhone* (Apple
+  Intelligence, when available) · *Apple's cloud* (Private Cloud Compute,
+  iOS 27) · *ChatGPT (OpenAI)*; *Prefer* and *If it can't answer* (the
+  synced fallback order); the existing key and model rows apply to the
+  OpenAI provider only; a token line per provider.
+- **Triage** gains *Classifier*: *On this iPhone* · *Apple's cloud* · *Jev*,
+  and the Siri-triage rows (dry run, your rules, the run and journal screen).
 
 ## Milestones
 

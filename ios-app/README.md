@@ -1,8 +1,12 @@
 # Hey Pigeon for iOS
 
 Native SwiftUI shell over the shared Rust core. Design and rationale:
-[docs/ios.md](../docs/ios.md). Status: **scaffold** — the Rust bridge is built
-and tested on CI, the Swift side has not been compiled on a Mac yet.
+[docs/ios.md](../docs/ios.md); the Siri, App Intents and on-device AI layer in
+[docs/ios-intelligence.md](../docs/ios-intelligence.md). Status: the Rust
+bridge is built and tested on CI and the Swift shell archives through
+`publish-ios`; the iOS 27 features (the "iOS 27" section of that document)
+are written but not yet compiled — its "Verify on the first build" table says
+what to check.
 
 ```text
 ios-app/
@@ -137,3 +141,10 @@ deliver` step, if that ever becomes a chore.
 | Optimistic actions, undo, sync cadence | `HeyPigeon/App/AppModel.swift` |
 | Gesture map (swipe = keyboard shortcut) | `HeyPigeon/Features/Inbox/InboxView.swift` |
 | Safe HTML rendering | `HeyPigeon/Features/Thread/MessageBodyView.swift` |
+| Attachments: chips, Quick Look, Explain attachment | `HeyPigeon/Features/Thread/AttachmentViews.swift`, `HeyPigeon/AI/AttachmentUnderstanding.swift` |
+| The AI door the Rust core calls back into; which model answers | `HeyPigeon/AI/FoundationModelsBackend.swift`, `HeyPigeon/AI/ModelProviders.swift`; resolution in `desktop-app/crates/ffi/src/settings.rs` |
+| The triage prompt and its evaluation | `HeyPigeon/AI/TriagePrompt.swift`, `HeyPigeonTests/Evaluations/` |
+| Siri: entities, the Mail schema, the verbs | `HeyPigeon/Intents/Entities.swift`, `MailSchema.swift`, `MailSchemaIntents.swift`, `ThreadIntents.swift`, `ListIntents.swift` |
+| "Ask my inbox" | `HeyPigeon/AI/InboxAsk.swift`, `HeyPigeon/Features/Inbox/AskSheet.swift`, `HeyPigeon/Intents/SpotlightIndexer.swift` |
+| "Triage my inbox" | `HeyPigeon/AI/TriageTools.swift`, `HeyPigeon/AI/TriageAgent.swift`, `HeyPigeon/Intents/TriageIntents.swift`, `HeyPigeonWidgets/TriageLiveActivity.swift` |
+| Settings | `HeyPigeon/Features/Settings/SettingsView.swift`, `TriageJournalView.swift` |

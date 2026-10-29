@@ -237,7 +237,12 @@ messages before the last two stays visible.
   container, a trailing `<blockquote>`, or `>` lines in plain text) folds
   behind a ••• button, same rules as desktop.
 - **Attachments** are chips under the message: tap fetches the bytes
-  (`messages.attachments.get`, cached) and opens Quick Look. Never auto-open.
+  (`messages.attachments.get`, cached as a file) and opens Quick Look. Never
+  auto-open. On images and PDFs, **Explain attachment** has the on-device
+  model read it (OCR, barcodes) and offers one-tap chips — remind me on
+  travel day, copy the tracking number; mail that smells like a receipt,
+  ticket or shipment gets the chips under the subject as the thread opens
+  ([ios-intelligence.md](./ios-intelligence.md) "Attachment understanding").
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
 - **Two floating bars** replace the tab bar while a thread is open: the
@@ -290,15 +295,27 @@ The desktop's sections, same order, same wording:
 - **Accounts** — avatar, name, email, connection state; Name, Color (the
   five tags), Sync (reminder sync over the account's Drive app folder),
   Signature; Reconnect, Remove (asks once); Add account.
-- **AI** — ChatGPT (OpenAI): paste a key (verified before it is stored),
-  Model, Auto-summarize, Remove. Powers "Summarize N active" on the day
-  groups, "Summarize thread", the ✨ draft reply, and Edit with AI in
-  compose (tone and edit presets or a freeform instruction).
-- **Triage** — Jev: key (verified), Auto-triage, Reanalyze all emails, the
-  labels (add; swipe to remove). Classification runs at the end of every
-  sync round, bounded per round, never on its own timer. The labels are the
-  bottom pill and the chips on rows; a thread's labels can be edited by hand
-  (sticky until Reanalyze).
+- **AI** — the providers in fallback order: *On this iPhone* (Apple
+  Intelligence, no key), *Apple's cloud* (Private Cloud Compute, no key,
+  Apple-private, never stored) and ChatGPT (OpenAI: paste a key, verified
+  before it is stored; Model; Remove). *Prefer* picks the first choice, *If
+  it can't answer* the order after it (private first · cloud first · stay
+  on this iPhone), both synced; Auto-summarize; a token line per provider.
+  Powers "Summarize N active" on the day groups, "Summarize thread", the ✨
+  draft reply, Edit with AI in compose (tone and edit presets or a freeform
+  instruction), and the triage, Ask and attachment features of
+  [ios-intelligence.md](./ios-intelligence.md).
+- **Siri & Search** — *Let Siri see your inbox* (the on-device Spotlight
+  index Siri, Spotlight and "Ask my inbox" read), *Ask my inbox*, the Siri
+  tip and the Shortcuts link.
+- **Triage** — *Classifier*: On this iPhone · Apple's cloud · Jev (key,
+  verified); Auto-triage; Reanalyze all emails; the labels (add; swipe to
+  remove). Classification runs at the end of every sync round, bounded per
+  round, never on its own timer. The labels are the bottom pill and the
+  chips on rows; a thread's labels can be edited by hand (sticky until
+  Reanalyze). *Siri triage*: a dry-run switch, your own triage rules in your
+  words (both synced), and the run-and-journal screen for "Hey Siri, triage
+  my inbox".
 - **Inbox** — Pinned list; Swipe actions (the four tiers).
 - **Appearance** — System · Light · Dark (iOS only; the desktop follows
   the system).
@@ -402,8 +419,16 @@ a Mac.
 4. **iOS-M4 — Siri and on-device AI**: App Intents over `AppModel`, the
    Spotlight index the new Siri reads, the Mail schema domain, on-screen
    awareness, Foundation Models as the zero-key AI default, widgets and
-   Controls. Planned in [ios-intelligence.md](./ios-intelligence.md); the
-   widgets, Shortcuts and share-extension items of M3 are specified there.
+   Controls. Specified and built in [ios-intelligence.md](./ios-intelligence.md);
+   the widgets, Shortcuts and share-extension items of M3 are there too.
+5. **iOS-M5 — iOS 27**: the deployment floor moves to 27 and the
+   intelligence layer grows into it — Apple's Private Cloud Compute and
+   pluggable `LanguageModel` providers behind one Swift backend, "Ask my
+   inbox" over the Spotlight index, the agentic "triage my inbox" with a
+   Live Activity, attachment understanding, the `.mail.thread` schema and
+   View Annotations, syncable entities and donations. Built, in
+   [ios-intelligence.md](./ios-intelligence.md) "iOS 27"; the first build
+   on a Mac with the iOS 27 SDK is the gate.
 
 ## Out of scope
 

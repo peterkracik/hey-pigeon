@@ -556,8 +556,12 @@ picked per request by the core:
   (`response.usage` after every answer; a cost estimate when a price is
   known). The classifier picker gains Apple's cloud.
 - The **Private Cloud Compute entitlement** is granted per App ID on
-  request; `project.yml` carries the key commented out with the steps. Until
-  it is granted the app degrades to the on-device model on its own.
+  request; `project.yml` carries the key commented out with the steps, and
+  `HEYPIGEON_PRIVATE_CLOUD_COMPUTE` (NO) keeps the app off the cloud model
+  until both are switched on together. It does not degrade on its own: on
+  an eligible device the framework reports the model available and traps
+  on the first request from an unentitled build (build 108, starting a
+  triage run).
 - **Evaluations** (`HeyPigeonTests/Evaluations/`): a labeled triage set
   (`triage-eval.json`, placeholder rows to replace with anonymised mail),
   `TriageEvalScore` / `TriageEvalReport` (priority accuracy, near misses,

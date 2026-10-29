@@ -90,8 +90,11 @@ struct SystemModelProvider: ModelProvider {
 /// Apple's Private Cloud Compute model (iOS 27): a 32K-token context,
 /// reasoning levels, no API key, prompts never stored, still Apple-private.
 /// Needs the Private Cloud Compute entitlement on the App ID (project.yml
-/// has the commented entry and the steps); without it `availability` says
-/// so and the engine falls back to the on-device model.
+/// has the commented entry and the steps). A build without it says so
+/// through `isEnabledInBuild` and never creates a session: the framework
+/// can report the model available on an eligible device and then trap on
+/// the first request, which took the app down when a triage run reached
+/// its decide phase.
 struct PrivateCloudComputeProvider: ModelProvider {
     let id = "apple-cloud"
     let label = "Apple's cloud"
@@ -104,7 +107,17 @@ struct PrivateCloudComputeProvider: ModelProvider {
 
     private var model: PrivateCloudComputeLanguageModel { PrivateCloudComputeLanguageModel() }
 
+    /// Info.plist `HeyPigeonPrivateCloudCompute` (project.yml sets it with
+    /// the entitlement). Anything but YES, an unset `$(…)` included, is off.
+    static let isEnabledInBuild: Bool = {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "HeyPigeonPrivateCloudCompute") as? String
+        return raw?.trimmingCharacters(in: .whitespaces).uppercased() == "YES"
+    }()
+
     var availability: ProviderAvailability {
+        guard Self.isEnabledInBuild else {
+            return .unavailable("This build doesn't include Private Cloud Compute yet.")
+        }
         switch model.availability {
         case .available: return .available
         case .unavailable(.deviceNotEligible): return .unavailable("This device can't use Private Cloud Compute.")

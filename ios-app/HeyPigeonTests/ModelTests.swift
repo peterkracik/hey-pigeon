@@ -250,3 +250,15 @@ struct SpotlightFingerprintTests {
         #expect(base != SpotlightIndexer.fingerprint(row, labelNames: ["Travel"], account: renamed))
     }
 }
+
+struct PrivateCloudComputeGateTests {
+    /// The build has no Private Cloud Compute entitlement, so the cloud
+    /// model is never offered and triage decides on the device: the
+    /// framework traps on a request from an unentitled app.
+    @Test func cloudModelStaysOffWithoutTheEntitlement() {
+        #expect(!PrivateCloudComputeProvider.isEnabledInBuild)
+        #expect(!PrivateCloudComputeProvider().availability.isAvailable)
+        #expect(PrivateCloudComputeProvider().availability.reason?.contains("doesn't include") == true)
+        #expect(TriageProfile.current().decideProvider.id == SystemModelProvider().id)
+    }
+}

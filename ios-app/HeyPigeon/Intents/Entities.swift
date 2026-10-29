@@ -64,7 +64,7 @@ struct MailThreadEntity {
         let resolved = account ?? MailAccount(id: row.accountId, email: row.accountId, displayName: row.accountId, color: .sky, avatarURL: nil, signature: "")
         senderAddress = row.lastFromAddress
         self.labelNames = labelNames
-        let stored = detail?.messages ?? []
+        let stored = detail?.mail ?? []
         var names: [String] = []
         var addresses: [String] = []
         for m in stored {
@@ -81,8 +81,8 @@ struct MailThreadEntity {
         participantAddresses = addresses
         bodyText = Self.indexableBody(stored)
         // Then the wrapped ones.
-        if let detail, !detail.messages.isEmpty {
-            messages = detail.messages.map { MailMessageEntity($0, in: detail, account: resolved) }
+        if let detail, !detail.mail.isEmpty {
+            messages = detail.mail.map { MailMessageEntity($0, in: detail, account: resolved) }
         } else {
             messages = [MailMessageEntity(row, account: resolved)]
         }

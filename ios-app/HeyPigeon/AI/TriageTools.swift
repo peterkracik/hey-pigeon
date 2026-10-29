@@ -104,7 +104,7 @@ struct TriagePlan: Equatable, Codable {
                 guard row.needsReply != on else { continue }
                 model.toggleNeedsReply(row)
             case .draft(_, _, let body):
-                guard let detail = try? await model.engine.thread(id: row.id), let last = detail.messages.last else { continue }
+                guard let detail = try? await model.engine.thread(id: row.id), let last = detail.mail.last else { continue }
                 var d = SendDraft.reply(to: last, in: row, all: false, history: nil)
                 d.bodyText = body
                 model.saveDraft(d, from: row.accountId)
@@ -230,7 +230,7 @@ struct ReadThreadTool: Tool {
 
     func call(arguments: Arguments) async throws -> String {
         guard let detail = try await host.thread(id: arguments.threadId) else { return "That email is gone." }
-        let messages = detail.messages.suffix(6).map { m in
+        let messages = detail.mail.suffix(6).map { m in
             let text = m.bodyText.map { MessageBodyView.splitQuoted($0)?.main ?? $0 } ?? m.snippet
             return Message(from: m.isMine ? "Me" : m.fromName, date: Formatters.fullDate(m.date), text: String(text.prefix(1_500)))
         }
@@ -353,7 +353,7 @@ struct DraftReplyTool: Tool {
 
     func call(arguments: Arguments) async throws -> String {
         guard let detail = try await host.thread(id: arguments.threadId) else { return "That email is gone." }
-        let transcript = detail.messages.map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
+        let transcript = detail.mail.map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
         let body = try await host.draftReply(subject: detail.thread.subject, history: transcript, notes: arguments.notes)
         return await MainActor.run {
             let p = TriageProposal.draft(threadId: detail.thread.id, subject: detail.thread.subject, body: body)

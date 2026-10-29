@@ -225,8 +225,8 @@ struct MailMessageEntity {
     @MainActor
     static func messages(of row: ThreadRow, in model: AppModel) -> [MailMessageEntity] {
         guard let account = model.account(for: row) else { return [] }
-        if let detail = try? model.engine.threadLocal(id: row.id), !detail.messages.isEmpty {
-            return detail.messages.map { MailMessageEntity($0, in: detail, account: account) }
+        if let detail = try? model.engine.threadLocal(id: row.id), !detail.mail.isEmpty {
+            return detail.mail.map { MailMessageEntity($0, in: detail, account: account) }
         }
         return [MailMessageEntity(row, account: account)]
     }

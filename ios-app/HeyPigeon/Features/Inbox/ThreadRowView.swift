@@ -56,6 +56,10 @@ struct ThreadRowView: View {
                 ForEach(triageNames, id: \.self) { name in
                     Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
                 }
+                // An unsent reply waits in the thread (the Drafts folder needs no mark).
+                if row.labels.contains("DRAFT"), model.view != .drafts {
+                    Chip(text: "Draft", background: Theme.tagBackground(.coral), foreground: Theme.tagForeground(.coral))
+                }
                 if row.hasAttachment {
                     Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)
                 }

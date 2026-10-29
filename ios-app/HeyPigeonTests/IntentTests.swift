@@ -216,6 +216,17 @@ struct IntentTests {
         #expect(MailThreadEntity.indexableBody([m(1, "   ")]) == nil)
     }
 
+    @Test func threadDraftsStayOutOfTheConversation() throws {
+        func m(_ i: Int, draft: Bool = false) -> MessageItem {
+            MessageItem(id: "m\(i)", fromName: "A", fromAddress: "a@x", to: ["me"], date: Date(timeIntervalSince1970: Double(i)),
+                        snippet: "", bodyHTML: nil, bodyText: "text \(i)", isRead: true, isMine: draft, isDraft: draft)
+        }
+        let row = try #require(try engine.threadRow(id: "t5"))
+        let detail = ThreadDetail(thread: row, messages: [m(1), m(2, draft: true), m(3)])
+        #expect(detail.mail.map(\.id) == ["m1", "m3"]) // replies answer m3, not the draft
+        #expect(detail.drafts.map(\.id) == ["m2"])
+    }
+
     @Test func askCitationsKeepOnlyKnownThreadsOnce() {
         let rows = InboxAsk.validCitations(["t2", "nope", "t2", "t1"], in: model)
         #expect(rows.map(\.id) == ["t2", "t1"])

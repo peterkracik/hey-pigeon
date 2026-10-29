@@ -55,11 +55,14 @@ targets:
         # The entitlement is granted per App ID on request (developer.apple.com
         # → Identifiers → app.heypigeon.ios → Capabilities → Private Cloud
         # Compute → request access). Until it is granted the key below must
-        # stay commented out: a profile without it fails the archive, and the
-        # app degrades to the on-device model on its own (Settings › AI says
-        # "isn't reachable"). Once granted, uncomment it; publish-ios regenerates
-        # the App Store profile with sigh on the next run — check the
-        # "Fetch App Store provisioning profile" log shows the capability.
+        # stay commented out (a profile without it fails the archive) and
+        # HEYPIGEON_PRIVATE_CLOUD_COMPUTE below stays NO: the app then never
+        # touches the cloud model. Without the entitlement the framework can
+        # report the model available and trap on the first request (build 108
+        # crashed starting a triage run that way). Once granted, uncomment the
+        # key AND set the setting to YES; publish-ios regenerates the App
+        # Store profile with sigh on the next run — check the "Fetch App
+        # Store provisioning profile" log shows the capability.
         # com.apple.developer.foundation-models.private-cloud-compute: true
         # Default mail app (Settings › Apps › Default Apps › Email; the
         # "mailto" URL type below and Shared/DeepLinks.swift are the other
@@ -91,6 +94,9 @@ targets:
         # CI's manual signing passes one profile per target (publish-ios.yml);
         # empty under automatic signing.
         PROVISIONING_PROFILE_SPECIFIER: $(PROFILE_APP)
+        # YES only together with the Private Cloud Compute entitlement above
+        # (Info.plist HeyPigeonPrivateCloudCompute, ModelProviders.swift).
+        HEYPIGEON_PRIVATE_CLOUD_COMPUTE: "NO"
     info:
       path: HeyPigeon/Info.plist
       properties:
@@ -105,6 +111,9 @@ targets:
         GoogleIOSClientID: $(GOOGLE_IOS_CLIENT_ID)
         # Default relay URL for Settings → Notifications (PushController.swift); may be empty.
         HeyPigeonRelayURL: $(HEYPIGEON_RELAY_URL)
+        # Whether this build carries the Private Cloud Compute entitlement
+        # (PrivateCloudComputeProvider.isEnabledInBuild).
+        HeyPigeonPrivateCloudCompute: $(HEYPIGEON_PRIVATE_CLOUD_COMPUTE)
         # Google's iOS OAuth redirect: the reversed client id as a URL scheme;
         # heypigeon:// for widgets, the Live Activity and the share extension;
         # and mailto: — what the system hands the default mail app when a

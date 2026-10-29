@@ -10,6 +10,14 @@ struct SummarySheet: View {
 
     private var summary: GroupSummary? { model.groupSummaries[presentation.id] }
 
+    /// What went to the provider, said accurately: a thread summary reads
+    /// the messages' text, a list summary only subjects and previews.
+    private var footnote: String {
+        presentation.id.hasPrefix(AppModel.threadSummaryPrefix)
+            ? "The messages' text (up to \(AppModel.threadSummaryCharsPerMessage.formatted()) characters each) was sent to the AI provider."
+            : "Subject and snippet only were sent to the AI provider, never the full messages."
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -24,7 +32,7 @@ struct SummarySheet: View {
                             Text("Summarizing…").font(.body).foregroundStyle(Theme.textSecondary)
                         }
                     }
-                    Text("Subject and snippet only were sent to the AI provider, never the full messages.")
+                    Text(footnote)
                         .font(.caption).foregroundStyle(Theme.textTertiary)
                         .padding(.top, 8)
                 }
@@ -33,7 +41,7 @@ struct SummarySheet: View {
             }
             .background(Theme.canvas)
             .navigationTitle(presentation.title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])

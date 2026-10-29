@@ -167,6 +167,16 @@ struct MailThreadEntity {
 
 extension MailThreadEntity: IndexedEntity {}
 
+extension MailThreadEntity {
+    /// The system's handle on a thread by id, for notifications, view
+    /// annotations and the like. One place for the initializer: spelled
+    /// inline in a file that also imports Intents it did not type-check
+    /// for the simulator.
+    static func identifier(_ threadId: String) -> EntityIdentifier {
+        EntityIdentifier(for: MailThreadEntity.self, identifier: threadId)
+    }
+}
+
 /// Gmail thread ids are the same on every device the account is on, so a
 /// Siri conversation started on the iPhone can go on with the iPad or Mac
 /// build later (iOS 27).

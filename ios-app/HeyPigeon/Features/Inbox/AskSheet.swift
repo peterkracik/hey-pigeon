@@ -37,7 +37,7 @@ struct AskSheet: View {
                             }
                             .id(i)
                         }
-                        Text("Answered on this iPhone from the index Siri uses. Nothing is sent anywhere.")
+                        Text("Answered on this \(Device.name) from the index Siri uses. Nothing is sent anywhere.")
                             .font(.caption).foregroundStyle(Theme.textTertiary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -50,7 +50,7 @@ struct AskSheet: View {
             .background(Theme.canvas)
             .safeAreaInset(edge: .bottom) { field }
             .navigationTitle("Ask my inbox")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task {
                 if !question.trimmingCharacters(in: .whitespaces).isEmpty { ask() } else { focused = true }

@@ -23,24 +23,41 @@ import Foundation
 enum SpotlightIndexer {
     static let perAccount = 500
 
+    /// What each thread looked like when it was last indexed, by id: a
+    /// refresh re-indexes only the threads whose fingerprint moved instead
+    /// of reading every thread's messages from the store after every sync.
+    /// In memory, so the first refresh after a launch indexes everything.
+    @MainActor private static var indexed: [String: Int] = [:]
+
     @MainActor
     static func refresh(_ model: AppModel) async {
         guard model.siriIndexEnabled else { return }
+        let labelNames = labelNameMap(model)
         var keep: [MailThreadEntity] = []
         var keepMessages: [MailMessageEntity] = []
         var drop: [String] = []
         var dropMessages: [String] = []
+        var fresh: [String: Int] = [:]
         for account in model.accounts {
             let rows = (try? model.engine.threads(in: .all, accountId: account.id, before: nil, limit: perAccount)) ?? []
             for row in rows {
-                let thread = entity(for: row, in: model)
+                let names = labelNames(row)
+                let print = fingerprint(row, labelNames: names, account: account)
+                let gone = row.labels.contains("TRASH") || row.labels.contains("SPAM")
+                // Unchanged since the last refresh: nothing to tell Spotlight.
+                if !gone, indexed[row.id] == print { continue }
+                let thread = entity(for: row, in: model, labelNames: names)
                 let stored = thread.messages.filter(\.isStoredMessage)
-                if row.labels.contains("TRASH") || row.labels.contains("SPAM") {
-                    drop.append(row.id)
-                    dropMessages += stored.map(\.id)
+                if gone {
+                    if indexed[row.id] != nil || indexed.isEmpty {
+                        drop.append(row.id)
+                        dropMessages += stored.map(\.id)
+                    }
+                    indexed[row.id] = nil
                 } else {
                     keep.append(thread)
                     keepMessages += stored.suffix(messagesPerThread)
+                    fresh[row.id] = print
                 }
             }
         }
@@ -49,24 +66,62 @@ enum SpotlightIndexer {
         if !keepMessages.isEmpty { try? await index.indexAppEntities(keepMessages) }
         if !drop.isEmpty { try? await index.deleteAppEntities(identifiedBy: drop, ofType: MailThreadEntity.self) }
         if !dropMessages.isEmpty { try? await index.deleteAppEntities(identifiedBy: dropMessages, ofType: MailMessageEntity.self) }
+        indexed.merge(fresh) { _, new in new }
+    }
+
+    /// Everything the index shows of a thread: the row itself (flags,
+    /// snippet, labels, message count), its label names and the account's
+    /// name. Bodies are not in it; `invalidate` covers a thread whose
+    /// bodies just arrived.
+    static func fingerprint(_ row: ThreadRow, labelNames: [String], account: MailAccount?) -> Int {
+        var h = Hasher()
+        h.combine(row)
+        h.combine(labelNames)
+        h.combine(account?.displayName)
+        h.combine(account?.email)
+        return h.finalize()
+    }
+
+    /// The thread's message bodies are now in the store (it was opened):
+    /// the next refresh indexes their text.
+    @MainActor
+    static func invalidate(threadId: String) {
+        indexed[threadId] = nil
+    }
+
+    /// Forget every fingerprint: the next refresh indexes every thread.
+    @MainActor
+    static func invalidateAll() {
+        indexed = [:]
     }
 
     /// The newest stored messages of a thread that go in as message items;
     /// the thread item carries the rest of the text up to its own cap.
     static let messagesPerThread = 20
 
+    /// Gmail label id → name per account, built once per refresh instead
+    /// of a scan of every label for every row.
+    @MainActor
+    private static func labelNameMap(_ model: AppModel) -> (ThreadRow) -> [String] {
+        var names: [String: String] = [:]
+        for l in model.labels { names[l.accountId + "|" + l.id] = l.name }
+        return { row in row.labels.compactMap { names[row.accountId + "|" + $0] } }
+    }
+
     /// One thread as the index sees it: the row, the account, the label
     /// names, and the stored messages (bodies when they are local).
     @MainActor
-    static func entity(for row: ThreadRow, in model: AppModel) -> MailThreadEntity {
+    static func entity(for row: ThreadRow, in model: AppModel, labelNames: [String]? = nil) -> MailThreadEntity {
         let detail = try? model.engine.threadLocal(id: row.id)
-        let names = row.labels.compactMap { id in model.labels.first { $0.id == id && $0.accountId == row.accountId }?.name }
+        let names = labelNames ?? row.labels.compactMap { id in model.labels.first { $0.id == id && $0.accountId == row.accountId }?.name }
         return MailThreadEntity(row, account: model.account(for: row), detail: detail, labelNames: names)
     }
 
     /// Settings turned the index off, or an account was removed: forget it
     /// all; the next refresh (if on) rebuilds from the store.
+    @MainActor
     static func clear() async {
+        indexed = [:]
         try? await CSSearchableIndex.default().deleteAllSearchableItems()
     }
 
@@ -90,7 +145,11 @@ final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate, Sendabl
     func searchableIndex(_ searchableIndex: CSSearchableIndex, reindexAllSearchableItemsWithAcknowledgementHandler acknowledgementHandler: @escaping () -> Void) {
         nonisolated(unsafe) let done = acknowledgementHandler
         Task { @MainActor in
-            if let model = AppModel.current { await SpotlightIndexer.refresh(model) }
+            if let model = AppModel.current {
+                // Spotlight lost its copy: index everything again.
+                SpotlightIndexer.invalidateAll()
+                await SpotlightIndexer.refresh(model)
+            }
             done()
         }
     }

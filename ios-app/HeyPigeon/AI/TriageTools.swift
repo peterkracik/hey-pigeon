@@ -78,10 +78,10 @@ struct TriagePlan: Equatable, Codable {
             case .draft: bump("draft a reply for")
             }
         }
-        guard !counts.isEmpty else { return "Nothing to change." }
+        guard let last = counts.last else { return "Nothing to change." }
         let parts = counts.map { "\($0.0) \($0.1)" }
-        return parts.count == 1 ? parts[0].prefix(1).capitalized + parts[0].dropFirst() + "?"
-            : parts.dropLast().joined(separator: ", ").prefix(1).capitalized + parts.dropLast().joined(separator: ", ").dropFirst() + " and \(parts.last!)?"
+        let sentence = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and \(last.0) \(last.1)"
+        return sentence.prefix(1).capitalized + sentence.dropFirst() + "?"
     }
 
     /// Apply every proposal through AppModel; a thread that is gone or
@@ -164,7 +164,7 @@ struct TriageRowView: Codable {
         labels = row.labels.compactMap { id in model.labels.first { $0.id == id && $0.accountId == row.accountId }?.name }
             + row.triageLabelIds.compactMap { id in model.triageLabels.first { $0.id == id }?.name }
         needsReply = row.needsReply
-        reminderAt = row.scheduledAt.map(Formatters.reminder)
+        reminderAt = row.scheduledAt.map { Formatters.reminder($0) }
     }
 }
 
@@ -353,8 +353,7 @@ struct DraftReplyTool: Tool {
 
     func call(arguments: Arguments) async throws -> String {
         guard let detail = try await host.thread(id: arguments.threadId) else { return "That email is gone." }
-        let transcript = detail.mail.map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
-        let body = try await host.draftReply(subject: detail.thread.subject, history: transcript, notes: arguments.notes)
+        let body = try await host.draftReply(subject: detail.thread.subject, history: detail.transcript, notes: arguments.notes)
         return await MainActor.run {
             let p = TriageProposal.draft(threadId: detail.thread.id, subject: detail.thread.subject, body: body)
             host.journal(name, p.line)

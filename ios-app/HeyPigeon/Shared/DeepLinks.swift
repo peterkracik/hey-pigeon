@@ -6,7 +6,6 @@
 // link inside a message body opens — all land in AppModel here.
 
 import Foundation
-import UIKit
 
 enum DeepLink: Equatable {
     case thread(id: String)

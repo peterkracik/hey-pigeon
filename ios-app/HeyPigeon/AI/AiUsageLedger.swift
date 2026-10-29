@@ -40,16 +40,25 @@ final class AiUsageLedger: @unchecked Sendable {
     private let defaults: UserDefaults
     private let key = "ai.usage"
     private let lock = NSLock()
-    private(set) var byProvider: [String: TokenUsage]
+    /// Written from the engine's threads (every AI answer), read by
+    /// Settings on the main actor: always under `lock`. Observation is
+    /// wired by hand through `byProvider`.
+    @ObservationIgnored private var storage: [String: TokenUsage]
+
+    /// Usage per provider id since the last reset.
+    var byProvider: [String: TokenUsage] {
+        access(keyPath: \.byProvider)
+        return lock.withLock { storage }
+    }
     /// Prices for providers that bill; the Apple models are not listed.
     nonisolated(unsafe) static var prices: [String: TokenPrice] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let data = defaults.data(forKey: key), let saved = try? JSONDecoder().decode([String: TokenUsage].self, from: data) {
-            byProvider = saved
+            storage = saved
         } else {
-            byProvider = [:]
+            storage = [:]
         }
     }
 
@@ -60,23 +69,26 @@ final class AiUsageLedger: @unchecked Sendable {
     }
 
     func record(provider: String, input: Int, output: Int) {
-        lock.lock()
-        var u = byProvider[provider] ?? TokenUsage()
-        u.add(input: input, output: output)
-        byProvider[provider] = u
-        save()
-        lock.unlock()
+        withMutation(keyPath: \.byProvider) {
+            lock.withLock {
+                storage[provider, default: TokenUsage()].add(input: input, output: output)
+                save()
+            }
+        }
     }
 
     func reset() {
-        lock.lock()
-        byProvider = [:]
-        save()
-        lock.unlock()
+        withMutation(keyPath: \.byProvider) {
+            lock.withLock {
+                storage = [:]
+                save()
+            }
+        }
     }
 
+    /// Callers hold `lock`.
     private func save() {
-        defaults.set(try? JSONEncoder().encode(byProvider), forKey: key)
+        defaults.set(try? JSONEncoder().encode(storage), forKey: key)
     }
 
     /// "12 requests · 8.4K in / 1.2K out" (+ " · $0.03" when billed).

@@ -72,8 +72,10 @@ struct TriageProfile {
     /// can reach it, else on device.
     static func current() -> TriageProfile {
         let device = SystemModelProvider()
-        let cloud = ModelProviderRegistry.provider(id: "apple-cloud")
-        let decide: any ModelProvider = (cloud?.availability.isAvailable == true) ? cloud! : device
+        var decide: any ModelProvider = device
+        if let cloud = ModelProviderRegistry.provider(id: PrivateCloudComputeProvider().id), cloud.availability.isAvailable {
+            decide = cloud
+        }
         return TriageProfile(scanProvider: device, decideProvider: decide, actProvider: device)
     }
 }

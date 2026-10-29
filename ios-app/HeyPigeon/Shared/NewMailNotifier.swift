@@ -44,7 +44,7 @@ enum NewMailNotifier {
 
         let fresh = unreadInbox(model, accountId: accountId).filter { !before.contains($0.id) }
         // In front, the list is live and a banner would be noise.
-        if UIApplication.shared.applicationState != .active {
+        if !AppLifecycle.isActive {
             for row in fresh {
                 await post(row)
             }
@@ -57,11 +57,13 @@ enum NewMailNotifier {
 
     /// Badge = unread in the unified inbox + reminders that came due, across
     /// every account. Also called after every sync and reload, so it is
-    /// right with the relay off too.
+    /// right with the relay off too. The reminders come from the model's
+    /// last reload (every caller has just reloaded); only the unread count
+    /// is read fresh.
     @MainActor
     static func refreshBadge(_ model: AppModel) async {
         let unread = (try? model.engine.unreadCounts(accountId: nil))?["inbox"] ?? 0
-        let due = AppModel.due(model.scheduledThreads(accountId: nil)).count
+        let due = AppModel.due(model.scheduledAcrossAccounts).count
         try? await UNUserNotificationCenter.current().setBadgeCount(unread + due)
     }
 
@@ -81,7 +83,7 @@ enum NewMailNotifier {
         content.threadIdentifier = row.accountId
         content.userInfo = ["threadId": row.id, "accountId": row.accountId]
         // iOS 27: Siri can act on "that notification" as the thread entity.
-        content.appEntityIdentifiers = [EntityIdentifier(for: MailThreadEntity.self, identifier: row.id)]
+        content.appEntityIdentifiers = [MailThreadEntity.identifier(row.id)]
 
         // The intent carries the sender; iOS takes name and image from it.
         // A failed update falls back to the plain banner, same text.
@@ -118,11 +120,9 @@ enum NewMailNotifier {
 
     /// Who the banner is from: "Ana, Me (4)" → "Ana"; the address when the
     /// summary has no name (or is only "Me").
-    private static func sender(of row: ThreadRow) -> (name: String, address: String) {
+    static func sender(of row: ThreadRow) -> (name: String, address: String) {
         let address = row.lastFromAddress
-        let first = row.fromSummary.components(separatedBy: ",").first?
-            .trimmingCharacters(in: .whitespaces) ?? ""
-        let name = first.isEmpty || first == "Me" ? (address.isEmpty ? row.fromSummary : address) : first
+        let name = row.leadSenderName ?? (address.isEmpty ? row.fromSummary : address)
         return (name, address.isEmpty ? name : address)
     }
 

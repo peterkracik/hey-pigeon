@@ -22,7 +22,7 @@ enum WidgetSnapshotWriter {
             WidgetSnapshot.Row(id: t.id, from: t.fromSummary, subject: t.subject, snippet: t.snippet,
                                accountColor: colors[t.accountId] ?? "sky", at: at, isFollowUp: t.isFollowUp, isUnread: !t.isRead)
         }
-        let scheduled = model.scheduledThreads(accountId: nil)
+        let scheduled = model.scheduledAcrossAccounts
             .filter { $0.scheduledAt != nil }
             .sorted { ($0.scheduledAt ?? now) < ($1.scheduledAt ?? now) }
         let due = scheduled.filter { ($0.scheduledAt ?? now) <= now }

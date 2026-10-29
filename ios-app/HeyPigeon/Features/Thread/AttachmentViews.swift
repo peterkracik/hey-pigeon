@@ -85,7 +85,7 @@ struct AttachmentInsightSheet: View {
                             Text("Reading \(attachment.filename)…").font(.body).foregroundStyle(Theme.textSecondary)
                         }
                     }
-                    Text("Read on this iPhone by Apple Intelligence. The attachment never leaves the device.")
+                    Text("Read on this \(Device.name) by Apple Intelligence. The attachment never leaves the device.")
                         .font(.caption).foregroundStyle(Theme.textTertiary).padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -93,7 +93,7 @@ struct AttachmentInsightSheet: View {
             }
             .background(Theme.canvas)
             .navigationTitle(attachment.filename)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task {
                 do {
@@ -165,10 +165,10 @@ struct AttachmentActionChips: View {
             guard let row else { return }
             model.remind(row, at: at, onlyIfNoReply: false)
         case .saveTracking(let n, _):
-            UIPasteboard.general.string = n
+            Clipboard.copy(n)
             model.show("Tracking number copied")
         case .saveCode(let c):
-            UIPasteboard.general.string = c
+            Clipboard.copy(c)
             model.show("Code copied")
         }
     }

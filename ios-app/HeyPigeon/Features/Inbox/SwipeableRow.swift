@@ -27,8 +27,6 @@ struct SwipeableRow<Content: View>: View {
     @State private var tier = 0 // -2, -1, 0, 1, 2 (negative = trailing)
     @State private var dragging = false
 
-    private let shortThreshold: CGFloat = 72
-    private let longThreshold: CGFloat = 150
 
     private var armed: SwipeAction? {
         switch tier {
@@ -74,13 +72,8 @@ struct SwipeableRow<Content: View>: View {
                     // Vertical intent belongs to the list; only take clearly horizontal drags.
                     guard dragging || abs(dx) > abs(dy) * 1.5 else { return }
                     dragging = true
-                    offset = rubberBand(dx)
-                    let newTier: Int
-                    switch abs(dx) {
-                    case ..<shortThreshold: newTier = 0
-                    case ..<longThreshold: newTier = dx > 0 ? 1 : -1
-                    default: newTier = dx > 0 ? 2 : -2
-                    }
+                    offset = SwipeGeometry.rubberBand(dx)
+                    let newTier = SwipeGeometry.tier(for: dx)
                     if newTier != tier {
                         tier = newTier
                         if newTier != 0 { Haptics.light() }
@@ -102,9 +95,27 @@ struct SwipeableRow<Content: View>: View {
             }
         }
     }
+}
+
+/// The gesture's numbers, apart from the view so they can be tested.
+enum SwipeGeometry {
+    /// Distance that arms the first (short) action.
+    static let shortThreshold: CGFloat = 72
+    /// Distance that arms the second (long) action.
+    static let longThreshold: CGFloat = 150
+
+    /// -2…2: which action letting go would run (negative = trailing,
+    /// revealed by dragging left; 0 = none).
+    static func tier(for dx: CGFloat) -> Int {
+        switch abs(dx) {
+        case ..<shortThreshold: 0
+        case ..<longThreshold: dx > 0 ? 1 : -1
+        default: dx > 0 ? 2 : -2
+        }
+    }
 
     /// Past the long threshold the row resists, so the gesture reads as "done".
-    private func rubberBand(_ dx: CGFloat) -> CGFloat {
+    static func rubberBand(_ dx: CGFloat) -> CGFloat {
         let limit = longThreshold + 24
         if abs(dx) <= limit { return dx }
         let extra = abs(dx) - limit

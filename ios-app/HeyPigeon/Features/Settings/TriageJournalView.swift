@@ -40,7 +40,7 @@ struct TriageJournalView: View {
                 Section {
                     Button("Clear journal", role: .destructive) { journal.clear() }
                 } footer: {
-                    Text("Kept on this iPhone only, the last \(TriageJournal.cap) tool calls.")
+                    Text("Kept on this \(Device.name) only, the last \(TriageJournal.cap) tool calls.")
                 }
                 .menuCard()
             }

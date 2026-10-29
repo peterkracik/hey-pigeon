@@ -28,7 +28,7 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
         switch self {
         case .askOff: "Turn on \"Let Siri see your inbox\" in Hey Pigeon's settings to ask about your mail."
         case .askFailed(let why): "Hey Pigeon couldn't answer: \(why)"
-        case .triageOff: "Triage needs Apple Intelligence on this iPhone and a connected account."
+        case .triageOff: "Triage needs Apple Intelligence on this \(Device.name) and a connected account."
         case .triageBusy: "Hey Pigeon is already triaging. Let it finish first."
         case .notReady: "Hey Pigeon isn't ready yet. Try again in a moment."
         case .noSuchThread: "That email isn't in Hey Pigeon any more."

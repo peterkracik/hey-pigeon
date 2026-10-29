@@ -8,8 +8,8 @@ import Foundation
 struct PendingShare: Codable, Equatable {
     static let file = "pending-share.json"
     static let filesDirectory = "pending-share-files"
-    /// The composer's own cap (ComposeView.maxAttachBytes).
-    static let maxFileBytes = 18 * 1024 * 1024
+    /// The composer's own cap.
+    static let maxFileBytes = MailLimits.maxAttachmentBytes
 
     struct File: Codable, Equatable {
         let filename: String

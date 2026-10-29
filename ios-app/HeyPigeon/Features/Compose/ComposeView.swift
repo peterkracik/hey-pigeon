@@ -43,7 +43,10 @@ struct ComposeView: View {
     @FocusState private var focus: Field?
 
     private enum Field { case to, cc, bcc, subject, body }
-    private static let maxAttachBytes = 18 * 1024 * 1024
+    private static let maxAttachBytes = MailLimits.maxAttachmentBytes
+    /// How long typing pauses before the model's copy of the draft (what
+    /// Siri's "send it" sends) catches up with the editor.
+    private static let mirrorDelay: Duration = .milliseconds(300)
 
     init(draft: SendDraft) {
         _draft = State(initialValue: draft)
@@ -60,6 +63,9 @@ struct ComposeView: View {
         _savedFrom = State(initialValue: draft.draftSaved ? draft.fromAccountId : nil)
     }
 
+    /// The draft's content, for "did anything change?": what would be
+    /// sent (text, html part), not every attribute the editor carries, so
+    /// an untouched composer is never saved as a draft.
     private struct Snapshot: Equatable {
         let to: [String], cc: [String], bcc: [String]
         let subject: String, body: String, html: String?
@@ -114,7 +120,7 @@ struct ComposeView: View {
             }
             .background(Theme.canvas)
             .navigationTitle(draft.replyToThreadId == nil ? "New message" : "Reply")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { close() } label: { Image(systemName: "xmark") }
@@ -138,9 +144,13 @@ struct ComposeView: View {
             // A swipe down closes like the X: whatever changed is kept as a draft.
             .onDisappear { if !finished { saveDraft() } }
             // The model's copy follows the editor, so Siri's "send it" sends
-            // what is on screen, not what the composer opened with.
-            .onChange(of: snapshot) { _, _ in
-                if !finished, model.composeDraft?.draftKey == draft.draftKey { model.composeDraft = composed }
+            // what is on screen, not what the composer opened with — once
+            // typing pauses: each copy re-renders everything that observes
+            // the model's draft.
+            .task(id: snapshot) {
+                try? await Task.sleep(for: Self.mirrorDelay)
+                guard !Task.isCancelled, !finished, model.composeDraft?.draftKey == draft.draftKey else { return }
+                model.composeDraft = composed
             }
             // Siri's "update draft" changed the model's copy: take its fields.
             .onChange(of: model.composeDraft?.externalRevision) { _, _ in
@@ -151,7 +161,7 @@ struct ComposeView: View {
                 if phase == .background, !finished { saveDraft() }
             }
             .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-                if case .success(let urls) = result { addFiles(urls) }
+                if case .success(let urls) = result { Task { await addFiles(urls) } }
             }
             .photosPicker(isPresented: $showPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
             .onChange(of: photos) { _, items in
@@ -166,7 +176,7 @@ struct ComposeView: View {
             }
             .alert("Link", isPresented: $askLink) {
                 TextField("https://", text: $linkURL)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    .plainInput(.url)
                 Button("Link") { applyLink() }
                 Button("Cancel", role: .cancel) { linkURL = "" }
             } message: {
@@ -372,14 +382,33 @@ struct ComposeView: View {
 
     // MARK: Attachments
 
-    private func addFiles(_ urls: [URL]) {
+    /// Files from the Files picker. The size is checked before the file is
+    /// read (a video would otherwise be loaded whole only to be refused),
+    /// and reading plus base64 run off the main actor so a large PDF does
+    /// not freeze the composer.
+    private func addFiles(_ urls: [URL]) async {
+        let limit = Self.maxAttachBytes
         for url in urls {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { model.show("Could not read \(url.lastPathComponent)"); continue }
-            let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-            add(DraftAttachment(filename: url.lastPathComponent, mimeType: mime, size: data.count, dataBase64: data.base64EncodedString()))
+            let loaded = await Task.detached(priority: .userInitiated) { Self.load(url, limit: limit) }.value
+            switch loaded {
+            case .success(let a): add(a)
+            case .failure(.tooLarge): model.show("\(url.lastPathComponent) is over Gmail's ~18 MB limit")
+            case .failure(.unreadable): model.show("Could not read \(url.lastPathComponent)")
+            }
         }
+    }
+
+    private enum LoadError: Error { case tooLarge, unreadable }
+
+    /// One picked file as an attachment, inside its security scope.
+    private nonisolated static func load(_ url: URL, limit: Int) -> Result<DraftAttachment, LoadError> {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > limit { return .failure(.tooLarge) }
+        guard let data = try? Data(contentsOf: url) else { return .failure(.unreadable) }
+        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        return .success(DraftAttachment(filename: url.lastPathComponent, mimeType: mime, size: data.count,
+                                        dataBase64: data.base64EncodedString()))
     }
 
     private func addPhotos(_ items: [PhotosPickerItem]) async {

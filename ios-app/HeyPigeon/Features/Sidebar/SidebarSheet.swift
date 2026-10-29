@@ -13,7 +13,7 @@ struct SidebarSheet: View {
             list
                 .toolbarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .barTrailing) {
                         Button(role: .close) { dismiss() }
                     }
                 }
@@ -74,8 +74,7 @@ struct SidebarSheet: View {
     }
 
     private func go(_ folder: MailView) {
-        model.tab = .inbox
-        model.folder = folder
+        model.navigate(to: .inbox, folder: folder)
         Haptics.light()
         dismiss()
     }

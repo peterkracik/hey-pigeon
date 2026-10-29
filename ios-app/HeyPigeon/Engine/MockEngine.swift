@@ -322,7 +322,7 @@ final class MockEngine: MailEngine {
     func setAIProvider(_ provider: AIProvider) throws { aiProvider = provider }
     func setAIFallback(_ order: [AIProvider]) throws { aiFallback = order }
     func aiProviders() -> [AIProviderInfo] {
-        [AIProviderInfo(id: "apple", title: "On this iPhone", modelLabel: "On this iPhone", leavesDevice: false,
+        [AIProviderInfo(id: "apple", title: "On this \(Device.name)", modelLabel: "On this \(Device.name)", leavesDevice: false,
                         available: onDeviceAI, unavailableReason: onDeviceAI ? nil : "Apple Intelligence isn't available in the sample inbox."),
          AIProviderInfo(id: "apple-cloud", title: "Apple's cloud", modelLabel: "Private Cloud Compute", leavesDevice: true,
                         available: cloudAI, unavailableReason: cloudAI ? nil : "Private Cloud Compute isn't reachable in the sample inbox.")]

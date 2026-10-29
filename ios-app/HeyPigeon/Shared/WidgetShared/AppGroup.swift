@@ -48,6 +48,13 @@ enum AppGroup {
     }
 }
 
+/// Limits shared by the composer and the share extension.
+enum MailLimits {
+    /// Attachments per message, raw bytes. Gmail caps a message at 25 MB,
+    /// and base64 grows attachments by a third.
+    static let maxAttachmentBytes = 18 * 1024 * 1024
+}
+
 extension JSONEncoder {
     static let shared: JSONEncoder = {
         let e = JSONEncoder()

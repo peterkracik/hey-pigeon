@@ -44,12 +44,7 @@ struct ThreadView: View {
         return model.rows.first { $0.id == row.id } ?? detail?.thread ?? row
     }
 
-    private var participants: String {
-        guard let msgs = detail?.mail else { return row.fromSummary }
-        var seen: [String] = []
-        for m in msgs where !m.isMine && !seen.contains(m.fromName) { seen.append(m.fromName) }
-        return seen.isEmpty ? row.fromSummary : seen.joined(separator: ", ")
-    }
+    private var participants: String { detail?.participantNames ?? row.fromSummary }
 
     /// Reply all when someone besides the sender is on the last message,
     /// else Reply.
@@ -65,9 +60,7 @@ struct ThreadView: View {
     }
 
     /// Plain-text transcript, oldest first, "Me" for own messages (AI context).
-    private var transcript: String {
-        (detail?.mail ?? []).map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }.joined(separator: "\n\n")
-    }
+    private var transcript: String { detail?.transcript ?? "" }
 
     /// The thread's unsent drafts, oldest first. A draft saved a moment ago
     /// and not synced back yet stands in for the stored copy it updates.
@@ -130,7 +123,7 @@ struct ThreadView: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
             }
             if model.aiConfigured {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .barTrailing) {
                     Button {
                         if let d = detail { model.openThreadSummary(current, messages: d.mail) }
                     } label: { Image(systemName: "sparkles") }
@@ -138,7 +131,7 @@ struct ThreadView: View {
                     .accessibilityLabel("Summarize thread")
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .barTrailing) {
                 Menu {
                     Button { model.togglePin(current) } label: {
                         Label(current.isPinned ? "Unpin" : "Pin", systemImage: current.isPinned ? "pin.slash" : "pin")
@@ -188,6 +181,8 @@ struct ThreadView: View {
         .task(id: row.id) {
             do {
                 detail = try await model.engine.thread(id: row.id)
+                // The first open stores the bodies: the index can now carry them.
+                SpotlightIndexer.invalidate(threadId: row.id)
                 if detail == nil { failed = "This thread is no longer available." }
                 else if model.autoSummarize && model.aiConfigured, let d = detail {
                     model.summarizeThread(current, messages: d.mail)
@@ -227,15 +222,15 @@ struct ThreadView: View {
     /// two and any unread run before them. Opening a message unfolds.
     private func messageList(_ messages: [MessageItem]) -> some View {
         let lastIndex = messages.count - 1
-        var keepFrom = max(lastIndex - 1, 1)
-        while keepFrom > 1 && !messages[keepFrom - 1].isRead { keepFrom -= 1 }
-        let foldable = !unfolded && keepFrom - 1 >= 2
-            && !messages[1..<keepFrom].contains { expanded.contains($0.id) }
+        // Folded unless the user unfolded it or opened a message inside it.
+        let folded = unfolded ? nil : ThreadDetail.foldedRange(messages).flatMap { range in
+            messages[range].contains { expanded.contains($0.id) } ? nil : range
+        }
         return VStack(spacing: 1) {
             ForEach(Array(messages.enumerated()), id: \.element.id) { index, m in
-                if foldable && index > 0 && index < keepFrom {
-                    if index == 1 {
-                        EarlierRow(count: keepFrom - 1) { withAnimation(.snappy) { unfolded = true } }
+                if let folded, folded.contains(index) {
+                    if index == folded.lowerBound {
+                        EarlierRow(count: folded.count) { withAnimation(.snappy) { unfolded = true } }
                     }
                 } else {
                     MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || index == lastIndex),
@@ -319,25 +314,27 @@ struct ThreadView: View {
                 }
             }
             // Each toggle shows its state: filled icon in the state's colour.
+            // With a hardware keyboard (iPad, the Mac) the desktop's keys
+            // run them: e · h · n · s · ⌘⌫.
             HStack(spacing: 0) {
                 bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
-                    tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil) {
+                    tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil, key: "e") {
                     if !current.isDone { IntentDonations.archived(current, in: model) }
                     model.toggleDone(current); onClose()
                 }
                 bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
-                    tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone)) {
+                    tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone), key: "h") {
                     model.pendingRemind = current
                 }
                 bar(current.needsReply ? "Clear need reply" : "Need reply",
                     current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left",
-                    tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil) {
+                    tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil, key: "n") {
                     model.toggleNeedsReply(current)
                 }
-                bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil) {
+                bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
                     model.togglePin(current)
                 }
-                bar("Delete", "trash", tint: Color(hex: 0xB34E2E)) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
+                bar("Delete", "trash", tint: Color(hex: 0xB34E2E), key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
             }
             .frame(height: 52)
             .glassEffect(.regular, in: .capsule)
@@ -375,6 +372,7 @@ struct ThreadView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("r", modifiers: [])
         }
         .foregroundStyle(Theme.textPrimary)
         .frame(height: 48)
@@ -396,7 +394,9 @@ struct ThreadView: View {
         }
     }
 
-    private func bar(_ label: String, _ systemImage: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+    /// One triage button; `key` is its hardware-keyboard shortcut.
+    private func bar(_ label: String, _ systemImage: String, tint: Color? = nil,
+                     key: KeyEquivalent, modifiers: EventModifiers = [], action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage).font(.title3)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -404,6 +404,7 @@ struct ThreadView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(tint ?? Theme.textPrimary)
+        .keyboardShortcut(key, modifiers: modifiers)
         .accessibilityLabel(label)
     }
 

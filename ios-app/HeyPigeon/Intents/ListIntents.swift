@@ -229,7 +229,7 @@ struct ThreadsSnippet: View {
 
     private func trailing(_ row: ThreadRow) -> String {
         switch accent {
-        case .reminder: row.scheduledAt.map(Formatters.reminder) ?? Formatters.rowTime(row.lastMessageAt)
+        case .reminder: row.scheduledAt.map { Formatters.reminder($0) } ?? Formatters.rowTime(row.lastMessageAt)
         case .none, .needReply: Formatters.rowTime(row.lastMessageAt)
         }
     }

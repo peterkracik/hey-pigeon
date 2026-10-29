@@ -9,6 +9,7 @@
 
 import Foundation
 import FoundationModels
+import Synchronization
 
 /// What a request is for. The cloud model picks its reasoning level from
 /// it (light for drafts and summaries, deep for triage).
@@ -61,9 +62,9 @@ extension ModelProvider {
 /// iOS 27), so the backend chunks what does not fit.
 struct SystemModelProvider: ModelProvider {
     let id = "apple"
-    let label = "On this iPhone"
+    let label = "On this \(Device.name)"
     let modelId = "apple-on-device"
-    let modelLabel = "On this iPhone"
+    let modelLabel = "On this \(Device.name)"
     let promptBudget = 9_000
     let leavesDevice = false
 
@@ -160,15 +161,19 @@ struct PackageModelProvider: ModelProvider {
 /// integration, and the Rust core accepts the new id through
 /// `add_ai_backend`.
 enum ModelProviderRegistry {
-    nonisolated(unsafe) private static var extra: [any ModelProvider] = []
+    /// Registered packages. Read from the main actor and from the engine's
+    /// threads (the backends), so behind a lock rather than a bare global.
+    private static let extra = Mutex<[any ModelProvider]>([])
 
     static var all: [any ModelProvider] {
-        [SystemModelProvider(), PrivateCloudComputeProvider()] + extra
+        [SystemModelProvider(), PrivateCloudComputeProvider()] + extra.withLock { $0 }
     }
 
     static func register(_ provider: any ModelProvider) {
-        extra.removeAll { $0.id == provider.id }
-        extra.append(provider)
+        extra.withLock { list in
+            list.removeAll { $0.id == provider.id }
+            list.append(provider)
+        }
     }
 
     static func provider(id: String) -> (any ModelProvider)? {

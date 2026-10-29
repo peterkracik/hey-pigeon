@@ -88,7 +88,7 @@ struct AIEditSheet: View {
                 if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
             }
             .navigationTitle(mode == .write ? "Write with AI" : "Edit with AI")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .disabled(running != nil)
             .overlay { if running != nil { ProgressView("Working…").padding(20).glassEffect() } }

@@ -60,6 +60,14 @@ struct ThreadRow: Identifiable, Hashable {
     let labels: [String]
 
     var isConversation: Bool { messageCount > 1 }
+    /// The first name in `fromSummary` ("Ana, Me (4)" → "Ana"); nil when
+    /// the summary is empty or leads with the user ("Me").
+    var leadSenderName: String? {
+        let first = (fromSummary.components(separatedBy: ",").first ?? "")
+            .replacingOccurrences(of: #"\s*\(\d+\)$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        return first.isEmpty || first == "Me" ? nil : first
+    }
     var isDone: Bool { isArchived }
     var isPinned: Bool { isStarred }
 }
@@ -90,6 +98,79 @@ struct ThreadDetail: Hashable {
     /// what the AI reads.
     var mail: [MessageItem] { messages.filter { !$0.isDraft } }
     var drafts: [MessageItem] { messages.filter(\.isDraft) }
+
+    /// Plain-text transcript, oldest first, "Me" for the user's own
+    /// messages: the AI's context for drafting a reply. One shape for the
+    /// thread view, the Reply intent and the triage agent.
+    var transcript: String {
+        mail.map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }
+            .joined(separator: "\n\n")
+    }
+
+    /// The other people in the conversation, in order of first appearance;
+    /// nil when only the user wrote (the row's summary is used then).
+    var participantNames: String? {
+        var seen: [String] = []
+        for m in mail where !m.isMine && !seen.contains(m.fromName) { seen.append(m.fromName) }
+        return seen.isEmpty ? nil : seen.joined(separator: ", ")
+    }
+
+    /// Long threads fold their middle into one "N earlier" row: the first
+    /// message stays, then the last two and any unread run just before
+    /// them. Returns the indices folded away (never fewer than two), or nil
+    /// when nothing folds.
+    static func foldedRange(_ messages: [MessageItem]) -> Range<Int>? {
+        let lastIndex = messages.count - 1
+        var keepFrom = max(lastIndex - 1, 1)
+        while keepFrom > 1 && !messages[keepFrom - 1].isRead { keepFrom -= 1 }
+        return keepFrom - 1 >= 2 ? 1..<keepFrom : nil
+    }
+}
+
+/// RFC 5322-ish address handling for what the core hands over as header
+/// text (`"Ana Novak" <ana@acme.test>`, or a bare address).
+enum EmailAddress {
+    /// The address between the angle brackets, or the trimmed text itself.
+    static func address(in header: String) -> String {
+        if let open = header.firstIndex(of: "<"), let close = header[open...].firstIndex(of: ">") {
+            return String(header[header.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+        }
+        return header.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The display name, quotes stripped; the address when there is none.
+    static func displayName(in header: String) -> String {
+        let name = header.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        return name.isEmpty ? address(in: header) : name
+    }
+
+    /// Same mailbox: the addresses compared whole and without case. Not a
+    /// substring test — "hana@acme.test" is not "ana@acme.test".
+    static func same(_ a: String, _ b: String) -> Bool {
+        address(in: a).caseInsensitiveCompare(address(in: b)) == .orderedSame
+    }
+
+    /// Good enough to turn typed text into a recipient chip: one "@" with
+    /// something before it, a dotted domain after it, no spaces.
+    static func isPlausible(_ s: String) -> Bool {
+        let parts = s.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, !s.contains(where: \.isWhitespace) else { return false }
+        let domain = parts[1]
+        return domain.contains(".") && !domain.hasPrefix(".") && !domain.hasSuffix(".")
+    }
+}
+
+/// Bytes a standard base64 string decodes to, from its length alone: the
+/// size shown for an attachment without decoding megabytes to count them.
+enum Base64 {
+    static func decodedLength(_ s: String) -> Int {
+        let chars = s.utf8.filter { $0 != UInt8(ascii: "\n") && $0 != UInt8(ascii: "\r") }
+        guard !chars.isEmpty else { return 0 }
+        let padding = chars.reversed().prefix(2).prefix { $0 == UInt8(ascii: "=") }.count
+        return chars.count / 4 * 3 + (chars.count % 4 == 0 ? 0 : max(0, chars.count % 4 - 1)) - padding
+    }
 }
 
 /// One attachment of a message, as the provider names it; the bytes come
@@ -204,7 +285,7 @@ enum AIProvider: Hashable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .apple: "On this iPhone"
+        case .apple: "On this \(Device.name)"
         case .appleCloud: "Apple's cloud"
         case .openai: "ChatGPT (OpenAI)"
         case .other(let id): id.capitalized
@@ -223,7 +304,7 @@ enum TriageClassifier: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .apple: "On this iPhone"
+        case .apple: "On this \(Device.name)"
         case .appleCloud: "Apple's cloud"
         case .jev: "Jev"
         }

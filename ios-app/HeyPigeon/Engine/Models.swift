@@ -84,6 +84,28 @@ struct ThreadDetail: Hashable {
     let messages: [MessageItem]
 }
 
+/// One attachment of a message, as the provider names it; the bytes come
+/// on demand through `MailEngine.attachmentFile` and are cached as a file.
+struct AttachmentItem: Identifiable, Hashable {
+    let threadId: String
+    let messageId: String
+    let attachmentId: String
+    let filename: String
+    let mimeType: String
+    /// Bytes as the provider reports them; 0 when unknown.
+    let size: Int
+
+    var id: String { messageId + "|" + attachmentId }
+    var isImage: Bool { mimeType.lowercased().hasPrefix("image/") }
+    var isPDF: Bool { mimeType.lowercased() == "application/pdf" || filename.lowercased().hasSuffix(".pdf") }
+    /// What the on-device model can look at.
+    var isExplainable: Bool { isImage || isPDF }
+
+    var sizeText: String? {
+        size > 0 ? ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) : nil
+    }
+}
+
 /// A user-created Gmail label (system labels map to folders).
 struct MailLabelItem: Identifiable, Hashable {
     let id: String
@@ -521,6 +543,12 @@ protocol MailEngine: AnyObject {
     func draft(threadId: String) async throws -> SendDraft?
     /// One thread's row from the store (no network), whatever list it is in.
     func threadRow(id: String) throws -> ThreadRow?
+    /// The thread's attachments (filename, type, size): one network read,
+    /// asked for when a message with a paperclip is on screen.
+    func attachments(threadId: String) async throws -> [AttachmentItem]
+    /// The attachment's bytes as a cached file, fetched once. Never called
+    /// without the user tapping (or the on-device triage hook asking).
+    func attachmentFile(_ attachment: AttachmentItem) async throws -> URL
 
     func perform(_ action: MailAction, accountId: String) async throws
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws

@@ -172,6 +172,31 @@ final class MockEngine: MailEngine {
 
     func threadRow(id: String) throws -> ThreadRow? { rows[id] }
 
+    /// The rows with a paperclip get a PDF and, for the contract, an image.
+    func attachments(threadId: String) async throws -> [AttachmentItem] {
+        guard let row = rows[threadId], row.hasAttachment else { return [] }
+        var out = [AttachmentItem(threadId: threadId, messageId: "\(threadId)-m0", attachmentId: "a1",
+                                  filename: threadId == "t1" ? "Q4-roadmap.pdf" : "contract-v3.pdf", mimeType: "application/pdf", size: 184_320)]
+        if threadId == "t5" {
+            out.append(AttachmentItem(threadId: threadId, messageId: "\(threadId)-m0", attachmentId: "a2",
+                                      filename: "receipt.png", mimeType: "image/png", size: 2_048))
+        }
+        return out
+    }
+
+    /// A tiny file in the temporary directory stands in for the download.
+    func attachmentFile(_ a: AttachmentItem) async throws -> URL {
+        try? await Task.sleep(for: .milliseconds(200))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mock-\(a.attachmentId)-\(a.filename)")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            // A 1×1 white PNG; the PDF is a minimal one-page document.
+            let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=")!
+            let pdf = Data("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>".utf8)
+            try (a.isPDF ? pdf : png).write(to: url)
+        }
+        return url
+    }
+
     func perform(_ action: MailAction, accountId: String) async throws {
         switch action {
         case .archive(let id): update(id) { $0.isArchived = true; $0.scheduledAt = nil; $0.isFollowUp = false; $0.needsReply = false }

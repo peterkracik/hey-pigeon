@@ -173,6 +173,21 @@ final class RustEngine: MailEngine {
         try engine.getThreadRow(threadId: id).map { ThreadRow($0) }
     }
 
+    func attachments(threadId: String) async throws -> [AttachmentItem] {
+        try await engine.listAttachments(threadId: threadId).map {
+            AttachmentItem(threadId: $0.threadId, messageId: $0.messageId, attachmentId: $0.attachmentId,
+                           filename: $0.filename, mimeType: $0.mimeType, size: Int($0.size))
+        }
+    }
+
+    func attachmentFile(_ a: AttachmentItem) async throws -> URL {
+        let path = try await engine.fetchAttachment(attachment: MailAttachment(
+            threadId: a.threadId, messageId: a.messageId, attachmentId: a.attachmentId,
+            filename: a.filename, mimeType: a.mimeType, size: Int64(a.size)
+        ))
+        return URL(fileURLWithPath: path)
+    }
+
     func perform(_ action: MailAction, accountId: String) async throws {
         try await engine.mutate(accountId: accountId, mutation: action.mutation)
     }

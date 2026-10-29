@@ -25,6 +25,13 @@ struct ThreadView: View {
     /// Reply kind picked from the chevron; nil follows the default.
     @State private var replyChoice: ReplyKind?
     @State private var unfolded = false
+    /// The thread's attachments, by message, once the detail is here and
+    /// the row has a paperclip. One network read per thread.
+    @State private var attachments: [String: [AttachmentItem]] = [:]
+    /// The triage hook: a receipt / ticket / shipment with an image or PDF,
+    /// read on device as soon as the thread opens; the chips sit under the
+    /// subject line. Nil until (and unless) there is something to offer.
+    @State private var hintActions: [AttachmentAction] = []
 
     /// Live from the store (AppModel.openThread), never the copy this view
     /// was opened with: that one goes stale with the first action.
@@ -67,6 +74,11 @@ struct ThreadView: View {
                     .padding(.horizontal, 16).padding(.top, 6)
 
                 metaLine.padding(.horizontal, 16).padding(.top, 8)
+                if !hintActions.isEmpty {
+                    AttachmentActionChips(actions: hintActions, row: current)
+                        .padding(.horizontal, 16).padding(.top, 8)
+                        .accessibilityLabel("Suggested from the attachment")
+                }
 
                 if let detail {
                     messageList(detail.messages).padding(.top, 14)
@@ -153,6 +165,26 @@ struct ThreadView: View {
                     model.summarizeThread(current, messages: d.messages)
                 }
             } catch { failed = error.localizedDescription }
+            await loadAttachments()
+        }
+    }
+
+    // MARK: Attachments
+
+    /// The chips under each message, and — for mail that smells like a
+    /// receipt, a ticket or a shipment — the on-device read of the first
+    /// image or PDF, offered as one-tap chips. Never leaves the device.
+    private func loadAttachments() async {
+        guard current.hasAttachment, let list = try? await model.engine.attachments(threadId: row.id), !list.isEmpty else { return }
+        attachments = Dictionary(grouping: list, by: \.messageId)
+        guard AttachmentUnderstanding.isAvailable, AttachmentUnderstanding.looksActionable(subject: row.subject),
+              let first = list.first(where: \.isExplainable) else { return }
+        do {
+            let file = try await model.engine.attachmentFile(first)
+            let insight = try await AttachmentUnderstanding.explain(file: file, mimeType: first.mimeType, filename: first.filename)
+            withAnimation(.snappy) { hintActions = AttachmentUnderstanding.actions(for: insight) }
+        } catch {
+            // A hint, not a feature the user asked for: fail quietly.
         }
     }
 
@@ -174,7 +206,8 @@ struct ThreadView: View {
                         EarlierRow(count: keepFrom - 1) { withAnimation(.snappy) { unfolded = true } }
                     }
                 } else {
-                    MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || index == lastIndex)) {
+                    MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || index == lastIndex),
+                               attachments: attachments[m.id] ?? []) {
                         allCollapsed = false
                         if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
                     } onAction: { kind in run(kind, on: m) }
@@ -407,6 +440,7 @@ enum ReplyKind: String, CaseIterable, Identifiable {
 struct MessageRow: View {
     let message: MessageItem
     let expanded: Bool
+    var attachments: [AttachmentItem] = []
     let onToggle: () -> Void
     let onAction: (ReplyKind) -> Void
 
@@ -439,6 +473,9 @@ struct MessageRow: View {
             if expanded {
                 MessageBodyView(html: message.bodyHTML, text: message.bodyText ?? message.snippet, senderAddress: message.fromAddress)
                     .padding(.top, 12)
+                if !attachments.isEmpty {
+                    AttachmentChips(attachments: attachments).padding(.top, 10)
+                }
             }
         }
         .padding(.horizontal, 16).padding(.vertical, expanded ? 12 : 9)

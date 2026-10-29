@@ -4,6 +4,7 @@
 
 import HeyPigeonCore
 import Testing
+import UIKit
 @testable import HeyPigeon
 
 struct OnDeviceAITests {
@@ -120,5 +121,76 @@ struct OnDeviceAITests {
         #expect(AiUsageLedger(defaults: defaults).byProvider["apple"] == apple)
         ledger.reset()
         #expect(ledger.byProvider.isEmpty)
+    }
+}
+
+/// Attachment understanding's pure parts: the heuristic that starts it, the
+/// image sizing, the date parsing and the chips derived from the fields.
+struct AttachmentUnderstandingTests {
+    private func insight(kind: AttachmentInsight.Kind, date: String = "", departure: String = "", total: String = "",
+                         currency: String = "", merchant: String = "", tracking: String = "", carrier: String = "",
+                         flight: String = "", code: String = "") -> AttachmentInsight {
+        AttachmentInsight(kind: kind, summary: "", merchant: merchant, total: total, currency: currency, date: date,
+                          trackingNumber: tracking, carrier: carrier, flight: flight, departure: departure, confirmationCode: code)
+    }
+
+    @Test func onlyReceiptTicketAndShipmentSubjectsStartTheModel() {
+        #expect(AttachmentUnderstanding.looksActionable(subject: "Your receipt from Apple"))
+        #expect(AttachmentUnderstanding.looksActionable(subject: "Check-in opens: BTS → LIS"))
+        #expect(AttachmentUnderstanding.looksActionable(subject: "Your parcel has shipped"))
+        #expect(!AttachmentUnderstanding.looksActionable(subject: "Q4 roadmap review"))
+        #expect(!AttachmentUnderstanding.looksActionable(subject: "Weekend ride?"))
+    }
+
+    @Test func imagesAreDownscaledToTheLongestSide() {
+        #expect(AttachmentUnderstanding.targetSize(for: CGSize(width: 4_032, height: 3_024)) == CGSize(width: 1_024, height: 768))
+        #expect(AttachmentUnderstanding.targetSize(for: CGSize(width: 600, height: 900)) == CGSize(width: 600, height: 900))
+        let big = UIGraphicsImageRenderer(size: CGSize(width: 2_000, height: 1_000)).image { _ in }
+        let small = AttachmentUnderstanding.downscaled(big)
+        #expect(max(small.size.width, small.size.height) <= AttachmentUnderstanding.maxImageSide)
+    }
+
+    @Test func datesParseWithAndWithoutATime() throws {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Europe/Bratislava")!
+        let day = try #require(AttachmentUnderstanding.parseDate("2026-11-14", cal: cal))
+        #expect(cal.dateComponents([.year, .month, .day], from: day) == DateComponents(year: 2026, month: 11, day: 14))
+        let local = try #require(AttachmentUnderstanding.parseDate("2026-11-14T07:35:00", cal: cal))
+        #expect(cal.component(.hour, from: local) == 7)
+        #expect(AttachmentUnderstanding.parseDate("", cal: cal) == nil)
+        #expect(AttachmentUnderstanding.parseDate("soon", cal: cal) == nil)
+    }
+
+    @Test func chipsFollowTheFields() throws {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Europe/Bratislava")!
+        let now = try #require(cal.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 12)))
+        // An early flight: the evening before. A late one: the morning of.
+        let early = AttachmentUnderstanding.actions(for: insight(kind: .boardingPass, departure: "2026-11-14T07:35:00", flight: "LH1172", code: "ABC123"), now: now, calendar: cal)
+        guard case .remindTravelDay(let at, let flight) = early[0] else { Issue.record("no travel chip"); return }
+        #expect(flight == "LH1172")
+        #expect(cal.dateComponents([.day, .hour], from: at) == DateComponents(day: 13, hour: 18))
+        #expect(early.contains(.saveCode("ABC123")))
+        let late = AttachmentUnderstanding.actions(for: insight(kind: .ticket, date: "2026-11-14T19:00:00"), now: now, calendar: cal)
+        guard case .remindTravelDay(let at2, _) = late[0] else { Issue.record("no travel chip"); return }
+        #expect(cal.dateComponents([.day, .hour], from: at2) == DateComponents(day: 14, hour: 7))
+        // An invoice due later: the day before at the day-start hour; a receipt already paid (past date): nothing.
+        let invoice = AttachmentUnderstanding.actions(for: insight(kind: .invoice, date: "2026-11-20", total: "48.00", currency: "EUR", merchant: "Cloudhost"), now: now, calendar: cal)
+        guard case .remindBefore(let due, let what) = invoice[0] else { Issue.record("no due chip"); return }
+        #expect(cal.component(.day, from: due) == 19 && what == "48.00 EUR to Cloudhost is due")
+        #expect(AttachmentUnderstanding.actions(for: insight(kind: .receipt, date: "2026-10-01", total: "23.90"), now: now, calendar: cal).isEmpty)
+        // A shipment: the tracking number, once even when the code repeats it.
+        let parcel = AttachmentUnderstanding.actions(for: insight(kind: .shipment, tracking: "1Z999", carrier: "UPS", code: "1Z999"), now: now, calendar: cal)
+        #expect(parcel == [.saveTracking("1Z999", carrier: "UPS")])
+        #expect(parcel[0].title == "Copy UPS tracking")
+        #expect(AttachmentUnderstanding.actions(for: insight(kind: .image), now: now, calendar: cal).isEmpty)
+    }
+
+    @Test func attachmentItemsKnowWhatTheModelCanLookAt() {
+        let pdf = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "a", filename: "x.pdf", mimeType: "application/octet-stream", size: 2_048)
+        #expect(pdf.isPDF && pdf.isExplainable && pdf.sizeText != nil)
+        let zip = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "b", filename: "x.zip", mimeType: "application/zip", size: 0)
+        #expect(!zip.isExplainable && zip.sizeText == nil)
+        #expect(AttachmentItem(threadId: "t", messageId: "m", attachmentId: "c", filename: "p", mimeType: "image/HEIC", size: 1).isImage)
     }
 }

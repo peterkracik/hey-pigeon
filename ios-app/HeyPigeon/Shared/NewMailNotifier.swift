@@ -2,8 +2,16 @@
 // that are new since the last look, keep the badge honest (unread inbox +
 // reminders that came due). Text is composed here from the local database —
 // the relay never had it.
+//
+// Banners are communication notifications (like Messages or Superhuman):
+// the sender's name and an initials avatar lead, the app icon sits as a
+// small badge on it, instead of "Hey Pigeon" over every mail. Needs the
+// usernotifications.communication entitlement and INSendMessageIntent in
+// NSUserActivityTypes (project.yml); without them iOS shows the plain form.
 
 import Foundation
+import Intents
+import SwiftUI
 import UIKit
 import UserNotifications
 
@@ -63,16 +71,78 @@ enum NewMailNotifier {
     }
 
     private static func post(_ row: ThreadRow) async {
+        let (name, address) = sender(of: row)
         let content = UNMutableNotificationContent()
-        content.title = row.fromSummary
-        content.body = row.subject.isEmpty ? "(no subject)" : row.subject
+        content.title = name
+        content.subtitle = row.subject.isEmpty ? "(no subject)" : row.subject
+        content.body = row.snippet
         content.sound = .default
         content.threadIdentifier = row.accountId
         content.userInfo = ["threadId": row.id, "accountId": row.accountId]
+
+        // The intent carries the sender; iOS takes name and image from it.
+        // A failed update falls back to the plain banner, same text.
+        let image = avatar(name: name, address: address)
+        let person = INPerson(
+            personHandle: INPersonHandle(value: address, type: .emailAddress),
+            nameComponents: nil,
+            displayName: name,
+            image: image,
+            contactIdentifier: nil,
+            customIdentifier: address
+        )
+        let intent = INSendMessageIntent(
+            recipients: nil,
+            outgoingMessageType: .outgoingMessageText,
+            content: row.subject,
+            speakableGroupName: nil,
+            conversationIdentifier: row.id,
+            serviceName: nil,
+            sender: person,
+            attachments: nil
+        )
+        intent.setImage(image, forParameterNamed: \.sender)
+        let interaction = INInteraction(intent: intent, response: nil)
+        interaction.direction = .incoming
+        try? await interaction.donate()
+        let shown: UNNotificationContent = (try? content.updating(from: intent)) ?? content
+
         // Delivered now; the identifier dedupes a second push for the same thread.
         try? await UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: prefix + row.id, content: content, trigger: nil)
+            UNNotificationRequest(identifier: prefix + row.id, content: shown, trigger: nil)
         )
+    }
+
+    /// Who the banner is from: "Ana, Me (4)" → "Ana"; the address when the
+    /// summary has no name (or is only "Me").
+    private static func sender(of row: ThreadRow) -> (name: String, address: String) {
+        let address = row.lastFromAddress
+        let first = row.fromSummary.components(separatedBy: ",").first?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        let name = first.isEmpty || first == "Me" ? (address.isEmpty ? row.fromSummary : address) : first
+        return (name, address.isEmpty ? name : address)
+    }
+
+    /// Initial on a tag-coloured disc, the colour fixed per address so the
+    /// same person always looks the same.
+    private static func avatar(name: String, address: String) -> INImage {
+        let colors = AccountColor.allCases
+        let seed = address.lowercased().unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+        let fill = UIColor(Theme.tagForeground(colors[seed % colors.count]))
+        let letter = String(name.first(where: \.isLetter) ?? "?").uppercased()
+
+        let side: CGFloat = 180
+        let png = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).pngData { ctx in
+            fill.setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: side, height: side))
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: side * 0.46, weight: .bold),
+                .foregroundColor: UIColor.white,
+            ]
+            let size = letter.size(withAttributes: attrs)
+            letter.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
+        }
+        return INImage(imageData: png)
     }
 
     private struct Timeout: Error {}

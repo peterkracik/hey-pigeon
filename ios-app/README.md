@@ -10,13 +10,17 @@ ios-app/
     App/                HeyPigeonApp, AppModel (state + actions + background refresh)
     Engine/             MailEngine protocol, MockEngine, RustEngine (UniFFI adapter), OAuth
     Features/           Inbox · Thread · Remind · Accounts · Compose · Settings
-    Intents/            App Intents: entities, the verbs as intents, the Mail schema domain, App Shortcuts, Spotlight index
-    AI/                 Apple Intelligence as the AI provider the Rust core calls back into (no key)
-    Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets, widget snapshot, Live Activity, deep links
-      WidgetShared/     Compiled into the app and both extensions: App Group, snapshot, widget intents, pending share
-  HeyPigeonWidgets/     Widget extension: Unread · Next reminder · Need reply, the reminder Live Activity, Controls
+    Intents/            App Intents: entities (.mail.thread, message, draft, mailbox, account), the verbs as intents,
+                        the Mail schema domain, App Shortcuts, the triage and Ask intents, Spotlight index + delegate, donations
+    AI/                 The model layer the Rust core calls back into: FoundationModelsBackend over ModelProviders
+                        (on device · Private Cloud Compute · package models), the triage prompt, the agentic triage
+                        (tools + agent + journal), Ask my inbox over SpotlightSearchTool, attachment understanding, usage
+    Shared/             Theme (tokens), Formatters, ReminderScheduler, ReminderPresets, widget snapshot, Live Activities, deep links
+      WidgetShared/     Compiled into the app and both extensions: App Group, snapshot, widget intents, activity attributes, pending share
+  HeyPigeonWidgets/     Widget extension: Unread · Next reminder · Need reply, the reminder and triage Live Activities, Controls
   HeyPigeonShare/       Share extension: text, links and files → a pending share the app opens as a draft
-  HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets, snapshot, deep links)
+  HeyPigeonTests/       Unit tests over the mock engine (intents, entities, presets, snapshot, deep links, triage plan,
+                        attachment chips) and Evaluations/ (the triage and summary prompt harnesses)
   HeyPigeonCore/        Swift package wrapping the Rust core (generated, git-ignored contents)
   scripts/build-rust.sh cargo → uniffi → xcframework
   project.yml           XcodeGen spec (the .xcodeproj is generated)

@@ -236,8 +236,8 @@ Decisions:
   schema allows that, and bodies stay in the engine.
 - **No new engine surface.** The plan expected `crates/ffi` to grow
   `message(id)`; the latest-message mapping made that unnecessary.
-- **`MailThreadEntity` stays a plain entity.** `.mail.thread` is iOS 27
-  only; the app targets iOS 26.
+- **`MailThreadEntity`** was a plain entity while the app targeted iOS 26;
+  it adopts `.mail.thread` now (see "iOS 27" below).
 - **`category` is left out** of the message entity. The schema lists it as
   an optional `MailCategory?` whose enum schema (`.mail.category`) Apple
   documents without cases; if Xcode insists on it, add an `@AppEnum(schema:
@@ -513,6 +513,162 @@ and should be re-planned against Apple's docs when they start.
 - **Nothing here adds a server.** Private Cloud Compute is Apple's, off by
   default; Siri's cloud path is Apple's, behind the index toggle. The
   README's promise holds.
+
+## iOS 27
+
+The deployment target is iOS 27 (#63; `docs/ios.md` "Platform floor"), and
+the seven features below are built on the iOS 27 SDK APIs named in their
+issues. As with the steps above, **none of this has been compiled on a
+Mac**: the Swift was written against the WWDC26 session names, each
+API-touching call sits in one small place, and the "verify on the first
+build" list at the end says exactly which names to check.
+
+### One model layer (#65, #69)
+
+Every AI call on iOS goes through **`FoundationModelsBackend`**
+(`AI/FoundationModelsBackend.swift`), the one `AiBackend` the Rust core
+calls back into, over a **`ModelProvider`** (`AI/ModelProviders.swift`)
+picked per request by the core:
+
+| id | provider | window | leaves the device |
+| --- | --- | --- | --- |
+| `apple` | `SystemModelProvider` — Apple Intelligence on device | ~4K tokens (9,000 chars budgeted, chunked) | no |
+| `apple-cloud` | `PrivateCloudComputeProvider` — `PrivateCloudComputeLanguageModel`, light reasoning for drafts and summaries, deep for triage | 32K tokens (100,000 chars) | Apple's servers, never stored, no key |
+| `openai` | the Rust `adapter-openai` client, as before (the desktop needs it) | per model | OpenAI, BYO key |
+| any | `PackageModelProvider` — a Swift package's `LanguageModel` (Anthropic's or Google's once published, a local MLX model for a small fine-tuned classifier), its token in the Keychain (`ProviderTokenStore`), never an API-key string in the binary | per model | per provider |
+
+- The engine holds **one backend per provider id** (`add_ai_backend` /
+  `remove_ai_backend` in `crates/ffi`), accepts the known ids whether or
+  not this device registered them (the choice is synced), and resolves the
+  active provider as the **preferred one, then the first of
+  `pref:ai.fallback` that can answer** (default on device → Apple's cloud →
+  OpenAI, the order of how much leaves the device). Classifiers follow the
+  same rule with Jev last. `RustEngine.refreshAIProviders` re-registers
+  before every sync, so an offline cloud model drops out and the device
+  model answers.
+- **Settings › AI** lists both Apple rows (answering · available · why
+  not), *Prefer*, *If it can't answer* (private first · cloud first · stay
+  on this iPhone) and a per-provider token line from `AiUsageLedger`
+  (`response.usage` after every answer; a cost estimate when a price is
+  known). The classifier picker gains Apple's cloud.
+- The **Private Cloud Compute entitlement** is granted per App ID on
+  request; `project.yml` carries the key commented out with the steps. Until
+  it is granted the app degrades to the on-device model on its own.
+- **Evaluations** (`HeyPigeonTests/Evaluations/`): a labeled triage set
+  (`triage-eval.json`, placeholder rows to replace with anonymised mail),
+  `TriageEvalScore` / `TriageEvalReport` (priority accuracy, near misses,
+  label precision / recall / F1, one overall number to climb) over every
+  `TriagePromptVariant` (`AI/TriagePrompt.swift`, where the shipped
+  instruction lives), and a summary harness with a format-and-grounding
+  checker against the engine's shipped prompt (`ai_prompts` over the FFI).
+  The pure parts run anywhere; the model runs are enabled on a device with
+  Apple Intelligence and print the per-variant report. Wrapping the report
+  in the Evaluations framework's graders is the on-Mac step.
+
+### Ask my inbox (#64)
+
+`AI/InboxAsk.swift`: a session on the on-device model with iOS 27's
+**`SpotlightSearchTool`** over this app's own index (the `Communications`
+content domain, a `ContactResolver` made of the account addresses),
+answering a `@Generable InboxAnswer` — the text and the ids of the results
+it rests on, validated against the store and listed under the answer,
+tappable (`Features/Inbox/AskSheet.swift`, streamed). The inbox toolbar,
+Settings › Siri & Search and `AskInboxIntent` ("Ask Hey Pigeon when the
+Lisbon flight is") open it. To make the answers good the index got richer:
+participants with addresses, Gmail label names, the account handle, and —
+for threads the store holds bodies of — the newest messages' text as
+`textContent`, capped at 4,000 characters, through
+`MailEngine.threadLocal` (`Engine.get_thread_local`, no fetch for the
+index's sake). `SpotlightIndexDelegate` answers reindex requests and the
+read-back (`searchableItems(forIdentifiers:)`) so the tool sees full items.
+On only while the Spotlight toggle is on; the answer never leaves the
+device.
+
+### Agentic triage (#66)
+
+"Hey Siri, triage my inbox in Hey Pigeon". `AI/TriageTools.swift` has the
+Foundation Models `Tool`s over `AppModel`: `searchThreads`, `readThread`
+(reading) and `setLabel`, `markDone`, `remind`, `markNeedReply`,
+`draftReply` (proposing); **delete and send are not tools**. Acting tools
+never touch the mailbox: they add to a `TriagePlan` that is confirmed
+**once as a batch** ("Mark done 12, label 3 and remind 2?") and applied
+through the same model methods as the swipes; drafts go to Drafts, never
+out. `AI/TriageAgent.swift` runs three phases, each its own session
+profile — *scan* (on device, cheap, names the candidates), *decide*
+(Apple's cloud when reachable, else on device; reads only what the preview
+does not settle), *act* (on device, tools enabled) — with the user's own
+rules from Settings in the instructions and every tool call in
+`TriageJournal`. `TriageInboxIntent` is a `LongRunningIntent &
+CancellableIntent` with a dry-run parameter; progress is a Live Activity
+(`TriageLiveActivity`, Stop through the widget hook). Settings › Triage has
+the dry-run switch and the rules (both synced) and "Siri triage and
+journal": run from the app, apply or leave as is, read every run back.
+
+### Attachment understanding (#67)
+
+Attachments reach the phone: `MailEngine.attachments` / `attachmentFile`
+over the engine's `list_attachments` / `fetch_attachment` (the Gmail
+adapter walks the parts tree; embedded parts get `inline:<n>` ids; bytes
+are fetched on tap and cached as a file under the data directory, never
+auto-opened), as chips under each expanded message that open Quick Look,
+with **Explain attachment** on images and PDFs. `AI/AttachmentUnderstanding.swift`
+lets the on-device model look at the file — iOS 27 image input
+(`Attachment` in the prompt; images downscaled to 1,024 px, a PDF's first
+page rendered through PDFKit) with the Vision-backed **`OCRTool`** and
+**`BarcodeReaderTool`** — answering a `@Generable AttachmentInsight`
+(kind, summary, merchant, total, date, tracking number, carrier, flight,
+departure, code). From the fields come one-tap chips on the existing
+reminder plumbing: remind me on travel day, remind me before an amount is
+due, copy the tracking number or the code. The **triage hook** runs it as
+a thread opens when the subject smells like a receipt, ticket or shipment
+and an image or PDF is attached (cheap heuristic first). On device only:
+an attachment never goes to OpenAI or to Apple's cloud.
+
+### View Annotations and the `.mail.thread` schema (#68)
+
+Inbox and search rows carry
+`.appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier:))`
+and the `List` is a selection of thread entities
+(`.appEntityIdentifier(forSelectionType:)`), so "mark these done", "remind
+me about the second one tomorrow" and "archive everything from Lufthansa
+here" resolve against what is on screen. `MailThreadEntity` adopts
+**`.mail.thread`** with its `messages`: `MailMessageEntity` is a real
+stored message (id `<threadId>#<messageId>`) whenever the store holds the
+thread's messages, and the latest-message shape (id = thread id) only for
+a thread never opened; every schema intent acts on the message's
+`threadId`. `openMessage` / `openDraft` have their `@AppIntent(schema:)`
+back. Both queries answer `displayRepresentations(for:requestedComponents:)`
+from the rows alone.
+
+### Siri's model of the app (#70)
+
+`MailThreadEntity` and `MailDraftEntity` are `SyncableEntity` (Gmail
+thread ids and draft keys are stable across devices) and the thread states
+its ownership explicitly (`OwnershipProvidingEntity`, private by default).
+Reminder and new-mail notifications carry `appEntityIdentifiers` for their
+thread. `Intents/IntentDonations.swift` donates the schema-shaped actions
+when the user performs them in the UI — archive, delete, reply, label,
+remind — through `IntentDonationManager.shared.donate(intent:result:)`,
+from the swipes, the row menu, the thread bars and the Remind sheet only:
+never an intent Siri just ran, never a sync, never the agent.
+
+### Verify on the first build (iOS 27)
+
+Each of these is one call in one file; a renamed API is a local fix.
+
+| What | Where |
+| --- | --- |
+| `PrivateCloudComputeLanguageModel` and its `availability` cases; `ContextOptions(reasoningLevel:)` with `.light` / `.deep`; `LanguageModelSession(model:contextOptions:tools:instructions:)` | `AI/ModelProviders.swift` |
+| `response.usage` and its `inputTokens` / `outputTokens` | `AI/AiUsageLedger.swift` (`record(provider:_:)`) |
+| `SpotlightSearchTool.Configuration` (`contentDomain = .communications`, `contactResolver`), `ContactResolver` / `ResolvedContact` | `AI/InboxAsk.swift` |
+| `CSSearchableIndexDelegate.searchableItems(forIdentifiers:)`, `CSSearchableItem.associateAppEntity`, the `accountIdentifier` / `accountHandles` / `mailboxIdentifiers` attributes | `Intents/SpotlightIndexer.swift`, `Intents/Entities.swift` |
+| `LongRunningIntent`, `CancellableIntent` requirements | `Intents/TriageIntents.swift` |
+| `Attachment(image)` in a `Prompt`, `OCRTool()`, `BarcodeReaderTool()` | `AI/AttachmentUnderstanding.swift` |
+| `@AppEntity(schema: .mail.thread)` property requirements, `.mail.openMessage` / `.mail.openDraft`, `displayRepresentations(for:requestedComponents:)`, `.appEntityIdentifier(forSelectionType:)` | `Intents/Entities.swift`, `Intents/MailSchema.swift`, `Intents/MailSchemaIntents.swift`, `Features/Inbox/InboxView.swift` |
+| `SyncableEntity`, `OwnershipProvidingEntity` / `EntityOwnership`, `UNMutableNotificationContent.appEntityIdentifiers`, `IntentDonationManager.shared.donate(intent:result:)` | `Intents/Entities.swift`, `Shared/ReminderScheduler.swift`, `Shared/NewMailNotifier.swift`, `Intents/IntentDonations.swift` |
+| The Private Cloud Compute entitlement key, once access is granted | `ios-app/project.yml` |
+| `LanguageModelSession.DynamicProfile` — the agent's three phases are plain sessions per phase (`TriageProfile`); move them onto a dynamic profile when the API is in hand | `AI/TriageAgent.swift` |
+| AppIntentsTesting over the schema intents (the Swift Testing tests cover the `perform` bodies today) | `HeyPigeonTests/MailSchemaTests.swift` |
 
 ## Out of scope
 

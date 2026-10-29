@@ -17,11 +17,13 @@
 
 uniffi::setup_scaffolding!();
 
+mod ai;
 mod engine;
 mod push;
 mod secrets;
 mod settings;
 mod types;
 
+pub use ai::*;
 pub use engine::*;
 pub use types::*;

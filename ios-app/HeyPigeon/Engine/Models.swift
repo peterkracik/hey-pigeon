@@ -122,10 +122,41 @@ struct PushAccountState: Identifiable, Hashable {
     let watchExpiresAt: Date?
 }
 
+/// Which AI provider answers (`providerId`: "apple" on device, "openai"
+/// with a key), which one is preferred, and what this device has.
 struct AIStatus: Hashable {
     let configured: Bool
     let providerId: String?
+    /// The selected OpenAI model (synced).
     let model: String?
+    var preferredProviderId = "openai"
+    var onDeviceAvailable = false
+    var openaiConfigured = false
+
+    var answersOnDevice: Bool { providerId == AIProvider.apple.rawValue }
+}
+
+/// The two AI providers and the two triage classifiers, by their synced ids.
+enum AIProvider: String, CaseIterable, Identifiable {
+    case apple, openai
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .apple: "On this iPhone"
+        case .openai: "ChatGPT (OpenAI)"
+        }
+    }
+}
+
+enum TriageClassifier: String, CaseIterable, Identifiable {
+    case apple, jev
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .apple: "On this iPhone"
+        case .jev: "Jev"
+        }
+    }
 }
 
 struct AIModel: Identifiable, Hashable {
@@ -137,6 +168,9 @@ struct TriageStatus: Hashable {
     let configured: Bool
     let enabled: Bool
     let lastError: String?
+    var classifierId = TriageClassifier.jev.rawValue
+    var onDeviceAvailable = false
+    var jevConfigured = false
 }
 
 /// What the root list shows. The folder set mirrors the desktop sidebar.
@@ -451,6 +485,9 @@ protocol MailEngine: AnyObject {
     func setAIKey(_ key: String) async throws
     func removeAIKey() throws
     func setAIModel(_ model: String) throws
+    /// Prefer the on-device model or the key (synced; a device that cannot
+    /// run the preferred one falls back on its own).
+    func setAIProvider(_ provider: AIProvider) throws
     func aiEditText(instruction: String, text: String, history: String?) async throws -> String
     func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String
@@ -467,6 +504,7 @@ protocol MailEngine: AnyObject {
     func setJevKey(_ key: String) async throws
     func removeJevKey() throws
     func setAutoTriage(_ enabled: Bool) throws
+    func setTriageClassifier(_ classifier: TriageClassifier) throws
     func createTriageLabel(name: String) throws -> TriageLabelItem
     func renameTriageLabel(id: String, name: String) throws
     func deleteTriageLabel(id: String) throws

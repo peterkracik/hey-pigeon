@@ -445,13 +445,22 @@ pub struct PushAccountStatus {
     pub watch_expires_at_ms: Option<i64>,
 }
 
-/// Whether an AI provider is configured and which model is selected — the
-/// stored key itself is never returned.
+/// Whether an AI provider can answer and which one — the stored key itself
+/// is never returned. `provider_id` is the one that answers right now
+/// (`"apple"` for the shell's on-device backend, `"openai"` for the key):
+/// the preferred one when it can, else whichever can.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct AiStatus {
     pub configured: bool,
     pub provider_id: Option<String>,
+    /// The selected OpenAI model (synced preference).
     pub model: Option<String>,
+    /// The preferred provider (`pref:ai.provider`), whether or not it can answer.
+    pub preferred_provider_id: String,
+    /// The shell registered an on-device backend (Apple Intelligence available).
+    pub on_device_available: bool,
+    /// An OpenAI key is stored on this device.
+    pub openai_configured: bool,
 }
 
 /// One selectable model of an AI provider.
@@ -461,12 +470,37 @@ pub struct AiModel {
     pub label: String,
 }
 
-/// Jev auto-triage: key present, background classification on, last error.
+/// Auto-triage: a classifier can run (`configured`), background
+/// classification is on, which classifier is preferred (`"apple"` on
+/// device, `"jev"`), and the last failure.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct TriageStatus {
     pub configured: bool,
     pub enabled: bool,
     pub last_error: Option<String>,
+    /// `pref:triage.classifier`, resolved to a default when unset.
+    pub classifier_id: String,
+    pub on_device_available: bool,
+    pub jev_configured: bool,
+}
+
+/// What the on-device classifier decided for one email.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TriageVerdict {
+    pub priority: Priority,
+    /// Ids from the labels it was given; anything else is dropped.
+    pub label_ids: Vec<String>,
+}
+
+impl From<Priority> for domain::Priority {
+    fn from(p: Priority) -> Self {
+        match p {
+            Priority::Spam => Self::Spam,
+            Priority::Low => Self::Low,
+            Priority::Medium => Self::Medium,
+            Priority::High => Self::High,
+        }
+    }
 }
 
 /// One email's contribution to a group summary — subject + snippet only,

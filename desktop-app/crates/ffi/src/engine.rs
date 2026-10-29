@@ -14,6 +14,7 @@ use heypigeon_core::ports::{
 use heypigeon_core::{devsync, outbox, sync};
 use tokio::sync::RwLock;
 
+use crate::ai::AiBackend;
 use crate::secrets::default_secret_store;
 use crate::types::*;
 
@@ -70,6 +71,8 @@ pub struct Engine {
     pub(crate) classifying: Mutex<bool>,
     /// Last Jev failure; None after a clean run (settings.rs).
     pub(crate) triage_last_error: Mutex<Option<String>>,
+    /// The shell's on-device AI, when the device has one (ai.rs).
+    pub(crate) ai_backend: Mutex<Option<Arc<dyn AiBackend>>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -118,11 +121,19 @@ impl Engine {
             sync_status: Mutex::new(HashMap::new()),
             classifying: Mutex::new(false),
             triage_last_error: Mutex::new(None),
+            ai_backend: Mutex::new(None),
         }))
     }
 
     pub fn set_listener(&self, listener: Option<Arc<dyn EngineListener>>) {
         *self.listener.lock().unwrap() = listener;
+    }
+
+    /// The shell's on-device AI (Apple Intelligence), or `None` on a device
+    /// without one. With a backend set, AI and triage need no key:
+    /// `ai_status` / `triage_status` say which provider answers.
+    pub fn set_ai_backend(&self, backend: Option<Arc<dyn AiBackend>>) {
+        *self.ai_backend.lock().unwrap() = backend;
     }
 
     // ------------------------------------------------------------ reads
@@ -791,27 +802,10 @@ impl Engine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod tests_support {
+    use heypigeon_core::domain;
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "heypigeon-ffi-{tag}-{}-{}",
-            std::process::id(),
-            now_ms()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
-    fn client() -> OauthClient {
-        OauthClient {
-            client_id: "123-abc.apps.googleusercontent.com".to_string(),
-            client_secret: None,
-        }
-    }
-
-    fn sample_thread(id: &str, account: &str) -> domain::Thread {
+    pub(crate) fn sample_thread(id: &str, account: &str) -> domain::Thread {
         domain::Thread {
             id: id.to_string(),
             account_id: account.to_string(),
@@ -831,6 +825,29 @@ mod tests {
             triage_label_ids: vec![],
             needs_reply: false,
             follow_up_since: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tests_support::sample_thread;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "heypigeon-ffi-{tag}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn client() -> OauthClient {
+        OauthClient {
+            client_id: "123-abc.apps.googleusercontent.com".to_string(),
+            client_secret: None,
         }
     }
 

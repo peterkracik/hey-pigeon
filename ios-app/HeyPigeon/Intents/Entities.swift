@@ -109,22 +109,23 @@ struct MailThreadQuery: EntityStringQuery {
 
 // MARK: - Account
 
-struct MailAccountEntity: AppEntity {
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Account")
+/// The `.mail.account` schema: `name` and `emailAddress` are its words.
+@AppEntity(schema: .mail.account)
+struct MailAccountEntity {
     static let defaultQuery = MailAccountQuery()
 
     let id: String
-    @Property(title: "Email") var email: String
-    @Property(title: "Name") var name: String
+    var name: String
+    var emailAddress: String
 
     init(_ a: MailAccount) {
         id = a.id
-        email = a.email
         name = a.displayName
+        emailAddress = a.email
     }
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(name)", subtitle: "\(email)", image: .init(systemName: "person.crop.circle"))
+        DisplayRepresentation(title: "\(name)", subtitle: "\(emailAddress)", image: .init(systemName: "person.crop.circle"))
     }
 }
 

@@ -362,11 +362,7 @@ struct ThreadView: View {
     }
 
     private func forward(_ m: MessageItem) {
-        var d = SendDraft()
-        d.subject = row.subject.lowercased().hasPrefix("fwd:") ? row.subject : "Fwd: \(row.subject)"
-        d.bodyText = "\n\n---------- Forwarded message ----------\nFrom: \(m.fromName) <\(m.fromAddress)>\nDate: \(Formatters.fullDate(m.date))\n\n\(m.bodyText ?? m.snippet)"
-        d.fromAccountId = current.accountId
-        model.composeDraft = d
+        model.composeDraft = SendDraft.forward(of: m, in: current)
     }
 
     /// Desktop "Draft with AI" in the inline reply: writes the reply body,

@@ -209,35 +209,57 @@ extension (step 6) but need no data: they only fire intents.
 
 ## Step 3 — the Mail app schema domain
 
-Apple ships a `.mail` App Intent domain: entity schemas for `message`,
-`mailbox` and `account`, and intents such as `replyMail`, `deleteMail`,
-`openMessage`, `openDraft` and `updateDraft`. Conforming makes the new Siri
-understand "reply to Anna's email saying I'll be late" with **no custom
-phrase**, because the system already knows what a mail app does.
+Apple ships a `.mail` App Intent domain (iOS 18+): entity schemas for
+`message`, `draft`, `mailbox` and `account` (and `thread`, iOS 27 only),
+and twelve intent schemas in three **use-case groups** — composing
+(`createDraft` · `updateDraft` · `saveDraft` · `sendDraft`), replying (+
+`replyMail`) and forwarding (+ `forwardMail`) — plus the standalone
+`openMessage`, `openDraft`, `archiveMail`, `deleteMail`, `deleteDraft` and
+`updateMail`. Conforming (`@AppEntity(schema: .mail.message)`,
+`@AppIntent(schema: .mail.replyMail)`) makes the new Siri understand "reply
+to Anna's email saying I'll be late" with **no custom phrase**, because the
+system already knows what a mail app does. Xcode warns for every schema
+missing from a group the app partially adopts; all three groups are
+complete here (`Intents/MailSchema.swift`, `Intents/MailSchemaIntents.swift`).
 
-What it costs here:
+Decisions:
 
 - **Thread vs message.** The schema is message-shaped; the app is
-  thread-shaped. Each schema entity maps to the thread's latest message,
-  with the thread id as the stable id. `MailThreadEntity` grows the
-  schema's required properties (sender address, recipients, body preview)
-  or a second `MailMessageEntity` is derived from `MessageItem` for the
-  open thread only. Decide after reading the iOS 27 schema: if it demands
-  body text on the entity, prefer the second type and populate it lazily.
-- **Xcode checks completeness.** Adopting a schema group means implementing
-  every intent in it. Reply and delete map onto existing `AppModel` calls;
-  `updateDraft` maps onto `saveDraft`; `openDraft` onto `openDraft(row)`.
-  Anything the engine cannot do today (a schema that wants to send without
-  a composer) gets a `supportedModes` that opens the app and the composer
-  prefilled, which the schema allows.
-- **Verify first** the iOS 27 macro form (`@AppIntent(schema: .mail.…)` or
-  the older `AssistantIntent(schema:)`) and whether the domain requires the
-  Apple Intelligence entitlement or App Store distribution; the app ships
-  through TestFlight only.
+  thread-shaped. A `MailMessageEntity` is **the thread's latest message**,
+  with the thread id as its id. It is built from the row alone (sender,
+  subject, when, read, flagged = pinned, junk, mailbox from the Gmail
+  labels, no network), and opening, archiving, replying to and forwarding
+  it is exactly what the thread does. Its `body` is never filled in; the
+  schema allows that, and bodies stay in the engine.
+- **No new engine surface.** The plan expected `crates/ffi` to grow
+  `message(id)`; the latest-message mapping made that unnecessary.
+- **`MailThreadEntity` stays a plain entity.** `.mail.thread` is iOS 27
+  only; the app targets iOS 26.
+- **`category` is left out** of the message entity. The schema lists it as
+  an optional `MailCategory?` whose enum schema (`.mail.category`) Apple
+  documents without cases; if Xcode insists on it, add an `@AppEnum(schema:
+  .mail.category)` with the generated cases.
+- **Drafts.** A `MailDraftEntity`'s id is the draft's key: the open
+  composer's `SendDraft.draftKey`, or a saved Gmail draft's message id. The
+  composer now mirrors its live content into `AppModel.composeDraft` on
+  every edit and adopts changes made from outside through
+  `externalRevision`, so Siri's `updateDraft` reaches the screen and
+  `sendDraft` sends what is on it.
+- **`sendDraft` is the one send from Siri.** It goes through the same
+  5-second undo as the Send button (`AppModel.sendComposeDraft`), only for
+  a draft that is open or saved, never without a recipient; `sendLaterDate`
+  is declined (no scheduled send in this app). The composer-opening
+  intents (`createDraft`, `replyMail`, `forwardMail`) open the app and send
+  nothing.
+- **`updateMail`'s mailbox** maps onto the app's words: Inbox = not done,
+  Archive = done, Trash = delete, Spam = the SPAM label; any other folder is
+  declined with a spoken reason.
 
-The step is worth doing only once step 1 is in daily use, and it is the
-first one that touches `crates/ffi`: the engine gains `message(id:)` and a
-per-message `reply_to(message_id)` prefill if the schema needs them.
+Verify on the first Xcode build: that the `@AppEntity(schema:)` macro
+accepts the entities' extra initialisers and the `@AppIntent(schema:)`
+macro accepts `openAppWhenRun` and the `ReturnsValue` results used here,
+and whether the domain needs an entitlement or App Store distribution (the
+app ships through TestFlight only).
 
 ## Step 4 — on-screen awareness and conversation
 
@@ -379,7 +401,7 @@ build of the previous one to be *written*, all need one to be *shipped*.
 | --- | --- | --- | --- |
 | 1 | Entities, the intent table, `AppShortcutsProvider`; `Intents/` folder; `NSUserActivityTypes` and the App Shortcuts entries in `project.yml` | Swift only | that in-process intents launch the app in the background on iOS 26 as documented (they have since 16) |
 | 2 | `IndexedEntity` + index refresh in `sync()`; the Siri & Search setting | Swift only | `IndexedEntity` attribute set; indexing budget on cold launch |
-| 3 | Mail schema domain | Swift + `crates/ffi` (`message(id)`, per-message reply prefill) | the iOS 27 macro form; entitlement / distribution requirements; thread-vs-message shape |
+| 3 | Mail schema domain | Swift only (the latest-message mapping needs no engine change) | macro acceptance of the extra initialisers; entitlement / distribution requirements |
 | 4 | On-screen awareness, `RemindMe` follow-up, long-running intents | Swift only | iOS 27 multi-turn / long-running protocol names |
 | 5 | Foundation Models provider; triage classifier; provider pref; Settings › AI | Swift + `crates/ffi` (`AiBackend` foreign trait) + `core` (provider pref, second classifier behind the triage port) | availability API, `contextSize`, `@Generable` constraints; PCC option |
 | 6 | Widget extension, App Group snapshot, Live Activity, Controls | Swift + `project.yml` (second target, App Group entitlement) | nothing iOS-27-specific |

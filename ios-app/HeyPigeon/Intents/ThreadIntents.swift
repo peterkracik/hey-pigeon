@@ -158,7 +158,7 @@ struct MarkReadIntent: AppIntent {
     }
 }
 
-struct DeleteIntent: AppIntent {
+struct DeleteThreadIntent: AppIntent {
     static let title: LocalizedStringResource = "Delete Email"
     static let description = IntentDescription("Moves an email to the trash.", categoryName: "Triage")
 

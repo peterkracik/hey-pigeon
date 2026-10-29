@@ -149,7 +149,7 @@ struct SummarizeInboxIntent: AppIntent {
     }
 }
 
-/// "Ask Hey Pigeon when the Lisbon flight is": the on-device model over
+/// "Ask Hey Pigeon" (then "when is the Lisbon flight"): the on-device model over
 /// the Spotlight index (AI/InboxAsk.swift). Answers in the background with
 /// the cited threads as the snippet; nothing leaves the device.
 struct AskInboxIntent: AppIntent {

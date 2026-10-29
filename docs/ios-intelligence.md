@@ -577,8 +577,8 @@ content domain, a `ContactResolver` made of the account addresses),
 answering a `@Generable InboxAnswer` — the text and the ids of the results
 it rests on, validated against the store and listed under the answer,
 tappable (`Features/Inbox/AskSheet.swift`, streamed). The inbox toolbar,
-Settings › Siri & Search and `AskInboxIntent` ("Ask Hey Pigeon when the
-Lisbon flight is") open it. To make the answers good the index got richer:
+Settings › Siri & Search and `AskInboxIntent` ("Ask Hey Pigeon", then
+the question: a phrase cannot carry a free-text parameter) open it. To make the answers good the index got richer:
 participants with addresses, Gmail label names, the account handle, and —
 for threads the store holds bodies of — the newest messages' text as
 `textContent`, capped at 4,000 characters, through
@@ -636,7 +636,9 @@ Inbox and search rows carry
 so "mark these done", "remind
 me about the second one tomorrow" and "archive everything from Lufthansa
 here" resolve against what is on screen. `MailThreadEntity` adopts
-**`.mail.thread`** with its `messages`: `MailMessageEntity` is a real
+**`.mail.thread`** with its `messages`, `title` (the subject) and
+`description` (the preview): `MailMessageEntity`, which carries the
+schema's `category` (`MailCategory`, from Gmail's inbox tabs), is a real
 stored message (id `<threadId>#<messageId>`) whenever the store holds the
 thread's messages, and the latest-message shape (id = thread id) only for
 a thread never opened; every schema intent acts on the message's
@@ -722,6 +724,13 @@ Compute's unavailable reasons (`deviceNotEligible`, `systemNotReady`);
 `userIdentity()`; `EntityQuery.displayRepresentations(for:)` takes only
 the ids; there is no selection-type annotation without a `List`
 selection, so rows carry `.appEntityIdentifier(_:)` alone.
+Run 99 got through compiling and linking; the App Intents metadata step
+then asked for the schemas' required properties: `.mail.thread` needs
+`title` (the subject) and `description` (the preview), `.mail.message`
+needs `category`, an `@AppEnum(schema: .mail.category)` (`MailCategory`,
+from Gmail's inbox tabs). An App Shortcut phrase can only carry an
+entity or enum parameter, so "Ask Hey Pigeon" no longer takes the question
+in the phrase; Siri asks for it.
 
 | What | Where |
 | --- | --- |

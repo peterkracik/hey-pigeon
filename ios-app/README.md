@@ -99,7 +99,7 @@ stays `app.heypigeon`. They are separate products in App Store Connect
 not merge them under one id. No wildcard App ID is needed: automatic
 signing registers the explicit App ID on the first archive.
 
-**Capabilities.** One: **Push Notifications** (`aps-environment` in the
+**Capabilities.** **Push Notifications** (`aps-environment` in the
 entitlements XcodeGen writes from `project.yml`). `publish-ios` enables it
 on the App ID `app.heypigeon.ios` through the App Store Connect key
 (`fastlane produce enable_services`) before fetching the profile, so no
@@ -112,6 +112,20 @@ extension (widget, share sheet), iCloud KVS only for the optional secret
 sync. `HeyPigeon/PrivacyInfo.xcprivacy` declares the required-reason APIs
 (UserDefaults, SQLite file stats, monotonic clock); App Store Connect rejects
 uploads without it.
+
+**Default mail app.** The app handles `mailto:` (a URL type in
+`project.yml`, parsed into a prefilled composer by `Shared/DeepLinks.swift`)
+and is ready to be chosen under iOS Settings › Apps › Default Apps › Email —
+Settings › *Default email app* in the app opens that page. What is missing
+is Apple's managed entitlement `com.apple.developer.mail-client`, which the
+Account Holder requests once at
+<https://developer.apple.com/contact/request/default-mail-client> (an app
+that opens `mailto:` links, sends to any address and receives from any
+sender qualifies). When it is granted: tick *Default Mail App* on the App
+ID in the developer portal, uncomment the key in `project.yml` (next to the
+Private Cloud Compute one), push; `publish-ios` regenerates the profile.
+Until then the key must stay commented out — a profile without it fails
+the archive — and iOS keeps `mailto:` links for Apple Mail.
 
 **Push relay (optional).** `../relay/README.md` and `../terraform/README.md`.
 The app side: `Shared/PushController.swift` (the toggle, the relay URL, the
@@ -146,5 +160,7 @@ deliver` step, if that ever becomes a chore.
 | The triage prompt and its evaluation | `HeyPigeon/AI/TriagePrompt.swift`, `HeyPigeonTests/Evaluations/` |
 | Siri: entities, the Mail schema, the verbs | `HeyPigeon/Intents/Entities.swift`, `MailSchema.swift`, `MailSchemaIntents.swift`, `ThreadIntents.swift`, `ListIntents.swift` |
 | "Ask my inbox" | `HeyPigeon/AI/InboxAsk.swift`, `HeyPigeon/Features/Inbox/AskSheet.swift`, `HeyPigeon/Intents/SpotlightIndexer.swift` |
+| Spotlight: the thread and message items, result taps, "Search in App" | `HeyPigeon/Intents/SpotlightIndexer.swift`, `HeyPigeon/Intents/Entities.swift`, `HeyPigeon/Intents/MailSchema.swift`, `HeyPigeon/App/HeyPigeonApp.swift` |
+| Default mail app: `mailto:` links → the composer, the Settings door | `HeyPigeon/Shared/DeepLinks.swift`, `HeyPigeon/Features/Settings/SettingsView.swift`, `project.yml` |
 | "Triage my inbox" | `HeyPigeon/AI/TriageTools.swift`, `HeyPigeon/AI/TriageAgent.swift`, `HeyPigeon/Intents/TriageIntents.swift`, `HeyPigeonWidgets/TriageLiveActivity.swift` |
 | Settings | `HeyPigeon/Features/Settings/SettingsView.swift`, `TriageJournalView.swift` |

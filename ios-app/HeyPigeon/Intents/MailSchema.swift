@@ -11,8 +11,14 @@
 // before it was ever opened still resolves, with no network. Either way the
 // intents act on the thread (`threadId`), which is what the app does. Its
 // body is never filled in — bodies stay in the engine.
+//
+// Stored messages are also what the Spotlight index holds besides the
+// threads (`IndexedEntity` below, Intents/SpotlightIndexer.swift): Siri's
+// understanding of mail is message-shaped (`.mail.message`), so "the email
+// from Anna about the deposit" has a message to land on, not only a thread.
 
 import AppIntents
+import CoreSpotlight
 import Foundation
 
 // MARK: - Mailbox
@@ -104,6 +110,13 @@ struct MailMessageEntity {
     var isFlagged: Bool
     var account: MailAccountEntity
     var mailbox: MailboxEntity
+    /// For the Spotlight index only, never a schema property: the message's
+    /// own text (quoted history stripped, capped) when the store has it,
+    /// and the one-line preview Spotlight shows under the title.
+    let indexableText: String?
+    let previewText: String
+    /// For the Spotlight index only: the sender's name as the row shows it.
+    let senderName: String
 
     /// The thread's latest message, from the row alone.
     init(_ row: ThreadRow, account: MailAccount) {
@@ -123,6 +136,9 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
+        indexableText = nil
+        previewText = row.snippet
+        senderName = Self.senderName(row)
     }
 
     /// One stored message of a thread.
@@ -144,7 +160,20 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
+        indexableText = m.bodyText.flatMap { text in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let main = MessageBodyView.splitQuoted(trimmed)?.main ?? trimmed
+            return String(main.prefix(MailThreadEntity.bodyTextCap))
+        }
+        previewText = m.snippet
+        senderName = m.isMine ? "Me" : (m.fromName.isEmpty ? m.fromAddress : m.fromName)
     }
+
+    /// A stored message (`<threadId>#<messageId>`), as opposed to the
+    /// thread-as-latest-message shape. Only these go into the index: the
+    /// other shape shares the thread's id, and the thread item covers it.
+    var isStoredMessage: Bool { Self.messageId(of: id) != nil }
 
     static func id(threadId: String, messageId: String) -> String { threadId + "#" + messageId }
 
@@ -187,7 +216,38 @@ struct MailMessageEntity {
         if case .displayName(let n) = p.name { return n }
         return p.emailAddress ?? ""
     }
+
+    /// What Spotlight and Siri learn about one message: subject, sender,
+    /// recipients, when, the account and mailbox, the thread it belongs to
+    /// (`relatedUniqueIdentifier`, so Spotlight groups a thread's messages),
+    /// and its own text as `textContent` when the store has it. Same rules
+    /// and the same Settings › Siri & Search switch as the thread item.
+    var attributeSet: CSSearchableItemAttributeSet {
+        let a = CSSearchableItemAttributeSet(contentType: .emailMessage)
+        a.title = subject ?? "(no subject)"
+        a.contentDescription = previewText
+        a.authorNames = [senderName]
+        if let address = sender.emailAddress { a.authorEmailAddresses = [address] }
+        let recipients = to + cc
+        if !recipients.isEmpty {
+            a.recipientNames = recipients.map(Self.personLabel)
+            a.recipientEmailAddresses = recipients.emailAddresses
+        }
+        a.contentCreationDate = dateSent
+        a.contentModificationDate = dateReceived
+        a.containerIdentifier = account.id
+        a.containerTitle = account.name
+        a.domainIdentifier = account.id
+        a.accountIdentifier = account.id
+        a.accountHandles = [account.emailAddress]
+        a.mailboxIdentifiers = [mailbox.folder?.rawValue ?? "inbox"]
+        a.relatedUniqueIdentifier = threadId
+        a.textContent = indexableText
+        return a
+    }
 }
+
+extension MailMessageEntity: IndexedEntity {}
 
 /// Resolves ids of both shapes, free text through the engine's search, and
 /// "this email" as the open thread's latest message.

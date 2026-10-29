@@ -656,6 +656,58 @@ remind — through `IntentDonationManager.shared.donate(intent:result:)`,
 from the swipes, the row menu, the thread bars and the Remind sheet only:
 never an intent Siri just ran, never a sync, never the agent.
 
+### Default mail app and Spotlight (iOS 14+ / 18.3+ API, no iOS 27 in it)
+
+Two asks from the author: *set Hey Pigeon as the iPhone's default mail app*,
+and *when I search with Siri, show my mail from Hey Pigeon rather than from
+Apple Mail*.
+
+**Default mail app.** iOS offers an app under Settings › Apps › Default Apps
+› Email when it carries the managed entitlement
+`com.apple.developer.mail-client` and declares the `mailto:` scheme. The
+scheme is declared (`project.yml`, URL type `app.heypigeon.mailto`); a
+`mailto:` URL arrives in `HeyPigeonApp.onOpenURL` like the heypigeon://
+links and `DeepLink` turns it into `.mailto(SendDraft)`:
+`SendDraft(mailto:)` parses RFC 6068 — recipients before the `?`, `to`,
+`cc`, `bcc`, `subject`, `body` after it, percent-decoded, `+` left alone,
+CRLF → newline, every other header dropped — and `AppModel.compose` opens
+the composer. Nothing is sent. `mailto:` links *inside* a message body take
+the same path (`MessageBodyView.open`) instead of going to the system,
+which would open Apple Mail — or, with Hey Pigeon as the default, bounce
+straight back. Settings › *Default email app* opens the Default Apps page
+(`UIApplication.openDefaultApplicationsSettingsURLString`). The entitlement
+itself is Apple's to grant (request form, then the capability on the App
+ID); the key sits commented in `project.yml` next to the Private Cloud
+Compute one with the same rule: a profile without it fails the archive.
+
+**Siri and Spotlight answering from Hey Pigeon.** Siri has no switch that
+says "search this app's mail"; it answers from the Spotlight index, where
+Apple Mail is indexed too, and from the schema entities the apps expose. So
+the levers are the index and the user's iOS settings:
+
+- The index now holds **message items** besides the thread items:
+  `MailMessageEntity` is an `IndexedEntity` (`.mail.message`, the shape
+  Siri's model of mail is in), one item per stored message of each indexed
+  thread (the newest 20; id `<threadId>#<messageId>`, so it never collides
+  with the thread's), with `relatedUniqueIdentifier = threadId` so Spotlight
+  groups a thread's messages, the sender and recipients as people, the
+  mailbox, and the message's own text as `textContent`. The
+  thread-as-latest-message shape (id = thread id) is not indexed: the
+  thread item covers it. Trash and spam drop both kinds. The index delegate
+  answers for both id shapes.
+- **A Spotlight result opens the thread**:
+  `onContinueUserActivity(CSSearchableItemActionType)` reads the item id
+  (either shape) and calls `openThread`. Before this, a tap on one of our
+  results relied on the entity's `OpenIntent` alone.
+- **"Search in Hey Pigeon"** in Spotlight (`CoreSpotlightContinuation` in
+  the Info.plist; `CSQueryContinuationActionType` → `AppModel.openSearch`)
+  continues the typed words in the Search tab, filters cleared.
+- The rest is the user's: Settings › Siri & Search's footer says to keep
+  *Let Siri see your inbox* on, keep *Show in Search* / *Learn from this
+  App* on for Hey Pigeon (the new button opens the app's iOS Settings page)
+  and turn both off for Mail. And the default-mail-app choice above routes
+  Siri's "send an email" here.
+
 ### Verify on the first build (iOS 27)
 
 Each of these is one call in one file; a renamed API is a local fix.
@@ -673,6 +725,7 @@ Each of these is one call in one file; a renamed API is a local fix.
 | The Private Cloud Compute entitlement key, once access is granted | `ios-app/project.yml` |
 | `LanguageModelSession.DynamicProfile` — the agent's three phases are plain sessions per phase (`TriageProfile`); move them onto a dynamic profile when the API is in hand | `AI/TriageAgent.swift` |
 | AppIntentsTesting over the schema intents (the Swift Testing tests cover the `perform` bodies today) | `HeyPigeonTests/MailSchemaTests.swift` |
+| `MailMessageEntity: IndexedEntity` next to `MailThreadEntity`'s (two indexed entity types in one app; `relatedUniqueIdentifier` grouping in Spotlight); the `mailto` URL type being accepted without the entitlement; `UIApplication.openDefaultApplicationsSettingsURLString` landing on Default Apps | `Intents/MailSchema.swift`, `Intents/SpotlightIndexer.swift`, `project.yml`, `Features/Settings/SettingsView.swift` |
 
 ## Out of scope
 

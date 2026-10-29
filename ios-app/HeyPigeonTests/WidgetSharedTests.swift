@@ -1,4 +1,5 @@
-// The widget snapshot the app writes, the deep links the app opens on, and
+// The widget snapshot the app writes, the deep links the app opens on
+// (heypigeon:// and mailto:), a Spotlight search continuing in the app, and
 // a share becoming a draft — all over the mock engine, no App Group needed
 // (the snapshot is built, not written, here).
 
@@ -63,6 +64,37 @@ struct WidgetSharedTests {
         #expect(model.pendingThreadId == "t2")
         model.handle(.compose)
         #expect(model.composeDraft != nil)
+    }
+
+    @Test func mailtoLinksBecomePrefilledDrafts() throws {
+        // RFC 6068: recipients before the `?`, the four headers after it,
+        // percent-decoded, CRLF in the body a newline, a `+` left alone.
+        let url = URL(string: "mailto:anna@example.com,Ben%20%3Cben%2Bnews@example.com%3E?subject=Deposit%20back%3F&body=Hi%20Anna%2C%0D%0A%0D%0AAny%20news%3F&cc=cc@example.com&bcc=hidden@example.com&to=more@example.com&from=spoof@example.com")!
+        guard case .mailto(let d)? = DeepLink(url: url) else { Issue.record("not a mailto link"); return }
+        #expect(d.to == ["anna@example.com", "ben+news@example.com", "more@example.com"])
+        #expect(d.cc == ["cc@example.com"])
+        #expect(d.bcc == ["hidden@example.com"])
+        #expect(d.subject == "Deposit back?")
+        #expect(d.bodyText == "Hi Anna,\n\nAny news?")
+        #expect(d.fromAccountId == nil)
+
+        // A bare mailto: is an empty composer; the scheme is case-insensitive.
+        guard case .mailto(let empty)? = DeepLink(url: URL(string: "MAILTO:")!) else { Issue.record("not a mailto link"); return }
+        #expect(empty.to.isEmpty && empty.subject.isEmpty && empty.bodyText.isEmpty)
+
+        model.handle(DeepLink(url: url)!)
+        #expect(model.composeDraft?.to == ["anna@example.com", "ben+news@example.com", "more@example.com"])
+        #expect(model.composeDraft?.subject == "Deposit back?")
+    }
+
+    @Test func spotlightSearchContinuesInTheSearchTab() {
+        model.showSettings = true
+        model.openSearch("  invoice from anna ")
+        #expect(model.tab == .search)
+        #expect(model.searchText == "invoice from anna")
+        #expect(model.searchFilters.isEmpty)
+        #expect(!model.showSettings)
+        #expect(model.isSearching)
     }
 
     @Test func shareBecomesADraft() {

@@ -120,8 +120,13 @@ struct MailMessageEntity {
 
     /// The thread's latest message, from the row alone.
     init(_ row: ThreadRow, account: MailAccount) {
+        // Plain stored properties first: the schema properties are wrapped
+        // by the macro and need `self` whole.
         id = row.id
         threadId = row.id
+        indexableText = nil
+        previewText = row.snippet
+        senderName = Self.senderName(row)
         to = []
         cc = []
         bcc = []
@@ -136,9 +141,6 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
-        indexableText = nil
-        previewText = row.snippet
-        senderName = Self.senderName(row)
     }
 
     /// One stored message of a thread.
@@ -146,6 +148,14 @@ struct MailMessageEntity {
         let row = detail.thread
         id = Self.id(threadId: row.id, messageId: m.id)
         threadId = row.id
+        indexableText = m.bodyText.flatMap { text in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let main = MessageBodyView.splitQuoted(trimmed)?.main ?? trimmed
+            return String(main.prefix(MailThreadEntity.bodyTextCap))
+        }
+        previewText = m.snippet
+        senderName = m.isMine ? "Me" : (m.fromName.isEmpty ? m.fromAddress : m.fromName)
         to = m.to.map { $0 == "me" ? .mail(account.email, name: account.displayName, isMe: true) : .mail($0, name: nil) }
         cc = []
         bcc = []
@@ -160,14 +170,6 @@ struct MailMessageEntity {
         isFlagged = row.isPinned
         self.account = MailAccountEntity(account)
         mailbox = MailboxEntity.of(row, account: account)
-        indexableText = m.bodyText.flatMap { text in
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            let main = MessageBodyView.splitQuoted(trimmed)?.main ?? trimmed
-            return String(main.prefix(MailThreadEntity.bodyTextCap))
-        }
-        previewText = m.snippet
-        senderName = m.isMine ? "Me" : (m.fromName.isEmpty ? m.fromAddress : m.fromName)
     }
 
     /// A stored message (`<threadId>#<messageId>`), as opposed to the

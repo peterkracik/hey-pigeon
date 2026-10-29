@@ -54,15 +54,11 @@ struct MailThreadEntity {
     static let bodyTextCap = 4_000
 
     init(_ row: ThreadRow, account: MailAccount?, detail: ThreadDetail? = nil, labelNames: [String] = []) {
-        // Plain stored properties first: assigning an @Property goes through
-        // the wrapper, which needs `self` whole (the first compile said so).
+        // Plain stored properties first: assigning an @Property — or a
+        // schema property such as `messages`, which the macro wraps too —
+        // goes through the wrapper, which needs `self` whole.
         id = row.id
         let resolved = account ?? MailAccount(id: row.accountId, email: row.accountId, displayName: row.accountId, color: .sky, avatarURL: nil, signature: "")
-        if let detail, !detail.messages.isEmpty {
-            messages = detail.messages.map { MailMessageEntity($0, in: detail, account: resolved) }
-        } else {
-            messages = [MailMessageEntity(row, account: resolved)]
-        }
         senderAddress = row.lastFromAddress
         self.labelNames = labelNames
         let stored = detail?.messages ?? []
@@ -81,7 +77,12 @@ struct MailThreadEntity {
         participantNames = names
         participantAddresses = addresses
         bodyText = Self.indexableBody(stored)
-        // Then the @Property ones.
+        // Then the wrapped ones.
+        if let detail, !detail.messages.isEmpty {
+            messages = detail.messages.map { MailMessageEntity($0, in: detail, account: resolved) }
+        } else {
+            messages = [MailMessageEntity(row, account: resolved)]
+        }
         subject = row.subject.isEmpty ? "(no subject)" : row.subject
         from = row.fromSummary
         snippet = row.snippet

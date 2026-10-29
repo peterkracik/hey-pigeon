@@ -56,14 +56,14 @@ struct MailSchemaTests {
         #expect(resolved.map(\.id) == ["t5#t5-m2", "t5"])
         model.showThread(row)
         #expect(await q.defaultResult()?.id == "t5#t5-m3") // the latest message
-        let reps = try await q.displayRepresentations(for: ["t5#t5-m1", "nope"], requestedComponents: .title)
+        let reps = try await q.displayRepresentations(for: ["t5#t5-m1", "nope"])
         #expect(reps.count == 1 && reps["t5#t5-m1"] != nil)
 
         // The thread entity carries them as its `messages`.
         let thread = MailThreadEntity(row, account: model.account(for: row), detail: try engine.threadLocal(id: "t5"))
         #expect(thread.messages.map(\.id) == messages.map(\.id))
         #expect(MailThreadEntity(row, account: model.account(for: row)).messages.map(\.id) == ["t5"])
-        let threadReps = try await MailThreadQuery().displayRepresentations(for: ["t5"], requestedComponents: .title)
+        let threadReps = try await MailThreadQuery().displayRepresentations(for: ["t5"])
         #expect(threadReps["t5"] != nil)
     }
 

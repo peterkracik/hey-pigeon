@@ -82,21 +82,26 @@ enum SpotlightIndexer {
 /// an OS update), rebuild these ids, and — iOS 27 — hand back the full
 /// items for ids a search returned, which is how `SpotlightSearchTool`
 /// reads the body text the index only searched.
-final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate {
+final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate, Sendable {
     static let shared = SpotlightIndexDelegate()
 
+    // Spotlight's handler and index are not Sendable; each is used once,
+    // from the one task the call starts.
     func searchableIndex(_ searchableIndex: CSSearchableIndex, reindexAllSearchableItemsWithAcknowledgementHandler acknowledgementHandler: @escaping () -> Void) {
+        nonisolated(unsafe) let done = acknowledgementHandler
         Task { @MainActor in
             if let model = AppModel.current { await SpotlightIndexer.refresh(model) }
-            acknowledgementHandler()
+            done()
         }
     }
 
     func searchableIndex(_ searchableIndex: CSSearchableIndex, reindexSearchableItemsWithIdentifiers identifiers: [String], acknowledgementHandler: @escaping () -> Void) {
-        Task { @MainActor in
-            let items = Self.items(for: identifiers)
-            if !items.isEmpty { try? await searchableIndex.indexSearchableItems(items) }
-            acknowledgementHandler()
+        nonisolated(unsafe) let done = acknowledgementHandler
+        nonisolated(unsafe) let index = searchableIndex
+        Task {
+            let items = await Self.entries(for: identifiers).map(\.item)
+            if !items.isEmpty { try? await index.indexSearchableItems(items) }
+            done()
         }
     }
 
@@ -104,23 +109,38 @@ final class SpotlightIndexDelegate: NSObject, CSSearchableIndexDelegate {
     /// reads after a hit). Off when the Settings toggle is off, so nothing
     /// leaves the store while the user has the index drained.
     func searchableItems(forIdentifiers identifiers: [String]) async -> [CSSearchableItem] {
-        await Self.items(for: identifiers)
+        await Self.entries(for: identifiers).map(\.item)
+    }
+
+    /// What one id indexes as: entities are values and cross the actor
+    /// boundary; the `CSSearchableItem` is made on the caller's side.
+    private enum Entry: Sendable {
+        case thread(MailThreadEntity)
+        case message(MailMessageEntity)
+
+        var item: CSSearchableItem {
+            switch self {
+            case .thread(let thread):
+                return thread.searchableItem
+            case .message(let message):
+                let item = CSSearchableItem(uniqueIdentifier: message.id, domainIdentifier: message.account.id, attributeSet: message.attributeSet)
+                item.associateAppEntity(message, priority: 0)
+                return item
+            }
+        }
     }
 
     /// Thread ids and message ids (`<threadId>#<messageId>`) alike.
     @MainActor
-    private static func items(for identifiers: [String]) -> [CSSearchableItem] {
+    private static func entries(for identifiers: [String]) -> [Entry] {
         guard let model = AppModel.current, model.siriIndexEnabled else { return [] }
         return identifiers.compactMap { id in
             let threadId = MailMessageEntity.threadId(of: id)
             guard let row = try? model.engine.threadRow(id: threadId),
                   !row.labels.contains("TRASH"), !row.labels.contains("SPAM") else { return nil }
             let thread = SpotlightIndexer.entity(for: row, in: model)
-            guard MailMessageEntity.messageId(of: id) != nil else { return thread.searchableItem }
-            guard let message = thread.messages.first(where: { $0.id == id }) else { return nil }
-            let item = CSSearchableItem(uniqueIdentifier: id, domainIdentifier: message.account.id, attributeSet: message.attributeSet)
-            item.associateAppEntity(message, priority: 0)
-            return item
+            guard MailMessageEntity.messageId(of: id) != nil else { return .thread(thread) }
+            return thread.messages.first(where: { $0.id == id }).map { .message($0) }
         }
     }
 }

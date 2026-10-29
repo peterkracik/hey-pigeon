@@ -92,7 +92,7 @@ struct MessageBodyView: View {
     /// "On … wrote:" line. Nil when there is no trailing quote or nothing
     /// before it, so non-quoted text is never hidden. Same rules as
     /// desktop-app/src/lib/EmailBody.svelte.
-    static func splitQuoted(_ text: String) -> (main: String, quoted: String)? {
+    nonisolated static func splitQuoted(_ text: String) -> (main: String, quoted: String)? {
         let lines = text.components(separatedBy: "\n")
         var i = lines.count
         var hasQuote = false

@@ -16,21 +16,21 @@ enum IntentDonations {
 
     static func archived(_ row: ThreadRow, in model: AppModel) {
         guard enabled, let e = messageEntity(row, model) else { return }
-        var intent = ArchiveMailIntent()
+        let intent = ArchiveMailIntent()
         intent.entities = [e]
         donate(intent, result: .result(dialog: "Marked done."))
     }
 
     static func deleted(_ row: ThreadRow, in model: AppModel) {
         guard enabled, let e = messageEntity(row, model) else { return }
-        var intent = DeleteMailIntent()
+        let intent = DeleteMailIntent()
         intent.entities = [e]
         donate(intent, result: .result(dialog: "Deleted."))
     }
 
     static func replied(_ row: ThreadRow, all: Bool, in model: AppModel) {
         guard enabled, let e = messageEntity(row, model) else { return }
-        var intent = ReplyMailIntent()
+        let intent = ReplyMailIntent()
         intent.target = e
         intent.isReplyAll = all
         intent.attachments = []
@@ -46,12 +46,12 @@ enum IntentDonations {
         intent.thread = MailThreadEntity(row, account: model.account(for: row))
         intent.label = MailLabelEntity(label)
         intent.add = on
-        donate(intent, result: .result(dialog: on ? "Label added · \(label.name)." : "Label removed · \(label.name)."))
+        donate(intent, result: .result(dialog: IntentDialog(stringLiteral: on ? "Label added · \(label.name)." : "Label removed · \(label.name).")))
     }
 
     static func reminded(_ row: ThreadRow, at: Date, onlyIfNoReply: Bool, in model: AppModel) {
         guard enabled else { return }
-        var intent = RemindMeIntent()
+        let intent = RemindMeIntent()
         intent.thread = MailThreadEntity(row, account: model.account(for: row))
         intent.when = .pickDate
         intent.date = at

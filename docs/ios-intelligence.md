@@ -537,7 +537,7 @@ picked per request by the core:
 | id | provider | window | leaves the device |
 | --- | --- | --- | --- |
 | `apple` | `SystemModelProvider` — Apple Intelligence on device | ~4K tokens (9,000 chars budgeted, chunked) | no |
-| `apple-cloud` | `PrivateCloudComputeProvider` — `PrivateCloudComputeLanguageModel`, light reasoning for drafts and summaries, deep for triage | 32K tokens (100,000 chars) | Apple's servers, never stored, no key |
+| `apple-cloud` | `PrivateCloudComputeProvider` — `PrivateCloudComputeLanguageModel` at its default reasoning level (per-request light / deep is a follow-up) | 32K tokens (100,000 chars) | Apple's servers, never stored, no key |
 | `openai` | the Rust `adapter-openai` client, as before (the desktop needs it) | per model | OpenAI, BYO key |
 | any | `PackageModelProvider` — a Swift package's `LanguageModel` (Anthropic's or Google's once published, a local MLX model for a small fine-tuned classifier), its token in the Keychain (`ProviderTokenStore`), never an API-key string in the binary | per model | per provider |
 
@@ -632,8 +632,8 @@ an attachment never goes to OpenAI or to Apple's cloud.
 
 Inbox and search rows carry
 `.appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier:))`
-and the `List` is a selection of thread entities
-(`.appEntityIdentifier(forSelectionType:)`), so "mark these done", "remind
+(the list has no selection, so no `appEntityIdentifier(forSelectionType:identifier:)`),
+so "mark these done", "remind
 me about the second one tomorrow" and "archive everything from Lufthansa
 here" resolve against what is on screen. `MailThreadEntity` adopts
 **`.mail.thread`** with its `messages`: `MailMessageEntity` is a real
@@ -641,7 +641,7 @@ stored message (id `<threadId>#<messageId>`) whenever the store holds the
 thread's messages, and the latest-message shape (id = thread id) only for
 a thread never opened; every schema intent acts on the message's
 `threadId`. `openMessage` / `openDraft` have their `@AppIntent(schema:)`
-back. Both queries answer `displayRepresentations(for:requestedComponents:)`
+back. Both queries answer `displayRepresentations(for:)`
 from the rows alone.
 
 ### Siri's model of the app (#70)
@@ -712,15 +712,24 @@ the levers are the index and the user's iOS settings:
 
 Each of these is one call in one file; a renamed API is a local fix.
 
+The first archive against the iOS 27.2 SDK (publish-ios run 96) settled
+these, now matching the SDK: `LanguageModelSession.Usage`
+(`input.totalTokenCount` / `output.totalTokenCount`); Private Cloud
+Compute's unavailable reasons (`deviceNotEligible`, `systemNotReady`);
+`OCRTool` / `BarcodeReaderTool` come from **Vision**;
+`SpotlightSearchTool.Configuration(sources:guide:contactResolver:)` with
+`guide: .focused(.communications)`; `ContactResolver` is one
+`userIdentity()`; `EntityQuery.displayRepresentations(for:)` takes only
+the ids; there is no selection-type annotation without a `List`
+selection, so rows carry `.appEntityIdentifier(_:)` alone.
+
 | What | Where |
 | --- | --- |
-| `PrivateCloudComputeLanguageModel` and its `availability` cases; `ContextOptions(reasoningLevel:)` with `.light` / `.deep`; `LanguageModelSession(model:contextOptions:tools:instructions:)` | `AI/ModelProviders.swift` |
-| `response.usage` and its `inputTokens` / `outputTokens` | `AI/AiUsageLedger.swift` (`record(provider:_:)`) |
-| `SpotlightSearchTool.Configuration` (`contentDomain = .communications`, `contactResolver`), `ContactResolver` / `ResolvedContact` | `AI/InboxAsk.swift` |
+| Reasoning level: `ContextOptions(reasoningLevel:)` is per request (`respond(to:…, contextOptions:)`, which takes a `Prompt`), not per session; Private Cloud Compute runs at its default until light (drafts) / deep (triage) is passed on each call | `AI/ModelProviders.swift`, `AI/FoundationModelsBackend.swift` |
 | `CSSearchableIndexDelegate.searchableItems(forIdentifiers:)`, `CSSearchableItem.associateAppEntity`, the `accountIdentifier` / `accountHandles` / `mailboxIdentifiers` attributes | `Intents/SpotlightIndexer.swift`, `Intents/Entities.swift` |
 | `LongRunningIntent`, `CancellableIntent` requirements | `Intents/TriageIntents.swift` |
-| `Attachment(image)` in a `Prompt`, `OCRTool()`, `BarcodeReaderTool()` | `AI/AttachmentUnderstanding.swift` |
-| `@AppEntity(schema: .mail.thread)` property requirements, `.mail.openMessage` / `.mail.openDraft`, `displayRepresentations(for:requestedComponents:)`, `.appEntityIdentifier(forSelectionType:)` | `Intents/Entities.swift`, `Intents/MailSchema.swift`, `Intents/MailSchemaIntents.swift`, `Features/Inbox/InboxView.swift` |
+| `Attachment(image)` in a `Prompt` | `AI/AttachmentUnderstanding.swift` |
+| `@AppEntity(schema: .mail.thread)` property requirements, `.mail.openMessage` / `.mail.openDraft` | `Intents/Entities.swift`, `Intents/MailSchema.swift`, `Intents/MailSchemaIntents.swift`, `Features/Inbox/InboxView.swift` |
 | `SyncableEntity`, `OwnershipProvidingEntity` / `EntityOwnership`, `UNMutableNotificationContent.appEntityIdentifiers`, `IntentDonationManager.shared.donate(intent:result:)` | `Intents/Entities.swift`, `Shared/ReminderScheduler.swift`, `Shared/NewMailNotifier.swift`, `Intents/IntentDonations.swift` |
 | The Private Cloud Compute entitlement key, once access is granted | `ios-app/project.yml` |
 | `LanguageModelSession.DynamicProfile` — the agent's three phases are plain sessions per phase (`TriageProfile`); move them onto a dynamic profile when the API is in hand | `AI/TriageAgent.swift` |

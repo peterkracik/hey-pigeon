@@ -108,9 +108,11 @@ enum InboxAsk {
     /// results — sender, recipients, subject, dates) and a contact resolver
     /// made of the user's own account addresses.
     private static func makeSession(model: AppModel) -> LanguageModelSession {
-        var configuration = SpotlightSearchTool.Configuration()
-        configuration.contentDomain = .communications
-        configuration.contactResolver = AccountContactResolver(accounts: model.accounts)
+        let configuration = SpotlightSearchTool.Configuration(
+            sources: [.coreSpotlight],
+            guide: .focused(.communications),
+            contactResolver: AccountContactResolver(accounts: model.accounts)
+        )
         let tool = SpotlightSearchTool(configuration: configuration)
         return SystemModelProvider().session(instructions: instructions, task: .completion, tools: [tool])
     }
@@ -134,11 +136,10 @@ enum InboxAsk {
 struct AccountContactResolver: ContactResolver {
     let accounts: [MailAccount]
 
-    func contacts(matching query: String) async -> [ResolvedContact] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let me = ["me", "myself", "i"].contains(q)
-        return accounts
-            .filter { me || $0.email.lowercased().contains(q) || $0.displayName.lowercased().contains(q) }
-            .map { ResolvedContact(displayName: $0.displayName, handles: [$0.email], isMe: true) }
+    func userIdentity() -> ResolvedContact {
+        var me = ResolvedContact(displayName: accounts.first?.displayName ?? "Me")
+        me.names = Array(Set(accounts.map(\.displayName).filter { !$0.isEmpty }))
+        me.emailAddresses = accounts.map(\.email)
+        return me
     }
 }

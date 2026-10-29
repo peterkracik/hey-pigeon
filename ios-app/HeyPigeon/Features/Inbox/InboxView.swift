@@ -4,6 +4,7 @@
 // Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
 // Need reply; Search is its own screen (Features/Search).
 
+import AppIntents
 import SwiftUI
 
 struct MailListScreen: View {
@@ -212,6 +213,11 @@ struct ThreadList: View {
                                     path.append(row)
                                 }
                         }
+                        // View Annotations (iOS 27): Siri sees this row as the
+                        // thread entity, so "mark these done", "remind me about
+                        // the second one" and "archive everything from Lufthansa
+                        // here" resolve against what is on screen.
+                        .appEntityIdentifier(EntityIdentifier(for: MailThreadEntity.self, identifier: row.id))
                         .padding(.bottom, 1) // the gap between rows, canvas showing through
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                         .listRowBackground(Color.clear)
@@ -229,6 +235,8 @@ struct ThreadList: View {
         .contentMargins(.top, 0, for: .scrollContent)
         .scrollDismissesKeyboard(.immediately)
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
+        // The list is a selection of thread entities for Siri ("these").
+        .appEntityIdentifier(forSelectionType: MailThreadEntity.self)
     }
 
     private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {

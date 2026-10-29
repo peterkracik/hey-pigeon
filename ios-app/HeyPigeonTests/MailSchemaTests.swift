@@ -36,6 +36,48 @@ struct MailSchemaTests {
         #expect(m.account.emailAddress == "me@personal.test")
     }
 
+    /// Once a thread was opened, its messages are real entities with
+    /// `<threadId>#<messageId>` ids, and the queries resolve both shapes.
+    @Test func messagesBecomeRealEntitiesOnceTheStoreHasThem() async throws {
+        let row = try #require(try engine.threadRow(id: "t5"))
+        #expect(MailMessageEntity.messages(of: row, in: model).map(\.id) == ["t5"])
+        _ = try await engine.thread(id: "t5")
+        let messages = MailMessageEntity.messages(of: row, in: model)
+        #expect(messages.count == 4)
+        #expect(messages[0].id == "t5#t5-m0" && messages[0].threadId == "t5")
+        #expect(MailMessageEntity.personLabel(messages[0].sender) == "Ana")
+        #expect(messages[1].sender.isMe) // "Me" rows are the account
+        #expect(messages[1].to.first?.emailAddress == "ana@acme.test")
+        #expect(MailMessageEntity.threadId(of: "t5#t5-m3") == "t5")
+        #expect(MailMessageEntity.messageId(of: "t5") == nil)
+
+        let q = MailMessageQuery()
+        let resolved = try await q.entities(for: ["t5#t5-m2", "t5", "t5#nope", "nope"])
+        #expect(resolved.map(\.id) == ["t5#t5-m2", "t5"])
+        model.showThread(row)
+        #expect(await q.defaultResult()?.id == "t5#t5-m3") // the latest message
+        let reps = try await q.displayRepresentations(for: ["t5#t5-m1", "nope"], requestedComponents: .title)
+        #expect(reps.count == 1 && reps["t5#t5-m1"] != nil)
+
+        // The thread entity carries them as its `messages`.
+        let thread = MailThreadEntity(row, account: model.account(for: row), detail: try engine.threadLocal(id: "t5"))
+        #expect(thread.messages.map(\.id) == messages.map(\.id))
+        #expect(MailThreadEntity(row, account: model.account(for: row)).messages.map(\.id) == ["t5"])
+        let threadReps = try await MailThreadQuery().displayRepresentations(for: ["t5"], requestedComponents: .title)
+        #expect(threadReps["t5"] != nil)
+    }
+
+    @Test func archiveActsOnTheThreadBehindARealMessage() async throws {
+        _ = try await engine.thread(id: "t7")
+        let row = try #require(try engine.threadRow(id: "t7"))
+        let first = try #require(MailMessageEntity.messages(of: row, in: model).first)
+        var archive = ArchiveMailIntent()
+        archive.entities = [first]
+        _ = try await archive.perform()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(try engine.threadRow(id: "t7")?.isDone == true)
+    }
+
     @Test func personHelpersRoundTrip() {
         let p = IntentPerson.mail("ana@acme.test", name: "Ana")
         #expect(p.emailAddress == "ana@acme.test")

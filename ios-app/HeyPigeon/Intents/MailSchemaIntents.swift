@@ -33,7 +33,7 @@ struct ReplyMailIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<MailDraftEntity> {
         let model = try await IntentSupport.model()
-        let row = try IntentSupport.row(id: target.id, in: model)
+        let row = try IntentSupport.row(id: target.threadId, in: model)
         try await model.openReply(to: row, all: isReplyAll, body: body.map { String($0.characters) })
         return .result(value: try model.applyToOpenDraft(to: to, cc: cc, bcc: bcc, subject: subject, body: nil, account: account))
     }
@@ -55,7 +55,7 @@ struct ForwardMailIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<MailDraftEntity> {
         let model = try await IntentSupport.model()
-        let row = try IntentSupport.row(id: target.id, in: model)
+        let row = try IntentSupport.row(id: target.threadId, in: model)
         try await model.openForward(of: row)
         // The user's words go above the quoted message.
         let prefix = body.map { String($0.characters) }
@@ -166,32 +166,29 @@ struct SendDraftIntent {
 
 // MARK: - Opening
 //
-// The Mail domain documents `openMessage` and `openDraft` schemas, but the
-// iOS 26 SDK has no such members (the first compile of this file said so),
-// so these are plain OpenIntents over the schema entities: Shortcuts and
-// the App Shortcut phrases reach them, and they pick up the schema once
-// the toolchain has it.
+// The `openMessage` and `openDraft` schemas (the iOS 26 SDK lacked them —
+// #62 made these plain OpenIntents; the iOS 27 SDK has them back).
 
-struct OpenMessageIntent: OpenIntent {
-    static let title: LocalizedStringResource = "Open Message"
-    static let description = IntentDescription("Opens an email in Hey Pigeon.", categoryName: "Mail")
+@AppIntent(schema: .mail.openMessage)
+struct OpenMessageIntent {
+    static let openAppWhenRun = true
 
-    @Parameter(title: "Message") var target: MailMessageEntity
+    var target: MailMessageEntity
 
     @MainActor
     func perform() async throws -> some IntentResult {
         let model = try await IntentSupport.model()
-        _ = try IntentSupport.row(id: target.id, in: model)
-        model.openThread(id: target.id)
+        _ = try IntentSupport.row(id: target.threadId, in: model)
+        model.openThread(id: target.threadId)
         return .result()
     }
 }
 
-struct OpenDraftIntent: OpenIntent {
-    static let title: LocalizedStringResource = "Open Draft"
-    static let description = IntentDescription("Opens a draft in Hey Pigeon's composer.", categoryName: "Mail")
+@AppIntent(schema: .mail.openDraft)
+struct OpenDraftIntent {
+    static let openAppWhenRun = true
 
-    @Parameter(title: "Draft") var target: MailDraftEntity
+    var target: MailDraftEntity
 
     @MainActor
     func perform() async throws -> some IntentResult {
@@ -214,7 +211,7 @@ struct ArchiveMailIntent {
         let model = try await IntentSupport.model()
         var n = 0
         for e in entities {
-            guard let row = try? IntentSupport.row(id: e.id, in: model), !row.isDone else { continue }
+            guard let row = try? IntentSupport.row(id: e.threadId, in: model), !row.isDone else { continue }
             model.markDone(row)
             n += 1
         }
@@ -231,7 +228,7 @@ struct DeleteMailIntent: DeleteIntent {
         let model = try await IntentSupport.model()
         var n = 0
         for e in entities {
-            guard let row = try? IntentSupport.row(id: e.id, in: model) else { continue }
+            guard let row = try? IntentSupport.row(id: e.threadId, in: model) else { continue }
             model.delete(row)
             n += 1
         }
@@ -268,7 +265,7 @@ struct UpdateMailIntent {
     func perform() async throws -> some IntentResult {
         let model = try await IntentSupport.model()
         for e in target {
-            guard let row = try? IntentSupport.row(id: e.id, in: model) else { continue }
+            guard let row = try? IntentSupport.row(id: e.threadId, in: model) else { continue }
             if let isRead, row.isRead != isRead { model.toggleRead(row) }
             if let isFlagged, row.isPinned != isFlagged { model.togglePin(row) }
             if let isJunk, row.labels.contains("SPAM") != isJunk { model.setSpam(row, isJunk) }

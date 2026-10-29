@@ -11,11 +11,21 @@ import UniformTypeIdentifiers
 
 // MARK: - Thread
 
-struct MailThreadEntity: AppEntity, IndexedEntity {
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Email")
+/// The `.mail.thread` schema (iOS 27): a thread with its `messages`, so
+/// Siri's model of the app matches the app's own shape instead of the
+/// thread-as-message workaround alone. The extra properties are the row's
+/// flags, for Shortcuts filters. Also what Spotlight indexes
+/// (`IndexedEntity`), what syncs across the user's devices
+/// (`SyncableEntity`: Gmail thread ids are stable everywhere) and private
+/// by default (`OwnershipProvidingEntity`) — iOS 27 conformances below.
+@AppEntity(schema: .mail.thread)
+struct MailThreadEntity {
     static let defaultQuery = MailThreadQuery()
 
     let id: String
+    /// The thread's messages: the stored ones when the store has them,
+    /// else the latest-message shape alone (MailSchema.swift).
+    var messages: [MailMessageEntity]
     @Property(title: "Subject") var subject: String
     @Property(title: "From") var from: String
     @Property(title: "Preview") var snippet: String
@@ -45,13 +55,17 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
 
     init(_ row: ThreadRow, account: MailAccount?, detail: ThreadDetail? = nil, labelNames: [String] = []) {
         id = row.id
+        let resolved = account ?? MailAccount(id: row.accountId, email: row.accountId, displayName: row.accountId, color: .sky, avatarURL: nil, signature: "")
+        if let detail, !detail.messages.isEmpty {
+            messages = detail.messages.map { MailMessageEntity($0, in: detail, account: resolved) }
+        } else {
+            messages = [MailMessageEntity(row, account: resolved)]
+        }
         subject = row.subject.isEmpty ? "(no subject)" : row.subject
         from = row.fromSummary
         snippet = row.snippet
         receivedAt = row.lastMessageAt
-        self.account = MailAccountEntity(account ?? MailAccount(
-            id: row.accountId, email: row.accountId, displayName: row.accountId, color: .sky, avatarURL: nil, signature: ""
-        ))
+        self.account = MailAccountEntity(resolved)
         isUnread = !row.isRead
         isPinned = row.isPinned
         needsReply = row.needsReply
@@ -142,15 +156,37 @@ struct MailThreadEntity: AppEntity, IndexedEntity {
     }
 }
 
+extension MailThreadEntity: IndexedEntity {}
+
 /// Siri resolves "the one from Anna", "this email" (the open thread) and
 /// free text through the app's own search; Shortcuts pick from the inbox.
+/// Ids resolve with the stored messages (no network); the display
+/// representations alone come from the rows, fast, for Siri reading what
+/// is on screen (iOS 27).
 struct MailThreadQuery: EntityStringQuery {
     @MainActor
     func entities(for identifiers: [String]) async throws -> [MailThreadEntity] {
         let model = try await IntentSupport.model()
         return identifiers.compactMap { id in
-            (try? model.engine.threadRow(id: id)).flatMap { $0 }.map { MailThreadEntity($0, account: model.account(for: $0)) }
+            (try? model.engine.threadRow(id: id)).flatMap { $0 }.map {
+                MailThreadEntity($0, account: model.account(for: $0), detail: try? model.engine.threadLocal(id: $0.id))
+            }
         }
+    }
+
+    @MainActor
+    func displayRepresentations(for identifiers: [String], requestedComponents: DisplayRepresentation.Components) async throws -> [String: DisplayRepresentation] {
+        let model = try await IntentSupport.model()
+        var out: [String: DisplayRepresentation] = [:]
+        for id in identifiers {
+            guard let row = try? model.engine.threadRow(id: id) else { continue }
+            out[id] = DisplayRepresentation(
+                title: "\(row.subject.isEmpty ? "(no subject)" : row.subject)",
+                subtitle: "\(row.fromSummary) · \(Formatters.rowTime(row.lastMessageAt))",
+                image: .init(systemName: row.isRead ? "envelope.open" : "envelope.badge")
+            )
+        }
+        return out
     }
 
     @MainActor

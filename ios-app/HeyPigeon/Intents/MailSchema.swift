@@ -53,7 +53,11 @@ struct MailboxEntity {
     }
 }
 
-struct MailboxQuery: EntityQuery {
+/// String queries throughout the schema: every entity a Mail-schema intent
+/// takes as a parameter must be resolvable from speech ("the archive",
+/// "my work account"), or the App Intents metadata extractor rejects the
+/// intent at build time.
+struct MailboxQuery: EntityStringQuery {
     @MainActor
     private func all() async throws -> [MailboxEntity] {
         try await IntentSupport.model().accounts.flatMap { a in MailboxEntity.folders.map { MailboxEntity(folder: $0, account: a) } }
@@ -61,6 +65,12 @@ struct MailboxQuery: EntityQuery {
 
     func entities(for identifiers: [String]) async throws -> [MailboxEntity] {
         try await all().filter { identifiers.contains($0.id) }
+    }
+
+    func entities(matching string: String) async throws -> [MailboxEntity] {
+        try await all().filter {
+            $0.name.localizedCaseInsensitiveContains(string) || $0.account.emailAddress.localizedCaseInsensitiveContains(string)
+        }
     }
 
     func suggestedEntities() async throws -> [MailboxEntity] {
@@ -277,7 +287,7 @@ struct MailDraftEntity {
 /// what the user's other devices see too (iOS 27 `SyncableEntity`).
 extension MailDraftEntity: SyncableEntity {}
 
-struct MailDraftQuery: EntityQuery {
+struct MailDraftQuery: EntityStringQuery {
     @MainActor
     func entities(for identifiers: [String]) async throws -> [MailDraftEntity] {
         let model = try await IntentSupport.model()
@@ -290,6 +300,15 @@ struct MailDraftQuery: EntityQuery {
             }
         }
         return out
+    }
+
+    /// "The draft to Anna", "my budget draft": subject or a recipient.
+    @MainActor
+    func entities(matching string: String) async throws -> [MailDraftEntity] {
+        try await suggestedEntities().filter { d in
+            (d.subject ?? "").localizedCaseInsensitiveContains(string)
+                || d.to.contains { MailMessageEntity.personLabel($0).localizedCaseInsensitiveContains(string) }
+        }
     }
 
     @MainActor

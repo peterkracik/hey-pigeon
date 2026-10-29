@@ -54,6 +54,8 @@ struct MailThreadEntity {
     static let bodyTextCap = 4_000
 
     init(_ row: ThreadRow, account: MailAccount?, detail: ThreadDetail? = nil, labelNames: [String] = []) {
+        // Plain stored properties first: assigning an @Property goes through
+        // the wrapper, which needs `self` whole (the first compile said so).
         id = row.id
         let resolved = account ?? MailAccount(id: row.accountId, email: row.accountId, displayName: row.accountId, color: .sky, avatarURL: nil, signature: "")
         if let detail, !detail.messages.isEmpty {
@@ -61,23 +63,12 @@ struct MailThreadEntity {
         } else {
             messages = [MailMessageEntity(row, account: resolved)]
         }
-        subject = row.subject.isEmpty ? "(no subject)" : row.subject
-        from = row.fromSummary
-        snippet = row.snippet
-        receivedAt = row.lastMessageAt
-        self.account = MailAccountEntity(resolved)
-        isUnread = !row.isRead
-        isPinned = row.isPinned
-        needsReply = row.needsReply
-        reminderAt = row.scheduledAt
-        isDone = row.isDone
-        hasAttachment = row.hasAttachment
         senderAddress = row.lastFromAddress
         self.labelNames = labelNames
-        let messages = detail?.messages ?? []
+        let stored = detail?.messages ?? []
         var names: [String] = []
         var addresses: [String] = []
-        for m in messages {
+        for m in stored {
             if !m.isMine, !m.fromAddress.isEmpty, !addresses.contains(m.fromAddress) {
                 addresses.append(m.fromAddress)
                 names.append(m.fromName)
@@ -89,7 +80,19 @@ struct MailThreadEntity {
         }
         participantNames = names
         participantAddresses = addresses
-        bodyText = Self.indexableBody(messages)
+        bodyText = Self.indexableBody(stored)
+        // Then the @Property ones.
+        subject = row.subject.isEmpty ? "(no subject)" : row.subject
+        from = row.fromSummary
+        snippet = row.snippet
+        receivedAt = row.lastMessageAt
+        self.account = MailAccountEntity(resolved)
+        isUnread = !row.isRead
+        isPinned = row.isPinned
+        needsReply = row.needsReply
+        reminderAt = row.scheduledAt
+        isDone = row.isDone
+        hasAttachment = row.hasAttachment
     }
 
     /// Newest messages first, plain text, until the cap: the end of a long
@@ -244,16 +247,27 @@ struct MailAccountEntity {
     }
 }
 
-struct MailAccountQuery: EntityQuery {
+/// A string query, not a plain one: the Mail-schema intents take an account
+/// as a parameter, and the metadata extractor refuses a schema parameter
+/// Siri cannot resolve from speech ("my work account").
+struct MailAccountQuery: EntityStringQuery {
     @MainActor
-    func entities(for identifiers: [String]) async throws -> [MailAccountEntity] {
-        let model = try await IntentSupport.model()
-        return model.accounts.filter { identifiers.contains($0.id) }.map(MailAccountEntity.init)
+    private func all() async throws -> [MailAccountEntity] {
+        try await IntentSupport.model().accounts.map(MailAccountEntity.init)
     }
 
-    @MainActor
+    func entities(for identifiers: [String]) async throws -> [MailAccountEntity] {
+        try await all().filter { identifiers.contains($0.id) }
+    }
+
+    func entities(matching string: String) async throws -> [MailAccountEntity] {
+        try await all().filter {
+            $0.name.localizedCaseInsensitiveContains(string) || $0.emailAddress.localizedCaseInsensitiveContains(string)
+        }
+    }
+
     func suggestedEntities() async throws -> [MailAccountEntity] {
-        try await IntentSupport.model().accounts.map(MailAccountEntity.init)
+        try await all()
     }
 }
 

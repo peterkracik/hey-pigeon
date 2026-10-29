@@ -108,7 +108,7 @@ Queries:
   `engine.threadRow(id:)`; `entities(matching:)` through `engine.search`,
   which already runs FTS over sender, subject and body; `suggestedEntities()`
   returns the inbox's first page (the rows a user is most likely to mean).
-- `MailAccountQuery: EntityQuery` with `suggestedEntities()` = all accounts.
+- `MailAccountQuery: EntityStringQuery` with `suggestedEntities()` = all accounts and `entities(matching:)` over name and address. Every entity a Mail-schema intent takes as a parameter (account, mailbox, draft, message) needs a string query or `IndexedEntity`; the App Intents metadata extractor rejects the intent otherwise (the first archive said so).
 
 The `UniqueEntity`-style singletons (`InboxEntity`, …) are not needed:
 folders are an `AppEnum` (see Open below).

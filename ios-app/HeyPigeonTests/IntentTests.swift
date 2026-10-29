@@ -255,3 +255,95 @@ struct ReminderPresetTests {
         #expect(RemindWhen.offered(now: evening).last == .pickDate)
     }
 }
+
+/// The agentic triage's pure parts over the mock engine: the plan dedupes
+/// and summarizes, applies through the same model methods as the swipes,
+/// skips what is gone or already so; the tools' argument parsing; the
+/// journal's persistence and grouping.
+@MainActor
+struct TriageAgentTests {
+    let model: AppModel
+    let engine: MockEngine
+
+    init() {
+        engine = MockEngine()
+        model = AppModel(engine: engine)
+    }
+
+    @Test func planDedupesAndSummarizesTheBatch() {
+        var plan = TriagePlan()
+        #expect(plan.confirmationSummary == "Nothing to change.")
+        #expect(plan.add(.markDone(threadId: "t3", subject: "CI")))
+        #expect(!plan.add(.markDone(threadId: "t3", subject: "CI")))
+        plan.add(.markDone(threadId: "t6", subject: "Receipt"))
+        plan.add(.label(threadId: "t8", subject: "Invoice", labelId: "Label_2", labelName: "Travel", on: true))
+        plan.add(.remind(threadId: "t4", subject: "Lisbon", at: Date().addingTimeInterval(86_400), onlyIfNoReply: false))
+        #expect(plan.confirmationSummary == "Mark done 2, label 1 and remind 1?")
+        #expect(plan.proposals.count == 4)
+        var one = TriagePlan()
+        one.add(.needReply(threadId: "t1", subject: "Roadmap", on: true))
+        #expect(one.confirmationSummary == "Flag need reply 1?")
+        #expect(one.proposals[0].line == "Need reply · Roadmap")
+    }
+
+    @Test func planAppliesThroughTheModelAndSkipsWhatIsAlreadySo() async throws {
+        var plan = TriagePlan()
+        plan.add(.markDone(threadId: "t3", subject: "CI"))
+        plan.add(.needReply(threadId: "t1", subject: "Roadmap", on: true))
+        plan.add(.label(threadId: "t8", subject: "Invoice", labelId: "Label_2", labelName: "Travel", on: true))
+        plan.add(.remind(threadId: "t4", subject: "Lisbon", at: Date().addingTimeInterval(3_600), onlyIfNoReply: true))
+        plan.add(.markDone(threadId: "gone", subject: "?"))
+        try engine.setNeedsReply(threadId: "t1", true) // already flagged: skipped
+        let applied = await plan.apply(to: model)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(applied == 3)
+        #expect(try engine.threadRow(id: "t3")?.isDone == true)
+        #expect(try engine.threadRow(id: "t1")?.needsReply == true)
+        #expect(try engine.threadRow(id: "t8")?.labels.contains("Label_2") == true)
+        #expect(try engine.threadRow(id: "t4")?.isFollowUp == true)
+    }
+
+    @Test func remindToolParsesIsoAndBareDates() {
+        #expect(RemindTool.parse("2026-11-14T09:00:00+01:00") != nil)
+        #expect(RemindTool.parse("2026-11-14T09:00:00.000Z") != nil)
+        let day = RemindTool.parse("2026-11-14")
+        #expect(day.map { Calendar.current.component(.hour, from: $0) } == ReminderPreset.dayStart)
+        #expect(RemindTool.parse("tomorrow") == nil)
+    }
+
+    @Test func rowViewCarriesNamesNotIds() throws {
+        let row = try #require(try engine.threadRow(id: "t4"))
+        let v = TriageRowView(row, model: model)
+        #expect(v.labels == ["Travel"]) // tl2 → its name; INBOX/STARRED are not user labels
+        #expect(v.from == "Lufthansa" && !v.isUnread)
+        #expect(TriageToolOutput.json([v]).contains("\"subject\":\"Your trip to Lisbon: check-in opens\""))
+    }
+
+    @Test func journalPersistsCapsAndGroupsByRun() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("triage-journal-\(UUID().uuidString).json")
+        let journal = TriageJournal(url: url)
+        let a = UUID(), b = UUID()
+        journal.append(TriageJournalEntry(runId: a, at: Date(), phase: .scan, tool: "searchThreads", detail: "inbox · 8 rows", dryRun: true))
+        journal.append(TriageJournalEntry(runId: a, at: Date(), phase: .act, tool: "markDone", detail: "Mark done · CI", dryRun: true))
+        journal.append(TriageJournalEntry(runId: b, at: Date(), phase: .scan, tool: "run", detail: "started", dryRun: false))
+        let runs = journal.runs
+        #expect(runs.map(\.id) == [b, a]) // newest run first
+        #expect(runs[1].entries.map(\.tool) == ["searchThreads", "markDone"])
+        #expect(TriageJournal(url: url).entries.count == 3)
+        for i in 0..<(TriageJournal.cap + 5) {
+            journal.append(TriageJournalEntry(runId: b, at: Date(), phase: .decide, tool: "decide", detail: "\(i)", dryRun: false))
+        }
+        #expect(journal.entries.count == TriageJournal.cap)
+        journal.clear()
+        #expect(TriageJournal(url: url).entries.isEmpty)
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    @Test func instructionsCarryTheUsersRules() {
+        #expect(TriageAgent.scanInstructions(rules: "").contains("Pick the ones worth a decision"))
+        #expect(!TriageAgent.scanInstructions(rules: "   ").contains("own rules"))
+        let d = TriageAgent.decideInstructions(rules: "Newsletters are done.", labels: ["Invoices", "Travel"])
+        #expect(d.contains("Labels that exist: Invoices, Travel"))
+        #expect(d.hasSuffix("Newsletters are done."))
+    }
+}

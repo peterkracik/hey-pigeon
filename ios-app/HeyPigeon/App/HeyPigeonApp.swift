@@ -32,6 +32,8 @@ struct HeyPigeonApp: App {
                 model.snooze(threadId: id, hours: hours)
             case .open(let target):
                 model.handle(DeepLink(target))
+            case .cancelTriage:
+                TriageAgent.current?.cancel()
             }
             // The optimistic row change lands on the next main-actor turn.
             try? await Task.sleep(for: .milliseconds(50))

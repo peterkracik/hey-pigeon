@@ -15,6 +15,7 @@ struct HeyPigeonWidgetBundle: WidgetBundle {
         NextReminderWidget()
         NeedReplyWidget()
         ReminderLiveActivity()
+        TriageLiveActivity()
         ComposeControl()
         ScheduledControl()
         InboxControl()

@@ -557,6 +557,29 @@ private struct TriageSection: View {
                         .font(.footnote.weight(.semibold))
                 }
             }
+            // "Hey Siri, triage my inbox": the agentic run over the engine
+            // (AI/TriageAgent.swift) — a dry-run switch, the user's own
+            // rules, and the journal of what it did.
+            if onDevice {
+                @Bindable var model = model
+                Toggle(isOn: $model.triageDryRun) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Siri triage: dry run")
+                        Text("\"Triage my inbox\" only reports what it would do.").font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your triage rules")
+                    TextEditor(text: $model.triageRules)
+                        .frame(minHeight: 60)
+                        .font(.subheadline)
+                    Text("In your words, one per line; they win over the built-in ones. \"Newsletters are done. Anything from the bank needs a reply.\"")
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+                NavigationLink { TriageJournalView() } label: {
+                    Label(model.triageAgent == nil ? "Siri triage and journal" : "Siri triage · \(model.triageAgent!.phase.title)", systemImage: "list.bullet.rectangle")
+                }
+            }
             // The labels: the categories Jev sorts mail into, and the
             // segments of the bottom pill.
             ForEach(model.triageLabels) { l in

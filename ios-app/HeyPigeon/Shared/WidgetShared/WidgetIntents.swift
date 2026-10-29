@@ -14,6 +14,8 @@ enum WidgetAction: Equatable {
     case markDone(threadId: String)
     case snooze(threadId: String, hours: Int)
     case open(ControlTarget)
+    /// Stop the triage run in progress (its Live Activity's button).
+    case cancelTriage
 }
 
 enum WidgetActions {
@@ -76,6 +78,22 @@ struct WidgetSnoozeIntent: LiveActivityIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         await WidgetActions.run(.snooze(threadId: threadId, hours: hours))
+        return .result()
+    }
+}
+
+/// Stop from the triage Live Activity: the run ends at its next step and
+/// nothing is applied. Runs in the app's process, like Done.
+struct WidgetCancelTriageIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Stop Triage"
+    static let description = IntentDescription("Stops the triage run in progress without changing anything.")
+    static let isDiscoverable = false
+
+    init() {}
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        await WidgetActions.run(.cancelTriage)
         return .result()
     }
 }

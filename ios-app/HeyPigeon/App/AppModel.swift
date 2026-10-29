@@ -181,6 +181,9 @@ final class AppModel {
         static let swipeActions = "swipe_actions"
         /// Settings › Siri & Search › "Let Siri see your inbox".
         static let siriIndex = "siri_index"
+        /// Settings › Triage › Siri triage: "Dry run" and the user's own rules.
+        static let triageDryRun = "triage.dry_run"
+        static let triageRules = "triage.rules"
     }
 
     /// Group pinned messages at the top of the inbox.
@@ -212,6 +215,17 @@ final class AppModel {
             }
         }
     }
+    /// "Triage my inbox" only reports what it would do; nothing changes.
+    var triageDryRun = false {
+        didSet { savePref(PrefName.triageDryRun, triageDryRun) }
+    }
+    /// The user's own triage rules, in their words, put into the agent's
+    /// instructions ("newsletters are done; anything from the bank is high").
+    var triageRules = "" {
+        didSet { savePref(PrefName.triageRules, triageRules) }
+    }
+    /// The triage run in progress or waiting for confirmation (TriageAgent).
+    var triageAgent: TriageAgent?
     /// Bumped when another device changed a synced setting; views that
     /// cache engine status (Settings' AI and Triage sections) reload on it.
     private(set) var prefsVersion = 0
@@ -248,6 +262,8 @@ final class AppModel {
             if actions.count == 4 { swipeActions = actions }
         }
         if let v = prefs[PrefName.siriIndex] as? Bool { siriIndexEnabled = v }
+        if let v = prefs[PrefName.triageDryRun] as? Bool { triageDryRun = v }
+        if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         adoptingPrefs = false
     }
 

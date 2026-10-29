@@ -90,13 +90,13 @@ struct MailboxQuery: EntityStringQuery {
 /// Updates map across, Social and Forums count as updates, Primary as
 /// primary. Gmail has no Transactions tab; nothing maps to it.
 @AppEnum(schema: .mail.category)
-enum MailCategory: AppEnum {
+enum MailCategory: String, AppEnum {
     case primary
     case transactions
     case updates
     case promotions
 
-    static var caseDisplayRepresentations: [MailCategory: DisplayRepresentation] = [
+    static let caseDisplayRepresentations: [MailCategory: DisplayRepresentation] = [
         .primary: "Primary",
         .transactions: "Transactions",
         .updates: "Updates",

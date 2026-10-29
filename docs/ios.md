@@ -145,10 +145,22 @@ Three lines, flat, hairline separators, no cards and no avatar — about
   paged). The loaded rows never hold a thread twice, whatever the engine
   returns: SwiftUI's `List` aborts the process on duplicate row ids.
 
+### Platform floor: iOS 27
+
+The deployment target is **iOS 27** (`ios-app/project.yml`,
+`HeyPigeonCore/Package.swift`, and `publish-ios.yml` archives against the
+iOS 27 SDK). The app is installed on one phone, so the floor moves with the
+phone instead of gating every call with `#available`. What iOS 27 buys is
+the intelligence layer in [ios-intelligence.md](./ios-intelligence.md): the
+`.mail.thread` schema and View Annotations for Siri, `SpotlightSearchTool`
+for "Ask my inbox", Private Cloud Compute and pluggable `LanguageModel`
+providers for Foundation Models, image input and the Vision tools, long-
+running intents, `SyncableEntity` and notification entity identifiers.
+
 ### Liquid Glass (iOS 26)
 
-The app targets iOS 26 and uses the system's Liquid Glass surfaces rather
-than drawing its own chrome:
+The app uses the system's Liquid Glass surfaces (iOS 26+) rather than
+drawing its own chrome:
 
 - The tab bar is the floating glass pill with the Search tab as the separate
   circle (`Tab(role: .search)`); it minimizes on scroll

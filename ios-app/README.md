@@ -6,7 +6,7 @@ and tested on CI, the Swift side has not been compiled on a Mac yet.
 
 ```text
 ios-app/
-  HeyPigeon/            SwiftUI app (iOS 26+, Liquid Glass)
+  HeyPigeon/            SwiftUI app (iOS 27+, Liquid Glass; Siri, Foundation Models and Spotlight intelligence)
     App/                HeyPigeonApp, AppModel (state + actions + background refresh)
     Engine/             MailEngine protocol, MockEngine, RustEngine (UniFFI adapter), OAuth
     Features/           Inbox · Thread · Remind · Accounts · Compose · Settings
@@ -25,7 +25,7 @@ ios-app/
 
 ## Build
 
-1. Tools: Xcode 26+, Rust (`rustup`), `brew install xcodegen`.
+1. Tools: Xcode 27+ (the iOS 27 SDK is the deployment floor — see docs/ios.md), Rust (`rustup`), `brew install xcodegen`.
 2. Rust targets: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`.
 3. OAuth client: in the same Google Cloud project as the desktop client
    (see [docs/google-oauth-setup.md](../docs/google-oauth-setup.md)), add a

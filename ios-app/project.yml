@@ -4,7 +4,12 @@ name: HeyPigeon
 options:
   bundleIdPrefix: app.heypigeon
   deploymentTarget:
-    iOS: "26.0" # Liquid Glass is the system look from iOS 26; the UI uses its APIs directly
+    # iOS 27: the Siri, Foundation Models and Core Spotlight additions the
+    # intelligence features use (docs/ios-intelligence.md "iOS 27") are iOS 27
+    # SDK APIs, and the app is only installed on the author's phone, so the
+    # floor moves instead of gating every call with #available. Liquid Glass
+    # (iOS 26) comes along for free.
+    iOS: "27.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 

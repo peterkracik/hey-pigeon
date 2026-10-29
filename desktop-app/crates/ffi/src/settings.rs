@@ -245,6 +245,16 @@ impl Engine {
         })
     }
 
+    /// The shipped system prompts, for the shell's evaluation harness.
+    pub fn ai_prompts(&self) -> AiPrompts {
+        AiPrompts {
+            summary: SUMMARY_SYSTEM_PROMPT.to_string(),
+            thread_summary: THREAD_SUMMARY_SYSTEM_PROMPT.to_string(),
+            draft_reply: DRAFT_REPLY_SYSTEM_PROMPT.to_string(),
+            edit: EDIT_SYSTEM_PROMPT.to_string(),
+        }
+    }
+
     /// Static catalogue for OpenAI (no key needed); the backend's own
     /// entries for a shell provider (empty when this device lacks it).
     pub fn ai_models(&self, provider_id: String) -> Result<Vec<AiModel>, EngineError> {

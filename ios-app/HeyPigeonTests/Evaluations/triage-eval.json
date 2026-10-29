@@ -1,0 +1,22 @@
+{
+  "_comment": "The labeled set TriageEvaluation scores prompt variants against. Rows are the shape the classifier sees (sender, subject, one preview line — never a body) with the expected priority (spam | low | medium | high) and expected label names from `labels`. These rows are generic placeholders; replace them with your own anonymised mail (change names, amounts and companies, keep the shape) — a dozen per priority is enough to tell two prompts apart.",
+  "labels": ["Invoices", "Travel", "Newsletters", "Work"],
+  "cases": [
+    { "from": "billing@cloudhost.example", "subject": "Your invoice INV-2031 is ready", "snippet": "Amount due: €48.00 by 15 November. View and pay online.", "priority": "medium", "labels": ["Invoices"] },
+    { "from": "receipts@shop.example", "subject": "Your receipt from Shop", "snippet": "Thanks for your purchase. Order #88213, total €23.90.", "priority": "low", "labels": ["Invoices"] },
+    { "from": "noreply@airline.example", "subject": "Check-in open: BTS → LIS, Friday", "snippet": "Online check-in for flight 1172 is now open. Boarding passes available.", "priority": "high", "labels": ["Travel"] },
+    { "from": "bookings@hotel.example", "subject": "Your reservation confirmation #44510", "snippet": "We look forward to welcoming you on 3 December. Free cancellation until 1 December.", "priority": "medium", "labels": ["Travel"] },
+    { "from": "weekly@newsletter.example", "subject": "This week in Swift — issue 412", "snippet": "Five articles on concurrency, a new linter, and the usual links.", "priority": "low", "labels": ["Newsletters"] },
+    { "from": "news@retailer.example", "subject": "⚡ 40% off everything — today only", "snippet": "Don't miss our biggest sale of the year. Shop now before midnight.", "priority": "spam", "labels": [] },
+    { "from": "it-security@contoso.example", "subject": "Action required: verify your mailbox", "snippet": "Your account will be suspended in 24 hours unless you confirm your password here.", "priority": "spam", "labels": [] },
+    { "from": "anna@partner.example", "subject": "Contract draft v3 — one open point", "snippet": "I've accepted your changes to §4. Can you confirm the termination clause by Thursday?", "priority": "high", "labels": ["Work"] },
+    { "from": "marek@partner.example", "subject": "Re: onboarding checklist", "snippet": "Done — added the two missing steps and pinged IT. Nothing needed from you.", "priority": "low", "labels": ["Work"] },
+    { "from": "priya@partner.example", "subject": "Q4 roadmap review", "snippet": "Attaching the deck — can you look at slides 4–7 before Thursday's meeting?", "priority": "high", "labels": ["Work"] },
+    { "from": "noreply@github.example", "subject": "[hey-pigeon] CI passed on main", "snippet": "All 3 jobs succeeded.", "priority": "low", "labels": [] },
+    { "from": "team@bank.example", "subject": "Your statement is ready", "snippet": "Your October statement is available in the app.", "priority": "low", "labels": ["Invoices"] },
+    { "from": "support@saas.example", "subject": "Payment failed — update your card", "snippet": "We couldn't charge your card for the November plan. Service pauses in 3 days.", "priority": "high", "labels": ["Invoices"] },
+    { "from": "events@conference.example", "subject": "Your ticket for DevConf 2026", "snippet": "Here is your QR ticket. Doors open at 8:30 on 12 March.", "priority": "medium", "labels": ["Travel"] },
+    { "from": "hello@startup.example", "subject": "Quick question about your stack", "snippet": "I noticed you work on email clients — would you be open to a 15-minute call about our API?", "priority": "spam", "labels": [] },
+    { "from": "mum@family.example", "subject": "Sunday lunch?", "snippet": "Are you coming on Sunday? Let me know by Friday so I can plan.", "priority": "medium", "labels": [] }
+  ]
+}

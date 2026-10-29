@@ -299,6 +299,11 @@ final class RustEngine: MailEngine {
         )
     }
 
+    func aiPrompts() -> AIPrompts {
+        let p = engine.aiPrompts()
+        return AIPrompts(summary: p.summary, threadSummary: p.threadSummary, draftReply: p.draftReply, edit: p.edit)
+    }
+
     // MARK: Triage
 
     func triageStatus() throws -> TriageStatus {

@@ -527,6 +527,17 @@ impl From<Priority> for domain::Priority {
     }
 }
 
+/// The system prompts the engine sends, so the shell's evaluation harness
+/// scores the prompt the app really runs (and variants of it) instead of
+/// a copy that drifts.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AiPrompts {
+    pub summary: String,
+    pub thread_summary: String,
+    pub draft_reply: String,
+    pub edit: String,
+}
+
 /// One email's contribution to a group summary — subject + snippet only,
 /// never the full body.
 #[derive(Debug, Clone, uniffi::Record)]

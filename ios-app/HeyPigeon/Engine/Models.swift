@@ -218,6 +218,14 @@ struct TriageStatus: Hashable {
     func isAvailable(_ c: TriageClassifier) -> Bool { availableClassifierIds.contains(c.rawValue) }
 }
 
+/// The engine's shipped system prompts (crates/ffi/src/settings.rs).
+struct AIPrompts: Hashable {
+    let summary: String
+    let threadSummary: String
+    let draftReply: String
+    let edit: String
+}
+
 /// One model provider as Settings lists it: the engine's id, the row
 /// title, and whether this device can run it (with the reason when not).
 struct AIProviderInfo: Identifiable, Hashable {
@@ -557,6 +565,9 @@ protocol MailEngine: AnyObject {
     func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String
     func aiSummarizeGroup(items: [(from: String, subject: String, snippet: String)]) async throws -> String
+    /// The system prompts the engine runs (summary, thread summary, draft
+    /// reply, edit) — what the evaluation harness scores variants against.
+    func aiPrompts() -> AIPrompts
 
     // Optional iOS push relay (relay/README.md). The Google access token used
     // to authenticate with the relay never leaves the engine.

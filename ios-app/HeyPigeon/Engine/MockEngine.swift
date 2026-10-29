@@ -327,6 +327,17 @@ final class MockEngine: MailEngine {
         return "You've got \(items.count) active emails; \(items.first?.from ?? "someone") wants a look at \"\(items.first?.subject ?? "")\"."
     }
 
+    /// The desktop's prompts, abridged: the evaluation harness only needs
+    /// the format rules it checks for.
+    func aiPrompts() -> AIPrompts {
+        AIPrompts(
+            summary: "You write a factual digest of the user's active emails. Return 1 to 4 bullet points, each on its own line starting with \"- \". Wrap the key facts in **double asterisks** for bold. Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.",
+            threadSummary: "You write a factual recap of one email conversation. Return 1 to 4 bullet points, each on its own line starting with \"- \". Wrap the key facts in **double asterisks** for bold. No headers, no other markdown.",
+            draftReply: "You are drafting an email reply on behalf of the user. Return ONLY the reply body as plain text.",
+            edit: "Apply the user's instruction to the given text and return ONLY the revised text."
+        )
+    }
+
     // MARK: Triage
 
     func triageStatus() throws -> TriageStatus {

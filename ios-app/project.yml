@@ -40,6 +40,9 @@ targets:
       path: HeyPigeon/HeyPigeon.entitlements
       properties:
         aps-environment: development
+        # Communication notifications: new-mail banners lead with the
+        # sender's name and avatar (NewMailNotifier.swift).
+        com.apple.developer.usernotifications.communication: true
     preBuildScripts:
       - name: Build Rust core (cargo + uniffi)
         script: |
@@ -72,6 +75,9 @@ targets:
             CFBundleURLName: app.heypigeon.oauth
             CFBundleURLSchemes:
               - $(GOOGLE_IOS_REVERSED_CLIENT_ID)
+        # The intent new-mail banners are built from (communication notifications).
+        NSUserActivityTypes:
+          - INSendMessageIntent
         UIBackgroundModes:
           - fetch
           - remote-notification # silent push from the optional relay

@@ -9,8 +9,9 @@ struct ShortcutsSheet: View {
 
     private static let groups: [(String, [(String, String)])] = [
         ("Move", [
-            ("J · K", "Next · previous thread"), ("↩", "Open in a new window"), ("Esc", "Clear the selection or the search"),
-            ("/", "Search"), ("⌘K", "Command palette"), ("?", "This sheet"),
+            ("J · K", "Next · previous thread (in a thread too)"), ("↩", "Open the thread"), ("⌘↩", "Open it in a new window"),
+            ("Esc · ⌘[", "Back to the list; then leave the search; then clear the selection"),
+            ("/", "Search"), ("⌃⌘S", "Show or hide the folders"), ("⌘K", "Command palette"), ("?", "This sheet"),
         ]),
         ("Act on a thread", [
             ("E", "Mark done (and back)"), ("H", "Remind me (or remove the reminder)"), ("N", "Need reply"),

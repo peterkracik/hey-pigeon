@@ -128,7 +128,7 @@ struct CommandPalette: View {
     // MARK: Items
 
     private var allItems: [PaletteItem] {
-        let row = state.selectedRow(in: model)
+        let row = state.focusRow(in: model)
         switch stage {
         case .label: return row.map { labelItems(for: $0) } ?? []
         case .move: return row.map { moveItems(for: $0) } ?? []
@@ -145,7 +145,8 @@ struct CommandPalette: View {
                 ("Reply", "arrowshape.turn.up.left", "R", .reply),
                 ("Reply all", "arrowshape.turn.up.left.2", "A", .replyAll),
                 ("Forward", "arrowshape.turn.up.right", "F", .forward),
-                ("Open in new window", "macwindow", "↩", .openInWindow),
+                ("Open", "arrow.right.circle", "↩", .open),
+                ("Open in new window", "macwindow", "⌘↩", .openInWindow),
                 ("Delete", "trash", "#", .delete),
             ]
             for (title, image, key, command) in threadItems {
@@ -189,6 +190,15 @@ struct CommandPalette: View {
         out.append(PaletteItem(id: "search", title: "Search", systemImage: "magnifyingglass", key: "/") {
             state.run(.search, in: model)
         })
+        out.append(PaletteItem(id: "sidebar", title: state.sidebarVisible ? "Hide folders" : "Show folders",
+                               systemImage: "sidebar.leading", key: "⌃⌘S") {
+            state.run(.toggleSidebar, in: model)
+        })
+        if state.isThreadOpen {
+            out.append(PaletteItem(id: "back", title: "Back to the list", systemImage: "chevron.left", key: "Esc") {
+                state.run(.back, in: model)
+            })
+        }
         let folders: [(MailView, String?)] = [
             (.inbox, "G I"), (.scheduled, "G S"), (.needReply, "G N"), (.starred, "G P"), (.sent, "G T"),
             (.drafts, "G D"), (.archive, "G A"), (.all, nil), (.spam, nil), (.trash, nil),

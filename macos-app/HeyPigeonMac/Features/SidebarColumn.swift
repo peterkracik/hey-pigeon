@@ -1,7 +1,9 @@
-// The sidebar: the accounts (desktop 0/1/2) as a switch at the top, then
-// the folders in the desktop sidebar's order with Scheduled and Need reply
-// among them, the Gmail labels, and Add account · Settings at the bottom.
-// The phone shows the same list as a sheet (Features/Sidebar/SidebarSheet).
+// The folders drawer: the accounts (desktop 0/1/2) as a switch at the top,
+// then the folders in the desktop sidebar's order with Scheduled and Need
+// reply among them, the Gmail labels, and Add account · Settings at the
+// bottom. The phone shows the same list as a sheet
+// (Features/Sidebar/SidebarSheet); here ⌃⌘S and the header's button slide
+// it in and out, and a folder picked here closes the open thread.
 
 import SwiftUI
 
@@ -15,9 +17,7 @@ struct SidebarColumn: View {
             get: { model.isSearching ? nil : model.view },
             set: { view in
                 guard let view else { return }
-                state.selection = []
-                model.show(view)
-                state.listFocusRequest += 1
+                state.run(.go(view), in: model)
             }
         )
     }
@@ -65,6 +65,11 @@ struct SidebarColumn: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(Theme.canvas)
+        // The window has no title bar: the traffic lights sit over the
+        // drawer's top edge.
+        .safeAreaPadding(.top, 26)
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
                 Button { Task { await model.addAccount() } } label: { Label("Add account", systemImage: "plus.circle") }

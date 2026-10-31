@@ -4,6 +4,7 @@
 // the tally stays readable. The Stop button runs WidgetCancelTriageIntent
 // in this process, which reaches TriageAgent.current.
 
+#if os(iOS)
 import ActivityKit
 import Foundation
 
@@ -35,3 +36,14 @@ enum TriageLiveActivityController {
         for a in Activity<TriageActivityAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
     }
 }
+#else
+// No Live Activities on the Mac: Settings › Triage shows the run's phase
+// and tally live instead. Same calls, nothing to do.
+import Foundation
+
+@MainActor
+enum TriageLiveActivityController {
+    static func update(_ agent: TriageAgent) async {}
+    static func endAll() async {}
+}
+#endif

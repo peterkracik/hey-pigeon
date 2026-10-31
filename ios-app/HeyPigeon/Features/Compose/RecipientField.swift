@@ -42,7 +42,7 @@ struct RecipientField<Field: Hashable>: View {
                 // Next to chips the input only needs room for a caret, so the
                 // first chip does not push it onto a line of its own.
                 TextField(addresses.isEmpty ? "Email address" : "", text: $text)
-                    .textContentType(.emailAddress).plainInput(.email)
+                    .plainInput(.email)
                     .submitLabel(.next)
                     .focused(focused, equals: field)
                     .foregroundStyle(Theme.textPrimary)

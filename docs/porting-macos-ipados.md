@@ -1,21 +1,22 @@
 # Porting the iOS app to iPadOS and macOS
 
-Where the SwiftUI app stands for the iPad and a native Mac build, and what
-is left to do, file by file. The desktop Tauri app (`desktop-app/`) stays
-the Mac product for now; this is about bringing the Swift shell — with its
-Siri, Spotlight, Foundation Models and widget work — to the other two
-platforms.
+Where the SwiftUI app stands for the iPad and the native Mac app, and what
+is left to do. The native Mac app exists (`macos-app/`, built and tested by
+`macos-ci`); the desktop Tauri app (`desktop-app/`) is still shipped
+alongside it under its own bundle id. This document is the iPad plan and
+the record of how the Swift shell — with its Siri, Spotlight, Foundation
+Models and widget work — reached the Mac.
 
 ## Where it stands
 
-| | iPadOS | macOS (native SwiftUI target) |
+| | iPadOS | macOS (native SwiftUI target, `macos-app/`) |
 | --- | --- | --- |
-| Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | No target yet |
-| Platform calls | Behind `Shared/Platform.swift` | `Platform.swift` has AppKit branches, not compiled yet |
-| Layout | The phone's `TabView` + `NavigationStack`, full screen | — |
-| Keyboard | `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | Same shortcuts carry over |
+| Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on `mac-v*` tags |
+| Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
+| Layout | The phone's `TabView` + `NavigationStack`, full screen | Sidebar · list · thread (`NavigationSplitView`), Settings as a window, a thread in its own window |
+| Keyboard | `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
-| Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | Needs a macOS slice in `build-rust.sh` |
+| Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` (+ `x86_64` for a universal release) from the same `build-rust.sh` when `PLATFORM_NAME=macosx` |
 
 ## The platform layer
 
@@ -35,8 +36,13 @@ should reach UIKit or AppKit:
 | Toolbar ends | `ToolbarItemPlacement.barLeading` / `.barTrailing` |
 | iOS-only modifiers | `inlineNavigationTitle()`, `plainInput(_:)`, `groupedListStyle()` |
 
-The macOS branches are written against plain AppKit and will need a first
-compile when the target exists.
+The platform door also hides the modifiers that exist on one platform
+only, so a feature file never writes a bare `#if`: `sheetSize` (detents on
+iOS, a frame on the Mac), `dismissKeyboardOnScroll`, `hidesTabBar`,
+`alwaysShownSearch`, `hidesNavigationBarInCompactWidth`, `siriEntity`, and
+`Theme`'s `menuSectionSpacing` / `menuSheet`. `PlatformImage`,
+`PlatformFont` and `PlatformColor` name the UIKit / AppKit types for the
+few places that draw (the notification avatar, the attachment downscale).
 
 ## iPadOS: next steps
 
@@ -54,30 +60,44 @@ compile when the target exists.
 4. **Pointer.** `SwipeableRow`'s drag tiers work with a trackpad swipe; a
    hover action bar like the desktop's would be the iPad-native addition.
 
-## macOS: what a native target needs
+## macOS: how the native target is built
 
-Add a `HeyPigeonMac` target to `project.yml` (platform `macOS`, the same
-`HeyPigeon/` sources minus the files below, `HeyPigeonCore` with a macOS
-slice) and work through this list:
+`macos-app/project.yml` compiles `ios-app/HeyPigeon` (every file but
+`App/HeyPigeonApp.swift` and `App/AppDelegate.swift`) with the Mac-only
+sources in `macos-app/HeyPigeonMac`. The table that used to list what
+needed a twin, as it was resolved:
 
-| File | iOS-only API | macOS replacement |
+| File | iOS-only API | What the Mac compiles |
 | --- | --- | --- |
-| `App/AppDelegate.swift`, `App/HeyPigeonApp.swift` | `UIApplicationDelegate`, `@UIApplicationDelegateAdaptor` | `NSApplicationDelegate` + `@NSApplicationDelegateAdaptor`; the APNs callbacks have the same names |
-| `App/AppModel.swift` | `BGTaskScheduler` background refresh | `NSBackgroundActivityScheduler`, or sync on a timer while running |
-| `Shared/NewMailNotifier.swift` | `UIBackgroundFetchResult`, `UIGraphicsImageRenderer` avatar | A `Bool` result; draw the avatar with `NSImage(size:flipped:drawingHandler:)` |
-| `Features/Thread/MessageBodyView.swift` | `UIViewRepresentable` for `UITextView` and `WKWebView` | `NSViewRepresentable` twins (`NSTextView`, `WKWebView`); CSP, link policy and scripts unchanged |
-| `Features/Thread/AttachmentViews.swift` | `quickLookPreview` | Available on macOS; check the sheet sizing |
-| `AI/AttachmentUnderstanding.swift` | `UIImage`, `UIGraphicsImageRenderer` | `CGImage` throughout (PDFKit and Vision take it on both) |
-| `Engine/RustEngine.swift` | HTML import via UIKit's `NSAttributedString` | AppKit's, already behind `#if canImport` |
-| `HeyPigeonShare/ShareViewController.swift` | `UIViewController`, `openURL:` responder trick | An `NSViewController` share extension; `NSWorkspace` cannot be used from it either, so keep the pending-share handoff |
-| `HeyPigeonWidgets/*` | Live Activities (`ActivityKit`) | Not on macOS; widgets and Controls build as they are |
-| `Shared/*LiveActivityController.swift` | `ActivityKit` | Compile out on macOS |
-| `Theme.swift` `menuList()` | `listSectionSpacing`, `presentationDragIndicator` | Wrap the iOS-only modifiers like `groupedListStyle()` |
-| `Features/**` | `.tabBarMinimizeBehavior`, `.toolbar(.hidden, for: .tabBar)`, `Tab(role: .search)` | `#if os(iOS)`; a Mac window uses the split view above instead of tabs |
+| `App/AppDelegate.swift`, `App/HeyPigeonApp.swift` | `UIApplicationDelegate`, `TabView` | `macos-app/HeyPigeonMac/App/MacAppDelegate.swift` (`NSApplicationDelegate`, same APNs and notification callbacks, the Dock menu) and `HeyPigeonMacApp.swift` (the scenes) |
+| `App/AppModel.swift` | `BGTaskScheduler` | The two refresh functions are `#if os(iOS)`; the Mac syncs on a timer (`MacSyncLoop`) |
+| `Shared/NewMailNotifier.swift` | `UIBackgroundFetchResult`, `UIGraphicsImageRenderer` | `FetchResult` is a plain enum on the Mac; the avatar is an `NSImage` |
+| `Features/Thread/MessageBodyView.swift` | `UITextView`, `WKWebView` representables | `NSTextView` and `WKWebView` twins (`NSViewRepresentable`); the web view passes scroll wheel events up so the thread keeps scrolling |
+| `AI/AttachmentUnderstanding.swift` | `UIImage` | `PlatformImage` (`NSImage` on the Mac) throughout |
+| `Shared/*LiveActivityController.swift`, `WidgetShared/*ActivityAttributes.swift` | `ActivityKit` | `#if canImport(ActivityKit)`, with no-op controllers on the Mac |
+| `WidgetShared/WidgetIntents.swift` | `LiveActivityIntent` | `InAppWidgetIntent` is `LiveActivityIntent` on iOS, `AppIntent` on the Mac; the Mac widgets act through `heypigeon://done` and `heypigeon://snooze` links instead |
+| `HeyPigeonWidgets/*` | Live Activities, Controls, Lock Screen families | Gated out; `WidgetDoneButton` / `WidgetSnoozeButton` are intents on iOS and links on the Mac |
+| `HeyPigeonShare/ShareViewController.swift` | `UIViewController` | The view moved to `ShareView.swift` (shared); `macos-app/HeyPigeonMacShare` hosts it in an `NSViewController` and opens the app through the extension context |
+| `Theme.swift`, the sheets | `listSectionSpacing`, `presentationDetents`, `scrollDismissesKeyboard`, `navigationBarDrawer`, `toolbar(.hidden, for: .tabBar)` | The `Platform.swift` helpers above |
+| `Features/Settings/SettingsView.swift` | iOS Settings doors, the relay toggle's copy | `#if os(macOS)` sections: the default-mail-app button asks macOS and shows the state, Notifications has the local new-mail switch, the swipe titles and footers say what the Mac does |
 
-Bundle ids: the Mac app is `app.heypigeon` (the Tauri product). A native
-SwiftUI Mac target would need its own id, or replace the Tauri app under
-that id deliberately — decide before the first archive.
+What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
+
+- `MainWindow` — the split view, the sheets, the toast, the disconnected alert.
+- `SidebarColumn` — accounts, folders (Scheduled and Need reply among them), labels, Add account · Settings.
+- `ThreadListColumn` — title and account menu, the toolbar search with the Search tab's filter bar and recent searches, the rows with the hover bar and the trackpad swipes, the Jev pill.
+- `ThreadDetailColumn` — the shared `ThreadView` for one selection, a batch bar for several, `ThreadWindow` for a thread in its own window.
+- `WindowState` — the selection, auto-advance, `KeyboardMap` (the desktop's keys and `g`-chords) and every action.
+- `CommandPalette` (⌘K, with the `l` / `v` stages), `ShortcutsSheet` (`?`), `MenuBarExtraView`.
+
+Rules that came out of it are in `macos-app/CLAUDE.md`: shared first, no
+bare `#if` in a feature file, bare letters only through `onKeyPress`,
+auto-advance opt-in, sync is the timer, widgets act through links.
+
+Bundle ids: the Tauri app keeps `app.heypigeon`; the native Mac app is
+`app.heypigeon.mac` (its extensions `app.heypigeon.mac.widgets` and
+`.share`), so both can be installed and the native one ships from its own
+workflow (`publish-macos.yml`).
 
 ## Rules while porting
 
@@ -86,4 +106,4 @@ that id deliberately — decide before the first archive.
 - Copy names the device through `Device.name`.
 - Every platform branch keeps the iOS branch byte-for-byte what ships, so
   a port never changes the phone app by accident; `ios-ci` checks the
-  iPhone and iPad builds on each change.
+  iPhone and iPad builds on each change, and `macos-ci` the Mac.

@@ -1,0 +1,240 @@
+# XcodeGen spec — `xcodegen generate` produces HeyPigeonMac.xcodeproj (git-ignored).
+# The native Mac app over the shared Rust core: the iOS shell's model, engine,
+# AI, intents and feature views (../ios-app/HeyPigeon, compiled for macOS
+# behind their platform gates) plus the Mac-only window, menus, sidebar and
+# list (HeyPigeonMac/). Same package for the Rust core (its xcframework gets
+# a macOS slice from ../ios-app/scripts/build-rust.sh when PLATFORM_NAME is
+# macosx, which is what Xcode sets for a Mac build).
+name: HeyPigeonMac
+options:
+  bundleIdPrefix: app.heypigeon
+  deploymentTarget:
+    # macOS 27: the same SDK floor as the phone (Foundation Models with
+    # Private Cloud Compute, the Spotlight search tool, the Mail schema's
+    # thread entity), and Liquid Glass with it. The app is installed on the
+    # author's Mac, so the floor moves instead of gating every call.
+    macOS: "27.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+configFiles:
+  Debug: Config/Local.xcconfig
+  Release: Config/Local.xcconfig
+
+packages:
+  HeyPigeonCore:
+    path: ../ios-app/HeyPigeonCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: false # build-rust.sh writes into the package dir
+    # Required for notarized direct distribution (publish-macos.yml).
+    ENABLE_HARDENED_RUNTIME: true
+    # YES only together with the Private Cloud Compute entitlement
+    # (ios-app/project.yml explains the dance; same key, same Info.plist name).
+    HEYPIGEON_PRIVATE_CLOUD_COMPUTE: "NO"
+
+targets:
+  HeyPigeon:
+    type: application
+    platform: macOS
+    sources:
+      # The shared shell. The two iOS-only app files are replaced by
+      # HeyPigeonMac/App; every other file compiles for macOS.
+      - path: ../ios-app/HeyPigeon
+        name: Shared
+        excludes:
+          - "App/HeyPigeonApp.swift"
+          - "App/AppDelegate.swift"
+          - "Resources/**"
+      - path: HeyPigeonMac
+        excludes:
+          - "Resources/Fonts/**"
+      # Drop Manrope-*.ttf here for the brand typeface (ATSApplicationFontsPath
+      # below); without the files SwiftUI falls back to the system font.
+      - path: HeyPigeonMac/Resources/Fonts
+        type: folder
+        buildPhase: resources
+    entitlements:
+      path: HeyPigeonMac/HeyPigeon.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        # Gmail, Drive, OpenAI / Jev with the user's own key, the OAuth consent.
+        com.apple.security.network.client: true
+        # The composer's Files picker.
+        com.apple.security.files.user-selected.read-only: true
+        # Shared with the widget and share extensions: the widgets' JSON
+        # snapshot and a pending share. Not the database, not the Keychain.
+        com.apple.security.application-groups:
+          - group.app.heypigeon
+        # Silent pushes from the optional relay (the Mac's own 30-second
+        # sync covers new mail without it). The Mac's APNs key.
+        com.apple.developer.aps-environment: development
+    dependencies:
+      - package: HeyPigeonCore
+      - target: HeyPigeonWidgets
+      - target: HeyPigeonShare
+    preBuildScripts:
+      - name: Build Rust core (cargo + uniffi, macOS slice)
+        script: |
+          "$SRCROOT/scripts/build-rust.sh"
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        # The product is HeyPigeon.app (the display name has the space): a
+        # PRODUCT_NAME with a space breaks the TEST_HOST path XcodeGen
+        # derives for the unit tests. The tests `@testable import HeyPigeon`.
+        PRODUCT_MODULE_NAME: HeyPigeon
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.mac
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+        CODE_SIGN_STYLE: Automatic
+        COMBINE_HIDPI_IMAGES: true
+    info:
+      path: HeyPigeonMac/Info.plist
+      properties:
+        CFBundleDisplayName: Hey Pigeon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: ""
+        # The Rust engine reads the Mac's Google OAuth client id from here
+        # (HeyPigeonMacApp.makeEngine). An "iOS" type client works for the Mac
+        # too; its reversed id is the consent sheet's callback scheme below.
+        GoogleMacClientID: $(GOOGLE_MAC_CLIENT_ID)
+        HeyPigeonRelayURL: $(HEYPIGEON_RELAY_URL)
+        HeyPigeonPrivateCloudCompute: $(HEYPIGEON_PRIVATE_CLOUD_COMPUTE)
+        # Fonts live in Contents/Resources/Fonts (the folder reference above).
+        ATSApplicationFontsPath: Fonts
+        # Google's OAuth redirect (the reversed client id as a URL scheme);
+        # heypigeon:// for the widgets and the share extension; and mailto:,
+        # what macOS hands the default mail app (Shared/DeepLinks.swift turns
+        # it into a prefilled composer). All three land in onOpenURL.
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: app.heypigeon.oauth
+            CFBundleURLSchemes:
+              - $(GOOGLE_MAC_REVERSED_CLIENT_ID)
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: app.heypigeon.links
+            CFBundleURLSchemes:
+              - heypigeon
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: app.heypigeon.mailto
+            CFBundleURLSchemes:
+              - mailto
+        # Spotlight's "Search in App" row continues in the list's search field.
+        CoreSpotlightContinuation: true
+        # The intent new-mail banners are built from, and the open thread
+        # (ThreadView.activityType) for Siri's "this email".
+        NSUserActivityTypes:
+          - INSendMessageIntent
+          - app.heypigeon.thread
+    scheme:
+      environmentVariables:
+        # Set to 1 to run against the in-memory sample inbox (no OAuth, no Rust).
+        HEYPIGEON_MOCK: "0"
+      testTargets:
+        - HeyPigeonTests
+
+  # Widgets (Unread · Next reminder · Need reply) — the phone's, built for
+  # the Mac: no Live Activities, no Controls, no Lock Screen families, and
+  # Done / Snooze are heypigeon:// links. Reads the App Group snapshot the
+  # app writes; never links the Rust core.
+  HeyPigeonWidgets:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: ../ios-app/HeyPigeonWidgets
+        name: Widgets
+        excludes:
+          - "Controls.swift"
+          - "ReminderLiveActivity.swift"
+          - "TriageLiveActivity.swift"
+      - path: ../ios-app/HeyPigeon/Shared/WidgetShared
+        name: WidgetShared
+    entitlements:
+      path: HeyPigeonMac/HeyPigeonWidgets.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - group.app.heypigeon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.mac.widgets
+        DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+    info:
+      path: HeyPigeonMac/WidgetsInfo.plist
+      properties:
+        CFBundleDisplayName: Hey Pigeon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # The share menu's "Hey Pigeon": text, links and files into the App
+  # Group, then the app opens on a prefilled composer. Never sends.
+  HeyPigeonShare:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: HeyPigeonMacShare
+      - path: ../ios-app/HeyPigeonShare/ShareView.swift
+        name: SharedShare
+      - path: ../ios-app/HeyPigeon/Shared/WidgetShared
+        name: WidgetShared
+    entitlements:
+      path: HeyPigeonMac/HeyPigeonShare.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - group.app.heypigeon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.mac.share
+        DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+    info:
+      path: HeyPigeonMac/ShareInfo.plist
+      properties:
+        CFBundleDisplayName: Hey Pigeon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 5
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsMovieWithMaxCount: 2
+
+  # The phone's unit tests (model, intents, entities, presets, snapshot,
+  # deep links, triage plan, attachment chips) run on the Mac too, plus the
+  # Mac window's own (keyboard map, selection, palette). Over the mock
+  # engine: no OAuth, no Rust.
+  HeyPigeonTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ../ios-app/HeyPigeonTests
+        name: SharedTests
+      - path: HeyPigeonMacTests
+    dependencies:
+      - target: HeyPigeon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.mac.tests
+        GENERATE_INFOPLIST_FILE: true

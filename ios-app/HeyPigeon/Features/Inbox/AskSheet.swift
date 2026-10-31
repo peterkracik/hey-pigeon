@@ -56,8 +56,7 @@ struct AskSheet: View {
                 if !question.trimmingCharacters(in: .whitespaces).isEmpty { ask() } else { focused = true }
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .sheetSize(.large)
     }
 
     private var starter: some View {

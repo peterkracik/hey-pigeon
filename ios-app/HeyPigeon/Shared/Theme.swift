@@ -100,7 +100,7 @@ extension Color {
 extension View {
     func menuList() -> some View {
         groupedListStyle()
-            .listSectionSpacing(16)
+            .menuSectionSpacing()
             // The inset-grouped default leaves a wide gutter in a sheet; keep
             // the cards close to the edges like the inbox rows.
             .contentMargins(.horizontal, 12, for: .scrollContent)
@@ -120,13 +120,32 @@ extension View {
         #endif
     }
 
+    /// The gap between the cards; an iOS-only modifier (the Mac's inset
+    /// list spaces its sections itself).
+    @ViewBuilder
+    func menuSectionSpacing() -> some View {
+        #if os(iOS)
+        listSectionSpacing(16)
+        #else
+        self
+        #endif
+    }
+
     /// A section of a menu sheet, on a card.
     func menuCard() -> some View { listRowBackground(Theme.card) }
 
+    /// The menu sheets' presentation: full height on iOS; on the Mac a
+    /// sheet is a window, so it gets a size instead.
+    @ViewBuilder
     func menuSheet() -> some View {
+        #if os(iOS)
         presentationBackground(Theme.canvas)
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        #else
+        frame(minWidth: 560, idealWidth: 600, minHeight: 640, idealHeight: 760)
+            .background(Theme.canvas)
+        #endif
     }
 }
 

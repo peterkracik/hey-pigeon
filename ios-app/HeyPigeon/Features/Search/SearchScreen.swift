@@ -8,7 +8,6 @@ import SwiftUI
 
 struct SearchScreen: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path: [ThreadRow] = []
     @State private var picking: PersonField?
 
@@ -33,7 +32,7 @@ struct SearchScreen: View {
             .navigationTitle("Search")
             // On the phone the field lives in the tab bar, so the empty
             // navigation bar would only push the filters down.
-            .toolbarVisibility(sizeClass == .compact ? .hidden : .automatic, for: .navigationBar)
+            .hidesNavigationBarInCompactWidth()
             .searchable(text: $model.searchText, prompt: "Search")
             .onSubmit(of: .search) { model.rememberSearch() }
             .navigationDestination(for: ThreadRow.self) { row in
@@ -50,7 +49,9 @@ struct SearchScreen: View {
 }
 
 /// "3 results" over the list; the core returns at most `AppModel.searchLimit`.
-private struct ResultCount: View {
+/// Internal, like the filter bar, the picker and the recent list below:
+/// the Mac's list column shows the same pieces.
+struct ResultCount: View {
     let count: Int
 
     var body: some View {
@@ -77,7 +78,7 @@ enum PersonField: String, Identifiable {
 
 /// The row of filter buttons. Off: grey with a chevron. On: filled, showing
 /// the value, with an × to remove it.
-private struct SearchFilterBar: View {
+struct SearchFilterBar: View {
     @Binding var picking: PersonField?
     @Environment(AppModel.self) private var model
 
@@ -189,7 +190,7 @@ private struct FilterPillLabel: View {
 
 /// A short sheet of the people the mail comes from; the field narrows it
 /// by name or address, and "From “…”" takes whatever was typed.
-private struct PersonPicker: View {
+struct PersonPicker: View {
     let field: PersonField
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -239,7 +240,7 @@ private struct PersonPicker: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Theme.canvas)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Name or email")
+            .alwaysShownSearch(text: $query, prompt: "Name or email")
             .plainInput()
             .navigationTitle(field.title)
             .inlineNavigationTitle()
@@ -254,7 +255,7 @@ private struct PersonPicker: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .sheetSize(.mediumOrLarge, dragIndicator: false)
         .task { people = model.searchPeople() }
     }
 
@@ -297,7 +298,7 @@ private struct PersonPicker: View {
 // MARK: Recent
 
 /// Nothing typed and no filter on: the last few searches, newest first.
-private struct RecentSearches: View {
+struct RecentSearches: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -333,7 +334,7 @@ private struct RecentSearches: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .scrollDismissesKeyboard(.immediately)
+            .dismissKeyboardOnScroll()
         }
     }
 }

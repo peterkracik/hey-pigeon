@@ -13,6 +13,11 @@ enum DeepLink: Equatable {
     case folder(MailView)
     /// A mailto: link, already a prefilled draft. Nothing is sent.
     case mailto(SendDraft)
+    /// A Mac widget's Done button: the same mark-done as the swipe, with
+    /// its Undo toast, in the app the link opened.
+    case done(id: String)
+    /// A Mac widget's "1 h": the reminder moves ahead by that many hours.
+    case snooze(id: String, hours: Int)
 
     init?(url: URL) {
         if url.scheme?.lowercased() == "mailto" {
@@ -30,6 +35,13 @@ enum DeepLink: Equatable {
         case "folder":
             guard parts.count > 1, let f = MailFolder(rawValue: parts[1]) else { return nil }
             self = .folder(f.view)
+        case "done":
+            guard parts.count > 1, let id = parts[1].removingPercentEncoding, !id.isEmpty else { return nil }
+            self = .done(id: id)
+        case "snooze":
+            guard parts.count > 1, let id = parts[1].removingPercentEncoding, !id.isEmpty else { return nil }
+            let hours = parts.count > 2 ? Int(parts[2]) ?? 1 : 1
+            self = .snooze(id: id, hours: max(1, hours))
         default:
             return nil
         }
@@ -53,6 +65,12 @@ extension AppModel {
             if !adoptPendingShare() { compose(SendDraft()) }
         case .folder(let view): show(view)
         case .mailto(let draft): compose(draft)
+        case .done(let id):
+            if let row = try? engine.threadRow(id: id), !row.isDone { markDone(row) }
+            show(.inbox)
+        case .snooze(let id, let hours):
+            snooze(threadId: id, hours: hours)
+            show(.scheduled)
         }
     }
 

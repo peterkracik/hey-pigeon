@@ -1,11 +1,12 @@
 // The app's one door to the platform: everything that differs between the
-// iPhone, the iPad and a future Mac build sits behind these names, so a
-// view or the model never imports UIKit for a haptic, the keyboard, the
+// iPhone, the iPad and the Mac sits behind these names, so a view or the
+// model never imports UIKit or AppKit for a haptic, the keyboard, the
 // clipboard, a system-settings link or "is the app in front". The iOS
-// branch is what ships today; the macOS branch is the porting starting
-// point (docs/porting-macos-ipados.md) and is not compiled by any target
-// yet — keep it to plain AppKit so the port starts from something close.
+// branch is what ships on the phone; the macOS branch is compiled by the
+// native Mac app (macos-app/, docs/porting-macos-ipados.md). Keep both
+// behaving the same from a feature file's point of view.
 
+import AppIntents
 import Foundation
 import SwiftUI
 #if canImport(UIKit)
@@ -52,8 +53,12 @@ enum Device {
 
 #if canImport(UIKit)
 typealias PlatformColor = UIColor
+typealias PlatformImage = UIImage
+typealias PlatformFont = UIFont
 #elseif canImport(AppKit)
 typealias PlatformColor = NSColor
+typealias PlatformImage = NSImage
+typealias PlatformFont = NSFont
 #endif
 
 extension Color {
@@ -171,25 +176,46 @@ enum RemoteNotifications {
 @MainActor
 enum SystemSettings {
     /// The system's page for this app (its Siri & Search and notification
-    /// switches live there).
+    /// switches live there). The Mac has no per-app page: Siri's own pane
+    /// is where "Apple Intelligence & Siri" and app access are decided.
     static func openAppSettings() {
         #if canImport(UIKit)
         open(UIApplication.openSettingsURLString)
         #elseif canImport(AppKit)
-        open("x-apple.systempreferences:com.apple.preference.notifications")
+        open("x-apple.systempreferences:com.apple.Siri-Settings.extension")
         #endif
     }
 
-    /// Default Apps (iOS 18.3+), where the user picks the Email app; the
-    /// app's own page when the system has no such link.
+    /// The system's Notifications pane (the Mac's banners and badge switches
+    /// live there; iOS keeps them on the app's own page).
+    static func openNotificationSettings() {
+        #if canImport(UIKit)
+        open(UIApplication.openNotificationSettingsURLString)
+        #elseif canImport(AppKit)
+        open("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+        #endif
+    }
+
+    /// Default Apps (iOS 18.3+), where the user picks the Email app. The Mac
+    /// has no such page: the app asks the system to make it the handler of
+    /// mailto: links itself, and macOS confirms with the user once.
     static func openDefaultApps() {
         #if canImport(UIKit)
         open(UIApplication.openDefaultApplicationsSettingsURLString)
         #elseif canImport(AppKit)
-        // macOS keeps the default mail reader in Mail's own settings.
-        openAppSettings()
+        NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "mailto") { _ in }
         #endif
     }
+
+    #if os(macOS)
+    /// Whether this app is the Mac's mail handler right now (the Mac can
+    /// read it, unlike iOS), so Settings can show a status line.
+    static var isDefaultMailApp: Bool {
+        guard let url = URL(string: "mailto:test@example.com"),
+              let handler = NSWorkspace.shared.urlForApplication(toOpen: url) else { return false }
+        return handler.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL
+    }
+    #endif
 
     private static func open(_ string: String) {
         guard let url = URL(string: string) else { return }
@@ -240,17 +266,143 @@ extension View {
     }
 
     /// An input for addresses, URLs or keys: no autocapitalization, no
-    /// autocorrection, and the matching keyboard on iOS.
+    /// autocorrection, and the matching keyboard on iOS (an address field
+    /// also tells the keyboard what it is, for the system's suggestions).
     @ViewBuilder
     func plainInput(_ kind: PlainInputKind = .text) -> some View {
         #if os(iOS)
         textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(kind.keyboard)
+            .textContentType(kind.contentType)
         #else
         autocorrectionDisabled()
         #endif
     }
+
+    /// The keyboard goes away when the content scrolls (iOS); the Mac has no
+    /// soft keyboard to dismiss.
+    @ViewBuilder
+    func dismissKeyboardOnScroll(_ mode: KeyboardScrollDismissal = .immediately) -> some View {
+        #if os(iOS)
+        switch mode {
+        case .immediately: scrollDismissesKeyboard(.immediately)
+        case .interactively: scrollDismissesKeyboard(.interactively)
+        }
+        #else
+        self
+        #endif
+    }
+
+    /// A pushed screen that hides the tab bar (the thread view puts its own
+    /// glass bars in its place). The Mac window has no tab bar.
+    @ViewBuilder
+    func hidesTabBar() -> some View {
+        #if os(iOS)
+        toolbar(.hidden, for: .tabBar)
+        #else
+        self
+        #endif
+    }
+
+    /// How big a sheet is: detents (and the grabber) on iOS, a window size
+    /// on the Mac, where a sheet is as large as its content asks to be.
+    @ViewBuilder
+    func sheetSize(_ size: SheetSize, dragIndicator: Bool = true) -> some View {
+        #if os(iOS)
+        presentationDetents(size.detents)
+            .presentationDragIndicator(dragIndicator ? .visible : .automatic)
+        #else
+        frame(minWidth: size.frame.width, idealWidth: size.frame.width,
+              minHeight: size.frame.height, idealHeight: size.frame.height)
+        #endif
+    }
+
+    /// A search field that is always on screen, under the title: the iOS
+    /// navigation-bar drawer; the Mac puts it in the toolbar.
+    @ViewBuilder
+    func alwaysShownSearch(text: Binding<String>, prompt: String) -> some View {
+        #if os(iOS)
+        searchable(text: text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
+        #else
+        searchable(text: text, placement: .toolbar, prompt: prompt)
+        #endif
+    }
+
+    /// The phone's Search tab hides its navigation bar (the field lives in
+    /// the tab bar, so an empty bar would only push the filters down);
+    /// regular widths and the Mac keep theirs.
+    @ViewBuilder
+    func hidesNavigationBarInCompactWidth() -> some View {
+        #if os(iOS)
+        modifier(CompactNavigationBarHider())
+        #else
+        self
+        #endif
+    }
+
+    /// iOS 26 view annotation: Siri's on-screen awareness sees this view as
+    /// the entity ("mark these done"). The Mac has no on-screen Siri.
+    @ViewBuilder
+    func siriEntity(_ identifier: EntityIdentifier) -> some View {
+        #if os(iOS)
+        appEntityIdentifier(identifier)
+        #else
+        self
+        #endif
+    }
+
+    /// The thread bars' hardware-keyboard keys on the iPad (e · h · n · s ·
+    /// r · ⌘⌫). The Mac runs the same keys through its window's key map
+    /// (macos-app WindowState.handle), where a bare letter never reaches a
+    /// text field; a key equivalent on the button would take it from one.
+    @ViewBuilder
+    func threadKey(_ key: KeyEquivalent, modifiers: EventModifiers = []) -> some View {
+        #if os(iOS)
+        keyboardShortcut(key, modifiers: modifiers)
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct CompactNavigationBarHider: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    func body(content: Content) -> some View {
+        content.toolbarVisibility(sizeClass == .compact ? .hidden : .automatic, for: .navigationBar)
+    }
+}
+#endif
+
+/// `dismissKeyboardOnScroll`'s two iOS behaviours.
+enum KeyboardScrollDismissal {
+    case immediately, interactively
+}
+
+/// `sheetSize`: the three sheet heights the app uses.
+enum SheetSize {
+    case medium, mediumOrLarge, large
+
+    #if os(iOS)
+    var detents: Set<PresentationDetent> {
+        switch self {
+        case .medium: [.medium]
+        case .mediumOrLarge: [.medium, .large]
+        case .large: [.large]
+        }
+    }
+    #else
+    /// The Mac sheet's size, in points.
+    var frame: CGSize {
+        switch self {
+        case .medium: CGSize(width: 480, height: 420)
+        case .mediumOrLarge: CGSize(width: 560, height: 560)
+        case .large: CGSize(width: 680, height: 720)
+        }
+    }
+    #endif
 }
 
 /// What `plainInput` is for; picks the iOS keyboard.
@@ -264,6 +416,12 @@ enum PlainInputKind {
         case .email: .emailAddress
         case .url: .URL
         }
+    }
+
+    /// Only an address field declares its content (the recipient fields'
+    /// autofill); the others stay plain, as they were.
+    var contentType: UITextContentType? {
+        self == .email ? .emailAddress : nil
     }
     #endif
 }

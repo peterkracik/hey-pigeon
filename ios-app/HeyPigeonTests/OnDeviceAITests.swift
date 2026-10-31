@@ -4,7 +4,11 @@
 
 import HeyPigeonCore
 import Testing
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 @testable import HeyPigeon
 
 struct OnDeviceAITests {
@@ -145,7 +149,11 @@ struct AttachmentUnderstandingTests {
     @Test func imagesAreDownscaledToTheLongestSide() {
         #expect(AttachmentUnderstanding.targetSize(for: CGSize(width: 4_032, height: 3_024)) == CGSize(width: 1_024, height: 768))
         #expect(AttachmentUnderstanding.targetSize(for: CGSize(width: 600, height: 900)) == CGSize(width: 600, height: 900))
+        #if canImport(UIKit)
         let big = UIGraphicsImageRenderer(size: CGSize(width: 2_000, height: 1_000)).image { _ in }
+        #else
+        let big = NSImage(size: CGSize(width: 2_000, height: 1_000))
+        #endif
         let small = AttachmentUnderstanding.downscaled(big)
         #expect(max(small.size.width, small.size.height) <= AttachmentUnderstanding.maxImageSide)
     }

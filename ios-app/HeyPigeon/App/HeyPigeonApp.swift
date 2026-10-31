@@ -168,10 +168,6 @@ struct RootView: View {
     }
 }
 
-extension SendDraft: Identifiable {
-    var id: String { draftKey }
-}
-
 /// Bottom toast with an optional Undo — the archive gesture's safety net.
 struct ToastView: View {
     @Environment(AppModel.self) private var model

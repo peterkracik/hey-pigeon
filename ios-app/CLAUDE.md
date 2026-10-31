@@ -107,7 +107,11 @@ XcodeGen from `project.yml` — edit `project.yml`, never the outputs.
 
 ## Porting
 
-The Mac and the iPad plan, with the file-by-file list of what still needs
-a platform twin, is `../docs/porting-macos-ipados.md`. Keep new code inside
-that plan: no new direct UIKit use outside `Platform.swift` and the
-representables listed there.
+`HeyPigeon/` is also the native Mac app's shell (`../macos-app`,
+`../macos-app/CLAUDE.md`): every file here except `App/HeyPigeonApp.swift`
+and `App/AppDelegate.swift` compiles for macOS, so a change here runs on
+both — `ios-ci` and `macos-ci` check it. Keep new code inside that shape:
+no new direct UIKit use outside `Platform.swift` and the representables
+(`MessageBodyView`), iOS-only modifiers behind a `Platform.swift` helper,
+and copy that names the device through `Device.name`. The iPad plan and
+the Mac's status are in `../docs/porting-macos-ipados.md`.

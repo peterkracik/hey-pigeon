@@ -113,7 +113,7 @@ struct ThreadView: View {
         // here: a plain-text principal counts as the title and went with it.
         .navigationTitle(participants)
         .toolbarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .hidesTabBar()
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text(participants)
@@ -174,7 +174,9 @@ struct ThreadView: View {
         // fallback when Siri cannot read the activity).
         .userActivity(ThreadView.activityType) { activity in
             activity.title = row.subject.isEmpty ? row.fromSummary : row.subject
+            #if os(iOS)
             activity.appEntityIdentifier = EntityIdentifier(for: MailThreadEntity(current, account: model.account(for: current)))
+            #endif
         }
         .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
@@ -372,7 +374,7 @@ struct ThreadView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut("r", modifiers: [])
+            .threadKey("r")
         }
         .foregroundStyle(Theme.textPrimary)
         .frame(height: 48)
@@ -404,7 +406,7 @@ struct ThreadView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(tint ?? Theme.textPrimary)
-        .keyboardShortcut(key, modifiers: modifiers)
+        .threadKey(key, modifiers: modifiers)
         .accessibilityLabel(label)
     }
 

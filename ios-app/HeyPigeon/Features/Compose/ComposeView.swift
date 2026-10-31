@@ -115,7 +115,7 @@ struct ComposeView: View {
                     }
                     .padding(.bottom, 24)
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .dismissKeyboardOnScroll(.interactively)
                 footer
             }
             .background(Theme.canvas)
@@ -172,7 +172,7 @@ struct ComposeView: View {
                 AIEditSheet(text: selectedText ?? bodyWithoutSignature, hasSelection: selectedText != nil,
                             subject: draft.subject, history: draft.history,
                             onApply: applyAI, onWrite: replaceBody)
-                .presentationDetents([.medium, .large])
+                .sheetSize(.mediumOrLarge, dragIndicator: false)
             }
             .alert("Link", isPresented: $askLink) {
                 TextField("https://", text: $linkURL)

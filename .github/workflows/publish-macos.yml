@@ -1,0 +1,289 @@
+name: publish-macos
+
+# Build the native Mac app (Rust core → xcframework → Xcode archive), sign it
+# with Developer ID, notarize it and publish the zip — the Swift app's twin of
+# publish-ios. Every push to main that changes the app (the Mac sources, the
+# shell it shares with the phone, or the Rust crates) publishes a build to
+# the rolling "mac-latest" pre-release (one stable download URL, replaced
+# each time); a `mac-v*` tag cuts a versioned release with the version from
+# the tag; a manual run does what a main push does.
+#
+# Secrets: the GitHub environment "macos" (synced there from a Doppler
+# config of the same shape). Same values as the Tauri build and publish-ios
+# already use; only the OAuth client is the Mac's own.
+#   APPLE_CERTIFICATE                  base64 of the "Developer ID Application" .p12 (the Tauri build's)
+#   APPLE_CERTIFICATE_PASSWORD         its password
+#   APPLE_TEAM_ID                      10-char team id
+#   ASC_API_KEY_ID                     App Store Connect API key (publish-ios's): Xcode registers the Mac App
+#   ASC_API_ISSUER_ID                  IDs and makes the Developer ID profiles with it (push, app groups),
+#   ASC_API_KEY_P8                     and notarytool submits the build with it; the .p8 as base64
+#   HEYPIGEON_MAC_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" for the Mac (the phone's
+#                                      HEYPIGEON_IOS_OAUTH_CLIENT_ID value works; a separate client
+#                                      registered for app.heypigeon.mac is the tidier choice)
+# Optional:
+#   HEYPIGEON_RELAY_URL                the push relay's register-token URL; empty keeps push off on the Mac
+#
+# One-time setup outside CI: nothing beyond the certificate and the key. The
+# first archive registers the App IDs (app.heypigeon.mac and its two
+# extensions) and the Developer ID profiles through the key.
+
+on:
+  push:
+    # Tags publish a versioned release. Path filters do not apply to tag pushes.
+    tags: ["mac-v*"]
+    # Pushes to main publish the rolling build when the app itself changed:
+    # the Mac sources, the shell and core it is built from, or this workflow.
+    # Documentation inside those folders does not count.
+    branches: ["main"]
+    paths:
+      - "macos-app/**"
+      - "!macos-app/**/*.md"
+      - "ios-app/HeyPigeon/**"
+      - "ios-app/HeyPigeonWidgets/**"
+      - "ios-app/HeyPigeonShare/**"
+      - "ios-app/HeyPigeonCore/**"
+      - "ios-app/scripts/**"
+      - "desktop-app/crates/**"
+      - "desktop-app/Cargo.toml"
+      - "desktop-app/Cargo.lock"
+      - ".github/workflows/publish-macos.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version (defaults to the tag for mac-v* tags, else MARKETING_VERSION in macos-app/project.yml)"
+        type: string
+        required: false
+
+# One group per ref for pushes (a newer push to main replaces a still-queued
+# build), but every tag or manual run gets its own group.
+concurrency:
+  group: publish-macos-${{ github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') && github.ref || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  SCHEME: HeyPigeon
+  ARCHIVE: macos-app/build/HeyPigeon.xcarchive
+  EXPORT_DIR: macos-app/build/export
+
+jobs:
+  build-sign-notarize:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    environment:
+      name: macos
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode with the macOS 27 SDK
+        run: |
+          set -euo pipefail
+          all="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V || true)"
+          xc="$(printf '%s\n' "$all" | grep -viE 'beta|release_candidate|_rc' | tail -1 || true)"
+          if [[ -z "$xc" ]]; then xc="$(printf '%s\n' "$all" | tail -1)"; fi
+          if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
+          xcodebuild -version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-app
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Resolve version numbers
+        id: ver
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then
+            version="${GITHUB_REF#refs/tags/mac-v}"
+          else
+            version="$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' macos-app/project.yml | head -1)"
+            test -n "$version" || { echo "MARKETING_VERSION not found in macos-app/project.yml" >&2; exit 1; }
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then echo "tagged=true" >> "$GITHUB_OUTPUT"; else echo "tagged=false" >> "$GITHUB_OUTPUT"; fi
+          echo "Version ${version} (${GITHUB_RUN_NUMBER})"
+
+      - name: Write Local.xcconfig (team + Google OAuth client + relay)
+        env:
+          CLIENT_ID: ${{ secrets.HEYPIGEON_MAC_OAUTH_CLIENT_ID }}
+          RELAY_URL: ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$CLIENT_ID" || { echo "HEYPIGEON_MAC_OAUTH_CLIENT_ID is not set in the macos environment" >&2; exit 1; }
+          reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
+          # xcconfig treats "//" as the start of a comment, so a URL must be
+          # written as https:/$()/host — Xcode resolves the empty $() away.
+          relay_xc="$(printf '%s' "$RELAY_URL" | sed 's#://#:/$()/#g')"
+          cat > macos-app/Config/Local.xcconfig <<EOF
+          DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
+          GOOGLE_MAC_CLIENT_ID = ${CLIENT_ID}
+          GOOGLE_MAC_REVERSED_CLIENT_ID = ${reversed}
+          HEYPIGEON_RELAY_URL = ${relay_xc}
+          EOF
+
+      - name: Build Rust core for macOS (universal) + Swift bindings
+        env:
+          RUST_PROFILE: release
+          PLATFORM_NAME: macosx
+          ARCHS: arm64 x86_64
+        run: macos-app/scripts/build-rust.sh
+
+      - name: Generate Xcode project
+        working-directory: macos-app
+        run: xcodegen generate
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12_B64: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          echo "$CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/dist.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" >/dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/dist.p12"
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Install App Store Connect API key
+        env:
+          KEY_P8_B64: ${{ secrets.ASC_API_KEY_P8 }}
+          KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$KEY_ID" || { echo "ASC_API_KEY_ID is not set" >&2; exit 1; }
+          mkdir -p ~/private_keys
+          key=~/private_keys/AuthKey_${KEY_ID}.p8
+          if [[ "$KEY_P8_B64" == *"-----BEGIN"* ]]; then
+            printf '%s\n' "$KEY_P8_B64" > "$key"
+          else
+            printf '%s' "$KEY_P8_B64" | tr -d '\n\r ' | base64 --decode > "$key"
+            if ! grep -q -- "-----BEGIN" "$key"; then
+              tr -d '\n\r ' < "$key" | base64 --decode > "$key.2" 2>/dev/null && mv "$key.2" "$key" || true
+            fi
+          fi
+          chmod 600 "$key"
+          grep -q -- "-----BEGIN PRIVATE KEY-----" "$key" || { echo "ASC_API_KEY_P8 is not a PEM private key" >&2; exit 1; }
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+
+      # Automatic signing with the API key: Xcode registers the App IDs,
+      # turns on the capabilities the entitlements ask for and makes the
+      # Developer ID profiles itself.
+      - name: Archive
+        working-directory: macos-app
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project HeyPigeonMac.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$GITHUB_WORKSPACE/$ARCHIVE" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}" \
+            DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
+            ARCHS="arm64 x86_64" \
+            MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}"
+
+      - name: Export (Developer ID)
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>developer-id</string>
+            <key>destination</key><string>export</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$EXPORT_DIR" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}"
+          ls -la "$EXPORT_DIR"
+
+      - name: Notarize and staple
+        run: |
+          set -euo pipefail
+          app="$EXPORT_DIR/HeyPigeon.app"
+          # A tag names the zip by its version; a main push by version and
+          # build number, so two builds of one version stay apart.
+          if [[ "${{ steps.ver.outputs.tagged }}" == "true" ]]; then
+            zip="$RUNNER_TEMP/HeyPigeon-mac-${{ steps.ver.outputs.version }}.zip"
+          else
+            zip="$RUNNER_TEMP/HeyPigeon-mac-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}.zip"
+          fi
+          ditto -c -k --keepParent "$app" "$zip"
+          xcrun notarytool submit "$zip" \
+            --key "$ASC_KEY_PATH" \
+            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+            --issuer "${{ secrets.ASC_API_ISSUER_ID }}" \
+            --wait
+          xcrun stapler staple "$app"
+          # Re-zip with the ticket stapled; this is what the release carries.
+          rm -f "$zip"
+          ditto -c -k --keepParent "$app" "$zip"
+          echo "ZIP=$zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HeyPigeon-mac-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+      # ---- A tag: the versioned release ------------------------------------
+      - name: Attach to the release
+        if: steps.ver.outputs.tagged == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Hey Pigeon for Mac ${{ steps.ver.outputs.version }}"
+          files: ${{ env.ZIP }}
+
+      # ---- A push to main: the rolling pre-release ----------------------------
+      # One pre-release, "mac-latest", whose zip is replaced on every build, so
+      # the download link never changes:
+      # https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip
+      - name: Publish as the latest build
+        if: steps.ver.outputs.tagged != 'true'
+        run: |
+          set -euo pipefail
+          cp "$ZIP" "$RUNNER_TEMP/HeyPigeon-mac-latest.zip"
+          echo "LATEST_ZIP=$RUNNER_TEMP/HeyPigeon-mac-latest.zip" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
+        if: steps.ver.outputs.tagged != 'true'
+        with:
+          tag_name: mac-latest
+          name: "Hey Pigeon for Mac — latest build"
+          prerelease: true
+          body: |
+            Version ${{ steps.ver.outputs.version }}, build ${{ steps.ver.outputs.build }}, from `${{ github.sha }}`.
+            Replaced on every push to main that changes the Mac app. Signed with Developer ID and notarized.
+          files: ${{ env.LATEST_ZIP }}
+
+      - name: Clean up keys
+        if: always()
+        run: rm -rf ~/private_keys "$RUNNER_TEMP/signing.keychain-db" macos-app/Config/Local.xcconfig

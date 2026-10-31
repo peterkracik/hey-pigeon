@@ -1,8 +1,12 @@
-// The main window: folders · threads · the open thread, three columns of a
-// NavigationSplitView. The sheets the phone presents from its root (Remind
-// me, compose, the summary, Ask my inbox) are presented here, the toast
-// floats over the bottom edge, and the keyboard map works wherever the
-// focus is as long as it is not a text field.
+// The main window, the phone's shape made bigger: one column, the list full
+// width up to a readable maximum, a thread opening in its place
+// (NavigationStack, as in MailListScreen), the folders in a drawer on the
+// left that ⌃⌘S or the header's button puts away. No title bar and no
+// toolbar — the header rows are views (InboxPage, ThreadPage), glass circles
+// like the phone's. The sheets the phone presents from its root (Remind me,
+// compose, the summary, Ask my inbox) are presented here, the toast floats
+// over the bottom edge, and the keyboard map works wherever the focus is as
+// long as it is not a text field.
 
 import SwiftUI
 
@@ -15,19 +19,28 @@ struct MainWindow: View {
     var body: some View {
         @Bindable var model = model
         @Bindable var state = state
-        NavigationSplitView(columnVisibility: $state.columns) {
-            SidebarColumn(state: state)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 236, max: 320)
-        } content: {
-            ThreadListColumn(state: state)
-                .navigationSplitViewColumnWidth(min: 340, ideal: 420, max: 600)
-        } detail: {
-            ThreadDetailColumn(state: state)
+        HStack(spacing: 0) {
+            if state.sidebarVisible {
+                SidebarColumn(state: state)
+                    .frame(width: 232)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                Rectangle().fill(Theme.separator).frame(width: 1)
+            }
+            NavigationStack(path: $state.path) {
+                InboxPage(state: state)
+                    .navigationDestination(for: ThreadRow.self) { row in
+                        ThreadPage(row: row, state: state)
+                    }
+            }
         }
-        .navigationSplitViewStyle(.balanced)
+        .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
+        .background(Theme.canvas)
+        .frame(minWidth: 720, minHeight: 480)
+        // The window has no toolbar: the header rows are the pages' own.
+        .toolbarVisibility(.hidden, for: .windowToolbar)
         .focusedSceneValue(\.windowState, state)
-        // Keys that reach the window itself (the detail column has focus, or
-        // nothing has): the same map the list column handles.
+        // Keys that reach the window itself (nothing else has focus): the
+        // same map the list and the thread handle.
         .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
         .overlay(alignment: .bottom) { MacToast() }
         .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
@@ -60,7 +73,7 @@ struct MainWindow: View {
             Text("\(model.disconnectedAccountId ?? "") needs to sign in again. Mail for it is stale until then.")
         }
         // The model's sheet flags are the phone's; here Settings is a window
-        // and the sidebar a column.
+        // and the sidebar the drawer.
         .onChange(of: model.showSettings) { _, show in
             guard show else { return }
             model.showSettings = false
@@ -69,7 +82,7 @@ struct MainWindow: View {
         .onChange(of: model.showSidebar) { _, show in
             guard show else { return }
             model.showSidebar = false
-            withAnimation { state.columns = .all }
+            state.sidebarVisible = true
         }
         .onAppear {
             state.openInWindow = { id in openWindow(id: MacWindows.thread, value: id) }

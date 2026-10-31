@@ -17,7 +17,8 @@ too. There is no second model, engine or intent layer.
 HeyPigeonMac/
   App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
-  Features/   MainWindow, SidebarColumn, ThreadListColumn, ThreadDetailColumn, WindowState,
+  Features/   MainWindow (drawer + NavigationStack), SidebarColumn (the drawer), InboxPage (header row,
+              list, search, batch bar), ThreadPage (header row over ThreadView; ThreadWindow), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
@@ -37,20 +38,33 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   `siriEntity`, …), never a bare `#if` in a feature file. `ios-ci` and
   `macos-ci` both run on a PR that touches the shared folder.
 - **One window state object.** `WindowState` is per window (AppModel is
-  per process): the selection, the sheets, the keyboard map and every
-  action. Keys, menus, hover buttons, trackpad swipes and the palette all
-  call `WindowState.run(_:in:rows:)`, which calls AppModel like the swipes
-  do. Pure logic is static (`KeyboardMap.resolve`, `PaletteFilter`), tested
-  in `HeyPigeonMacTests`.
+  per process): the open thread (`path`, the NavigationStack's, at most
+  one deep), the highlighted rows, the drawer, the search, the sheets, the
+  keyboard map and every action. Keys, menus, hover buttons, trackpad
+  swipes and the palette all call `WindowState.run(_:in:rows:)`, which acts
+  on the open thread else the highlighted rows (`focusRow`) and calls
+  AppModel like the swipes do. Pure logic is static (`KeyboardMap.resolve`,
+  `PaletteFilter`), tested in `HeyPigeonMacTests`.
+- **The phone's shape, no chrome.** The window has no title bar
+  (`.windowStyle(.hiddenTitleBar)`) and no toolbar
+  (`.toolbarVisibility(.hidden, for: .windowToolbar)`): a page draws its
+  own header row with the phone's glass circles, and leaves the traffic
+  lights room (`TrafficLightsGap`) when the drawer is away. Nothing in the
+  Mac folder uses `.toolbar` or `.navigationTitle`; the shared views'
+  toolbar items simply do not render here, so a Mac page restates what
+  matters in its header (ThreadPage's menu). The list and the thread keep
+  to `MacLayout.maxWidth`.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the
   detail and the window) and menu items carry ⌘-based equivalents. After a
   chord changes the folder, ask the list for focus back
   (`listFocusRequest`): `AppModel.tab`'s didSet drops the first responder.
-- **Auto-advance is opt-in.** Set `pendingAdvance` (through `run` or
-  `advance`) before an action that may remove the selected row; a folder
-  switch clears the selection instead.
+- **Auto-advance is opt-in in the list, always on in a thread.** In the
+  list, set `pendingAdvance` (through `run`) before an action that may
+  remove the highlighted row; a folder switch clears the highlight
+  instead. With a thread open, its row leaving the list opens the next
+  one (`rowsChanged`, `closeOpen`), and a folder switch closes it.
 - **Sync is the timer.** No BGTaskScheduler on the Mac; `MacSyncLoop` runs
   a round every 30 s and composes new-mail banners from its diff
   (`NewMailNotifier.post`). The Mac build has no push entitlement — it is

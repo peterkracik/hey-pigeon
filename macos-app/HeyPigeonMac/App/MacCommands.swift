@@ -5,8 +5,8 @@
 // (WindowState.handle) rather than the menu, because a single-letter menu
 // key equivalent would steal the letter from every text field.
 //
-// Thread commands act on the key window's selection through the focused
-// scene value; they are disabled while nothing is selected.
+// Thread commands act on the key window's open thread or highlighted rows
+// through the focused scene value; they are disabled while there is neither.
 
 import AppKit
 import SwiftUI
@@ -16,8 +16,8 @@ struct MacCommands: Commands {
     let updater: MacUpdater
     @FocusedValue(\.windowState) private var state
 
-    private var hasSelection: Bool { !(state?.selection.isEmpty ?? true) }
-    private var hasOne: Bool { state?.selection.count == 1 }
+    private var hasSelection: Bool { state?.hasTarget ?? false }
+    private var hasOne: Bool { state?.hasOneTarget ?? false }
 
     var body: some Commands {
         // Under "About Hey Pigeon", where every Mac app keeps it. Disabled
@@ -33,6 +33,12 @@ struct MacCommands: Commands {
             Button("Check for Mail") { Task { await model.sync() } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
+        }
+
+        // View › the drawer, where macOS keeps "Show Sidebar".
+        CommandGroup(after: .sidebar) {
+            Button(state?.sidebarVisible == false ? "Show Folders" : "Hide Folders") { run(.toggleSidebar) }
+                .keyboardShortcut("s", modifiers: [.command, .control])
         }
 
         CommandMenu("Message") {
@@ -103,6 +109,9 @@ struct MacCommands: Commands {
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
             }
             Divider()
+            Button("Back to the List") { run(.back) }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(!(state?.isThreadOpen ?? false))
             Button("Search") { run(.search) }
                 .keyboardShortcut("f", modifiers: [.command, .option])
             Button("Command Palette") { run(.palette) }

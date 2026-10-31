@@ -138,16 +138,18 @@ struct SummaryEvaluationTests {
     @Test(.enabled(if: AppleIntelligenceProvider.isAvailable, "needs Apple Intelligence on the device"))
     @MainActor
     func scoreTheShippedSummaryPromptOnDevice() async throws {
-        let shipped = AppModel(engine: MockEngine()).engine.aiPrompts().summary
-        let variants: [(String, String)] = [
-            ("shipped", shipped),
-            // One candidate: the same rules with an example line, which small models follow better.
-            ("with-example", shipped + "\n\nExample of one bullet: - **Acme** invoice **INV-12** for **€48** due **15 Nov**."),
-        ]
-        for (name, instructions) in variants {
-            let report = try await SummaryEvaluation.run(variant: name, instructions: instructions)
-            print(report)
-            if name == "shipped" { #expect(report.formatPassRate >= 0.5) }
+        try await OnDeviceModel.run {
+            let shipped = AppModel(engine: MockEngine()).engine.aiPrompts().summary
+            let variants: [(String, String)] = [
+                ("shipped", shipped),
+                // One candidate: the same rules with an example line, which small models follow better.
+                ("with-example", shipped + "\n\nExample of one bullet: - **Acme** invoice **INV-12** for **€48** due **15 Nov**."),
+            ]
+            for (name, instructions) in variants {
+                let report = try await SummaryEvaluation.run(variant: name, instructions: instructions)
+                print(report)
+                if name == "shipped" { #expect(report.formatPassRate >= 0.5) }
+            }
         }
     }
 }

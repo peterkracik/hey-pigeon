@@ -77,7 +77,6 @@ struct WindowStateTests {
     @Test func markDoneAdvancesToTheRowThatTookItsPlace() async throws {
         let ids = state.flatIds(model)
         state.select(ids[1], in: model)
-        state.selectionChanged(in: model)
         state.run(.markDone, in: model)
         // The optimistic removal already happened; the list tells the state.
         state.rowsChanged(in: model)
@@ -99,13 +98,50 @@ struct WindowStateTests {
         #expect(state.selection.isEmpty)
     }
 
-    @Test func selectingMarksTheThreadRead() async throws {
+    @Test func openingMarksTheThreadReadAndEscapeComesBackToItsRow() async throws {
         let unread = try #require(try engine.threadRow(id: "t1"))
         #expect(!unread.isRead)
         state.select("t1", in: model)
-        state.selectionChanged(in: model)
+        state.run(.open, in: model)
+        #expect(state.path.map(\.id) == ["t1"] && state.isThreadOpen)
         try await Task.sleep(for: .milliseconds(50))
         #expect(try engine.threadRow(id: "t1")?.isRead == true)
+        state.run(.escape, in: model)
+        #expect(state.path.isEmpty && state.selection == ["t1"])
+    }
+
+    @Test func inAnOpenThreadMarkDoneOpensTheNextOne() async throws {
+        let ids = state.flatIds(model)
+        let second = try #require(model.row(forThreadId: ids[1]))
+        state.open(second, in: model)
+        state.run(.markDone, in: model)
+        state.rowsChanged(in: model)
+        let after = state.flatIds(model)
+        #expect(!after.contains(ids[1]))
+        #expect(state.path.last?.id == after[1] && state.selection == [after[1]])
+    }
+
+    @Test func jAndKWalkTheThreadsWhileOneIsOpen() throws {
+        let ids = state.flatIds(model)
+        state.open(try #require(model.row(forThreadId: ids[0])), in: model)
+        state.run(.next, in: model)
+        #expect(state.path.last?.id == ids[1])
+        state.run(.previous, in: model)
+        #expect(state.path.last?.id == ids[0])
+        // The thread's own close with the row still listed: the list comes back.
+        state.closeOpen(in: model)
+        #expect(state.path.isEmpty && state.selection == [ids[0]])
+    }
+
+    @Test func aFolderSwitchClosesTheThreadAndTheDrawerToggles() throws {
+        state.open(try #require(model.row(forThreadId: "t1")), in: model)
+        state.run(.go(.starred), in: model)
+        #expect(state.path.isEmpty && model.view == .starred)
+        let before = state.sidebarVisible
+        state.run(.toggleSidebar, in: model)
+        #expect(state.sidebarVisible != before)
+        state.run(.toggleSidebar, in: model)
+        #expect(state.sidebarVisible == before)
     }
 
     @Test func escapeClearsTheSearchThenTheSelection() {

@@ -1,8 +1,9 @@
-// One window's state: the selected threads, the open sheets, the keyboard
-// map and the actions behind every key, menu item, hover button and
-// palette row. AppModel is one per process; this is one per window, so two
-// windows can show two threads. Pure parts (the key map, the palette
-// filter) are static so the tests can run them without a window.
+// One window's state: the open thread, the highlighted rows, the folders
+// drawer, the search, the sheets, the keyboard map and the actions behind
+// every key, menu item, hover button and palette row. AppModel is one per
+// process; this is one per window, so two windows can show two threads.
+// Pure parts (the key map, the palette filter) are static so the tests can
+// run them without a window.
 
 import SwiftUI
 
@@ -12,7 +13,7 @@ enum MailCommand: Hashable {
     case reply, replyAll, forward
     case label, move
     case summarizeThread, draftReply
-    case compose, search, palette, shortcuts, escape
+    case compose, search, palette, shortcuts, escape, back, toggleSidebar
     case next, previous, open, openInWindow
     /// Switch account: the index in `AppModel.accounts`, nil for all.
     case account(Int?)
@@ -99,10 +100,20 @@ enum PaletteStage: Equatable {
 @MainActor
 @Observable
 final class WindowState: Equatable {
-    /// Selected thread ids: one shows in the detail column, several show a
-    /// batch bar.
+    /// The thread on screen: the NavigationStack's path, at most one deep —
+    /// the next thread replaces the one before it. The list is the root,
+    /// as in the phone's MailListScreen.
+    var path: [ThreadRow] = []
+    /// The highlighted rows: one is the keyboard cursor (j / k, the row a
+    /// thread was opened from), several (⌘-click, ⇧-click) show the batch bar.
     var selection: Set<String> = []
-    var columns: NavigationSplitViewVisibility = .all
+    /// The folders drawer; away, the list has the whole window. Remembered
+    /// across launches.
+    var sidebarVisible: Bool = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible") }
+    }
+    /// The header shows the search field (`/`, the magnifier).
+    var searching = false
     var showPalette = false
     var paletteStage: PaletteStage = .all
     var showShortcuts = false
@@ -110,7 +121,7 @@ final class WindowState: Equatable {
     /// The list scrolls to this id after a keyboard move.
     var scrollTarget: String?
     /// Bumped to put the keyboard back on the list (after a chord changed
-    /// the folder, after a sheet closed): the list column observes it.
+    /// the folder, after a sheet closed): the list observes it.
     var listFocusRequest = 0
     /// Bumped to focus the search field (`/`).
     var searchFocusRequest = 0
@@ -118,14 +129,32 @@ final class WindowState: Equatable {
     @ObservationIgnored var openInWindow: ((String) -> Void)?
 
     @ObservationIgnored private var chordArmedAt: Date?
-    /// Where the selection was in the flat list, so a row that leaves
-    /// (done, delete, remind) hands the selection to its neighbour.
+    /// Where the cursor was in the flat list, so a row that leaves (done,
+    /// delete, remind) hands its place to its neighbour.
     @ObservationIgnored private var lastIndex: Int?
-    /// Set by an action that may take the selected row out of the list;
+    /// Set by an action that may take the highlighted row out of the list;
     /// consumed by `rowsChanged`, so a folder switch never auto-selects.
     @ObservationIgnored private var pendingAdvance = false
 
     nonisolated static func == (a: WindowState, b: WindowState) -> Bool { a === b }
+
+    // MARK: What a command acts on
+
+    /// The open thread (live from the store), else the one highlighted row.
+    func focusRow(in model: AppModel) -> ThreadRow? {
+        if let open = path.last { return model.row(forThreadId: open.id) ?? open }
+        return selectedRow(in: model)
+    }
+
+    func focusRows(in model: AppModel) -> [ThreadRow] {
+        if let open = path.last { return [model.row(forThreadId: open.id) ?? open] }
+        return selectedRows(in: model)
+    }
+
+    /// For the menus: something to act on at all, and exactly one thread.
+    var hasTarget: Bool { !path.isEmpty || !selection.isEmpty }
+    var hasOneTarget: Bool { !path.isEmpty || selection.count == 1 }
+    var isThreadOpen: Bool { !path.isEmpty }
 
     // MARK: Selection
 
@@ -134,7 +163,7 @@ final class WindowState: Equatable {
         model.groupedRows.flatMap { $0.rows.map(\.id) }
     }
 
-    /// The one selected thread, from the list or the store.
+    /// The one highlighted thread, from the list or the store.
     func selectedRow(in model: AppModel) -> ThreadRow? {
         guard selection.count == 1, let id = selection.first else { return nil }
         return model.row(forThreadId: id)
@@ -151,7 +180,7 @@ final class WindowState: Equatable {
     }
 
     /// j / k / arrows: the neighbour, clamped; the first or last row when
-    /// nothing is selected.
+    /// nothing is highlighted.
     func move(by delta: Int, in model: AppModel) {
         let ids = flatIds(model)
         guard !ids.isEmpty else { return }
@@ -165,19 +194,83 @@ final class WindowState: Equatable {
         select(ids[next], in: model)
     }
 
-    /// The list clicked or arrowed to a row: remember where, and mark it
-    /// read (a thread on screen is read, as on the phone's tap).
-    func selectionChanged(in model: AppModel) {
-        guard selection.count == 1, let id = selection.first else { return }
-        if let i = flatIds(model).firstIndex(of: id) { lastIndex = i }
-        if model.view != .drafts, let row = model.row(forThreadId: id), !row.isRead { model.markRead(row) }
+    /// ⌘-click: the row joins or leaves the selection.
+    func toggle(_ id: String, in model: AppModel) {
+        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+        lastIndex = flatIds(model).firstIndex(of: id) ?? lastIndex
     }
 
-    /// The list's rows changed. When an action took the selected row out,
-    /// the row now in its place takes the selection (Superhuman's
-    /// auto-advance); when a folder switch did, the selection just clears.
+    /// ⇧-click: every row between the cursor and this one.
+    func extend(to id: String, in model: AppModel) {
+        let ids = flatIds(model)
+        guard let to = ids.firstIndex(of: id) else { return }
+        let from = lastIndex ?? to
+        selection.formUnion(ids[min(from, to)...max(from, to)])
+    }
+
+    // MARK: The open thread
+
+    /// A click, Return, a notification: the thread opens in place of the
+    /// list, is marked read like the phone's tap, and keeps the cursor on
+    /// its row so Esc lands where the reader left. A draft opens the
+    /// composer instead.
+    func open(_ row: ThreadRow, in model: AppModel) {
+        select(row.id, in: model)
+        if model.view == .drafts { model.openDraft(row); return }
+        if !row.isRead { model.markRead(row) }
+        path = [row]
+    }
+
+    /// Back to the list (Esc, the header's arrow, ⌘[), the cursor still on
+    /// the row.
+    func close() {
+        path = []
+        listFocusRequest += 1
+    }
+
+    /// The open thread's own bars did something that closes it (done,
+    /// delete, mark unread, move): the next thread takes its place when its
+    /// row left the list, else the list comes back.
+    func closeOpen(in model: AppModel) {
+        guard let open = path.last else { return }
+        if flatIds(model).contains(open.id) { close() } else { advanceOpen(in: model) }
+    }
+
+    /// The palette is about to move the thread on (a folder chosen): in the
+    /// list, the cursor may go to the row that takes its place; with a
+    /// thread open nothing is needed, the next thread follows its row
+    /// leaving the list (`rowsChanged`).
+    func advance(in model: AppModel) {
+        guard !isThreadOpen else { return }
+        pendingAdvance = true
+        rowsChanged(in: model)
+    }
+
+    /// The row the open thread came from is gone: its neighbour opens
+    /// (Superhuman's auto-advance), or the list comes back when there is none.
+    private func advanceOpen(in model: AppModel) {
+        let ids = flatIds(model)
+        if let i = lastIndex, !ids.isEmpty, let next = model.row(forThreadId: ids[min(i, ids.count - 1)]) {
+            open(next, in: model)
+        } else {
+            selection = []
+            close()
+        }
+    }
+
+    /// The list's rows changed. With a thread open whose row left the list
+    /// (done, delete, a reminder, a sync from another device), the next
+    /// thread takes its place. In the list, an action that took the
+    /// highlighted row out hands the highlight to the row now in its place;
+    /// a folder switch just clears it.
     func rowsChanged(in model: AppModel) {
         let ids = flatIds(model)
+        if let open = path.last {
+            guard !ids.contains(open.id) else { return }
+            pendingAdvance = false
+            advanceOpen(in: model)
+            return
+        }
         guard selection.count == 1, let id = selection.first, !ids.contains(id) else { return }
         guard pendingAdvance else { return }
         pendingAdvance = false
@@ -185,11 +278,12 @@ final class WindowState: Equatable {
         select(ids[min(i, ids.count - 1)], in: model)
     }
 
-    /// The open thread's own bars did something that closes it (done,
-    /// delete, mark unread, move): advance like a key would.
-    func advance(in model: AppModel) {
-        pendingAdvance = true
-        rowsChanged(in: model)
+    /// The search field closes and the list is the folder again.
+    func endSearch(in model: AppModel) {
+        searching = false
+        model.searchText = ""
+        model.searchFilters = SearchFilters()
+        listFocusRequest += 1
     }
 
     // MARK: Keys
@@ -220,13 +314,13 @@ final class WindowState: Equatable {
 
     // MARK: Actions
 
-    /// Run a command on the selection (or on `rows`, for a hover bar or a
-    /// trackpad swipe that names its row). Every mutation goes through
-    /// AppModel, like the phone's swipes, so undo, the badge, the widgets
-    /// and Spotlight stay consistent.
+    /// Run a command on the open thread or the highlighted rows (or on
+    /// `rows`, for a hover bar or a trackpad swipe that names its row).
+    /// Every mutation goes through AppModel, like the phone's swipes, so
+    /// undo, the badge, the widgets and Spotlight stay consistent.
     func run(_ command: MailCommand, in model: AppModel, rows explicit: [ThreadRow]? = nil) {
-        let rows = explicit ?? selectedRows(in: model)
-        let row = explicit?.count == 1 ? explicit?.first : selectedRow(in: model)
+        let rows = explicit ?? focusRows(in: model)
+        let row = explicit?.count == 1 ? explicit?.first : focusRow(in: model)
         switch command {
         case .markDone:
             guard !rows.isEmpty else { return }
@@ -243,7 +337,11 @@ final class WindowState: Equatable {
                 model.delete(r)
             }
         case .toggleRead:
+            // Marking the open thread unread closes it, as on the phone:
+            // staying would only read it again.
+            let closes = explicit == nil && isThreadOpen && rows.allSatisfy(\.isRead)
             for r in rows { model.toggleRead(r) }
+            if closes { close() }
         case .pin:
             for r in rows { model.togglePin(r) }
         case .needReply:
@@ -279,6 +377,7 @@ final class WindowState: Equatable {
         case .compose:
             model.compose(SendDraft())
         case .search:
+            searching = true
             searchFocusRequest += 1
         case .palette:
             paletteStage = .all
@@ -286,18 +385,27 @@ final class WindowState: Equatable {
         case .shortcuts:
             showShortcuts.toggle()
         case .escape:
-            if model.isSearching {
-                model.searchText = ""
-                model.searchFilters = SearchFilters()
-                listFocusRequest += 1
+            if isThreadOpen {
+                close()
+            } else if searching || model.isSearching {
+                endSearch(in: model)
             } else if !selection.isEmpty {
                 selection = []
             }
+        case .back:
+            if isThreadOpen { close() }
+        case .toggleSidebar:
+            sidebarVisible.toggle()
         case .next:
             move(by: 1, in: model)
+            if isThreadOpen, let next = selectedRow(in: model) { open(next, in: model) }
         case .previous:
             move(by: -1, in: model)
-        case .open, .openInWindow:
+            if isThreadOpen, let previous = selectedRow(in: model) { open(previous, in: model) }
+        case .open:
+            guard let row else { return }
+            open(row, in: model)
+        case .openInWindow:
             guard let row else { return }
             if model.view == .drafts { model.openDraft(row) } else { openInWindow?(row.id) }
         case .account(let index):
@@ -310,6 +418,8 @@ final class WindowState: Equatable {
             listFocusRequest += 1
         case .go(let view):
             selection = []
+            path = []
+            if searching || model.isSearching { endSearch(in: model) }
             model.show(view)
             listFocusRequest += 1
         case .summarizeView:

@@ -1,8 +1,9 @@
 // Hey Pigeon for the Mac: the iPhone app's model, engine, intents, Spotlight
 // index, widget snapshot and AI layer (ios-app/HeyPigeon, compiled for macOS)
-// under a Mac window — three columns (folders · threads · the open thread),
+// under a Mac window — the phone's one column made bigger (the list, a
+// thread in its place, the folders in a drawer; no title bar, no toolbar),
 // the desktop's keyboard map, a menu bar, Settings (⌘,), an optional menu
-// bar extra with the unread count, and a thread in its own window on Return.
+// bar extra with the unread count, and a thread in its own window on ⌘↩.
 // The Mac never suspends the app, so sync is a timer while it runs plus
 // every activation (MacSyncLoop), and new-mail banners come from that
 // timer's diff rather than a push relay. The app updates itself from the
@@ -94,7 +95,10 @@ struct HeyPigeonMacApp: App {
                     model.openSearch(query)
                 }
         }
-        .defaultSize(width: 1240, height: 800)
+        .defaultSize(width: 1100, height: 760)
+        // No title bar: the pages draw their own header row where it would
+        // be (MainWindow hides the toolbar too), the traffic lights stay.
+        .windowStyle(.hiddenTitleBar)
         .commands { MacCommands(model: model, updater: updater) }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -110,7 +114,7 @@ struct HeyPigeonMacApp: App {
             }
         }
 
-        // Return (or "Open in New Window") puts a thread in its own window.
+        // ⌘↩ (or "Open in New Window") puts a thread in its own window.
         WindowGroup("Thread", id: MacWindows.thread, for: String.self) { $threadId in
             ThreadWindow(threadId: threadId)
                 .environment(model)

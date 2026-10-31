@@ -204,20 +204,22 @@ struct TriageEvaluationTests {
     /// ground. Needs a device with Apple Intelligence.
     @Test(.enabled(if: AppleIntelligenceProvider.isAvailable, "needs Apple Intelligence on the device"))
     func scoreEveryVariantOnDevice() async throws {
-        let set = try TriageEvalSet.load()
-        var reports: [TriageEvalReport] = []
-        for variant in TriagePromptVariant.candidates {
-            let report = try await TriageEvaluation.run(set, variant: variant, classify: TriageEvaluation.onDeviceClassifier(variant: variant))
-            print(report)
-            reports.append(report)
-        }
-        let shipped = try #require(reports.first { $0.variant == TriagePromptVariant.shipped.id })
-        let best = try #require(reports.max { $0.overall < $1.overall })
-        // A candidate that beats the shipped prompt by a clear margin is the
-        // signal to promote it; the test only fails when shipped regresses.
-        #expect(shipped.priorityAccuracy >= 0.5, "the shipped prompt gets fewer than half the priorities right")
-        if best.variant != shipped.variant, best.overall - shipped.overall > 0.1 {
-            print("⬆ \(best.variant) beats shipped by \(String(format: "%.2f", best.overall - shipped.overall)) — consider promoting it")
+        try await OnDeviceModel.run {
+            let set = try TriageEvalSet.load()
+            var reports: [TriageEvalReport] = []
+            for variant in TriagePromptVariant.candidates {
+                let report = try await TriageEvaluation.run(set, variant: variant, classify: TriageEvaluation.onDeviceClassifier(variant: variant))
+                print(report)
+                reports.append(report)
+            }
+            let shipped = try #require(reports.first { $0.variant == TriagePromptVariant.shipped.id })
+            let best = try #require(reports.max { $0.overall < $1.overall })
+            // A candidate that beats the shipped prompt by a clear margin is the
+            // signal to promote it; the test only fails when shipped regresses.
+            #expect(shipped.priorityAccuracy >= 0.5, "the shipped prompt gets fewer than half the priorities right")
+            if best.variant != shipped.variant, best.overall - shipped.overall > 0.1 {
+                print("⬆ \(best.variant) beats shipped by \(String(format: "%.2f", best.overall - shipped.overall)) — consider promoting it")
+            }
         }
     }
 }

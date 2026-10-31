@@ -74,9 +74,11 @@ understanding. Personal, not a product; rough edges expected.
 ## macOS (native)
 
 The same Swift shell runs as a native Mac app in
-[`macos-app/`](./macos-app): sidebar, list and thread in one window, the
-desktop's keyboard map (`e` `h` `n` `s` `j` `k`, `g`-chords, `⌘K`), hover
-and trackpad actions, a Settings window, a menu bar extra, widgets, the
+[`macos-app/`](./macos-app): the phone's one column made bigger — the list
+full width, a thread in its place, the folders in a drawer, no title bar or
+toolbar — with the desktop's keyboard map (`e` `h` `n` `s` `j` `k`,
+`g`-chords, `⌘K`), hover and trackpad actions, a Settings window, a menu
+bar extra, widgets, the
 share menu, Siri and Spotlight through the same App Intents, and the same
 AI layer (Apple Intelligence on the Mac, Apple's cloud and OpenAI as
 opt-ins). It is the Mac download: every push to `main` that changes it

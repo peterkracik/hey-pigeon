@@ -5,9 +5,13 @@ The native Mac app: the same Swift shell as the phone
 model (`AppModel`), one engine, the same Siri intents, Spotlight index,
 widgets, AI layer and feature screens — compiled for macOS behind the
 platform door in `ios-app/HeyPigeon/Shared/Platform.swift` — plus what only
-a Mac has: three columns, a menu bar, the desktop's keyboard map, a command
-palette, hover actions, a Settings window, a menu bar extra, and a thread in
-its own window. Design notes in [docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
+a Mac has: a menu bar, the desktop's keyboard map, a command palette, hover
+actions, a Settings window, a menu bar extra, and a thread in its own
+window. The window is the phone's shape made bigger, Superhuman's
+minimalism in Liquid Glass: no title bar, no toolbar, the list full width
+up to a readable maximum, a thread opening in its place, the folders in a
+drawer that slides away. Design notes in
+[docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
 
 ```text
 macos-app/
@@ -15,10 +19,11 @@ macos-app/
     App/                  HeyPigeonMacApp (scenes, deep links, scene phase), MacAppDelegate (notifications,
                           APNs, Dock menu), MacSyncLoop (the 30 s timer + new-mail banners), MacCommands (menus),
                           MacUpdater (Sparkle: in-app updates from the mac-latest release)
-    Features/             MainWindow (the split view, sheets, toast), SidebarColumn, ThreadListColumn (search,
-                          hover and swipe actions), ThreadDetailColumn (+ ThreadWindow, the batch bar),
-                          WindowState (selection, the keyboard map, every action), CommandPalette (⌘K),
-                          ShortcutsSheet (?), MenuBarExtraView
+    Features/             MainWindow (the drawer + the NavigationStack, sheets, toast), SidebarColumn (the
+                          drawer), InboxPage (the header row, the list, search, hover and swipe actions, the
+                          batch bar), ThreadPage (the header row over the shared ThreadView; + ThreadWindow),
+                          WindowState (the open thread, the cursor, the keyboard map, every action),
+                          CommandPalette (⌘K), ShortcutsSheet (?), MenuBarExtraView
     Resources/            The Mac icon set; drop Manrope-*.ttf into Fonts/ for the brand typeface
   HeyPigeonMacShare/      The share menu's "Hey Pigeon": NSViewController over the shared ShareView
   HeyPigeonMacTests/      Swift Testing: the keyboard map, the selection, the palette filter, the widget links
@@ -32,10 +37,10 @@ macos-app/
 
 | | Phone | Mac |
 | --- | --- | --- |
-| Layout | Tabs + a stack + sheets | Sidebar · list · thread (`NavigationSplitView`); Settings is a window (⌘,); a thread opens in its own window on ↩ |
+| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a drawer (⌃⌘S); no title bar or toolbar — the header rows are glass circles like the phone's; Settings is a window (⌘,); ⌘↩ opens a thread in its own window |
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
-| After Mark done | Undo toast, back to the list | Undo toast, the next row takes the selection (auto-advance) |
-| Several at once | — | ⌘/⇧-click rows: a batch bar in the detail column |
+| After Mark done | Undo toast, back to the list | Undo toast; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
+| Several at once | — | ⌘/⇧-click rows: a glass batch bar at the bottom |
 | Sync | On open, pull, background refresh, the optional relay | Every 30 s while open, every activation, ⇧⌘N; no relay — the Mac build has no push entitlement |
 | New mail | A relay push → banner | The timer's diff → banner (Settings › Notifications), communication-style with the sender's initial |
 | Siri, Spotlight, Shortcuts | App Intents, the Mail schema, the index | The same files; "Ask my inbox" and "triage my inbox" through the Mailbox menu and the palette |

@@ -100,7 +100,11 @@ app (anything under `macos-app/` except docs, the shared shell in
 the zip to the rolling `mac-latest` pre-release, so the download link never
 changes:
 `https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip`.
-Install once: unzip, drag `HeyPigeon.app` to Applications, open.
+Install once: unzip, drag `HeyPigeon.app` into Applications, open it from
+there. Opened straight from the download instead, macOS runs a temporary
+read-only copy (App Translocation) from which the app's URL scheme is not
+its own — Google's sign-in cannot call back — and Sparkle cannot replace
+the bundle; the app says so at launch (`InstallLocation`).
 
 **Updates are in-app** ([Sparkle](https://sparkle-project.org)). Next to
 the zip the workflow uploads `appcast.xml` — the build number

@@ -10,6 +10,9 @@ import UserNotifications
 final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        // After the window is up: a copy run from the download cannot sign
+        // in or update (InstallLocation.swift).
+        Task { @MainActor in InstallLocation.warnIfTranslocated() }
     }
 
     /// Closing the last window does not quit a mail client: the menu bar

@@ -69,6 +69,13 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   installs are Info.plist defaults; `MacUpdater` only mirrors Sparkle's
   state for the menu and Settings › Updates. `CFBundleVersion` is the
   publish run number, so it only grows; never give a build a lower one.
+- **System callbacks are not on the main thread on the Mac.** AppKit and
+  the frameworks behind it hand completion handlers back on XPC queues
+  (`ASWebAuthenticationSession` did, and the first build crashed on Swift
+  6's executor check). A closure handed to such an API is `@Sendable` and
+  only resumes a continuation or hops to the main actor; a delegate
+  method the framework may call off the main thread is `nonisolated` and
+  reads state captured on the main actor beforehand (`OAuthCoordinator`).
 - **Copy says "Mac" through `Device.name`**, and Settings sections that
   differ (Default email app, Notifications, Siri & Search, the swipe
   titles) branch on `#if os(macOS)` inside `SettingsView` with their own

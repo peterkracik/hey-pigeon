@@ -123,7 +123,11 @@ enum NewMailNotifier {
             sender: person,
             attachments: nil
         )
+        #if os(iOS)
+        // The Mac's Intents framework has no per-parameter image; the person's
+        // own image above is what its banner shows.
         intent.setImage(image, forParameterNamed: \.sender)
+        #endif
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .incoming
         try? await interaction.donate()

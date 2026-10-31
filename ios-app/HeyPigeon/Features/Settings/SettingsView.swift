@@ -495,7 +495,11 @@ private struct SiriSection: View {
                 }
             }
             SiriTipView(intent: WhatNeedsReplyIntent())
+            #if os(iOS)
+            // The Mac has no ShortcutsLink: the Shortcuts app lists the
+            // actions on its own.
             ShortcutsLink()
+            #endif
             Button { SystemSettings.openAppSettings() } label: {
                 Label(Self.systemButtonTitle, systemImage: "gear")
             }

@@ -494,10 +494,11 @@ private struct SiriSection: View {
                     Label("Ask my inbox", systemImage: "questionmark.bubble")
                 }
             }
-            SiriTipView(intent: WhatNeedsReplyIntent())
             #if os(iOS)
-            // The Mac has no ShortcutsLink: the Shortcuts app lists the
+            // The Mac has neither the Siri tip nor ShortcutsLink: Siri
+            // offers the phrases itself and the Shortcuts app lists the
             // actions on its own.
+            SiriTipView(intent: WhatNeedsReplyIntent())
             ShortcutsLink()
             #endif
             Button { SystemSettings.openAppSettings() } label: {

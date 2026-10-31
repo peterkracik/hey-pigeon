@@ -15,7 +15,8 @@ Design doc: [DESIGN.md](./DESIGN.md). Site: [heypigeon.app](https://heypigeon.ap
 ## No backend, ever
 
 Hey Pigeon has **no server component of any kind** and never will by design.
-It's a local Tauri app that talks directly to Google's APIs using your own
+It's a local app — native on the Mac, the iPhone and the iPad, over one
+shared Rust core — that talks directly to Google's APIs using your own
 OAuth grant:
 
 - Your mail, contacts, and reminders never leave **your own Google account** —
@@ -23,13 +24,12 @@ OAuth grant:
   cross-device reminder sync.
 - Everything the app reads is cached in a local SQLite database on your
   device, purely for instant local search/browsing.
-- AI features (optional) never go through the developer. On the Mac they
-  are bring-your-own-API-key: requests go straight from your device to the
-  provider (OpenAI) — the developer never sees that traffic or holds your
-  key. On the iPhone the default is **Apple Intelligence on the device**
-  (no key, no network), with Apple's Private Cloud Compute (Apple's own
-  servers, never stored, no key) and OpenAI as opt-ins; which one answers,
-  and the order they fall back in, is yours to set.
+- AI features (optional) never go through the developer. The default is
+  **Apple Intelligence on the device** (no key, no network), with Apple's
+  Private Cloud Compute (Apple's own servers, never stored, no key) and
+  OpenAI (your own key; requests go straight from your device to the
+  provider) as opt-ins; which one answers, and the order they fall back in,
+  is yours to set.
 
 Because there's no backend and no third-party data store, there's no
 "Hey Pigeon got breached" risk model to worry about — your data's exposure
@@ -79,8 +79,13 @@ desktop's keyboard map (`e` `h` `n` `s` `j` `k`, `g`-chords, `⌘K`), hover
 and trackpad actions, a Settings window, a menu bar extra, widgets, the
 share menu, Siri and Spotlight through the same App Intents, and the same
 AI layer (Apple Intelligence on the Mac, Apple's cloud and OpenAI as
-opt-ins). It ships as a notarized zip from `publish-macos` (`mac-v*` tags);
-the Tauri app above stays as it is.
+opt-ins). It is the Mac download: every push to `main` that changes it
+publishes a Developer ID-signed, notarized zip to the rolling
+[`mac-latest`](https://github.com/peterkracik/hey-pigeon/releases/tag/mac-latest)
+release, and installed copies update themselves from it (Sparkle, hourly,
+in the background; Hey Pigeon › Check for Updates… does it now). The
+original Tauri desktop client in `desktop-app/` is no longer built; its
+`crates/` are the core both apps run on.
 
 ## License
 

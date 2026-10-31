@@ -26,6 +26,9 @@ struct SettingsView: View {
                 DefaultAppSection()
                 TriageSection()
                 NotificationsSection()
+                #if os(macOS)
+                UpdatesSection()
+                #endif
                 Section {
                     Toggle(isOn: $model.pinListEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -782,6 +785,46 @@ private struct TriageSection: View {
         } catch { self.error = error.localizedDescription }
     }
 }
+
+#if os(macOS)
+// MARK: Updates (the Mac's Sparkle feed — macos-app/README.md)
+
+/// The Mac updates itself from the builds publish-macos puts on GitHub
+/// (MacUpdater, injected by HeyPigeonMacApp's Settings scene); the section
+/// only shows in a build that carries the feed and its key.
+private struct UpdatesSection: View {
+    @Environment(MacUpdater.self) private var updater: MacUpdater?
+
+    var body: some View {
+        if let updater, updater.isEnabled {
+            UpdatesRows(updater: updater)
+        }
+    }
+}
+
+private struct UpdatesRows: View {
+    @Bindable var updater: MacUpdater
+
+    var body: some View {
+        Section {
+            Toggle(isOn: $updater.installsAutomatically) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Install updates automatically")
+                    Text("A new build downloads in the background and installs when you next quit the app. Off, it asks first.")
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheckForUpdates)
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text("Once an hour the app asks GitHub for the newest build of Hey Pigeon for Mac and verifies the download's signature. The check carries nothing about your mail.")
+        }
+        .menuCard()
+    }
+}
+#endif
 
 // MARK: Notifications (the optional push relay — relay/README.md)
 

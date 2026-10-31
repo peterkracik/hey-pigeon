@@ -74,7 +74,8 @@ jobs:
         run: brew install xcodegen
 
       # No OAuth client: the app falls back to the sample inbox. The
-      # reversed id only has to be a valid URL scheme.
+      # reversed id only has to be a valid URL scheme. No update key: the
+      # updater stays off (MacUpdater.isConfigured).
       - name: Write Local.xcconfig (CI placeholders)
         run: |
           cat > macos-app/Config/Local.xcconfig <<'EOF'
@@ -82,6 +83,7 @@ jobs:
           GOOGLE_MAC_CLIENT_ID =
           GOOGLE_MAC_REVERSED_CLIENT_ID = com.googleusercontent.apps.ci
           HEYPIGEON_RELAY_URL =
+          SPARKLE_PUBLIC_ED_KEY =
           EOF
 
       # The package's binary target must exist before Xcode resolves it;

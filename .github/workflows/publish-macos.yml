@@ -5,8 +5,11 @@ name: publish-macos
 # publish-ios. Every push to main that changes the app (the Mac sources, the
 # shell it shares with the phone, or the Rust crates) publishes a build to
 # the rolling "mac-latest" pre-release (one stable download URL, replaced
-# each time); a `mac-v*` tag cuts a versioned release with the version from
-# the tag; a manual run does what a main push does.
+# each time) together with the appcast installed copies poll — the zip is
+# signed with the EdDSA key the app trusts, so they update themselves within
+# the hour (MacUpdater.swift); a `mac-v*` tag cuts a versioned release with
+# the version from the tag (a download, not an update); a manual run does
+# what a main push does.
 #
 # Secrets: the GitHub environment "macos" (synced there from a Doppler
 # config of the same shape). Same values as the Tauri build and publish-ios
@@ -20,8 +23,13 @@ name: publish-macos
 #   HEYPIGEON_MAC_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" for the Mac (the phone's
 #                                      HEYPIGEON_IOS_OAUTH_CLIENT_ID value works; a separate client
 #                                      registered for app.heypigeon.mac is the tidier choice)
+#   SPARKLE_PRIVATE_ED_KEY             the one line Sparkle's `generate_keys -x` writes: the EdDSA key
+#                                      every published zip is signed with and the app verifies
+#                                      downloads against (its public half lands in the Info.plist)
 # Optional:
 #   HEYPIGEON_RELAY_URL                the push relay's register-token URL; empty keeps push off on the Mac
+#   SPARKLE_PUBLIC_ED_KEY              the key's public half (what `generate_keys` prints); left out,
+#                                      the build derives it from the private key
 #
 # One-time setup outside CI: nothing beyond the certificate and the key. The
 # first archive registers the App IDs (app.heypigeon.mac and its two
@@ -66,6 +74,9 @@ env:
   SCHEME: HeyPigeon
   ARCHIVE: macos-app/build/HeyPigeon.xcarchive
   EXPORT_DIR: macos-app/build/export
+  # Sparkle's command-line tools (generate_keys, sign_update) for the update
+  # feed; the framework the app links comes through SwiftPM (project.yml).
+  SPARKLE_VERSION: "2.10.1"
 
 jobs:
   build-sign-notarize:
@@ -98,6 +109,29 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
+      # The release tarball carries bin/sign_update and bin/generate_keys;
+      # its name is read from the release so a rename cannot break the build.
+      - name: Fetch Sparkle's command-line tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/sparkle-project/Sparkle/releases/tags/${SPARKLE_VERSION}"
+          url="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api" \
+            | python3 -c '
+          import json, re, sys
+          assets = json.load(sys.stdin)["assets"]
+          hits = [a["browser_download_url"] for a in assets if re.fullmatch(r"Sparkle-[0-9][0-9.]*\.tar\.xz", a["name"])]
+          if not hits:
+              sys.exit("No Sparkle-<version>.tar.xz among " + ", ".join(a["name"] for a in assets))
+          print(hits[0])
+          ')"
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          curl -fsSL "$url" | tar -xJ -C "$RUNNER_TEMP/sparkle"
+          bin="$(dirname "$(find "$RUNNER_TEMP/sparkle" -type f -name sign_update -path '*/bin/*' | head -1)")"
+          test -x "$bin/sign_update" && test -x "$bin/generate_keys"
+          echo "SPARKLE_BIN=$bin" >> "$GITHUB_ENV"
+
       - name: Resolve version numbers
         id: ver
         run: |
@@ -115,13 +149,38 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then echo "tagged=true" >> "$GITHUB_OUTPUT"; else echo "tagged=false" >> "$GITHUB_OUTPUT"; fi
           echo "Version ${version} (${GITHUB_RUN_NUMBER})"
 
-      - name: Write Local.xcconfig (team + Google OAuth client + relay)
+      - name: Write Local.xcconfig (team + Google OAuth client + relay) and the update key
         env:
           CLIENT_ID: ${{ secrets.HEYPIGEON_MAC_OAUTH_CLIENT_ID }}
           RELAY_URL: ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
+          SPARKLE_PRIVATE: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          SPARKLE_PUBLIC: ${{ vars.SPARKLE_PUBLIC_ED_KEY || secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: |
           set -euo pipefail
           test -n "$CLIENT_ID" || { echo "HEYPIGEON_MAC_OAUTH_CLIENT_ID is not set in the macos environment" >&2; exit 1; }
+          test -n "$SPARKLE_PRIVATE" || { echo "SPARKLE_PRIVATE_ED_KEY is not set in the macos environment (Sparkle's generate_keys -x; macos-app/README.md, Publishing)" >&2; exit 1; }
+          # The private key goes into a file sign_update reads later, never
+          # into the log or the xcconfig.
+          key="$RUNNER_TEMP/sparkle.key"
+          (umask 077; printf '%s\n' "$SPARKLE_PRIVATE" | tr -d '\r' > "$key")
+          if [[ -z "$SPARKLE_PUBLIC" ]]; then
+            # Derive the public half: generate_keys -f imports the seed into
+            # the default keychain — a throwaway one here — and prints it.
+            kc="$RUNNER_TEMP/sparkle.keychain-db"
+            pw="$(openssl rand -base64 24)"
+            default="$(security default-keychain -d user 2>/dev/null | tr -d '[:space:]"' || true)"
+            security create-keychain -p "$pw" "$kc"
+            security unlock-keychain -p "$pw" "$kc"
+            security default-keychain -d user -s "$kc"
+            SPARKLE_PUBLIC="$("$SPARKLE_BIN/generate_keys" -f "$key" | sed -nE 's#.*<string>([A-Za-z0-9+/=]+)</string>.*#\1#p' | head -1)"
+            if [[ -n "$default" ]]; then security default-keychain -d user -s "$default"; fi
+            test -n "$SPARKLE_PUBLIC" || { echo "Could not derive the public key from SPARKLE_PRIVATE_ED_KEY: is it the one base64 line generate_keys -x wrote?" >&2; exit 1; }
+          fi
+          echo "Update feed key (SUPublicEDKey): $SPARKLE_PUBLIC"
+          # Into the Info.plist through the build setting project.yml reads;
+          # passed on xcodebuild's command line (below) because a base64
+          # value may contain "//", which an xcconfig reads as a comment.
+          echo "SPARKLE_PUBLIC_ED_KEY=$SPARKLE_PUBLIC" >> "$GITHUB_ENV"
           reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
           # xcconfig treats "//" as the start of a comment, so a URL must be
           # written as https:/$()/host — Xcode resolves the empty $() away.
@@ -203,7 +262,8 @@ jobs:
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
             ARCHS="arm64 x86_64" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
-            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}"
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
+            SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
 
       - name: Export (Developer ID)
         run: |
@@ -265,16 +325,57 @@ jobs:
           name: "Hey Pigeon for Mac ${{ steps.ver.outputs.version }}"
           files: ${{ env.ZIP }}
 
-      # ---- A push to main: the rolling pre-release ----------------------------
+      # ---- A push to main: the rolling pre-release and the update feed --------
       # One pre-release, "mac-latest", whose zip is replaced on every build, so
       # the download link never changes:
       # https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip
-      - name: Publish as the latest build
+      # Next to it, appcast.xml: the zip's EdDSA signature, size and build
+      # number (CFBundleVersion, which only ever grows: the run number), what
+      # the app's Sparkle polls (SUFeedURL in project.yml) and installs.
+      - name: Sign the update and write the appcast
         if: steps.ver.outputs.tagged != 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD: ${{ steps.ver.outputs.build }}
+          NOTES: ${{ github.event.head_commit.message || 'A new build.' }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          cp "$ZIP" "$RUNNER_TEMP/HeyPigeon-mac-latest.zip"
-          echo "LATEST_ZIP=$RUNNER_TEMP/HeyPigeon-mac-latest.zip" >> "$GITHUB_ENV"
+          latest="$RUNNER_TEMP/HeyPigeon-mac-latest.zip"
+          cp "$ZIP" "$latest"
+          # -p: the bare signature; the key comes in on stdin, not as an argument.
+          sig="$("$SPARKLE_BIN/sign_update" -p --ed-key-file - "$latest" < "$RUNNER_TEMP/sparkle.key")"
+          test -n "$sig" || { echo "sign_update printed no signature" >&2; exit 1; }
+          SIG="$sig" LENGTH="$(stat -f %z "$latest")" python3 - > "$RUNNER_TEMP/appcast.xml" <<'PY'
+          import html, os
+          from email.utils import formatdate
+          e = os.environ
+          base = "https://github.com/peterkracik/hey-pigeon"
+          subject = next((l for l in e["NOTES"].splitlines() if l.strip()), "A new build.").strip()
+          print(f'''<?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Hey Pigeon for Mac</title>
+              <link>{base}/releases/download/mac-latest/appcast.xml</link>
+              <description>The newest build of Hey Pigeon for Mac.</description>
+              <language>en</language>
+              <item>
+                <title>Version {html.escape(e["VERSION"])} ({e["BUILD"]})</title>
+                <sparkle:version>{e["BUILD"]}</sparkle:version>
+                <sparkle:shortVersionString>{html.escape(e["VERSION"])}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>27.0.0</sparkle:minimumSystemVersion>
+                <pubDate>{formatdate(usegmt=True)}</pubDate>
+                <link>{base}/commit/{e["SHA"]}</link>
+                <description><![CDATA[<p>{html.escape(subject)}</p><p><a href="{base}/commit/{e["SHA"]}">The change on GitHub</a></p>]]></description>
+                <enclosure url="{base}/releases/download/mac-latest/HeyPigeon-mac-latest.zip" length="{e["LENGTH"]}" type="application/octet-stream" sparkle:edSignature="{e["SIG"]}"/>
+              </item>
+            </channel>
+          </rss>''')
+          PY
+          python3 -c 'import sys, xml.dom.minidom; xml.dom.minidom.parse(sys.argv[1])' "$RUNNER_TEMP/appcast.xml"
+          cat "$RUNNER_TEMP/appcast.xml"
+          echo "LATEST_ZIP=$latest" >> "$GITHUB_ENV"
+          echo "APPCAST=$RUNNER_TEMP/appcast.xml" >> "$GITHUB_ENV"
       - uses: softprops/action-gh-release@v2
         if: steps.ver.outputs.tagged != 'true'
         with:
@@ -284,8 +385,11 @@ jobs:
           body: |
             Version ${{ steps.ver.outputs.version }}, build ${{ steps.ver.outputs.build }}, from `${{ github.sha }}`.
             Replaced on every push to main that changes the Mac app. Signed with Developer ID and notarized.
-          files: ${{ env.LATEST_ZIP }}
+            Installed copies update themselves from the `appcast.xml` next to the zip within the hour (Hey Pigeon › Check for Updates… does it now).
+          files: |
+            ${{ env.LATEST_ZIP }}
+            ${{ env.APPCAST }}
 
       - name: Clean up keys
         if: always()
-        run: rm -rf ~/private_keys "$RUNNER_TEMP/signing.keychain-db" macos-app/Config/Local.xcconfig
+        run: rm -rf ~/private_keys "$RUNNER_TEMP/signing.keychain-db" "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP/sparkle.keychain-db" macos-app/Config/Local.xcconfig

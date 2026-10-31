@@ -11,3 +11,7 @@ GOOGLE_MAC_REVERSED_CLIENT_ID = com.googleusercontent.apps.123456789-abcdefg
 // the relay's pushes too. xcconfig reads "//" as a comment, so write a URL
 // as https:/$()/host.
 HEYPIGEON_RELAY_URL =
+// Optional: the public half of the EdDSA key the published builds are
+// signed with (publish-macos.yml; `generate_keys` prints it). Empty leaves
+// in-app updates off in your own builds, which is right for development.
+SPARKLE_PUBLIC_ED_KEY =

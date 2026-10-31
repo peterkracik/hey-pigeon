@@ -13,12 +13,20 @@ import SwiftUI
 
 struct MacCommands: Commands {
     let model: AppModel
+    let updater: MacUpdater
     @FocusedValue(\.windowState) private var state
 
     private var hasSelection: Bool { !(state?.selection.isEmpty ?? true) }
     private var hasOne: Bool { state?.selection.count == 1 }
 
     var body: some Commands {
+        // Under "About Hey Pigeon", where every Mac app keeps it. Disabled
+        // while Sparkle is busy, and in a build without the update key.
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheckForUpdates)
+        }
+
         CommandGroup(before: .newItem) {
             Button("New Message") { model.compose(SendDraft()) }
                 .keyboardShortcut("n", modifiers: .command)

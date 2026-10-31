@@ -5,7 +5,8 @@
 // bar extra with the unread count, and a thread in its own window on Return.
 // The Mac never suspends the app, so sync is a timer while it runs plus
 // every activation (MacSyncLoop), and new-mail banners come from that
-// timer's diff rather than a push relay.
+// timer's diff rather than a push relay. The app updates itself from the
+// builds publish-macos puts on GitHub (MacUpdater).
 
 import AppKit
 import CoreSpotlight
@@ -27,6 +28,8 @@ struct HeyPigeonMacApp: App {
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
     /// Settings › Appearance › "Show in the menu bar".
     @AppStorage("menuBarExtra") private var menuBarExtra = true
+    /// Sparkle, started once for the process (MacUpdater.swift).
+    private let updater = MacUpdater()
 
     init() {
         let engine = Self.makeEngine()
@@ -92,7 +95,7 @@ struct HeyPigeonMacApp: App {
                 }
         }
         .defaultSize(width: 1240, height: 800)
-        .commands { MacCommands(model: model) }
+        .commands { MacCommands(model: model, updater: updater) }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
@@ -119,6 +122,7 @@ struct HeyPigeonMacApp: App {
         Settings {
             SettingsView()
                 .environment(model)
+                .environment(updater)
                 .preferredColorScheme(scheme)
         }
 

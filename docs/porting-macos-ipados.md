@@ -2,8 +2,9 @@
 
 Where the SwiftUI app stands for the iPad and the native Mac app, and what
 is left to do. The native Mac app exists (`macos-app/`, built and tested by
-`macos-ci`); the desktop Tauri app (`desktop-app/`) is still shipped
-alongside it under its own bundle id. This document is the iPad plan and
+`macos-ci`, published by `publish-macos`) and replaced the Tauri desktop
+app (`desktop-app/`) as the Mac download; that app's shell is no longer
+built, its Rust crates are the core. This document is the iPad plan and
 the record of how the Swift shell — with its Siri, Spotlight, Foundation
 Models and widget work — reached the Mac.
 
@@ -11,7 +12,7 @@ Models and widget work — reached the Mac.
 
 | | iPadOS | macOS (native SwiftUI target, `macos-app/`) |
 | --- | --- | --- |
-| Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on `mac-v*` tags |
+| Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on every push to `main` (the `mac-latest` release, with the Sparkle appcast installed apps update from) and on `mac-v*` tags |
 | Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
 | Layout | The phone's `TabView` + `NavigationStack`, full screen | Sidebar · list · thread (`NavigationSplitView`), Settings as a window, a thread in its own window |
 | Keyboard | `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
@@ -94,10 +95,11 @@ Rules that came out of it are in `macos-app/CLAUDE.md`: shared first, no
 bare `#if` in a feature file, bare letters only through `onKeyPress`,
 auto-advance opt-in, sync is the timer, widgets act through links.
 
-Bundle ids: the Tauri app keeps `app.heypigeon`; the native Mac app is
+Bundle ids: the Tauri app had `app.heypigeon`; the native Mac app is
 `app.heypigeon.mac` (its extensions `app.heypigeon.mac.widgets` and
-`.share`), so both can be installed and the native one ships from its own
-workflow (`publish-macos.yml`).
+`.share`), so an old install and the new one sit side by side and neither
+can update into the other — the native app is installed once by hand and
+then updates itself (`MacUpdater`, `publish-macos.yml`).
 
 ## Rules while porting
 

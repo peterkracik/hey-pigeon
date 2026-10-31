@@ -15,7 +15,8 @@ too. There is no second model, engine or intent layer.
 
 ```text
 HeyPigeonMac/
-  App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands
+  App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
+              MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
   Features/   MainWindow, SidebarColumn, ThreadListColumn, ThreadDetailColumn, WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
@@ -57,6 +58,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   extension, which has no engine; Done and Snooze are
   `heypigeon://done/<id>` and `heypigeon://snooze/<id>/<h>`
   (`AppGroup.Link`, `DeepLink`), handled by `AppModel.handle`.
+- **Updates are Sparkle, configured in `project.yml`, not in code.**
+  `SUFeedURL` is the appcast `publish-macos` uploads to the `mac-latest`
+  release; `SUPublicEDKey` comes from the `SPARKLE_PUBLIC_ED_KEY` build
+  setting (empty in CI and in a checkout without `Local.xcconfig`, which
+  keeps the updater off — `MacUpdater.isConfigured`). Automatic checks and
+  installs are Info.plist defaults; `MacUpdater` only mirrors Sparkle's
+  state for the menu and Settings › Updates. `CFBundleVersion` is the
+  publish run number, so it only grows; never give a build a lower one.
 - **Copy says "Mac" through `Device.name`**, and Settings sections that
   differ (Default email app, Notifications, Siri & Search, the swipe
   titles) branch on `#if os(macOS)` inside `SettingsView` with their own

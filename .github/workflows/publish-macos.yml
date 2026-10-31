@@ -98,9 +98,11 @@ jobs:
           if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
           xcodebuild -version
 
+      # Apple Silicon only: macOS 27, the deployment target, no longer runs on
+      # Intel Macs, and Xcode flags an x86_64 slice as deprecated for it.
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -192,11 +194,11 @@ jobs:
           HEYPIGEON_RELAY_URL = ${relay_xc}
           EOF
 
-      - name: Build Rust core for macOS (universal) + Swift bindings
+      - name: Build Rust core for macOS (Apple Silicon) + Swift bindings
         env:
           RUST_PROFILE: release
           PLATFORM_NAME: macosx
-          ARCHS: arm64 x86_64
+          ARCHS: arm64
         run: macos-app/scripts/build-rust.sh
 
       - name: Generate Xcode project
@@ -243,8 +245,14 @@ jobs:
           echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
 
       # Automatic signing with the API key: Xcode registers the App IDs,
-      # turns on the capabilities the entitlements ask for and makes the
-      # Developer ID profiles itself.
+      # turns on the capabilities the entitlements ask for (push, the App
+      # Group) and makes the provisioning profiles itself. The archive is
+      # signed with the Developer ID identity from the start: Xcode's default
+      # for an archive is Apple Development, which needs a development
+      # certificate and a Mac registered with the team — CI has neither, and
+      # the first run failed on exactly that ("Your team has no devices").
+      # With Developer ID the profiles are Developer ID profiles, which name
+      # no devices; the export then only re-signs with the same identity.
       - name: Archive
         working-directory: macos-app
         run: |
@@ -260,7 +268,8 @@ jobs:
             -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
-            ARCHS="arm64 x86_64" \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            ARCHS="arm64" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
             SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"

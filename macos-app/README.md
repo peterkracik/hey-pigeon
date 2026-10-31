@@ -22,7 +22,7 @@ macos-app/
     Resources/            The Mac icon set; drop Manrope-*.ttf into Fonts/ for the brand typeface
   HeyPigeonMacShare/      The share menu's "Hey Pigeon": NSViewController over the shared ShareView
   HeyPigeonMacTests/      Swift Testing: the keyboard map, the selection, the palette filter, the widget links
-  scripts/build-rust.sh   cargo (aarch64/x86_64-apple-darwin) → uniffi → xcframework, via the iOS script
+  scripts/build-rust.sh   cargo (aarch64-apple-darwin) → uniffi → xcframework, via the iOS script
   project.yml             XcodeGen spec (the .xcodeproj is generated); the widgets target reuses
                           ios-app/HeyPigeonWidgets, the tests target reuses ios-app/HeyPigeonTests
   Config/                 Local.xcconfig with your team id + Google OAuth client (git-ignored)
@@ -51,7 +51,8 @@ Settings' sections — is the phone's code.
 ## Build
 
 1. Tools: Xcode 27+ (macOS 27 SDK), Rust (`rustup`), `brew install xcodegen`.
-2. Rust targets: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
+2. Rust target: `rustup target add aarch64-apple-darwin` (macOS 27 runs on
+   Apple Silicon only, so there is no Intel slice).
 3. OAuth client: Google has no "macOS" client type; a client of type **iOS**
    works from a Mac app through the same consent sheet
    (`ASWebAuthenticationSession`, the reversed client id as the callback
@@ -86,8 +87,8 @@ xcodebuild test -project HeyPigeonMac.xcodeproj -scheme HeyPigeon -destination '
 
 ## Publishing and updates (CI)
 
-`.github/workflows/publish-macos.yml` builds a universal archive, signs it
-with Developer ID through the App Store Connect key and notarizes it — the
+`.github/workflows/publish-macos.yml` builds an Apple Silicon archive, signs
+it with Developer ID through the App Store Connect key and notarizes it — the
 Swift app's twin of `publish-ios`. **Every push to `main`** that changes the
 app (anything under `macos-app/` except docs, the shared shell in
 `ios-app/HeyPigeon`, the widgets, the share view, the Rust crates) publishes

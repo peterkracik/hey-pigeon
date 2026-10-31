@@ -10,7 +10,20 @@
 import Foundation
 
 enum AppGroup {
+    #if os(macOS)
+    /// The Mac ships outside the App Store, signed with Developer ID and
+    /// without a provisioning profile, and macOS only honors an App Group
+    /// without one in the team-prefixed form (`TEAMID.group.app.heypigeon`).
+    /// macos-app/project.yml writes the resolved name into each target's
+    /// Info.plist next to the entitlement; an unsigned build (CI) has no
+    /// team prefix and falls back to the plain name.
+    static let identifier: String = {
+        let value = Bundle.main.object(forInfoDictionaryKey: "HeyPigeonAppGroup") as? String ?? ""
+        return value.isEmpty || value.hasPrefix("$(") ? "group.app.heypigeon" : value
+    }()
+    #else
     static let identifier = "group.app.heypigeon"
+    #endif
     /// The widgets' kinds and the URL scheme the app opens on.
     static let urlScheme = "heypigeon"
 

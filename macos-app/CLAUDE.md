@@ -53,7 +53,10 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   switch clears the selection instead.
 - **Sync is the timer.** No BGTaskScheduler on the Mac; `MacSyncLoop` runs
   a round every 30 s and composes new-mail banners from its diff
-  (`NewMailNotifier.post`). The push relay stays optional.
+  (`NewMailNotifier.post`). The Mac build has no push entitlement — it is
+  signed with Developer ID and no provisioning profile, which also makes
+  the App Group the team-prefixed name (`AppGroup.identifier` reads it
+  from the Info.plist) — so the relay is the phone's.
 - **Widgets act through links.** A Mac widget's button runs in the
   extension, which has no engine; Done and Snooze are
   `heypigeon://done/<id>` and `heypigeon://snooze/<id>/<h>`

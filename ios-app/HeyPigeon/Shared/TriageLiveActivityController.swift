@@ -4,7 +4,7 @@
 // the tally stays readable. The Stop button runs WidgetCancelTriageIntent
 // in this process, which reaches TriageAgent.current.
 
-#if canImport(ActivityKit)
+#if os(iOS)
 import ActivityKit
 import Foundation
 

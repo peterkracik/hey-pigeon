@@ -3,7 +3,7 @@
 // Dynamic: how many are due, and the first's sender, subject and thread id
 // (what the Done and Snooze buttons act on, what a tap opens).
 
-#if canImport(ActivityKit)
+#if os(iOS)
 import ActivityKit
 import Foundation
 
@@ -18,5 +18,6 @@ struct ReminderActivityAttributes: ActivityAttributes {
     }
 }
 #else
-// ActivityKit does not exist on the Mac; nothing uses these there.
+// The macOS SDK ships ActivityKit with every type marked unavailable, so
+// this is an os check, not canImport: nothing uses these on the Mac.
 #endif

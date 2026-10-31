@@ -4,7 +4,7 @@
 // and Snooze buttons on it run WidgetMarkDoneIntent / WidgetSnoozeIntent
 // in this process (LiveActivityIntent), which call back into AppModel.
 
-#if canImport(ActivityKit)
+#if os(iOS)
 import ActivityKit
 import Foundation
 

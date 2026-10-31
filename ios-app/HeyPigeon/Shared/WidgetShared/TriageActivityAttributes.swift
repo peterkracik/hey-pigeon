@@ -3,7 +3,7 @@
 // the Dynamic Island while the intent works past Siri's patience. Static:
 // nothing. Dynamic: everything the run reports as it goes.
 
-#if canImport(ActivityKit)
+#if os(iOS)
 import ActivityKit
 import Foundation
 
@@ -22,5 +22,6 @@ struct TriageActivityAttributes: ActivityAttributes {
     }
 }
 #else
-// ActivityKit does not exist on the Mac; nothing uses these there.
+// The macOS SDK ships ActivityKit with every type marked unavailable, so
+// this is an os check, not canImport: nothing uses these on the Mac.
 #endif

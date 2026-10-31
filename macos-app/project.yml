@@ -44,18 +44,6 @@ settings:
     # YES only together with the Private Cloud Compute entitlement
     # (ios-app/project.yml explains the dance; same key, same Info.plist name).
     HEYPIGEON_PRIVATE_CLOUD_COMPUTE: "NO"
-  configs:
-    Release:
-      # Xcode's "Signing Certificate: Developer ID Application" under
-      # automatic signing: a Release archive (publish-macos) is signed with
-      # the Developer ID identity and Xcode makes Developer ID provisioning
-      # profiles for the app and its extensions, which name no devices. The
-      # default, Apple Development, needs a development certificate and a
-      # Mac registered with the team — CI has neither. It has to be set here:
-      # the same value on xcodebuild's command line counts as a manual
-      # override and Xcode refuses it as "conflicting provisioning settings".
-      # Debug keeps the default, so a local run needs no Developer ID.
-      CODE_SIGN_IDENTITY: Developer ID Application
 
 targets:
   HeyPigeon:
@@ -88,11 +76,15 @@ targets:
         com.apple.security.files.user-selected.read-only: true
         # Shared with the widget and share extensions: the widgets' JSON
         # snapshot and a pending share. Not the database, not the Keychain.
+        # The team-id-prefixed form: the published app is signed with
+        # Developer ID and carries no provisioning profile (publish-macos),
+        # and that is the only form macOS honors without one — a plain
+        # "group." name would make macOS 15+ ask the user. Every target reads
+        # the resolved name back from its Info.plist (HeyPigeonAppGroup).
+        # No push entitlement for the same reason (aps-environment needs a
+        # profile): the Mac syncs itself every 30 s, the relay is the phone's.
         com.apple.security.application-groups:
-          - group.app.heypigeon
-        # Silent pushes from the optional relay (the Mac's own 30-second
-        # sync covers new mail without it). The Mac's APNs key.
-        com.apple.developer.aps-environment: development
+          - $(TeamIdentifierPrefix)group.app.heypigeon
         # Sparkle's installer helpers: a sandboxed app may talk to the two
         # XPC services inside Sparkle.framework only through this exception
         # (sparkle-project.org/documentation/sandboxing).
@@ -135,6 +127,9 @@ targets:
         # too; its reversed id is the consent sheet's callback scheme below.
         GoogleMacClientID: $(GOOGLE_MAC_CLIENT_ID)
         HeyPigeonRelayURL: $(HEYPIGEON_RELAY_URL)
+        # The App Group as signed (AppGroup.identifier on macOS); empty team
+        # prefix in an unsigned CI build, where there is no container anyway.
+        HeyPigeonAppGroup: $(TeamIdentifierPrefix)group.app.heypigeon
         HeyPigeonPrivateCloudCompute: $(HEYPIGEON_PRIVATE_CLOUD_COMPUTE)
         # Fonts live in Contents/Resources/Fonts (the folder reference above).
         ATSApplicationFontsPath: Fonts
@@ -206,7 +201,7 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.application-groups:
-          - group.app.heypigeon
+          - $(TeamIdentifierPrefix)group.app.heypigeon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.mac.widgets
@@ -220,6 +215,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        HeyPigeonAppGroup: $(TeamIdentifierPrefix)group.app.heypigeon
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
@@ -239,7 +235,7 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.application-groups:
-          - group.app.heypigeon
+          - $(TeamIdentifierPrefix)group.app.heypigeon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.mac.share
@@ -253,6 +249,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        HeyPigeonAppGroup: $(TeamIdentifierPrefix)group.app.heypigeon
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController

@@ -36,7 +36,7 @@ macos-app/
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
 | After Mark done | Undo toast, back to the list | Undo toast, the next row takes the selection (auto-advance) |
 | Several at once | — | ⌘/⇧-click rows: a batch bar in the detail column |
-| Sync | On open, pull, background refresh, the optional relay | Every 30 s while open, every activation, ⇧⌘N; the relay is optional and off |
+| Sync | On open, pull, background refresh, the optional relay | Every 30 s while open, every activation, ⇧⌘N; no relay — the Mac build has no push entitlement |
 | New mail | A relay push → banner | The timer's diff → banner (Settings › Notifications), communication-style with the sender's initial |
 | Siri, Spotlight, Shortcuts | App Intents, the Mail schema, the index | The same files; "Ask my inbox" and "triage my inbox" through the Mailbox menu and the palette |
 | Widgets | Unread · Next reminder · Need reply, Live Activities, Controls | The three widgets; Done and 1 h are `heypigeon://` links the app acts on |
@@ -69,7 +69,12 @@ To work on the UI without 3–4, set `HEYPIGEON_MOCK=1` in the scheme: the app
 runs against the in-memory sample inbox.
 
 The app is sandboxed (network client, user-selected files, the App Group
-`group.app.heypigeon` shared with the widget and share extensions, APNs).
+shared with the widget and share extensions). The published build is
+signed with Developer ID and carries no provisioning profile, so it holds
+no entitlement that needs one: the App Group is the team-prefixed
+`<TEAMID>.group.app.heypigeon` (the form macOS honors without a profile;
+`AppGroup.identifier` reads it from the Info.plist) and there is no push
+entitlement — the Mac syncs itself, the relay is the phone's.
 Its data lives in the container's Application Support; OAuth tokens and keys
 in the Keychain.
 
@@ -110,8 +115,9 @@ release with `HeyPigeon-mac-<version>.zip` — a download, not an update.
 The workflow reads the GitHub environment `macos` (synced from a Doppler
 config of the same shape): `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`
 and `APPLE_TEAM_ID`, `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID` and
-`ASC_API_KEY_P8` as `publish-ios` has them, `HEYPIGEON_MAC_OAUTH_CLIENT_ID`
-(an iOS-type Google client; the phone's value works), and
+`ASC_API_KEY_P8` as `publish-ios` has them (here only for notarization),
+`HEYPIGEON_MAC_OAUTH_CLIENT_ID` (an iOS-type Google client; the phone's
+value works), and
 `SPARKLE_PRIVATE_ED_KEY`, the update signing key. Make that one once, on
 any Mac, with Sparkle's tools (the `Sparkle-<version>.tar.xz` on
 [its releases page](https://github.com/sparkle-project/Sparkle/releases)):

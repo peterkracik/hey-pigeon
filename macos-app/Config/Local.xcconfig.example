@@ -6,10 +6,9 @@
 DEVELOPMENT_TEAM = ABCDE12345
 GOOGLE_MAC_CLIENT_ID = 123456789-abcdefg.apps.googleusercontent.com
 GOOGLE_MAC_REVERSED_CLIENT_ID = com.googleusercontent.apps.123456789-abcdefg
-// Optional: the push relay's register-token URL. The Mac does not need it —
-// it syncs every 30 seconds while open — so leave it empty unless you want
-// the relay's pushes too. xcconfig reads "//" as a comment, so write a URL
-// as https:/$()/host.
+// The push relay's register-token URL: leave it empty. The Mac build has no
+// push entitlement (it ships with Developer ID and no provisioning profile)
+// and syncs every 30 seconds while open instead.
 HEYPIGEON_RELAY_URL =
 // Optional: the public half of the EdDSA key the published builds are
 // signed with (publish-macos.yml; `generate_keys` prints it). Empty leaves

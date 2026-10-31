@@ -246,13 +246,14 @@ jobs:
 
       # Automatic signing with the API key: Xcode registers the App IDs,
       # turns on the capabilities the entitlements ask for (push, the App
-      # Group) and makes the provisioning profiles itself. The archive is
-      # signed with the Developer ID identity from the start: Xcode's default
-      # for an archive is Apple Development, which needs a development
-      # certificate and a Mac registered with the team — CI has neither, and
-      # the first run failed on exactly that ("Your team has no devices").
-      # With Developer ID the profiles are Developer ID profiles, which name
-      # no devices; the export then only re-signs with the same identity.
+      # Group) and makes the provisioning profiles itself. The Release
+      # configuration signs with the Developer ID identity (project.yml:
+      # CODE_SIGN_IDENTITY), so those are Developer ID profiles, which name
+      # no devices — the default, Apple Development, needs a development
+      # certificate and a Mac registered with the team, and the first run
+      # failed on exactly that ("Your team has no devices"). The identity
+      # cannot be passed here instead: on the command line Xcode treats it as
+      # a manual override that conflicts with automatic signing.
       - name: Archive
         working-directory: macos-app
         run: |
@@ -268,7 +269,6 @@ jobs:
             -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
-            CODE_SIGN_IDENTITY="Developer ID Application" \
             ARCHS="arm64" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \

@@ -44,6 +44,18 @@ settings:
     # YES only together with the Private Cloud Compute entitlement
     # (ios-app/project.yml explains the dance; same key, same Info.plist name).
     HEYPIGEON_PRIVATE_CLOUD_COMPUTE: "NO"
+  configs:
+    Release:
+      # Xcode's "Signing Certificate: Developer ID Application" under
+      # automatic signing: a Release archive (publish-macos) is signed with
+      # the Developer ID identity and Xcode makes Developer ID provisioning
+      # profiles for the app and its extensions, which name no devices. The
+      # default, Apple Development, needs a development certificate and a
+      # Mac registered with the team — CI has neither. It has to be set here:
+      # the same value on xcodebuild's command line counts as a manual
+      # override and Xcode refuses it as "conflicting provisioning settings".
+      # Debug keeps the default, so a local run needs no Developer ID.
+      CODE_SIGN_IDENTITY: Developer ID Application
 
 targets:
   HeyPigeon:

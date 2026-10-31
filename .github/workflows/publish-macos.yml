@@ -17,9 +17,9 @@ name: publish-macos
 #   APPLE_CERTIFICATE                  base64 of the "Developer ID Application" .p12 (the Tauri build's)
 #   APPLE_CERTIFICATE_PASSWORD         its password
 #   APPLE_TEAM_ID                      10-char team id
-#   ASC_API_KEY_ID                     App Store Connect API key (publish-ios's): Xcode registers the Mac App
-#   ASC_API_ISSUER_ID                  IDs and makes the Developer ID profiles with it (push, app groups),
-#   ASC_API_KEY_P8                     and notarytool submits the build with it; the .p8 as base64
+#   ASC_API_KEY_ID                     App Store Connect API key (publish-ios's): notarytool submits the
+#   ASC_API_ISSUER_ID                  build with it. Nothing else talks to Apple — the archive is signed
+#   ASC_API_KEY_P8                     with Developer ID and no provisioning profile; the .p8 as base64
 #   HEYPIGEON_MAC_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" for the Mac (the phone's
 #                                      HEYPIGEON_IOS_OAUTH_CLIENT_ID value works; a separate client
 #                                      registered for app.heypigeon.mac is the tidier choice)
@@ -27,9 +27,11 @@ name: publish-macos
 #                                      every published zip is signed with and the app verifies
 #                                      downloads against (its public half lands in the Info.plist)
 # Optional:
-#   HEYPIGEON_RELAY_URL                the push relay's register-token URL; empty keeps push off on the Mac
 #   SPARKLE_PUBLIC_ED_KEY              the key's public half (what `generate_keys` prints); left out,
 #                                      the build derives it from the private key
+# No HEYPIGEON_RELAY_URL: the Mac build has no push entitlement (that would
+# need a provisioning profile), so the relay is the phone's; the Mac syncs
+# itself every 30 seconds.
 #
 # One-time setup outside CI: nothing beyond the certificate and the key. The
 # first archive registers the App IDs (app.heypigeon.mac and its two
@@ -98,9 +100,11 @@ jobs:
           if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
           xcodebuild -version
 
+      # Apple Silicon only: macOS 27, the deployment target, no longer runs on
+      # Intel Macs, and Xcode flags an x86_64 slice as deprecated for it.
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -149,10 +153,9 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then echo "tagged=true" >> "$GITHUB_OUTPUT"; else echo "tagged=false" >> "$GITHUB_OUTPUT"; fi
           echo "Version ${version} (${GITHUB_RUN_NUMBER})"
 
-      - name: Write Local.xcconfig (team + Google OAuth client + relay) and the update key
+      - name: Write Local.xcconfig (team + Google OAuth client) and the update key
         env:
           CLIENT_ID: ${{ secrets.HEYPIGEON_MAC_OAUTH_CLIENT_ID }}
-          RELAY_URL: ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
           SPARKLE_PRIVATE: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
           SPARKLE_PUBLIC: ${{ vars.SPARKLE_PUBLIC_ED_KEY || secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: |
@@ -182,21 +185,18 @@ jobs:
           # value may contain "//", which an xcconfig reads as a comment.
           echo "SPARKLE_PUBLIC_ED_KEY=$SPARKLE_PUBLIC" >> "$GITHUB_ENV"
           reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
-          # xcconfig treats "//" as the start of a comment, so a URL must be
-          # written as https:/$()/host — Xcode resolves the empty $() away.
-          relay_xc="$(printf '%s' "$RELAY_URL" | sed 's#://#:/$()/#g')"
           cat > macos-app/Config/Local.xcconfig <<EOF
           DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_MAC_CLIENT_ID = ${CLIENT_ID}
           GOOGLE_MAC_REVERSED_CLIENT_ID = ${reversed}
-          HEYPIGEON_RELAY_URL = ${relay_xc}
+          HEYPIGEON_RELAY_URL =
           EOF
 
-      - name: Build Rust core for macOS (universal) + Swift bindings
+      - name: Build Rust core for macOS (Apple Silicon) + Swift bindings
         env:
           RUST_PROFILE: release
           PLATFORM_NAME: macosx
-          ARCHS: arm64 x86_64
+          ARCHS: arm64
         run: macos-app/scripts/build-rust.sh
 
       - name: Generate Xcode project
@@ -242,9 +242,15 @@ jobs:
           grep -q -- "-----BEGIN PRIVATE KEY-----" "$key" || { echo "ASC_API_KEY_P8 is not a PEM private key" >&2; exit 1; }
           echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
 
-      # Automatic signing with the API key: Xcode registers the App IDs,
-      # turns on the capabilities the entitlements ask for and makes the
-      # Developer ID profiles itself.
+      # Manual signing with the Developer ID identity and no provisioning
+      # profile. Nothing in the app needs one: no push entitlement, and the
+      # App Group is team-prefixed (project.yml). So nothing has to be
+      # registered with Apple and no device has to exist — Xcode's automatic
+      # signing wants an Apple Development certificate and a Mac registered
+      # with the team for the archive ("Your team has no devices") and
+      # refuses a Developer ID identity as "conflicting provisioning
+      # settings"; the first runs failed on both. The team id still matters:
+      # it is the App Group's prefix ($(TeamIdentifierPrefix)).
       - name: Archive
         working-directory: macos-app
         run: |
@@ -255,12 +261,11 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -archivePath "$GITHUB_WORKSPACE/$ARCHIVE" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
-            ARCHS="arm64 x86_64" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ARCHS="arm64" \
             MARKETING_VERSION="${{ steps.ver.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
             SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
@@ -274,19 +279,20 @@ jobs:
           <plist version="1.0"><dict>
             <key>method</key><string>developer-id</string>
             <key>destination</key><string>export</string>
-            <key>signingStyle</key><string>automatic</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Developer ID Application</string>
             <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
           </dict></plist>
           EOF
           xcodebuild -exportArchive \
             -archivePath "$ARCHIVE" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
-            -exportPath "$EXPORT_DIR" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$ASC_KEY_PATH" \
-            -authenticationKeyID "${{ secrets.ASC_API_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_API_ISSUER_ID }}"
+            -exportPath "$EXPORT_DIR"
           ls -la "$EXPORT_DIR"
+          # What ships: the identity, the entitlements (team-prefixed group, no
+          # profile-only ones) and a clean deep verification.
+          codesign -dv --entitlements - "$EXPORT_DIR/HeyPigeon.app" 2>&1 | grep -vE '^\s*$' | head -40
+          codesign --verify --deep --strict "$EXPORT_DIR/HeyPigeon.app"
 
       - name: Notarize and staple
         run: |

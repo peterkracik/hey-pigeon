@@ -17,7 +17,7 @@ Models and widget work — reached the Mac.
 | Layout | The phone's `TabView` + `NavigationStack`, full screen | Sidebar · list · thread (`NavigationSplitView`), Settings as a window, a thread in its own window |
 | Keyboard | `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
-| Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` (+ `x86_64` for a universal release) from the same `build-rust.sh` when `PLATFORM_NAME=macosx` |
+| Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` from the same `build-rust.sh` when `PLATFORM_NAME=macosx` (macOS 27 is Apple Silicon only; `ARCHS` can still add `x86_64`) |
 
 ## The platform layer
 

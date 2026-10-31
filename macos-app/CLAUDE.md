@@ -53,7 +53,10 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   switch clears the selection instead.
 - **Sync is the timer.** No BGTaskScheduler on the Mac; `MacSyncLoop` runs
   a round every 30 s and composes new-mail banners from its diff
-  (`NewMailNotifier.post`). The push relay stays optional.
+  (`NewMailNotifier.post`). The Mac build has no push entitlement — it is
+  signed with Developer ID and no provisioning profile, which also makes
+  the App Group the team-prefixed name (`AppGroup.identifier` reads it
+  from the Info.plist) — so the relay is the phone's.
 - **Widgets act through links.** A Mac widget's button runs in the
   extension, which has no engine; Done and Snooze are
   `heypigeon://done/<id>` and `heypigeon://snooze/<id>/<h>`
@@ -66,6 +69,13 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   installs are Info.plist defaults; `MacUpdater` only mirrors Sparkle's
   state for the menu and Settings › Updates. `CFBundleVersion` is the
   publish run number, so it only grows; never give a build a lower one.
+- **System callbacks are not on the main thread on the Mac.** AppKit and
+  the frameworks behind it hand completion handlers back on XPC queues
+  (`ASWebAuthenticationSession` did, and the first build crashed on Swift
+  6's executor check). A closure handed to such an API is `@Sendable` and
+  only resumes a continuation or hops to the main actor; a delegate
+  method the framework may call off the main thread is `nonisolated` and
+  reads state captured on the main actor beforehand (`OAuthCoordinator`).
 - **Copy says "Mac" through `Device.name`**, and Settings sections that
   differ (Default email app, Notifications, Siri & Search, the swipe
   titles) branch on `#if os(macOS)` inside `SettingsView` with their own

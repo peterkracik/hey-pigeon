@@ -5,7 +5,8 @@
 #
 #   PLATFORM_NAME=macosx ARCHS="arm64" macos-app/scripts/build-rust.sh
 #
-# One-time setup: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+# One-time setup: rustup target add aarch64-apple-darwin (x86_64-apple-darwin
+# too for a universal build; macOS 27 itself is Apple Silicon only)
 set -eo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 export PLATFORM_NAME="${PLATFORM_NAME:-macosx}"

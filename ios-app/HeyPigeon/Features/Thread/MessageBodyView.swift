@@ -265,7 +265,11 @@ private struct SelectableText: NSViewRepresentable {
 
 /// The HTML body in a WKWebView. The representable conformance is per
 /// platform (below); the configuration, the wrapping document, the
-/// navigation policy and the injected scripts are shared.
+/// navigation policy and the injected scripts are shared. Main-actor
+/// like a representable declared with its conformance: the nested
+/// Coordinator inherits it, and its completion closures may then touch
+/// the bindings on the main queue (Swift 6 refused the hop otherwise).
+@MainActor
 private struct HTMLView {
     let html: String
     let allowRemoteImages: Bool

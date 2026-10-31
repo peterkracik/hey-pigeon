@@ -198,7 +198,7 @@ jobs:
       - name: Notarize and staple
         run: |
           set -euo pipefail
-          app="$EXPORT_DIR/Hey Pigeon.app"
+          app="$EXPORT_DIR/HeyPigeon.app"
           zip="$RUNNER_TEMP/HeyPigeon-mac-${{ steps.ver.outputs.version }}.zip"
           ditto -c -k --keepParent "$app" "$zip"
           xcrun notarytool submit "$zip" \

@@ -44,7 +44,6 @@ struct SummarySheet: View {
             .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .sheetSize(.mediumOrLarge)
     }
 }

@@ -4,12 +4,19 @@
 // mailto: link to the app's own composer. The HTML arrives already sanitized by the core
 // (ammonia); this is the second layer.
 //
-// UIKit-backed (UITextView, WKWebView as UIViewRepresentable): the Mac port
-// needs NSViewRepresentable twins of SelectableText and HTMLView; the rules
-// (CSP, link policy, the injected scripts) carry over unchanged.
+// Two native views back it: the plain-text body is a selectable text view
+// (UITextView on iOS, NSTextView on the Mac) and the HTML a WKWebView, each
+// wrapped for SwiftUI by the platform's representable. The rules — CSP, the
+// link policy, the injected scripts — are the same on both and live in the
+// platform-neutral parts of `HTMLView`.
 
 import SwiftUI
 import WebKit
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 struct MessageBodyView: View {
     let html: String?
@@ -114,11 +121,11 @@ struct MessageBodyView: View {
     }
 
     /// Plain-text mail with every URL turned into a tappable, underlined link.
-    private static func linkified(_ text: String, style: UIFont.TextStyle = .body,
+    private static func linkified(_ text: String, style: PlatformFont.TextStyle = .body,
                                   color: Color = Theme.textPrimary) -> NSAttributedString {
         let out = NSMutableAttributedString(string: text, attributes: [
-            .font: UIFont.preferredFont(forTextStyle: style),
-            .foregroundColor: UIColor(color),
+            .font: PlatformFont.preferredFont(forTextStyle: style),
+            .foregroundColor: PlatformColor(color),
         ])
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
         for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
@@ -129,6 +136,9 @@ struct MessageBodyView: View {
     }
 }
 
+// MARK: - Selectable plain text
+
+#if canImport(UIKit)
 /// Read-only, selectable plain-text body: long-press or double-tap selects a
 /// range and brings up the native edit menu. Link taps go to `onLink` (the
 /// default browser, same as HTML mail).
@@ -187,8 +197,76 @@ private struct SelectableText: UIViewRepresentable {
         }
     }
 }
+#else
+/// The Mac twin: an NSTextView that is as tall as its text, selectable,
+/// with the system's Look Up / Translate / Share on the selection. Link
+/// clicks go to `onLink`, like the HTML view's.
+private struct SelectableText: NSViewRepresentable {
+    let text: NSAttributedString
+    let onLink: (URL) -> Void
 
-private struct HTMLView: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
+
+    func makeNSView(context: Context) -> NSTextView {
+        // TextKit 1 on purpose: the height measurement below reads the
+        // layout manager, which a TextKit 2 view only has after a fallback.
+        let view = NSTextView(usingTextLayoutManager: false)
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.widthTracksTextView = true
+        view.isAutomaticLinkDetectionEnabled = false
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.linkTextAttributes = [
+            .foregroundColor: NSColor(Theme.textPrimary),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        view.delegate = context.coordinator
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        context.coordinator.onLink = onLink
+        // Only on a real change: re-assigning drops the user's selection.
+        guard context.coordinator.shown != text else { return }
+        context.coordinator.shown = text
+        view.textStorage?.setAttributedString(text)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? nsView.window?.frame.width ?? 480
+        guard let container = nsView.textContainer, let manager = nsView.layoutManager else { return nil }
+        container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        manager.ensureLayout(for: container)
+        let used = manager.usedRect(for: container)
+        return CGSize(width: width, height: ceil(used.height))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var onLink: (URL) -> Void
+        var shown: NSAttributedString?
+        init(onLink: @escaping (URL) -> Void) { self.onLink = onLink }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            let url = (link as? URL) ?? (link as? String).flatMap { URL(string: $0) }
+            guard let url else { return false }
+            onLink(url)
+            return true
+        }
+    }
+}
+#endif
+
+// MARK: - HTML
+
+/// The HTML body in a WKWebView. The representable conformance is per
+/// platform (below); the configuration, the wrapping document, the
+/// navigation policy and the injected scripts are shared.
+private struct HTMLView {
     let html: String
     let allowRemoteImages: Bool
     let dark: Bool
@@ -199,26 +277,26 @@ private struct HTMLView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> WKWebView {
+    /// JavaScript off for the mail's own scripts (the app's measuring
+    /// script still runs: `didFinish` injects it).
+    fileprivate func configuration() -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
+        #if canImport(UIKit)
         // URLs written as plain text are linkified in didFinish instead of by
         // the .link detector: its taps arrive as x-apple-data-detectors: URLs,
         // which the navigation policy below cancels, so they never opened.
         config.dataDetectorTypes = [.phoneNumber]
-        let web = WKWebView(frame: .zero, configuration: config)
-        web.navigationDelegate = context.coordinator
-        web.scrollView.isScrollEnabled = false
-        web.isOpaque = false
-        web.backgroundColor = .clear
-        return web
+        #endif
+        return config
     }
 
-    func updateUIView(_ web: WKWebView, context: Context) {
-        context.coordinator.parent = self
+    /// Load the wrapped document when something it depends on changed.
+    fileprivate func update(_ web: WKWebView, coordinator: Coordinator) {
+        coordinator.parent = self
         let key = "\(allowRemoteImages)-\(dark)-\(showQuoted)-\(html.hashValue)"
-        guard context.coordinator.loadedKey != key else { return }
-        context.coordinator.loadedKey = key
+        guard coordinator.loadedKey != key else { return }
+        coordinator.loadedKey = key
         web.loadHTMLString(wrapped, baseURL: nil)
     }
 
@@ -378,3 +456,44 @@ private struct HTMLView: UIViewRepresentable {
         """#
     }
 }
+
+#if canImport(UIKit)
+extension HTMLView: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView {
+        let web = WKWebView(frame: .zero, configuration: configuration())
+        web.navigationDelegate = context.coordinator
+        web.scrollView.isScrollEnabled = false
+        web.isOpaque = false
+        web.backgroundColor = .clear
+        return web
+    }
+
+    func updateUIView(_ web: WKWebView, context: Context) {
+        update(web, coordinator: context.coordinator)
+    }
+}
+#else
+extension HTMLView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let web = PassthroughWebView(frame: .zero, configuration: configuration())
+        web.navigationDelegate = context.coordinator
+        // Transparent, so the message card's colour shows through as on iOS.
+        web.setValue(false, forKey: "drawsBackground")
+        return web
+    }
+
+    func updateNSView(_ web: WKWebView, context: Context) {
+        update(web, coordinator: context.coordinator)
+    }
+}
+
+/// A web view that never scrolls itself: it is as tall as its content, and
+/// the wheel belongs to the thread's scroll view around it — a plain
+/// WKWebView swallows scroll events over the message and the thread stops
+/// moving wherever the pointer rests on a body.
+private final class PassthroughWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+#endif

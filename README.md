@@ -71,6 +71,17 @@ Apple's cloud and OpenAI as opt-ins, "Ask my inbox" over the on-device
 Spotlight index, an agentic "triage my inbox", and attachment
 understanding. Personal, not a product; rough edges expected.
 
+## macOS (native)
+
+The same Swift shell runs as a native Mac app in
+[`macos-app/`](./macos-app): sidebar, list and thread in one window, the
+desktop's keyboard map (`e` `h` `n` `s` `j` `k`, `g`-chords, `⌘K`), hover
+and trackpad actions, a Settings window, a menu bar extra, widgets, the
+share menu, Siri and Spotlight through the same App Intents, and the same
+AI layer (Apple Intelligence on the Mac, Apple's cloud and OpenAI as
+opt-ins). It ships as a notarized zip from `publish-macos` (`mac-v*` tags);
+the Tauri app above stays as it is.
+
 ## License
 
 Not currently licensed for reuse/redistribution — source is visible for

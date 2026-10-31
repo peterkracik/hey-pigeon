@@ -3,6 +3,12 @@
 // WidgetSnapshot from the App Group — the app writes it after every reload;
 // buttons run WidgetMarkDoneIntent in the app's process and taps deep-link
 // through heypigeon://.
+//
+// The same file is the Mac's widget extension (macos-app/project.yml): no
+// Live Activities or Controls there, no Lock Screen families, and the Done
+// and Snooze buttons are heypigeon://done and heypigeon://snooze links the
+// app acts on when it opens — a Mac widget's intent runs in the extension,
+// which has no engine.
 
 import AppIntents
 import SwiftUI
@@ -14,11 +20,73 @@ struct HeyPigeonWidgetBundle: WidgetBundle {
         UnreadWidget()
         NextReminderWidget()
         NeedReplyWidget()
+        #if os(iOS)
         ReminderLiveActivity()
         TriageLiveActivity()
         ComposeControl()
         ScheduledControl()
         InboxControl()
+        #endif
+    }
+}
+
+/// The families each widget offers: the Lock Screen accessories are iOS.
+enum WidgetFamilies {
+    static let unread: [WidgetFamily] = {
+        #if os(iOS)
+        [.systemSmall, .accessoryCircular, .accessoryRectangular]
+        #else
+        [.systemSmall]
+        #endif
+    }()
+
+    static let reminder: [WidgetFamily] = {
+        #if os(iOS)
+        [.systemMedium, .accessoryRectangular]
+        #else
+        [.systemMedium]
+        #endif
+    }()
+}
+
+/// Done on a widget row: an intent that runs in the app's process on iOS,
+/// a link that opens the app on the Mac (same mark-done, same Undo toast).
+struct WidgetDoneButton<Content: View>: View {
+    let threadId: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        #if os(iOS)
+        Button(intent: WidgetMarkDoneIntent(threadId: threadId)) { content() }
+            .buttonStyle(.bordered).tint(WidgetPalette.accent)
+        #else
+        Link(destination: AppGroup.Link.done(threadId)) {
+            content()
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(WidgetPalette.accent.opacity(0.18), in: Capsule())
+                .foregroundStyle(WidgetPalette.accent)
+        }
+        #endif
+    }
+}
+
+/// "1 h" on a due reminder: the same two shapes as Done.
+struct WidgetSnoozeButton: View {
+    let threadId: String
+
+    var body: some View {
+        #if os(iOS)
+        Button(intent: WidgetSnoozeIntent(threadId: threadId)) {
+            Label("1 h", systemImage: "zzz").font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        #else
+        Link(destination: AppGroup.Link.snooze(threadId)) {
+            Label("1 h", systemImage: "zzz").font(.caption.weight(.semibold))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(.fill.secondary, in: Capsule())
+        }
+        #endif
     }
 }
 
@@ -72,7 +140,7 @@ struct UnreadWidget: Widget {
         }
         .configurationDisplayName("Unread")
         .description("How much is waiting in your inbox, by account.")
-        .supportedFamilies([.systemSmall, .accessoryCircular, .accessoryRectangular])
+        .supportedFamilies(WidgetFamilies.unread)
     }
 }
 
@@ -82,6 +150,7 @@ struct UnreadView: View {
 
     var body: some View {
         switch family {
+        #if os(iOS)
         case .accessoryCircular:
             VStack(spacing: 0) {
                 Image(systemName: "tray").font(.caption)
@@ -95,6 +164,7 @@ struct UnreadView: View {
                     Text(snapshot.accounts.map { "\($0.name) \($0.unread)" }.joined(separator: " · ")).font(.caption).lineLimit(1)
                 }
             }
+        #endif
         default:
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -136,7 +206,7 @@ struct NextReminderWidget: Widget {
         }
         .configurationDisplayName("Next reminder")
         .description("What's due, with Done right there.")
-        .supportedFamilies([.systemMedium, .accessoryRectangular])
+        .supportedFamilies(WidgetFamilies.reminder)
     }
 }
 
@@ -147,9 +217,18 @@ struct NextReminderView: View {
     private var row: WidgetSnapshot.Row? { snapshot.due.first ?? snapshot.upcoming.first }
     private var isDue: Bool { !snapshot.due.isEmpty }
 
+    /// The Lock Screen's rectangular slot (iOS only).
+    private var isAccessory: Bool {
+        #if os(iOS)
+        family == .accessoryRectangular
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         if let row {
-            if family == .accessoryRectangular {
+            if isAccessory {
                 VStack(alignment: .leading) {
                     Text(isDue ? "Due · \(row.from)" : "\(row.from) · \(row.at, style: .relative)").font(.headline).lineLimit(1)
                     Text(row.subject).font(.caption).lineLimit(2)
@@ -169,15 +248,11 @@ struct NextReminderView: View {
                     }
                     Spacer(minLength: 0)
                     HStack {
-                        Button(intent: WidgetMarkDoneIntent(threadId: row.id)) {
+                        WidgetDoneButton(threadId: row.id) {
                             Label("Done", systemImage: "checkmark").font(.caption.weight(.semibold))
                         }
-                        .buttonStyle(.bordered).tint(WidgetPalette.accent)
                         if isDue {
-                            Button(intent: WidgetSnoozeIntent(threadId: row.id)) {
-                                Label("1 h", systemImage: "zzz").font(.caption.weight(.semibold))
-                            }
-                            .buttonStyle(.bordered)
+                            WidgetSnoozeButton(threadId: row.id)
                         }
                         Spacer()
                         if snapshot.due.count + snapshot.upcoming.count > 1 {
@@ -238,10 +313,9 @@ struct NeedReplyView: View {
                 ForEach(shown) { row in
                     HStack(alignment: .top, spacing: 8) {
                         Link(destination: AppGroup.Link.thread(row.id)) { RowView(row: row) }
-                        Button(intent: WidgetMarkDoneIntent(threadId: row.id)) {
+                        WidgetDoneButton(threadId: row.id) {
                             Image(systemName: "checkmark").font(.caption.weight(.bold))
                         }
-                        .buttonStyle(.bordered).tint(WidgetPalette.accent)
                     }
                 }
                 Spacer(minLength: 0)

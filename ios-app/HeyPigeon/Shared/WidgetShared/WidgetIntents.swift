@@ -9,6 +9,17 @@
 import AppIntents
 import Foundation
 
+/// The intent kind the system performs in the app's process from a widget
+/// without opening the app: `LiveActivityIntent` on iOS. The Mac has no
+/// Live Activities and its widgets reach the app through heypigeon://
+/// links instead (AppGroup.Link.done / snooze), so there the types are
+/// plain intents — kept so the shared code and Shortcuts still see them.
+#if os(iOS)
+typealias InAppWidgetIntent = LiveActivityIntent
+#else
+typealias InAppWidgetIntent = AppIntent
+#endif
+
 /// What a widget or control can ask the app to do.
 enum WidgetAction: Equatable {
     case markDone(threadId: String)
@@ -43,7 +54,7 @@ enum ControlTarget: String, AppEnum {
 
 /// Done from a widget or the Live Activity: runs in the app's process in
 /// the background (LiveActivityIntent), same path as the swipe.
-struct WidgetMarkDoneIntent: LiveActivityIntent {
+struct WidgetMarkDoneIntent: InAppWidgetIntent {
     static let title: LocalizedStringResource = "Mark Done"
     static let description = IntentDescription("Marks the email done from a widget.")
     static let isDiscoverable = false
@@ -61,7 +72,7 @@ struct WidgetMarkDoneIntent: LiveActivityIntent {
 }
 
 /// Snooze a due reminder from the Live Activity: one hour from now.
-struct WidgetSnoozeIntent: LiveActivityIntent {
+struct WidgetSnoozeIntent: InAppWidgetIntent {
     static let title: LocalizedStringResource = "Snooze Reminder"
     static let description = IntentDescription("Moves the reminder an hour ahead.")
     static let isDiscoverable = false
@@ -84,7 +95,7 @@ struct WidgetSnoozeIntent: LiveActivityIntent {
 
 /// Stop from the triage Live Activity: the run ends at its next step and
 /// nothing is applied. Runs in the app's process, like Done.
-struct WidgetCancelTriageIntent: LiveActivityIntent {
+struct WidgetCancelTriageIntent: InAppWidgetIntent {
     static let title: LocalizedStringResource = "Stop Triage"
     static let description = IntentDescription("Stops the triage run in progress without changing anything.")
     static let isDiscoverable = false

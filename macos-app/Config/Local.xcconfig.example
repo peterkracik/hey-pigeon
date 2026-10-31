@@ -1,0 +1,13 @@
+// Copy to Local.xcconfig (git-ignored) and fill in. Same bring-your-own
+// OAuth idea as the phone: a Google OAuth client of type "iOS" (no secret —
+// Google has no "macOS" type, and an iOS client's reversed-id redirect works
+// from a Mac app through the same consent sheet). Either reuse the phone's
+// client or add a second iOS client with bundle id app.heypigeon.mac.
+DEVELOPMENT_TEAM = ABCDE12345
+GOOGLE_MAC_CLIENT_ID = 123456789-abcdefg.apps.googleusercontent.com
+GOOGLE_MAC_REVERSED_CLIENT_ID = com.googleusercontent.apps.123456789-abcdefg
+// Optional: the push relay's register-token URL. The Mac does not need it —
+// it syncs every 30 seconds while open — so leave it empty unless you want
+// the relay's pushes too. xcconfig reads "//" as a comment, so write a URL
+// as https:/$()/host.
+HEYPIGEON_RELAY_URL =

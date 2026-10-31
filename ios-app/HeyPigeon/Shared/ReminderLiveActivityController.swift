@@ -4,6 +4,7 @@
 // and Snooze buttons on it run WidgetMarkDoneIntent / WidgetSnoozeIntent
 // in this process (LiveActivityIntent), which call back into AppModel.
 
+#if canImport(ActivityKit)
 import ActivityKit
 import Foundation
 
@@ -32,3 +33,14 @@ enum ReminderLiveActivityController {
         _ = try? Activity.request(attributes: ReminderActivityAttributes(), content: content, pushType: nil)
     }
 }
+#else
+// No Live Activities on the Mac: the reminders that came due show in the
+// Scheduled list, the dock badge, the widgets and the menu bar extra
+// instead. Same calls, nothing to do.
+import Foundation
+
+@MainActor
+enum ReminderLiveActivityController {
+    static func sync(_ model: AppModel, now: Date = Date()) async {}
+}
+#endif

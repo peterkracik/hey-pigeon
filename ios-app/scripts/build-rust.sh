@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Build the Rust core for iOS and wrap it as a Swift package:
-#   desktop-app/crates/ffi  ──cargo──►  libheypigeon_ffi.a (device + simulator)
+# Build the Rust core for Apple platforms and wrap it as a Swift package:
+#   desktop-app/crates/ffi  ──cargo──►  libheypigeon_ffi.a (iOS device + simulator, or macOS)
 #                           ──uniffi──► HeyPigeonCore.swift + C header + modulemap
 #                           ──xcodebuild──► HeyPigeonCoreFFI.xcframework
-# Runs as an Xcode pre-build phase and by hand. Idempotent; incremental via cargo.
+# Runs as an Xcode pre-build phase (the iOS project's and the Mac project's,
+# macos-app/scripts/build-rust.sh) and by hand. Idempotent; incremental via
+# cargo. Which slices go in follows PLATFORM_NAME: iphoneos, iphonesimulator,
+# macosx (the native Mac app); unset builds the two iOS kinds.
 #
 # One-time setup:
 #   rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+#   rustup target add aarch64-apple-darwin x86_64-apple-darwin   # the Mac app
 #
 # No `set -u`: macOS ships bash 3.2, where expanding an empty array under -u
 # aborts with "unbound variable" (the device-only and simulator-only paths
@@ -34,6 +38,7 @@ cd "$CARGO_DIR"
 # Only build what Xcode is about to link, when invoked from Xcode.
 DEVICE_TARGETS=(aarch64-apple-ios)
 SIM_TARGETS=(aarch64-apple-ios-sim x86_64-apple-ios)
+MAC_TARGETS=()
 if [[ "${PLATFORM_NAME:-}" == "iphoneos" ]]; then
   SIM_TARGETS=()
 elif [[ "${PLATFORM_NAME:-}" == "iphonesimulator" ]]; then
@@ -42,9 +47,20 @@ elif [[ "${PLATFORM_NAME:-}" == "iphonesimulator" ]]; then
     *x86_64*) [[ "${ARCHS}" == *arm64* ]] || SIM_TARGETS=(x86_64-apple-ios) ;;
     *) SIM_TARGETS=(aarch64-apple-ios-sim) ;;
   esac
+elif [[ "${PLATFORM_NAME:-}" == "macosx" ]]; then
+  # The native Mac app: one slice per architecture Xcode asks for, lipo'd
+  # into one library when it asks for both (a universal release build).
+  DEVICE_TARGETS=()
+  SIM_TARGETS=()
+  case "${ARCHS:-arm64}" in
+    *x86_64*)
+      if [[ "${ARCHS}" == *arm64* ]]; then MAC_TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
+      else MAC_TARGETS=(x86_64-apple-darwin); fi ;;
+    *) MAC_TARGETS=(aarch64-apple-darwin) ;;
+  esac
 fi
 
-for t in "${DEVICE_TARGETS[@]}" "${SIM_TARGETS[@]}"; do
+for t in "${DEVICE_TARGETS[@]}" "${SIM_TARGETS[@]}" "${MAC_TARGETS[@]}"; do
   echo "▸ cargo build -p $CRATE --target $t ($PROFILE)"
   cargo build -p "$CRATE" --target "$t" "${CARGO_FLAGS[@]}"
 done
@@ -65,7 +81,7 @@ cp "$GEN/HeyPigeonCore.swift" "$PKG_DIR/Sources/HeyPigeonCore/HeyPigeonCore.swif
 cp "$GEN/HeyPigeonCoreFFI.h" "$GEN/include/"
 cp "$GEN/HeyPigeonCoreFFI.modulemap" "$GEN/include/module.modulemap"
 
-# One fat simulator library when both simulator slices were built.
+# One fat simulator (or Mac) library when both of its slices were built.
 XC_ARGS=()
 if (( ${#DEVICE_TARGETS[@]} )); then
   XC_ARGS+=(-library "$CARGO_DIR/target/aarch64-apple-ios/$PROFILE/$LIB" -headers "$GEN/include")
@@ -80,6 +96,19 @@ if (( ${#SIM_TARGETS[@]} )); then
     XC_ARGS+=(-library "$GEN/sim/$LIB" -headers "$GEN/include")
   else
     XC_ARGS+=(-library "$CARGO_DIR/target/${SIM_TARGETS[0]}/$PROFILE/$LIB" -headers "$GEN/include")
+  fi
+fi
+
+if (( ${#MAC_TARGETS[@]} )); then
+  if (( ${#MAC_TARGETS[@]} > 1 )); then
+    mkdir -p "$GEN/mac"
+    lipo -create \
+      "$CARGO_DIR/target/aarch64-apple-darwin/$PROFILE/$LIB" \
+      "$CARGO_DIR/target/x86_64-apple-darwin/$PROFILE/$LIB" \
+      -output "$GEN/mac/$LIB"
+    XC_ARGS+=(-library "$GEN/mac/$LIB" -headers "$GEN/include")
+  else
+    XC_ARGS+=(-library "$CARGO_DIR/target/${MAC_TARGETS[0]}/$PROFILE/$LIB" -headers "$GEN/include")
   fi
 fi
 

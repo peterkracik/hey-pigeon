@@ -13,7 +13,11 @@ import AppIntents
 import Foundation
 import Intents
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 import UserNotifications
 
 enum NewMailNotifier {
@@ -22,8 +26,17 @@ enum NewMailNotifier {
     /// completion handler.
     private static let budget: Duration = .seconds(25)
 
+    /// What a push-driven fetch reports back: UIKit's own result on iOS;
+    /// the Mac's delegate has no completion handler, so the same three
+    /// outcomes as a plain enum.
+    #if canImport(UIKit)
+    typealias FetchResult = UIBackgroundFetchResult
+    #else
+    enum FetchResult { case newData, noData, failed }
+    #endif
+
     @MainActor
-    static func handle(email: String?, model: AppModel) async -> UIBackgroundFetchResult {
+    static func handle(email: String?, model: AppModel) async -> FetchResult {
         let accountId = email.flatMap { e in model.accounts.first { $0.id == e || $0.email == e }?.id }
         let before = Set(unreadInbox(model, accountId: accountId).map(\.id))
 
@@ -67,13 +80,17 @@ enum NewMailNotifier {
         try? await UNUserNotificationCenter.current().setBadgeCount(unread + due)
     }
 
+    /// The unread inbox threads right now (one account or all): what a
+    /// sync's "new since the last look" is measured against. The Mac's
+    /// timer sync diffs it the same way (HeyPigeonMacApp).
     @MainActor
-    private static func unreadInbox(_ model: AppModel, accountId: String?) -> [ThreadRow] {
+    static func unreadInbox(_ model: AppModel, accountId: String?) -> [ThreadRow] {
         ((try? model.engine.threads(in: .inbox, accountId: accountId, before: nil, limit: 200)) ?? [])
             .filter { !$0.isRead }
     }
 
-    private static func post(_ row: ThreadRow) async {
+    /// One banner for one new thread, composed here from the local store.
+    static func post(_ row: ThreadRow) async {
         let (name, address) = sender(of: row)
         let content = UNMutableNotificationContent()
         content.title = name
@@ -131,21 +148,36 @@ enum NewMailNotifier {
     private static func avatar(name: String, address: String) -> INImage {
         let colors = AccountColor.allCases
         let seed = address.lowercased().unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
-        let fill = UIColor(Theme.tagForeground(colors[seed % colors.count]))
+        let fill = PlatformColor(Theme.tagForeground(colors[seed % colors.count]))
         let letter = String(name.first(where: \.isLetter) ?? "?").uppercased()
 
         let side: CGFloat = 180
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: PlatformFont.systemFont(ofSize: side * 0.46, weight: .bold),
+            .foregroundColor: PlatformColor.white,
+        ]
+        #if canImport(UIKit)
         let png = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).pngData { ctx in
             fill.setFill()
             ctx.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: side, height: side))
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: side * 0.46, weight: .bold),
-                .foregroundColor: UIColor.white,
-            ]
             let size = letter.size(withAttributes: attrs)
             letter.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
         }
         return INImage(imageData: png)
+        #else
+        let image = NSImage(size: CGSize(width: side, height: side), flipped: false) { rect in
+            fill.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            let size = letter.size(withAttributes: attrs)
+            letter.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
+            return true
+        }
+        guard let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            return INImage(imageData: Data())
+        }
+        return INImage(imageData: png)
+        #endif
     }
 
     private struct Timeout: Error {}

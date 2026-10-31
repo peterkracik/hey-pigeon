@@ -34,14 +34,14 @@ struct SettingsView: View {
                                 .font(.caption).foregroundStyle(Theme.textTertiary)
                         }
                     }
-                    swipePicker("Swipe right, short", 0)
-                    swipePicker("Swipe right, long", 1)
-                    swipePicker("Swipe left, short", 2)
-                    swipePicker("Swipe left, long", 3)
+                    swipePicker(Self.swipeTitles[0], 0)
+                    swipePicker(Self.swipeTitles[1], 1)
+                    swipePicker(Self.swipeTitles[2], 2)
+                    swipePicker(Self.swipeTitles[3], 3)
                 } header: {
                     Text("Inbox")
                 } footer: {
-                    Text("Control how messages are grouped and what each swipe does. A short swipe arms the first action, a longer one the second.")
+                    Text(Self.swipeFooter)
                 }
                 .menuCard()
                 Section("Appearance") {
@@ -58,7 +58,7 @@ struct SettingsView: View {
                 } header: {
                     Text("About")
                 } footer: {
-                    Text("No server, no analytics. Your mail stays between your device and your Google account. Updates arrive through TestFlight and the App Store.")
+                    Text(Self.aboutFooter)
                 }
                 .menuCard()
             }
@@ -70,7 +70,7 @@ struct SettingsView: View {
                     Button(role: .close) { Keyboard.dismiss(); dismiss() }
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnScroll(.interactively)
             .confirmationDialog("Remove \(removing?.email ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove account", role: .destructive) {
                     if let a = removing { Task { await model.removeAccount(a) } }
@@ -107,6 +107,33 @@ struct SettingsView: View {
             ForEach(RowAction.allCases) { a in Label(a.title, systemImage: a.systemImage).tag(a) }
         }
     }
+
+    /// The four tiers, in the words of the gesture each platform has: the
+    /// phone's two-distance swipe, the Mac's trackpad swipe and hover bar.
+    /// Same synced pref (`swipe_actions`) on both.
+    static let swipeTitles: [String] = {
+        #if os(macOS)
+        ["Swipe right, first", "Swipe right, second", "Swipe left, first", "Swipe left, second"]
+        #else
+        ["Swipe right, short", "Swipe right, long", "Swipe left, short", "Swipe left, long"]
+        #endif
+    }()
+
+    static let swipeFooter: String = {
+        #if os(macOS)
+        "Control how messages are grouped and which actions a two-finger swipe on a row reveals (a full swipe runs the first). The same actions sit in the bar that appears when you hover a row, and on the keys shown under ⌘/."
+        #else
+        "Control how messages are grouped and what each swipe does. A short swipe arms the first action, a longer one the second."
+        #endif
+    }()
+
+    static let aboutFooter: String = {
+        #if os(macOS)
+        "No server, no analytics. Your mail stays between this Mac and your Google account. Updates arrive as new builds on GitHub."
+        #else
+        "No server, no analytics. Your mail stays between your device and your Google account. Updates arrive through TestFlight and the App Store."
+        #endif
+    }()
 }
 
 /// One account block: avatar, name/email, status, Reconnect/Remove, then
@@ -470,36 +497,88 @@ private struct SiriSection: View {
             SiriTipView(intent: WhatNeedsReplyIntent())
             ShortcutsLink()
             Button { SystemSettings.openAppSettings() } label: {
-                Label("Siri & Search for Hey Pigeon", systemImage: "gear")
+                Label(Self.systemButtonTitle, systemImage: "gear")
             }
         } header: {
             Text("Siri & Search")
         } footer: {
-            Text("Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this \(Device.name).\n\nTo have Siri and Spotlight answer from Hey Pigeon's mail rather than Apple Mail's: keep the switch above on, make sure \"Show in Search\" and \"Learn from this App\" are on for Hey Pigeon in iOS Settings, and turn the same two off for Mail (iOS Settings › Apps › Mail › Siri & Search).")
+            Text(Self.footer)
         }
         .menuCard()
     }
+
+    static let systemButtonTitle: String = {
+        #if os(macOS)
+        "Apple Intelligence & Siri settings"
+        #else
+        "Siri & Search for Hey Pigeon"
+        #endif
+    }()
+
+    static let footer: String = {
+        #if os(macOS)
+        "Ask Siri what needs a reply or what's due, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this Mac.\n\nTo have Siri and Spotlight answer from Hey Pigeon's mail rather than Apple Mail's: keep the switch above on, and in System Settings › Apple Intelligence & Siri › Apps keep Hey Pigeon's Siri access on while turning off \"Learn from this App\" for Mail; Spotlight › Search Results decides which apps' mail Spotlight lists."
+        #else
+        "Ask Siri what needs a reply or what's due, say \"remind me about this tomorrow\" on an open thread, ask your inbox a question, or add any action to a Shortcut. Nothing is sent anywhere: Siri and the on-device model read the index on this \(Device.name).\n\nTo have Siri and Spotlight answer from Hey Pigeon's mail rather than Apple Mail's: keep the switch above on, make sure \"Show in Search\" and \"Learn from this App\" are on for Hey Pigeon in iOS Settings, and turn the same two off for Mail (iOS Settings › Apps › Mail › Siri & Search)."
+        #endif
+    }()
 }
 
 // MARK: - Default mail app
 
 /// The door to iOS Settings › Apps › Default Apps, where Hey Pigeon is
 /// offered as the Email app once the build carries the default-mail-client
-/// entitlement (project.yml). The app cannot read which app is the
-/// default, so this is a button and a sentence, not a status line.
+/// entitlement (project.yml). iOS cannot tell the app which app is the
+/// default, so there it is a button and a sentence. The Mac can: the app
+/// asks the system to make it the mailto: handler (macOS confirms once)
+/// and shows whether it is.
 private struct DefaultAppSection: View {
+    /// Re-read after the button, which changes it.
+    @State private var isDefault = false
+
     var body: some View {
         Section {
+            #if os(macOS)
+            if isDefault {
+                Label("Hey Pigeon is the default email app", systemImage: "checkmark.circle")
+                    .foregroundStyle(Theme.textSecondary)
+            } else {
+                Button { SystemSettings.openDefaultApps(); refresh() } label: {
+                    Label("Make Hey Pigeon the default email app", systemImage: "envelope.badge.person.crop")
+                }
+            }
+            #else
             Button { SystemSettings.openDefaultApps() } label: {
                 Label("Set Hey Pigeon as the default email app", systemImage: "envelope.badge.person.crop")
             }
+            #endif
         } header: {
             Text("Default email app")
         } footer: {
-            Text("Opens iOS Settings › Apps › Default Apps. Pick Hey Pigeon under Email and every mail link you tap — in Safari, Notes, a contact card, another app — opens a new message here, and \"send an email\" asked of Siri composes here too. Nothing is sent until you tap Send.")
+            Text(Self.footer)
         }
         .menuCard()
+        .onAppear { refresh() }
     }
+
+    private func refresh() {
+        #if os(macOS)
+        // The system's confirmation dialog answers a moment later.
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            isDefault = SystemSettings.isDefaultMailApp
+        }
+        isDefault = SystemSettings.isDefaultMailApp
+        #endif
+    }
+
+    static let footer: String = {
+        #if os(macOS)
+        "macOS asks you to confirm once. Every mail link you click afterwards — in Safari, Notes, a contact card, another app — opens a new message here, and \"send an email\" asked of Siri composes here too. Nothing is sent until you click Send."
+        #else
+        "Opens iOS Settings › Apps › Default Apps. Pick Hey Pigeon under Email and every mail link you tap — in Safari, Notes, a contact card, another app — opens a new message here, and \"send an email\" asked of Siri composes here too. Nothing is sent until you tap Send."
+        #endif
+    }()
 }
 
 // MARK: - Triage (Jev)
@@ -703,26 +782,61 @@ private struct TriageSection: View {
 
 private struct NotificationsSection: View {
     @Environment(AppModel.self) private var model
+    /// The Mac's new-mail banners come from its own periodic sync, not a
+    /// relay: one local switch, on by default (HeyPigeonMacApp reads it).
+    @AppStorage("newMailNotifications") private var newMailNotifications = true
 
     var body: some View {
         let push = model.push
         Section {
-            Toggle(isOn: Binding(get: { push.enabled }, set: { on in Task { await push.setEnabled(on) } })) {
+            #if os(macOS)
+            Toggle(isOn: $newMailNotifications) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("New mail (push)")
-                    Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                    Text("New mail")
+                    Text("A banner for each new unread thread the sync brings in while the app is in the background.")
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
                 }
             }
-            .disabled(push.busy || !push.canEnable)
+            Button { SystemSettings.openNotificationSettings() } label: {
+                Label("Notification settings for Hey Pigeon", systemImage: "bell.badge")
+            }
+            #endif
+            if push.canEnable {
+                Toggle(isOn: Binding(get: { push.enabled }, set: { on in Task { await push.setEnabled(on) } })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("New mail (push)")
+                        Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                .disabled(push.busy)
+            } else {
+                #if os(iOS)
+                Toggle(isOn: .constant(false)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("New mail (push)")
+                        Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                .disabled(true)
+                #endif
+            }
             if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(.red) }
         } header: {
             Text("Notifications")
         } footer: {
-            Text("Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way.")
+            Text(Self.footer)
         }
         .menuCard()
         .onAppear { push.refreshStatus() }
     }
+
+    static let footer: String = {
+        #if os(macOS)
+        "The Mac checks for mail every 30 seconds while the app is open and composes the banner itself; nothing goes through a relay. Reminders are local notifications either way."
+        #else
+        "Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way."
+        #endif
+    }()
 
     /// One line under the toggle: state, then the sync lease when there is one.
     private var statusLine: String {

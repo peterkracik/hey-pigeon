@@ -79,10 +79,9 @@ struct RemindSheet: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .groupedListStyle()
         .scrollContentBackground(.hidden)
-        .presentationDetents(showPicker ? [.large] : [.medium, .large])
-        .presentationDragIndicator(.visible)
+        .sheetSize(showPicker ? .large : .mediumOrLarge)
     }
 
     private func set(_ date: Date) {

@@ -40,11 +40,20 @@ enum AppGroup {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// `heypigeon://thread/<id>`, `heypigeon://compose`, `heypigeon://folder/<name>`.
+    /// `heypigeon://thread/<id>`, `heypigeon://compose`, `heypigeon://folder/<name>`,
+    /// and the two the Mac widgets act through (their buttons cannot run in
+    /// the app's process the way an iOS Live Activity intent can):
+    /// `heypigeon://done/<id>` and `heypigeon://snooze/<id>/<hours>`.
     enum Link {
-        static func thread(_ id: String) -> URL { URL(string: "\(urlScheme)://thread/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")! }
+        static func thread(_ id: String) -> URL { URL(string: "\(urlScheme)://thread/\(encoded(id))")! }
         static let compose = URL(string: "\(urlScheme)://compose")!
         static func folder(_ raw: String) -> URL { URL(string: "\(urlScheme)://folder/\(raw)")! }
+        static func done(_ id: String) -> URL { URL(string: "\(urlScheme)://done/\(encoded(id))")! }
+        static func snooze(_ id: String, hours: Int = 1) -> URL { URL(string: "\(urlScheme)://snooze/\(encoded(id))/\(max(1, hours))")! }
+
+        private static func encoded(_ id: String) -> String {
+            id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        }
     }
 }
 

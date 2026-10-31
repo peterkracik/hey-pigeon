@@ -11,7 +11,11 @@
 import Foundation
 import FoundationModels
 import PDFKit
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 import Vision
 
 /// The typed answer: what the attachment is and the fields worth acting on.
@@ -130,15 +134,16 @@ enum AttachmentUnderstanding {
     }
 
     /// The image the model gets: the file, or the PDF's first page, scaled
-    /// so its longest side is at most `maxImageSide`.
-    static func image(for file: URL, mimeType: String) throws -> UIImage? {
+    /// so its longest side is at most `maxImageSide`. UIImage on iOS,
+    /// NSImage on the Mac (PDFKit's thumbnail is the platform's image too).
+    static func image(for file: URL, mimeType: String) throws -> PlatformImage? {
         let lower = mimeType.lowercased()
         if lower == "application/pdf" || file.pathExtension.lowercased() == "pdf" {
             guard let page = PDFDocument(url: file)?.page(at: 0) else { return nil }
             let box = page.bounds(for: .mediaBox)
             return page.thumbnail(of: targetSize(for: box.size), for: .mediaBox)
         }
-        guard lower.hasPrefix("image/"), let data = try? Data(contentsOf: file), let image = UIImage(data: data) else { return nil }
+        guard lower.hasPrefix("image/"), let data = try? Data(contentsOf: file), let image = PlatformImage(data: data) else { return nil }
         return downscaled(image)
     }
 
@@ -149,14 +154,21 @@ enum AttachmentUnderstanding {
         return CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
     }
 
-    static func downscaled(_ image: UIImage) -> UIImage {
+    static func downscaled(_ image: PlatformImage) -> PlatformImage {
         let target = targetSize(for: image.size)
         guard target != image.size else { return image }
+        #if canImport(UIKit)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: target, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: target))
         }
+        #else
+        return NSImage(size: target, flipped: false) { rect in
+            image.draw(in: rect)
+            return true
+        }
+        #endif
     }
 
     // MARK: Chips

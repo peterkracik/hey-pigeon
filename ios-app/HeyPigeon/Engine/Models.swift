@@ -598,6 +598,12 @@ struct SendDraft: Hashable {
     }
 }
 
+/// The composer's draft key identifies the sheet that edits it
+/// (`.sheet(item:)` on both platforms).
+extension SendDraft: Identifiable {
+    var id: String { draftKey }
+}
+
 /// Optimistic changes queued for Gmail — same set as the desktop IPC.
 enum MailAction: Hashable {
     case archive(threadId: String)

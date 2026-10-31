@@ -102,8 +102,7 @@ struct AttachmentInsightSheet: View {
                 } catch { self.error = error.localizedDescription }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .sheetSize(.mediumOrLarge)
     }
 
     private var row: ThreadRow? { try? model.engine.threadRow(id: attachment.threadId) }

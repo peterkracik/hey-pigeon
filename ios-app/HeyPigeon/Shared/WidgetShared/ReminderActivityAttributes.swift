@@ -3,6 +3,7 @@
 // Dynamic: how many are due, and the first's sender, subject and thread id
 // (what the Done and Snooze buttons act on, what a tap opens).
 
+#if canImport(ActivityKit)
 import ActivityKit
 import Foundation
 
@@ -16,3 +17,6 @@ struct ReminderActivityAttributes: ActivityAttributes {
         let isFollowUp: Bool
     }
 }
+#else
+// ActivityKit does not exist on the Mac; nothing uses these there.
+#endif

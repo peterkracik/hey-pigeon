@@ -202,7 +202,7 @@ struct ThreadList: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 0, for: .scrollContent)
-        .scrollDismissesKeyboard(.immediately)
+        .dismissKeyboardOnScroll()
         .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
     }
 
@@ -233,7 +233,7 @@ struct ThreadList: View {
         // thread entity, so "mark these done", "remind me about
         // the second one" and "archive everything from Lufthansa
         // here" resolve against what is on screen.
-        .appEntityIdentifier(MailThreadEntity.identifier(row.id))
+        .siriEntity(MailThreadEntity.identifier(row.id))
         .padding(.bottom, 1) // the gap between rows, canvas showing through
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         .listRowBackground(Color.clear)

@@ -3,7 +3,9 @@
 // preferences (engine-backed, like the desktop's), and the undo toast. All
 // mutations go through here so optimistic UI + undo live in one place.
 
+#if os(iOS)
 import BackgroundTasks
+#endif
 import Foundation
 import Observation
 import SwiftUI
@@ -1193,8 +1195,10 @@ final class AppModel {
         } catch { show(error.localizedDescription) }
     }
 
-    // MARK: Background refresh
+    // MARK: Background refresh (iOS; the Mac never suspends the app and
+    // syncs on a timer while it runs — HeyPigeonMacApp)
 
+    #if os(iOS)
     /// iOS decides when this runs (a few times a day in practice). It is the
     /// only "push" the phone has in v1 — DESIGN.md's relay stays optional.
     ///
@@ -1220,4 +1224,5 @@ final class AppModel {
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(request)
     }
+    #endif
 }

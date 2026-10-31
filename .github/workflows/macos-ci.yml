@@ -1,0 +1,127 @@
+name: macos-ci
+
+# Compile and test the native Mac app on every pull request that touches it
+# — its own sources (macos-app/), the shell it shares with the phone
+# (ios-app/HeyPigeon, the widgets, the share view, the tests) or the Rust
+# core. No secrets and no signing: CODE_SIGNING_ALLOWED=NO and an empty OAuth
+# client id, so the app runs on the in-memory MockEngine
+# (HeyPigeonMacApp.makeEngine) and the unit tests — the phone's and the Mac
+# window's — run against it.
+
+on:
+  pull_request:
+    paths:
+      - "macos-app/**"
+      - "!macos-app/**/*.md"
+      - "ios-app/HeyPigeon/**"
+      - "ios-app/HeyPigeonWidgets/**"
+      - "ios-app/HeyPigeonShare/**"
+      - "ios-app/HeyPigeonTests/**"
+      - "ios-app/HeyPigeonCore/**"
+      - "ios-app/scripts/**"
+      - "desktop-app/crates/**"
+      - "desktop-app/Cargo.toml"
+      - "desktop-app/Cargo.lock"
+      - ".github/workflows/macos-ci.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "macos-app/**"
+      - "!macos-app/**/*.md"
+      - "ios-app/HeyPigeon/**"
+      - "desktop-app/crates/**"
+      - ".github/workflows/macos-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: macos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build-and-test
+    # Same image as ios-ci: the macOS 27 SDK is the deployment floor.
+    runs-on: xcode-27
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode with the macOS 27 SDK
+        run: |
+          set -euo pipefail
+          all="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V || true)"
+          xc="$(printf '%s\n' "$all" | grep -viE 'beta|release_candidate|_rc' | tail -1 || true)"
+          if [[ -z "$xc" ]]; then xc="$(printf '%s\n' "$all" | tail -1)"; fi
+          if [[ -n "$xc" ]]; then sudo xcode-select -s "$xc"; fi
+          xcodebuild -version
+          if ! xcodebuild -showsdks 2>/dev/null | grep -qE "macosx(27|[3-9][0-9])\."; then
+            echo "::error::No macOS 27 SDK on this runner image (macos-app targets macOS 27). Installed Xcodes: $(ls -d /Applications/Xcode*.app | tr '\n' ' ')." >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-app
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # No OAuth client: the app falls back to the sample inbox. The
+      # reversed id only has to be a valid URL scheme.
+      - name: Write Local.xcconfig (CI placeholders)
+        run: |
+          cat > macos-app/Config/Local.xcconfig <<'EOF'
+          DEVELOPMENT_TEAM =
+          GOOGLE_MAC_CLIENT_ID =
+          GOOGLE_MAC_REVERSED_CLIENT_ID = com.googleusercontent.apps.ci
+          HEYPIGEON_RELAY_URL =
+          EOF
+
+      # The package's binary target must exist before Xcode resolves it;
+      # the pre-build phase re-runs the script, which is then incremental.
+      - name: Build Rust core for macOS + Swift bindings
+        env:
+          RUST_PROFILE: release
+          PLATFORM_NAME: macosx
+          ARCHS: arm64
+        run: macos-app/scripts/build-rust.sh
+
+      - name: Generate Xcode project
+        working-directory: macos-app
+        run: xcodegen generate
+
+      - name: xcodebuild test (macOS)
+        working-directory: macos-app
+        run: |
+          # The full log goes to a file (uploaded on failure); the job log
+          # keeps errors, our own warnings and the test lines. xcodebuild's
+          # exit status decides, not grep's.
+          set +e
+          xcodebuild test \
+            -project HeyPigeonMac.xcodeproj \
+            -scheme HeyPigeon \
+            -configuration Debug \
+            -destination "platform=macOS" \
+            -resultBundlePath "$RUNNER_TEMP/HeyPigeonMac.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" \
+            | grep -E "error:|warning: .*/(HeyPigeon[A-Za-z]*|macos-app)/|Test (Suite|Case)|[✔✘◇]|\*\* "
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Upload result bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-xcresult
+          path: |
+            ${{ runner.temp }}/HeyPigeonMac.xcresult
+            ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7

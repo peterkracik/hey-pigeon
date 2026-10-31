@@ -236,16 +236,14 @@ final class WindowState: Equatable {
         if flatIds(model).contains(open.id) { close() } else { advanceOpen(in: model) }
     }
 
-    /// A sheet or the palette moved the thread on (a label picked, a folder
-    /// chosen): advance like a key would — in a thread, to the next one; in
-    /// the list, the cursor to the row now in its place.
+    /// The palette is about to move the thread on (a folder chosen): in the
+    /// list, the cursor may go to the row that takes its place; with a
+    /// thread open nothing is needed, the next thread follows its row
+    /// leaving the list (`rowsChanged`).
     func advance(in model: AppModel) {
-        if isThreadOpen {
-            closeOpen(in: model)
-        } else {
-            pendingAdvance = true
-            rowsChanged(in: model)
-        }
+        guard !isThreadOpen else { return }
+        pendingAdvance = true
+        rowsChanged(in: model)
     }
 
     /// The row the open thread came from is gone: its neighbour opens

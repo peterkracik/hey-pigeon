@@ -87,9 +87,13 @@ xcodebuild test -project HeyPigeonMac.xcodeproj -scheme HeyPigeon -destination '
 builds a universal archive, signs it with Developer ID through the App Store
 Connect key, notarizes it and attaches `HeyPigeon-mac-<version>.zip` to the
 GitHub release — the Swift app's twin of `build-macos` for the Tauri one.
-Secrets are listed at the top of the workflow; the Mac keeps its own bundle
-id, `app.heypigeon.mac`, next to the Tauri app's `app.heypigeon` and the
-phone's `app.heypigeon.ios`.
+It reads the GitHub environment `macos` (synced from a Doppler config of
+the same shape): `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` and
+`APPLE_TEAM_ID` as the Tauri build has them, `ASC_API_KEY_ID`,
+`ASC_API_ISSUER_ID` and `ASC_API_KEY_P8` as `publish-ios` has them, and
+`HEYPIGEON_MAC_OAUTH_CLIENT_ID` (an iOS-type Google client; the phone's
+value works). The Mac keeps its own bundle id, `app.heypigeon.mac`, next to
+the Tauri app's `app.heypigeon` and the phone's `app.heypigeon.ios`.
 
 ```sh
 git tag mac-v0.1.0 && git push origin mac-v0.1.0

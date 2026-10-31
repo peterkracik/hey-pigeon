@@ -5,16 +5,20 @@ name: publish-macos
 # way the Tauri desktop app ships (build-macos.yml), for the Swift one. Runs
 # on a `mac-v*` tag (the version comes from the tag) or by hand.
 #
-# Secrets (repository secrets, the ones build-macos already uses, plus two):
-#   APPLE_CERTIFICATE                  base64 of a "Developer ID Application" .p12
-#   APPLE_CERTIFICATE_PASSWORD
+# Secrets: the GitHub environment "macos" (synced there from a Doppler
+# config of the same shape). Same values as the Tauri build and publish-ios
+# already use; only the OAuth client is the Mac's own.
+#   APPLE_CERTIFICATE                  base64 of the "Developer ID Application" .p12 (the Tauri build's)
+#   APPLE_CERTIFICATE_PASSWORD         its password
 #   APPLE_TEAM_ID                      10-char team id
-#   ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_P8 (GitHub environment "ios")
-#                                      the App Store Connect API key publish-ios uses: here it lets
-#                                      Xcode manage the Developer ID profiles (push, app groups) and
-#                                      notarytool submit the build
+#   ASC_API_KEY_ID                     App Store Connect API key (publish-ios's): Xcode registers the Mac App
+#   ASC_API_ISSUER_ID                  IDs and makes the Developer ID profiles with it (push, app groups),
+#   ASC_API_KEY_P8                     and notarytool submits the build with it; the .p8 as base64
 #   HEYPIGEON_MAC_OAUTH_CLIENT_ID      Google OAuth client of type "iOS" for the Mac (the phone's
-#                                      HEYPIGEON_IOS_OAUTH_CLIENT_ID works too — set either)
+#                                      HEYPIGEON_IOS_OAUTH_CLIENT_ID value works; a separate client
+#                                      registered for app.heypigeon.mac is the tidier choice)
+# Optional:
+#   HEYPIGEON_RELAY_URL                the push relay's register-token URL; empty keeps push off on the Mac
 #
 # One-time setup outside CI: nothing beyond the certificate and the key. The
 # first archive registers the App IDs (app.heypigeon.mac and its two
@@ -44,7 +48,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 90
     environment:
-      name: ios
+      name: macos
     permissions:
       contents: write
     steps:
@@ -86,18 +90,22 @@ jobs:
           echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "Version ${version} (${GITHUB_RUN_NUMBER})"
 
-      - name: Write Local.xcconfig (team + Google OAuth client)
+      - name: Write Local.xcconfig (team + Google OAuth client + relay)
         env:
-          CLIENT_ID: ${{ secrets.HEYPIGEON_MAC_OAUTH_CLIENT_ID || secrets.HEYPIGEON_IOS_OAUTH_CLIENT_ID }}
+          CLIENT_ID: ${{ secrets.HEYPIGEON_MAC_OAUTH_CLIENT_ID }}
+          RELAY_URL: ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
         run: |
           set -euo pipefail
-          test -n "$CLIENT_ID" || { echo "HEYPIGEON_MAC_OAUTH_CLIENT_ID (or HEYPIGEON_IOS_OAUTH_CLIENT_ID) is not set" >&2; exit 1; }
+          test -n "$CLIENT_ID" || { echo "HEYPIGEON_MAC_OAUTH_CLIENT_ID is not set in the macos environment" >&2; exit 1; }
           reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
+          # xcconfig treats "//" as the start of a comment, so a URL must be
+          # written as https:/$()/host — Xcode resolves the empty $() away.
+          relay_xc="$(printf '%s' "$RELAY_URL" | sed 's#://#:/$()/#g')"
           cat > macos-app/Config/Local.xcconfig <<EOF
           DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_MAC_CLIENT_ID = ${CLIENT_ID}
           GOOGLE_MAC_REVERSED_CLIENT_ID = ${reversed}
-          HEYPIGEON_RELAY_URL =
+          HEYPIGEON_RELAY_URL = ${relay_xc}
           EOF
 
       - name: Build Rust core for macOS (universal) + Swift bindings

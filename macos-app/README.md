@@ -13,7 +13,8 @@ its own window. Design notes in [docs/porting-macos-ipados.md](../docs/porting-m
 macos-app/
   HeyPigeonMac/           Mac-only sources (macOS 27, Liquid Glass)
     App/                  HeyPigeonMacApp (scenes, deep links, scene phase), MacAppDelegate (notifications,
-                          APNs, Dock menu), MacSyncLoop (the 30 s timer + new-mail banners), MacCommands (menus)
+                          APNs, Dock menu), MacSyncLoop (the 30 s timer + new-mail banners), MacCommands (menus),
+                          MacUpdater (Sparkle: in-app updates from the mac-latest release)
     Features/             MainWindow (the split view, sheets, toast), SidebarColumn, ThreadListColumn (search,
                           hover and swipe actions), ThreadDetailColumn (+ ThreadWindow, the batch bar),
                           WindowState (selection, the keyboard map, every action), CommandPalette (⌘K),
@@ -40,6 +41,7 @@ macos-app/
 | Siri, Spotlight, Shortcuts | App Intents, the Mail schema, the index | The same files; "Ask my inbox" and "triage my inbox" through the Mailbox menu and the palette |
 | Widgets | Unread · Next reminder · Need reply, Live Activities, Controls | The three widgets; Done and 1 h are `heypigeon://` links the app acts on |
 | Default mail app | iOS Settings › Default Apps | Settings › Default email app asks macOS to make Hey Pigeon the `mailto:` handler and shows whether it is |
+| Updates | TestFlight | In-app (Sparkle): an hourly check of the `mac-latest` feed, a background download, the install on the next quit; Hey Pigeon › Check for Updates… and a switch in Settings › Updates |
 | Compose | Full-screen sheet | A sheet on the window, same composer (rich text, attachments, AI) |
 
 Everything else — the rows, the thread view with its glass bars, the Remind
@@ -56,7 +58,8 @@ Settings' sections — is the phone's code.
    scheme). Reuse the phone's client, or add one for bundle id
    `app.heypigeon.mac` (see [docs/google-oauth-setup.md](../docs/google-oauth-setup.md)).
    Copy the client id and its reversed form into `Config/Local.xcconfig`
-   (start from `Local.xcconfig.example`).
+   (start from `Local.xcconfig.example`). Leave `SPARKLE_PUBLIC_ED_KEY`
+   empty: a development build should not update itself.
 4. `scripts/build-rust.sh` once by hand (it also runs as a pre-build phase;
    `PLATFORM_NAME=macosx` picks the Mac slice).
 5. `xcodegen generate && open HeyPigeonMac.xcodeproj`, run.
@@ -81,7 +84,7 @@ PLATFORM_NAME=macosx scripts/build-rust.sh && xcodegen generate
 xcodebuild test -project HeyPigeonMac.xcodeproj -scheme HeyPigeon -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-## Publishing (CI)
+## Publishing and updates (CI)
 
 `.github/workflows/publish-macos.yml` builds a universal archive, signs it
 with Developer ID through the App Store Connect key and notarizes it — the
@@ -91,14 +94,39 @@ app (anything under `macos-app/` except docs, the shared shell in
 the zip to the rolling `mac-latest` pre-release, so the download link never
 changes:
 `https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip`.
-A `mac-v*` tag cuts a versioned release with `HeyPigeon-mac-<version>.zip`.
-It reads the GitHub environment `macos` (synced from a Doppler config of
-the same shape): `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` and
-`APPLE_TEAM_ID` as the Tauri build has them, `ASC_API_KEY_ID`,
-`ASC_API_ISSUER_ID` and `ASC_API_KEY_P8` as `publish-ios` has them, and
-`HEYPIGEON_MAC_OAUTH_CLIENT_ID` (an iOS-type Google client; the phone's
-value works). The Mac keeps its own bundle id, `app.heypigeon.mac`, next to
-the Tauri app's `app.heypigeon` and the phone's `app.heypigeon.ios`.
+Install once: unzip, drag `HeyPigeon.app` to Applications, open.
+
+**Updates are in-app** ([Sparkle](https://sparkle-project.org)). Next to
+the zip the workflow uploads `appcast.xml` — the build number
+(`CFBundleVersion`, the publish run number, so it only grows), the zip's
+size and its EdDSA signature. The app polls it once an hour (`SUFeedURL`
+in `project.yml`), downloads a newer build in the background, verifies the
+signature against `SUPublicEDKey` and installs it when the app next quits;
+Hey Pigeon › Check for Updates… does the round now, and Settings › Updates
+turns the automatic install off. A `mac-v*` tag still cuts a versioned
+release with `HeyPigeon-mac-<version>.zip` — a download, not an update.
+
+The workflow reads the GitHub environment `macos` (synced from a Doppler
+config of the same shape): `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`
+and `APPLE_TEAM_ID`, `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID` and
+`ASC_API_KEY_P8` as `publish-ios` has them, `HEYPIGEON_MAC_OAUTH_CLIENT_ID`
+(an iOS-type Google client; the phone's value works), and
+`SPARKLE_PRIVATE_ED_KEY`, the update signing key. Make that one once, on
+any Mac, with Sparkle's tools (the `Sparkle-<version>.tar.xz` on
+[its releases page](https://github.com/sparkle-project/Sparkle/releases)):
+
+```sh
+bin/generate_keys                      # makes the key in your login keychain, prints the public half
+bin/generate_keys -x sparkle-key.txt   # the private half, one base64 line → SPARKLE_PRIVATE_ED_KEY
+```
+
+Put the file's line into Doppler as `SPARKLE_PRIVATE_ED_KEY` and delete
+the file; the keychain copy is your backup — a lost key means every
+installed app stops seeing updates until it is reinstalled by hand. The
+public half is optional (`SPARKLE_PUBLIC_ED_KEY`): the build derives it
+from the private key when it is missing. The Mac keeps its own bundle id,
+`app.heypigeon.mac`, next to the phone's `app.heypigeon.ios` and the old
+Tauri app's `app.heypigeon`.
 
 ```sh
 git tag mac-v0.1.0 && git push origin mac-v0.1.0

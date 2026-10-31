@@ -24,6 +24,13 @@ configFiles:
 packages:
   HeyPigeonCore:
     path: ../ios-app/HeyPigeonCore
+  # In-app updates (MacUpdater.swift): the app menu's "Check for Updates…"
+  # and the silent background install, fed by the appcast publish-macos
+  # writes next to every build. Archive & Export re-signs the framework's
+  # helpers with the Developer ID, which is what notarization needs.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.0
 
 settings:
   base:
@@ -74,8 +81,16 @@ targets:
         # Silent pushes from the optional relay (the Mac's own 30-second
         # sync covers new mail without it). The Mac's APNs key.
         com.apple.developer.aps-environment: development
+        # Sparkle's installer helpers: a sandboxed app may talk to the two
+        # XPC services inside Sparkle.framework only through this exception
+        # (sparkle-project.org/documentation/sandboxing).
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spks
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spki
     dependencies:
       - package: HeyPigeonCore
+      - package: Sparkle
+        product: Sparkle
       - target: HeyPigeonWidgets
       - target: HeyPigeonShare
     preBuildScripts:
@@ -135,6 +150,22 @@ targets:
         NSUserActivityTypes:
           - INSendMessageIntent
           - app.heypigeon.thread
+        # In-app updates (Sparkle; MacUpdater.swift). The feed is the
+        # appcast publish-macos uploads to the mac-latest release with every
+        # build of main; the public EdDSA key verifies each download (its
+        # private half signs them in CI). Checks are on from the first
+        # launch — no permission prompt — once an hour, and a new build
+        # installs itself in the background; "Check for Updates…" in the
+        # app menu is for the impatient. A build without the key (CI, a
+        # checkout without Local.xcconfig) leaves the updater off.
+        SUFeedURL: https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/appcast.xml
+        SUPublicEDKey: $(SPARKLE_PUBLIC_ED_KEY)
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: true
+        SUScheduledCheckInterval: 3600
+        # Sandboxed apps install through Sparkle's launcher XPC service; the
+        # downloader service is not needed with the network.client entitlement.
+        SUEnableInstallerLauncherService: true
     scheme:
       environmentVariables:
         # Set to 1 to run against the in-memory sample inbox (no OAuth, no Rust).

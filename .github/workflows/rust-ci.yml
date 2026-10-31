@@ -3,7 +3,7 @@ name: rust-ci
 # Linux checks for the shared Rust core and the iOS bridge crate: format,
 # tests, and the Swift bindgen (so the FFI surface stays generatable without
 # a Mac). The Tauri shell (src-tauri) needs GTK/WebKit system libraries and
-# is built by build-macos.yml on release instead.
+# is not built here; the Mac ships as the native app (publish-macos.yml).
 
 on:
   push:

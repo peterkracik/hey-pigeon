@@ -64,13 +64,13 @@ on:
         type: string
         required: false
 
-# One group per ref for pushes (a newer push replaces a still-queued build),
-# but every tag or manual upload gets its own group: GitHub keeps at most one
-# queued run per group, so a push arriving while an upload was still waiting
-# for a runner used to silently cancel the upload.
+# One group per ref for pushes: a newer push to main cancels the build still
+# running for the previous one (every push publishes its own build, so the
+# older one would only cost minutes). Every tag or manual upload gets its own
+# group, so those are never cancelled by a push.
 concurrency:
   group: publish-ios-${{ github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') && github.ref || github.run_id }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   SCHEME: HeyPigeon

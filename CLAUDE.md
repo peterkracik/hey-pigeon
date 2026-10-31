@@ -13,7 +13,7 @@ Each part has its own guide; read the one for the folder you work in.
 
 CI: `rust-ci` (crates), `ios-ci` (iOS build + tests on PRs), `macos-ci`
 (native Mac build + tests on PRs), `publish-ios` (main → TestFlight),
-`publish-macos` (`mac-v*` tags → notarized zip), `build-macos` (Tauri
-desktop). A change to `desktop-app/crates` or to `ios-app/HeyPigeon` also
+`publish-macos` (main → the notarized `mac-latest` build; `mac-v*` tags →
+a versioned release), `build-macos` (Tauri desktop). A change to `desktop-app/crates` or to `ios-app/HeyPigeon` also
 rebuilds the iOS app and the Mac app, so keep `ios-ci` and `macos-ci` green
 for it too.

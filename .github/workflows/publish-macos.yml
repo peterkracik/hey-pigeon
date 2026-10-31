@@ -1,9 +1,12 @@
 name: publish-macos
 
 # Build the native Mac app (Rust core → xcframework → Xcode archive), sign it
-# with Developer ID, notarize it and attach a zip to a GitHub release — the
-# way the Tauri desktop app ships (build-macos.yml), for the Swift one. Runs
-# on a `mac-v*` tag (the version comes from the tag) or by hand.
+# with Developer ID, notarize it and publish the zip — the Swift app's twin of
+# publish-ios. Every push to main that changes the app (the Mac sources, the
+# shell it shares with the phone, or the Rust crates) publishes a build to
+# the rolling "mac-latest" pre-release (one stable download URL, replaced
+# each time); a `mac-v*` tag cuts a versioned release with the version from
+# the tag; a manual run does what a main push does.
 #
 # Secrets: the GitHub environment "macos" (synced there from a Doppler
 # config of the same shape). Same values as the Tauri build and publish-ios
@@ -26,7 +29,24 @@ name: publish-macos
 
 on:
   push:
+    # Tags publish a versioned release. Path filters do not apply to tag pushes.
     tags: ["mac-v*"]
+    # Pushes to main publish the rolling build when the app itself changed:
+    # the Mac sources, the shell and core it is built from, or this workflow.
+    # Documentation inside those folders does not count.
+    branches: ["main"]
+    paths:
+      - "macos-app/**"
+      - "!macos-app/**/*.md"
+      - "ios-app/HeyPigeon/**"
+      - "ios-app/HeyPigeonWidgets/**"
+      - "ios-app/HeyPigeonShare/**"
+      - "ios-app/HeyPigeonCore/**"
+      - "ios-app/scripts/**"
+      - "desktop-app/crates/**"
+      - "desktop-app/Cargo.toml"
+      - "desktop-app/Cargo.lock"
+      - ".github/workflows/publish-macos.yml"
   workflow_dispatch:
     inputs:
       version:
@@ -34,8 +54,10 @@ on:
         type: string
         required: false
 
+# One group per ref for pushes (a newer push to main replaces a still-queued
+# build), but every tag or manual run gets its own group.
 concurrency:
-  group: publish-macos-${{ github.run_id }}
+  group: publish-macos-${{ github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') && github.ref || github.run_id }}
   cancel-in-progress: false
 
 env:
@@ -88,6 +110,7 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/mac-v* ]]; then echo "tagged=true" >> "$GITHUB_OUTPUT"; else echo "tagged=false" >> "$GITHUB_OUTPUT"; fi
           echo "Version ${version} (${GITHUB_RUN_NUMBER})"
 
       - name: Write Local.xcconfig (team + Google OAuth client + relay)
@@ -207,7 +230,13 @@ jobs:
         run: |
           set -euo pipefail
           app="$EXPORT_DIR/HeyPigeon.app"
-          zip="$RUNNER_TEMP/HeyPigeon-mac-${{ steps.ver.outputs.version }}.zip"
+          # A tag names the zip by its version; a main push by version and
+          # build number, so two builds of one version stay apart.
+          if [[ "${{ steps.ver.outputs.tagged }}" == "true" ]]; then
+            zip="$RUNNER_TEMP/HeyPigeon-mac-${{ steps.ver.outputs.version }}.zip"
+          else
+            zip="$RUNNER_TEMP/HeyPigeon-mac-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}.zip"
+          fi
           ditto -c -k --keepParent "$app" "$zip"
           xcrun notarytool submit "$zip" \
             --key "$ASC_KEY_PATH" \
@@ -226,12 +255,34 @@ jobs:
           path: ${{ env.ZIP }}
           if-no-files-found: error
 
+      # ---- A tag: the versioned release ------------------------------------
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/mac-v')
+        if: steps.ver.outputs.tagged == 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: "Hey Pigeon for Mac ${{ steps.ver.outputs.version }}"
           files: ${{ env.ZIP }}
+
+      # ---- A push to main: the rolling pre-release ----------------------------
+      # One pre-release, "mac-latest", whose zip is replaced on every build, so
+      # the download link never changes:
+      # https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip
+      - name: Publish as the latest build
+        if: steps.ver.outputs.tagged != 'true'
+        run: |
+          set -euo pipefail
+          cp "$ZIP" "$RUNNER_TEMP/HeyPigeon-mac-latest.zip"
+          echo "LATEST_ZIP=$RUNNER_TEMP/HeyPigeon-mac-latest.zip" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
+        if: steps.ver.outputs.tagged != 'true'
+        with:
+          tag_name: mac-latest
+          name: "Hey Pigeon for Mac — latest build"
+          prerelease: true
+          body: |
+            Version ${{ steps.ver.outputs.version }}, build ${{ steps.ver.outputs.build }}, from `${{ github.sha }}`.
+            Replaced on every push to main that changes the Mac app. Signed with Developer ID and notarized.
+          files: ${{ env.LATEST_ZIP }}
 
       - name: Clean up keys
         if: always()

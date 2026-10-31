@@ -83,10 +83,15 @@ xcodebuild test -project HeyPigeonMac.xcodeproj -scheme HeyPigeon -destination '
 
 ## Publishing (CI)
 
-`.github/workflows/publish-macos.yml`: a `mac-v*` tag (or a manual run)
-builds a universal archive, signs it with Developer ID through the App Store
-Connect key, notarizes it and attaches `HeyPigeon-mac-<version>.zip` to the
-GitHub release — the Swift app's twin of `build-macos` for the Tauri one.
+`.github/workflows/publish-macos.yml` builds a universal archive, signs it
+with Developer ID through the App Store Connect key and notarizes it — the
+Swift app's twin of `publish-ios`. **Every push to `main`** that changes the
+app (anything under `macos-app/` except docs, the shared shell in
+`ios-app/HeyPigeon`, the widgets, the share view, the Rust crates) publishes
+the zip to the rolling `mac-latest` pre-release, so the download link never
+changes:
+`https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip`.
+A `mac-v*` tag cuts a versioned release with `HeyPigeon-mac-<version>.zip`.
 It reads the GitHub environment `macos` (synced from a Doppler config of
 the same shape): `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` and
 `APPLE_TEAM_ID` as the Tauri build has them, `ASC_API_KEY_ID`,

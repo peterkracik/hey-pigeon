@@ -349,8 +349,9 @@ private struct HTMLView {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             // allowsContentJavaScript only blocks the mail's own scripts; this
-            // app-injected one still runs. Linkify, fold the quote, then measure.
-            let script = Self.linkifyScript + Self.quoteScript(hide: !parent.showQuoted)
+            // app-injected one still runs. Linkify, fold the quote, shrink a
+            // too-wide layout to fit, then measure.
+            let script = Self.linkifyScript + Self.quoteScript(hide: !parent.showQuoted) + Self.fitScript
                 + "[document.documentElement.scrollHeight, window.__pigeonQuote === true]"
             webView.evaluateJavaScript(script) { [weak self] result, _ in
                 guard let self, let r = result as? [Any], let h = r.first as? CGFloat, h > 0 else { return }
@@ -361,6 +362,22 @@ private struct HTMLView {
                 }
             }
         }
+
+        /// Newsletters and receipts are often laid out for a fixed 600–700 px
+        /// column (table width attributes, inline px widths), which
+        /// `max-width: 100%` cannot undo; the web view does not scroll, so the
+        /// right side was cut off on a phone. Like Apple Mail, scale the whole
+        /// body down until it fits the view's width. CSS zoom (not a
+        /// transform) so the measured height shrinks with it.
+        static let fitScript = #"""
+        (function () {
+          var b = document.body, d = document.documentElement;
+          if (!b) return;
+          b.style.zoom = "";
+          var w = d.clientWidth, sw = Math.max(b.scrollWidth, d.scrollWidth);
+          if (w > 0 && sw > w + 1) b.style.zoom = String(Math.max(w / sw, 0.25));
+        })();
+        """#
 
         /// Finds the outermost trailing quote container (Outlook's reference
         /// container, div.gmail_quote, or a trailing <blockquote>) and hides

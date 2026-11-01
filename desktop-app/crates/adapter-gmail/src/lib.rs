@@ -23,6 +23,12 @@ const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 const UPLOAD_API: &str = "https://gmail.googleapis.com/upload/gmail/v1/users/me";
 /// threads.get concurrency during backfill (quota-friendly, still fast).
 const FETCH_CONCURRENCY: usize = 10;
+/// Retries of a rate-limited read before the error reaches the caller.
+/// Gmail's per-user quota is per minute, so the waits (2, 4, 8, 16 s plus
+/// jitter, or the server's Retry-After) span most of a quota window.
+const RATE_LIMIT_RETRIES: u32 = 4;
+/// Longest single wait on a rate limit, whatever Retry-After says.
+const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 pub fn refresh_token_key(account_id: &str) -> String {
     format!("oauth.refresh.{account_id}")
@@ -45,6 +51,11 @@ pub struct GmailProvider {
     /// (account, composer draft key) → Gmail draft id, so repeated saves
     /// update one draft without waiting on Gmail's search index.
     draft_ids: Mutex<HashMap<(AccountId, String), String>>,
+    /// account → instant before which no request is sent. Set when Gmail
+    /// answers "rate limited", so the backfill's parallel fetches and a
+    /// thread open all wait out the same window instead of each spending
+    /// more of the per-minute quota on requests that will be refused.
+    cooldown: std::sync::Mutex<HashMap<AccountId, Instant>>,
 }
 
 impl GmailProvider {
@@ -57,6 +68,7 @@ impl GmailProvider {
             photo_cache: Mutex::new(HashMap::new()),
             photo_warmed: Mutex::new(std::collections::HashSet::new()),
             draft_ids: Mutex::new(HashMap::new()),
+            cooldown: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -240,19 +252,65 @@ impl GmailProvider {
         account_id: &AccountId,
         url: &str,
     ) -> Result<T, MailError> {
-        let token = self.access_token(account_id).await?;
-        let resp = self
-            .http
-            .get(url)
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp)
-            .await?
-            .json::<T>()
-            .await
-            .map_err(|e| MailError::Provider(e.to_string()))
+        // Reads are idempotent, so a rate limit is retried here with
+        // exponential backoff (Gmail's documented remedy) and only reaches
+        // the caller once the retries run out.
+        let mut attempt = 0;
+        loop {
+            self.wait_cooldown(account_id).await;
+            let token = self.access_token(account_id).await?;
+            let sent = self
+                .http
+                .get(url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|e| MailError::Network(e.to_string()))?;
+            match Self::check(sent).await {
+                Ok(resp) => {
+                    return resp
+                        .json::<T>()
+                        .await
+                        .map_err(|e| MailError::Provider(e.to_string()))
+                }
+                Err(MailError::RateLimited { retry_after_secs })
+                    if attempt < RATE_LIMIT_RETRIES =>
+                {
+                    let wait = backoff(attempt, retry_after_secs);
+                    log::info!("gmail rate limited ({account_id}), retrying in {wait:?}");
+                    self.start_cooldown(account_id, wait);
+                    attempt += 1;
+                }
+                Err(e) => {
+                    if let MailError::RateLimited { retry_after_secs } = &e {
+                        self.start_cooldown(account_id, backoff(attempt, *retry_after_secs));
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// Sleep until this account's rate-limit cooldown (if any) has passed.
+    async fn wait_cooldown(&self, account_id: &AccountId) {
+        let until = self.cooldown.lock().unwrap().get(account_id).copied();
+        if let Some(until) = until {
+            let now = Instant::now();
+            if until > now {
+                tokio::time::sleep(until - now).await;
+            }
+        }
+    }
+
+    /// Hold every request for this account for `wait` (never shortening a
+    /// longer cooldown another request already started).
+    fn start_cooldown(&self, account_id: &AccountId, wait: Duration) {
+        let until = Instant::now() + wait;
+        let mut map = self.cooldown.lock().unwrap();
+        let entry = map.entry(account_id.clone()).or_insert(until);
+        if *entry < until {
+            *entry = until;
+        }
     }
 
     async fn post_json(
@@ -261,6 +319,7 @@ impl GmailProvider {
         url: &str,
         body: &serde_json::Value,
     ) -> Result<(), MailError> {
+        self.wait_cooldown(account_id).await;
         let token = self.access_token(account_id).await?;
         let resp = self
             .http
@@ -281,6 +340,7 @@ impl GmailProvider {
         url: &str,
         body: &serde_json::Value,
     ) -> Result<T, MailError> {
+        self.wait_cooldown(account_id).await;
         let token = self.access_token(account_id).await?;
         let resp = self
             .http
@@ -330,6 +390,7 @@ impl GmailProvider {
         // '-' is not in the base64 alphabet and the inner MIME uses distinct
         // boundary strings, so this outer boundary cannot be forged.
         const B: &str = "hp_rel_7MA4YWxkTrZu0gW";
+        self.wait_cooldown(account_id).await;
         let token = self.access_token(account_id).await?;
         let body = format!(
             "--{B}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n--{B}\r\nContent-Type: message/rfc822\r\n\r\n{rfc822}\r\n--{B}--\r\n"
@@ -458,6 +519,7 @@ impl GmailProvider {
         url: &str,
         body: &serde_json::Value,
     ) -> Result<(), MailError> {
+        self.wait_cooldown(account_id).await;
         let token = self.access_token(account_id).await?;
         let resp = self
             .http
@@ -471,6 +533,7 @@ impl GmailProvider {
     }
 
     async fn delete(&self, account_id: &AccountId, url: &str) -> Result<(), MailError> {
+        self.wait_cooldown(account_id).await;
         let token = self.access_token(account_id).await?;
         let resp = self
             .http
@@ -498,11 +561,41 @@ impl GmailProvider {
             429 => MailError::RateLimited {
                 retry_after_secs: retry_after,
             },
+            // Gmail reports its per-user quota as 403 rateLimitExceeded /
+            // userRateLimitExceeded, not 429. Left as a provider error it
+            // was shown raw in the thread view and never retried.
+            403 if is_rate_limit_403(&body) => MailError::RateLimited {
+                retry_after_secs: retry_after,
+            },
             // 404 stays a plain provider error — `HistoryExpired` is scoped to
             // the history checkpoint (ports.rs); `list_history` maps it there.
             _ => MailError::Provider(format!("{status}: {body}")),
         })
     }
+}
+
+/// Is this 403 body Gmail's rate limit rather than a real permission
+/// failure? Both say `PERMISSION_DENIED`; only the reason tells them apart.
+fn is_rate_limit_403(body: &str) -> bool {
+    [
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "RATE_LIMIT_EXCEEDED",
+    ]
+    .iter()
+    .any(|r| body.contains(&format!("\"{r}\"")))
+}
+
+/// Wait before retry `attempt` (0-based): the server's Retry-After when it
+/// sends one, else 2^(attempt+1) s, plus up to 1 s of jitter so parallel
+/// fetches do not come back in lockstep. Capped at `MAX_BACKOFF`.
+fn backoff(attempt: u32, retry_after_secs: Option<u64>) -> Duration {
+    use rand::Rng;
+    let base = retry_after_secs
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(2u64 << attempt.min(4)));
+    let jitter = Duration::from_millis(rand::rng().random_range(0..1000));
+    (base + jitter).min(MAX_BACKOFF)
 }
 
 /// Did `check` see an HTTP 404? (`Display` for a 404 status starts with
@@ -1562,6 +1655,29 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limit_403_is_told_apart_from_permission_denied() {
+        let quota = r#"{"error":{"code":403,"message":"Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'","errors":[{"domain":"usageLimits","reason":"rateLimitExceeded"}],"status":"PERMISSION_DENIED"}}"#;
+        assert!(is_rate_limit_403(quota));
+        assert!(is_rate_limit_403(
+            r#"{"errors":[{"reason":"userRateLimitExceeded"}]}"#
+        ));
+        assert!(!is_rate_limit_403(
+            r#"{"error":{"code":403,"errors":[{"reason":"insufficientPermissions"}],"status":"PERMISSION_DENIED"}}"#
+        ));
+    }
+
+    #[test]
+    fn backoff_doubles_honours_retry_after_and_caps() {
+        let b0 = backoff(0, None);
+        assert!(b0 >= Duration::from_secs(2) && b0 < Duration::from_secs(3));
+        let b2 = backoff(2, None);
+        assert!(b2 >= Duration::from_secs(8) && b2 < Duration::from_secs(9));
+        let ra = backoff(0, Some(5));
+        assert!(ra >= Duration::from_secs(5) && ra < Duration::from_secs(6));
+        assert_eq!(backoff(9, Some(600)), MAX_BACKOFF);
+    }
 
     #[test]
     fn header_addresses_keep_quoted_commas_and_strip_names() {

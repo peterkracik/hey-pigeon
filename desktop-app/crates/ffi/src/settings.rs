@@ -616,7 +616,7 @@ impl Engine {
 
     /// `pref:ai.fallback`, or the default order. Ids this device cannot
     /// serve are simply skipped at resolution time.
-    fn fallback_order(&self) -> Result<Vec<String>, EngineError> {
+    pub(crate) fn fallback_order(&self) -> Result<Vec<String>, EngineError> {
         let stored: Option<Vec<String>> = self.store.get_pref(AI_FALLBACK_PREF)?.and_then(|v| {
             v.as_array().map(|items| {
                 items
@@ -666,14 +666,20 @@ impl Engine {
         Ok(self.backend(provider_id).map(ActiveProvider::Foreign))
     }
 
+    /// Provider ids in the order they are tried: the preferred one, then
+    /// the fallback order.
+    pub(crate) fn provider_candidates(&self) -> Result<Vec<String>, EngineError> {
+        let mut candidates = vec![self.preferred_provider()?];
+        candidates.extend(self.fallback_order()?);
+        Ok(candidates)
+    }
+
     /// The provider that answers now: the preferred one when it can, else
     /// the first of the fallback order that can, else none. A device
     /// without Apple Intelligence keeps working off the key it has; a
     /// device without a key keeps working off the models it has.
     fn active_provider(&self) -> Result<Option<ActiveProvider>, EngineError> {
-        let mut candidates = vec![self.preferred_provider()?];
-        candidates.extend(self.fallback_order()?);
-        for id in candidates {
+        for id in self.provider_candidates()? {
             if let Some(p) = self.provider_if_available(&id)? {
                 return Ok(Some(p));
             }

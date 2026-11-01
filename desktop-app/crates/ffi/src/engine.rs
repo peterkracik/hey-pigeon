@@ -71,6 +71,8 @@ pub struct Engine {
     sync_status: Mutex<HashMap<AccountId, SyncStatusEntry>>,
     /// Guards Jev classification from overlapping runs (settings.rs).
     pub(crate) classifying: Mutex<bool>,
+    /// Guards the AI suggestion pass from overlapping runs (suggest.rs).
+    pub(crate) suggesting: Mutex<bool>,
     /// Last Jev failure; None after a clean run (settings.rs).
     pub(crate) triage_last_error: Mutex<Option<String>>,
     /// The shell's AI backends, one per provider it can offer on this device
@@ -125,6 +127,7 @@ impl Engine {
             disconnected: Mutex::new(disconnected),
             sync_status: Mutex::new(HashMap::new()),
             classifying: Mutex::new(false),
+            suggesting: Mutex::new(false),
             triage_last_error: Mutex::new(None),
             ai_backends: Mutex::new(Vec::new()),
         }))
@@ -513,6 +516,11 @@ impl Engine {
             .get_thread(&thread_id)?
             .ok_or_else(|| EngineError::Invalid(format!("unknown thread {thread_id}")))?;
         self.store.set_schedule(&thread_id, scheduled_at)?;
+        // A reminder settles the question the AI suggestion asked (this is
+        // also how accepting a "Remind me" proposal clears it).
+        if scheduled_at.is_some() {
+            self.store.clear_thread_suggestion(&thread_id)?;
+        }
         devsync::record_reminder(&self.store, &thread.account_id, &thread_id, scheduled_at)?;
         let follow_up_since = match (scheduled_at, follow_up) {
             (Some(_), true) => Some(now_ms()),
@@ -544,6 +552,10 @@ impl Engine {
             .get_thread(&thread_id)?
             .ok_or_else(|| EngineError::Invalid(format!("unknown thread {thread_id}")))?;
         self.store.set_needs_reply(&thread_id, needs_reply)?;
+        // Same as a reminder: flagging it answers the AI suggestion.
+        if needs_reply {
+            self.store.clear_thread_suggestion(&thread_id)?;
+        }
         devsync::record_needs_reply(&self.store, &thread.account_id, &thread_id, needs_reply)?;
         self.notify_threads_updated();
         self.push_devsync_later(thread.account_id);
@@ -626,6 +638,9 @@ impl Engine {
         // Jev triage rides the sync cadence, never its own timer (desktop
         // does the same at the end of its poll tick).
         self.classify_pending().await;
+        // Then the "Need reply" / "Remind me" proposals for new unread
+        // mail, on the same cadence (suggest.rs).
+        self.suggest_pending().await;
         Ok(changed)
     }
 
@@ -1001,6 +1016,7 @@ pub(crate) mod tests_support {
             triage_label_ids: vec![],
             needs_reply: false,
             follow_up_since: None,
+            suggestion: None,
         }
     }
 }

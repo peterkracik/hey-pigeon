@@ -53,6 +53,14 @@ struct ThreadRowView: View {
                     .foregroundStyle(tone)
                     .lineLimit(1)
                 Spacer(minLength: 0)
+                // The AI's proposal, read-only here (the row is a tap target
+                // and a swipe surface): the thread and the long-press menu
+                // accept or dismiss it.
+                if let s = row.openSuggestion {
+                    Chip(text: s.title, systemImage: "sparkles",
+                         background: Theme.accentSoft, foreground: Theme.textPrimary, capsule: true)
+                        .accessibilityLabel("Suggested: \(s.title)")
+                }
                 ForEach(triageNames, id: \.self) { name in
                     Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
                 }
@@ -117,7 +125,8 @@ struct ThreadRowView: View {
     }
 }
 
-/// A small label pill: Jev labels, the reminder and need-reply badges.
+/// A small label pill: Jev labels, the reminder and need-reply badges, the
+/// AI's suggestion.
 struct Chip: View {
     let text: String
     var systemImage: String? = nil

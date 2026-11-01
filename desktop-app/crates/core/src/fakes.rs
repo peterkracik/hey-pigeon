@@ -48,6 +48,9 @@ struct MemStoreInner {
     /// Threads whose triage labels were manually edited — `set_thread_triage`
     /// must leave them alone until `reset_triage` clears the pin.
     triage_labels_manual: std::collections::HashSet<ThreadId>,
+    /// thread → `msg_count` at its last AI suggestion pass (same rule as
+    /// `triage_versions`).
+    suggestion_versions: HashMap<ThreadId, i64>,
     /// App-wide preferences (`Store::get_pref` & co.).
     prefs: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -142,6 +145,7 @@ impl Store for MemStore {
             // the `false` default.
             t.needs_reply = old.needs_reply;
             t.follow_up_since = old.follow_up_since;
+            t.suggestion = old.suggestion;
         }
         g.threads.insert(t.id.clone(), t);
         Ok(())
@@ -345,6 +349,57 @@ impl Store for MemStore {
         v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
         v.truncate(limit as usize);
         Ok(v)
+    }
+
+    fn list_threads_needing_suggestion(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        // Keep in lockstep with SqliteStore's query.
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| {
+                !t.is_read
+                    && t.is_inbox
+                    && !t.is_archived
+                    && t.scheduled_at.is_none()
+                    && !t.needs_reply
+                    && t.last_msg_at >= since
+                    && g.suggestion_versions.get(&t.id) != Some(&t.msg_count)
+            })
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
+    fn set_thread_suggestion(
+        &self,
+        thread_id: &ThreadId,
+        suggestion: Option<&Suggestion>,
+        at_msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let t = g
+            .threads
+            .get_mut(thread_id)
+            .ok_or_else(|| StoreError(format!("unknown thread {thread_id}")))?;
+        t.suggestion = suggestion.copied();
+        g.suggestion_versions
+            .insert(thread_id.clone(), at_msg_count);
+        Ok(())
+    }
+
+    fn clear_thread_suggestion(&self, thread_id: &ThreadId) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        Ok(g.threads
+            .get_mut(thread_id)
+            .and_then(|t| t.suggestion.take())
+            .is_some())
     }
 
     fn set_thread_triage(
@@ -758,6 +813,7 @@ impl FakeProvider {
                     scheduled_at: None,
                     needs_reply: false,
                     follow_up_since: None,
+                    suggestion: None,
                     labels: vec!["INBOX".to_string()],
                     // Every 5th sample thread carries an attachment — just
                     // enough variety to eyeball the icon in Fake-backend dev mode.
@@ -990,6 +1046,7 @@ mod tests {
             scheduled_at: None,
             needs_reply: false,
             follow_up_since: None,
+            suggestion: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,

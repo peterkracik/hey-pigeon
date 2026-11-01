@@ -26,6 +26,48 @@ func makeMessage(_ id: String, from: String = "Ana", address: String = "ana@acme
                 bodyHTML: nil, bodyText: text, isRead: read, isMine: mine, isDraft: draft)
 }
 
+struct SuggestionPromptTests {
+    private var prague: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Prague")!
+        return c
+    }
+
+    @Test func aDayAndHourBecomeAReminderInTheUsersTimeZone() throws {
+        let at = try #require(SuggestionPrompt.remindDate(day: "2026-11-06", hour: 7, calendar: prague))
+        let c = prague.dateComponents([.year, .month, .day, .hour, .minute], from: at)
+        #expect(c == DateComponents(year: 2026, month: 11, day: 6, hour: 7, minute: 0))
+        // 06:00 UTC: Prague is UTC+1 in November.
+        #expect(at.timeIntervalSince1970 == 1_793_944_800)
+    }
+
+    @Test func notADayIsNoReminder() {
+        #expect(SuggestionPrompt.remindDate(day: "Friday", hour: 8, calendar: prague) == nil)
+        #expect(SuggestionPrompt.remindDate(day: "", hour: 8, calendar: prague) == nil)
+        #expect(SuggestionPrompt.remindDate(day: "2026-02-30", hour: 8, calendar: prague) == nil)
+        // An hour out of range falls back to 8 rather than dropping the day.
+        let at = SuggestionPrompt.remindDate(day: "2026-11-06", hour: 31, calendar: prague)
+        #expect(at.map { prague.component(.hour, from: $0) } == 8)
+    }
+
+    @Test func theModelsActionMapsToAProposal() {
+        #expect(SuggestionPrompt.suggestion(action: "reply", remindOn: "", hour: 8, calendar: prague) == .needsReply)
+        #expect(SuggestionPrompt.suggestion(action: "nothing", remindOn: "2026-11-06", hour: 8, calendar: prague) == nil)
+        #expect(SuggestionPrompt.suggestion(action: "remind", remindOn: "soon", hour: 8, calendar: prague) == nil)
+        let at = SuggestionPrompt.remindDate(day: "2026-11-06", hour: 8, calendar: prague)!
+        #expect(SuggestionPrompt.suggestion(action: "remind", remindOn: "2026-11-06", hour: 8, calendar: prague) == .remind(at: at))
+    }
+
+    @Test func thePromptCarriesTheWeekdaySoRelativeDatesResolve() {
+        // Sunday 1 November 2026, 13:05 UTC = 14:05 in Prague.
+        let received = Date(timeIntervalSince1970: 1_793_538_300)
+        let p = SuggestionPrompt.prompt(subject: "", from: "ana@acme.test", body: "See you Friday?",
+                                        received: received, calendar: prague)
+        #expect(p.hasPrefix("Received: Sunday, 1 November 2026, 14:05\n"))
+        #expect(p.contains("Subject: (no subject)") && p.hasSuffix("See you Friday?"))
+    }
+}
+
 struct EmailAddressTests {
     @Test func parsesHeaderText() {
         #expect(EmailAddress.address(in: "\"Ana Novak\" <ana@acme.test>") == "ana@acme.test")

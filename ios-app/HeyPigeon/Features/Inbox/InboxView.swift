@@ -295,6 +295,13 @@ struct RowMenu: View {
     }
 
     var body: some View {
+        // The AI's proposal first: it is what the row is asking about.
+        if let s = row.openSuggestion {
+            Section("Suggested") {
+                Button { model.acceptSuggestion(row) } label: { Label(s.title, systemImage: s.systemImage) }
+                Button { model.dismissSuggestion(row) } label: { Label("Dismiss suggestion", systemImage: "xmark") }
+            }
+        }
         Button {
             if !row.isDone { IntentDonations.archived(row, in: model) }
             model.toggleDone(row)

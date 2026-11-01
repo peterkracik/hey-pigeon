@@ -207,6 +207,10 @@ final class RustEngine: MailEngine {
         try engine.setNeedsReply(threadId: threadId, needsReply: value)
     }
 
+    func dismissSuggestion(threadId: String) throws {
+        try engine.dismissSuggestion(threadId: threadId)
+    }
+
     func setManualTriageLabels(threadId: String, ids: [String]) throws {
         try engine.setManualTriageLabels(threadId: threadId, labelIds: ids)
     }
@@ -396,7 +400,13 @@ private extension ThreadRow {
                 case .high: .high
                 }
             },
-            triageLabelIds: t.triageLabelIds, labels: t.labels
+            triageLabelIds: t.triageLabelIds, labels: t.labels,
+            suggestion: t.suggestion.map {
+                switch $0 {
+                case .needsReply: .needsReply
+                case .remind(let at): .remind(at: Date(epochMs: at))
+                }
+            }
         )
     }
 }

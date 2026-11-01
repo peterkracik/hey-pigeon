@@ -140,6 +140,56 @@ struct AppModelTests {
         #expect(try engine.threadRow(id: "t1")?.scheduledAt == nil)
     }
 
+    // MARK: AI suggestions (the mock's t1 asks a question, t2 names a day)
+
+    @Test func acceptingNeedReplyFlagsTheThreadAndDropsTheProposal() throws {
+        let row = try #require(try engine.threadRow(id: "t1"))
+        #expect(row.openSuggestion == .needsReply)
+        model.acceptSuggestion(row)
+        let after = try #require(try engine.threadRow(id: "t1"))
+        #expect(after.needsReply && after.suggestion == nil)
+        #expect(!model.rows.contains { $0.id == "t1" }) // moved to Need reply
+    }
+
+    @Test func acceptingRemindSetsTheProposedReminder() throws {
+        let row = try #require(try engine.threadRow(id: "t2"))
+        guard case .remind(let at) = row.openSuggestion else {
+            Issue.record("t2 should propose a reminder")
+            return
+        }
+        model.acceptSuggestion(row)
+        let after = try #require(try engine.threadRow(id: "t2"))
+        #expect(after.scheduledAt == at && after.suggestion == nil && !after.isFollowUp)
+    }
+
+    @Test func aPastReminderProposalAsksForATimeInstead() throws {
+        let row = makeRow("t2", read: false)
+        var stale = row
+        stale.suggestion = .remind(at: Date().addingTimeInterval(-3_600))
+        model.acceptSuggestion(stale)
+        #expect(model.pendingRemind?.id == "t2")
+        #expect(try engine.threadRow(id: "t2")?.scheduledAt == nil)
+    }
+
+    @Test func dismissingKeepsTheThreadWhereItIs() throws {
+        let row = try #require(try engine.threadRow(id: "t1"))
+        model.dismissSuggestion(row)
+        let after = try #require(try engine.threadRow(id: "t1"))
+        #expect(after.suggestion == nil && !after.needsReply && after.scheduledAt == nil)
+        #expect(model.rows.contains { $0.id == "t1" })
+    }
+
+    @Test func aFlaggedOrDoneThreadOffersNoSuggestion() {
+        var flagged = makeRow("a", needsReply: true)
+        flagged.suggestion = .needsReply
+        var done = makeRow("b", archived: true)
+        done.suggestion = .needsReply
+        var open = makeRow("c", read: false)
+        open.suggestion = .needsReply
+        #expect(flagged.openSuggestion == nil && done.openSuggestion == nil)
+        #expect(open.openSuggestion == .needsReply)
+    }
+
     // MARK: Prefs
 
     @Test func triageRulesAreSavedOnceTypingPausesOrOnFlush() throws {

@@ -50,6 +50,20 @@ pub trait AiBackend: Send + Sync {
         from: String,
         labels: Vec<TriageLabel>,
     ) -> Result<TriageVerdict, EngineError>;
+    /// Read one new unread email and propose what the user should do with
+    /// it: `NeedsReply` when the sender is waiting on an answer, `Remind`
+    /// at the date it names when it matters later (a meeting, a deadline),
+    /// nothing otherwise. `body` is the newest message as plain text,
+    /// already trimmed; `received_at` (epoch ms) is when it arrived, so
+    /// "tomorrow" or "Friday" resolve — the shell knows the user's time
+    /// zone, the core does not, so the date arithmetic is the backend's.
+    async fn suggest(
+        &self,
+        subject: String,
+        from: String,
+        body: String,
+        received_at: i64,
+    ) -> Result<Option<ThreadSuggestion>, EngineError>;
 }
 
 /// The core's view of the shell's backend.
@@ -117,6 +131,10 @@ pub(crate) mod fakes {
         pub(crate) provider_id: String,
         pub(crate) completions: Mutex<Vec<(String, String)>>,
         pub(crate) classifications: Mutex<Vec<String>>,
+        /// Subjects and bodies `suggest` was asked about, in order.
+        pub(crate) suggestions_asked: Mutex<Vec<(String, String)>>,
+        /// What `suggest` answers (`Err` when the string is set).
+        pub(crate) suggestion: Mutex<Result<Option<ThreadSuggestion>, String>>,
         pub(crate) verdict: TriageVerdict,
         pub(crate) answer: String,
     }
@@ -135,6 +153,8 @@ pub(crate) mod fakes {
                 provider_id: provider_id.to_string(),
                 completions: Mutex::new(Vec::new()),
                 classifications: Mutex::new(Vec::new()),
+                suggestions_asked: Mutex::new(Vec::new()),
+                suggestion: Mutex::new(Ok(None)),
                 verdict,
                 answer: answer.to_string(),
             })
@@ -165,6 +185,20 @@ pub(crate) mod fakes {
         ) -> Result<TriageVerdict, EngineError> {
             self.classifications.lock().unwrap().push(subject);
             Ok(self.verdict.clone())
+        }
+        async fn suggest(
+            &self,
+            subject: String,
+            _from: String,
+            body: String,
+            _received_at: i64,
+        ) -> Result<Option<ThreadSuggestion>, EngineError> {
+            self.suggestions_asked.lock().unwrap().push((subject, body));
+            self.suggestion
+                .lock()
+                .unwrap()
+                .clone()
+                .map_err(EngineError::Ai)
         }
     }
 }

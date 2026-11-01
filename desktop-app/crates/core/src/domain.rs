@@ -75,6 +75,26 @@ pub struct Thread {
     /// re-upserts, travels between devices through the sync map.
     #[serde(default)]
     pub follow_up_since: Option<i64>,
+    /// Local-only AI proposal for a new unread email: "Need reply" or
+    /// "Remind me" at a date the model read in it. Same contract as
+    /// `priority`: never synced to Gmail or between devices (each device
+    /// can analyze), preserved across provider re-upserts. Cleared once
+    /// the user accepts or dismisses it, or flags the thread themselves.
+    #[serde(default)]
+    pub suggestion: Option<Suggestion>,
+}
+
+/// What the AI proposes for a new unread email. The user accepts it (one
+/// tap sets the flag or the reminder) or dismisses it; nothing changes on
+/// its own.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Suggestion {
+    /// Someone is waiting on the user's answer.
+    NeedsReply,
+    /// Bring the thread back at `at` (epoch ms): a meeting, a deadline, a
+    /// delivery the email names.
+    Remind { at: i64 },
 }
 
 /// Current wall-clock time as epoch milliseconds — the unit `scheduled_at`

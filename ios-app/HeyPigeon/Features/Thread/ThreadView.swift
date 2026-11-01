@@ -82,6 +82,10 @@ struct ThreadView: View {
                     .padding(.horizontal, 16).padding(.top, 6)
 
                 metaLine.padding(.horizontal, 16).padding(.top, 8)
+                if let s = current.openSuggestion {
+                    SuggestionCard(suggestion: s, row: current)
+                        .padding(.horizontal, 16).padding(.top, 10)
+                }
                 if !hintActions.isEmpty {
                     AttachmentActionChips(actions: hintActions, row: current)
                         .padding(.horizontal, 16).padding(.top, 8)

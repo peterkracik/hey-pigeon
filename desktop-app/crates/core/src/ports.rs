@@ -518,6 +518,41 @@ pub trait Store {
         Ok(())
     }
 
+    /// Unread inbox threads the AI has not looked at since their last
+    /// message, newer than `since` (epoch ms), newest first: no reminder,
+    /// not flagged "needs reply", not done. Same versioning as triage —
+    /// `set_thread_suggestion` records the `msg_count` it covered, and a
+    /// new message makes the thread due again.
+    fn list_threads_needing_suggestion(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let _ = (since, limit);
+        Ok(Vec::new())
+    }
+
+    /// Persist one analysis: the proposal (None = nothing to suggest) and
+    /// the `msg_count` it covers, so the thread is not asked about again
+    /// until a new message lands.
+    fn set_thread_suggestion(
+        &self,
+        thread_id: &ThreadId,
+        suggestion: Option<&Suggestion>,
+        at_msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, suggestion, at_msg_count);
+        Err(StoreError("suggestions not supported by this store".into()))
+    }
+
+    /// Drop the proposal (accepted, dismissed, or the user flagged the
+    /// thread themselves) but keep its version, so the same message is
+    /// never proposed twice. True when there was one to drop.
+    fn clear_thread_suggestion(&self, thread_id: &ThreadId) -> Result<bool, StoreError> {
+        let _ = thread_id;
+        Ok(false)
+    }
+
     /// Apply a mutation locally (the optimistic half).
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError>;
 

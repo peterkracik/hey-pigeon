@@ -172,3 +172,42 @@ struct AttachmentActionChips: View {
         }
     }
 }
+
+/// The AI's proposal for a new email, under the thread's header: what it
+/// suggests, one tap to take it, one to dismiss it. Nothing changes until
+/// the user picks (crates/ffi/src/suggest.rs).
+struct SuggestionCard: View {
+    let suggestion: MailSuggestion
+    let row: ThreadRow
+    @Environment(AppModel.self) private var model
+
+    private var reason: String {
+        switch suggestion {
+        case .needsReply: "Looks like someone is waiting on your answer."
+        case .remind: "Looks like this matters on a later date."
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "sparkles").font(.footnote).foregroundStyle(Theme.textSecondary)
+            Text(reason)
+                .font(.footnote).foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button { model.acceptSuggestion(row) } label: {
+                Chip(text: suggestion.title, systemImage: suggestion.systemImage,
+                     background: Theme.accentSoft, foreground: Theme.textPrimary, capsule: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Accept: \(suggestion.title)")
+            Button { model.dismissSuggestion(row) } label: {
+                Image(systemName: "xmark").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss suggestion")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}

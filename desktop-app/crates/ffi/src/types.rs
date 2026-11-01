@@ -80,6 +80,38 @@ pub struct MailThread {
     pub needs_reply: bool,
     /// Local-only "remind me if no reply" marker (epoch ms it was armed).
     pub follow_up_since: Option<i64>,
+    /// The AI's proposal for this new unread email, waiting for the user
+    /// to accept or dismiss it. Local-only.
+    pub suggestion: Option<ThreadSuggestion>,
+}
+
+/// What the AI proposes for a new unread email (`domain::Suggestion`).
+/// Also the answer type of `AiBackend::suggest`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ThreadSuggestion {
+    /// Someone is waiting on the user's answer: flag it "Need reply".
+    NeedsReply,
+    /// Bring it back at `at` (epoch ms): "Remind me" on a date the email
+    /// names (a meeting, a deadline, a delivery).
+    Remind { at: i64 },
+}
+
+impl From<domain::Suggestion> for ThreadSuggestion {
+    fn from(s: domain::Suggestion) -> Self {
+        match s {
+            domain::Suggestion::NeedsReply => Self::NeedsReply,
+            domain::Suggestion::Remind { at } => Self::Remind { at },
+        }
+    }
+}
+
+impl From<ThreadSuggestion> for domain::Suggestion {
+    fn from(s: ThreadSuggestion) -> Self {
+        match s {
+            ThreadSuggestion::NeedsReply => Self::NeedsReply,
+            ThreadSuggestion::Remind { at } => Self::Remind { at },
+        }
+    }
 }
 
 impl From<domain::Thread> for MailThread {
@@ -103,6 +135,7 @@ impl From<domain::Thread> for MailThread {
             triage_label_ids: t.triage_label_ids,
             needs_reply: t.needs_reply,
             follow_up_since: t.follow_up_since,
+            suggestion: t.suggestion.map(Into::into),
         }
     }
 }

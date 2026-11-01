@@ -35,21 +35,27 @@ final class MockEngine: MailEngine {
         func row(_ i: Int, _ account: String, _ from: String, _ addr: String, _ subject: String,
                  _ snippet: String, hoursAgo: Double, unread: Bool = false, count: Int = 1,
                  attachment: Bool = false, pin: Bool = false, priority: TriageLevel? = nil,
-                 triage: [String] = []) -> ThreadRow
+                 triage: [String] = [], suggestion: MailSuggestion? = nil) -> ThreadRow
         {
             ThreadRow(id: "t\(i)", accountId: account, subject: subject, snippet: snippet,
                       lastMessageAt: now.addingTimeInterval(-hoursAgo * 3600), isRead: !unread,
                       isArchived: false, messageCount: count, fromSummary: from, lastFromAddress: addr,
                       scheduledAt: nil, isFollowUp: false, needsReply: false, isStarred: pin,
                       hasAttachment: attachment, priority: priority, triageLabelIds: triage,
-                      labels: ["INBOX"] + (pin ? ["STARRED"] : []))
+                      labels: ["INBOX"] + (pin ? ["STARRED"] : []), suggestion: suggestion)
         }
+        // What the core's suggestion pass would propose for the two new
+        // unread emails (suggest.rs): a question waiting on an answer, and
+        // a plan with a day in it.
+        let saturday = Calendar.current.date(byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: now))
+            .flatMap { Calendar.current.date(bySettingHour: 7, minute: 0, second: 0, of: $0) } ?? now
         let sample: [ThreadRow] = [
             row(1, "me@work.test", "Priya Nair", "priya@acme.test", "Q4 roadmap review",
                 "Attaching the deck — can you look at slides 4–7 before Thursday?", hoursAgo: 0.4,
-                unread: true, count: 3, attachment: true, priority: .high),
+                unread: true, count: 3, attachment: true, priority: .high, suggestion: .needsReply),
             row(2, "me@personal.test", "Tomáš", "tomas@friends.test", "Weekend ride?",
-                "Forecast looks good for Saturday morning. Usual place at 8?", hoursAgo: 2.5, unread: true),
+                "Forecast looks good for Saturday morning. Usual place at 8?", hoursAgo: 2.5, unread: true,
+                suggestion: .remind(at: saturday)),
             row(3, "me@work.test", "GitHub", "noreply@github.test", "[hey-pigeon] CI passed on main",
                 "All 3 jobs succeeded.", hoursAgo: 5, priority: .low, triage: ["tl3"]),
             row(4, "me@personal.test", "Lufthansa", "news@lh.test", "Your trip to Lisbon: check-in opens",
@@ -211,13 +217,26 @@ final class MockEngine: MailEngine {
         onThreadsUpdated?()
     }
 
+    // A reminder or the flag settles the AI suggestion (engine.rs
+    // `set_schedule` / `set_needs_reply`).
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws {
-        update(threadId) { $0.scheduledAt = date; $0.isFollowUp = date != nil && onlyIfNoReply }
+        update(threadId) {
+            $0.scheduledAt = date; $0.isFollowUp = date != nil && onlyIfNoReply
+            if date != nil { $0.suggestion = nil }
+        }
         onThreadsUpdated?()
     }
 
     func setNeedsReply(threadId: String, _ value: Bool) throws {
-        update(threadId) { $0.needsReply = value }
+        update(threadId) {
+            $0.needsReply = value
+            if value { $0.suggestion = nil }
+        }
+        onThreadsUpdated?()
+    }
+
+    func dismissSuggestion(threadId: String) throws {
+        update(threadId) { $0.suggestion = nil }
         onThreadsUpdated?()
     }
 
@@ -405,20 +424,21 @@ final class MockEngine: MailEngine {
     // ThreadRow is immutable on purpose; rebuild it through a mutable copy.
     private struct Draft {
         var isRead: Bool, isArchived: Bool, scheduledAt: Date?, isFollowUp: Bool,
-            needsReply: Bool, isStarred: Bool, labels: [String], triageLabelIds: [String]
+            needsReply: Bool, isStarred: Bool, labels: [String], triageLabelIds: [String],
+            suggestion: MailSuggestion?
     }
 
     private func update(_ id: String, _ change: (inout Draft) -> Void) {
         guard let r = rows[id] else { return }
         var d = Draft(isRead: r.isRead, isArchived: r.isArchived, scheduledAt: r.scheduledAt,
                       isFollowUp: r.isFollowUp, needsReply: r.needsReply, isStarred: r.isStarred,
-                      labels: r.labels, triageLabelIds: r.triageLabelIds)
+                      labels: r.labels, triageLabelIds: r.triageLabelIds, suggestion: r.suggestion)
         change(&d)
         rows[id] = ThreadRow(id: r.id, accountId: r.accountId, subject: r.subject, snippet: r.snippet,
                              lastMessageAt: r.lastMessageAt, isRead: d.isRead, isArchived: d.isArchived,
                              messageCount: r.messageCount, fromSummary: r.fromSummary, lastFromAddress: r.lastFromAddress,
                              scheduledAt: d.scheduledAt, isFollowUp: d.isFollowUp, needsReply: d.needsReply,
                              isStarred: d.isStarred, hasAttachment: r.hasAttachment, priority: r.priority,
-                             triageLabelIds: d.triageLabelIds, labels: d.labels)
+                             triageLabelIds: d.triageLabelIds, labels: d.labels, suggestion: d.suggestion)
     }
 }

@@ -836,6 +836,7 @@ mod tests {
             scheduled_at: None,
             needs_reply: false,
             follow_up_since: None,
+            suggestion: None,
             labels: vec!["INBOX".to_string(), "UNREAD".to_string()],
             has_attachment: false,
             priority: None,

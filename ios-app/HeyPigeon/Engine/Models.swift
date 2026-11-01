@@ -33,6 +33,28 @@ enum TriageLevel: String, Hashable, Comparable {
     static func < (lhs: TriageLevel, rhs: TriageLevel) -> Bool { lhs.rank < rhs.rank }
 }
 
+/// What the AI proposes for a new unread email (crates/ffi/src/suggest.rs):
+/// one tap accepts it, nothing happens until then.
+enum MailSuggestion: Hashable {
+    case needsReply
+    case remind(at: Date)
+
+    /// The chip's words, the desktop's vocabulary.
+    var title: String {
+        switch self {
+        case .needsReply: "Need reply"
+        case .remind(let at): "Remind · \(Formatters.reminder(at))"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .needsReply: "arrowshape.turn.up.left"
+        case .remind: "clock"
+        }
+    }
+}
+
 /// One thread as the lists show it: the store's row, no bodies. Immutable;
 /// a change is a fresh row from the engine.
 struct ThreadRow: Identifiable, Hashable {
@@ -62,6 +84,16 @@ struct ThreadRow: Identifiable, Hashable {
     let triageLabelIds: [String]
     /// Gmail label ids over the thread (INBOX, STARRED, Label_…).
     let labels: [String]
+    /// The AI's proposal for this new email, until accepted or dismissed.
+    var suggestion: MailSuggestion? = nil
+
+    /// The proposal, while it still means something: the core drops it when
+    /// the user flags the thread, but a row from before that (or a thread
+    /// marked done) must not offer it.
+    var openSuggestion: MailSuggestion? {
+        guard !needsReply, scheduledAt == nil, !isArchived else { return nil }
+        return suggestion
+    }
 
     var isConversation: Bool { messageCount > 1 }
     /// The first name in `fromSummary` ("Ana, Me (4)" → "Ana"); nil when
@@ -665,6 +697,9 @@ protocol MailEngine: AnyObject {
     func perform(_ action: MailAction, accountId: String) async throws
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws
     func setNeedsReply(threadId: String, _ value: Bool) throws
+    /// Drop the AI's proposal without acting on it. Accepting needs no call
+    /// of its own: setting the flag or the reminder drops it in the core.
+    func dismissSuggestion(threadId: String) throws
     func setManualTriageLabels(threadId: String, ids: [String]) throws
 
     func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws

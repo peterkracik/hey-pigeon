@@ -2,7 +2,8 @@
 // layer"): the Rust core calls back into this through the UniFFI
 // `AiBackend` trait (crates/ffi/src/ai.rs), one instance per
 // `ModelProvider` the device can run, registered with
-// `Engine.addAiBackend`. The summary, draft, edit and triage paths in the
+// `Engine.addAiBackend`. The summary, draft, edit, triage and new-mail
+// suggestion paths in the
 // core never learn which model answered; the core picks the provider
 // (preferred, then the fallback order) and this class runs the request on
 // its `LanguageModelSession`.
@@ -54,6 +55,28 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
             throw EngineError.Ai(message: Self.describe(error))
         }
         return TriageVerdict(priority: verdict.priority.ffi, labelIds: TriagePrompt.labelIds(for: verdict.labels, in: labels))
+    }
+
+    func suggest(subject: String, from: String, body: String, receivedAt: Int64) async throws -> ThreadSuggestion? {
+        let session = provider.session(instructions: SuggestionPrompt.instructions, task: .classification)
+        // Leave room for the header lines and the answer; the core already
+        // cut the body to a few thousand characters.
+        let room = max(provider.promptBudget - 400, 500)
+        let prompt = SuggestionPrompt.prompt(subject: subject, from: from, body: String(body.prefix(room)),
+                                             received: Date(timeIntervalSince1970: Double(receivedAt) / 1000))
+        let call: SuggestionCall
+        do {
+            let response = try await session.respond(to: prompt, generating: SuggestionCall.self)
+            ledger.record(provider: provider.id, response.usage)
+            call = response.content
+        } catch let error as LanguageModelSession.GenerationError {
+            throw EngineError.Ai(message: Self.describe(error))
+        }
+        switch SuggestionPrompt.suggestion(action: call.action.rawValue, remindOn: call.remindOn, hour: call.hour) {
+        case .needsReply: return .needsReply
+        case .remind(let at): return .remind(at: Int64((at.timeIntervalSince1970 * 1000).rounded()))
+        case nil: return nil
+        }
     }
 
     // MARK: Completion with chunking
@@ -123,6 +146,23 @@ struct TriageCall {
     var priority: TriagePriority
     @Guide(description: "The labels from the available list that apply, by their exact names. Empty when none fits.", .count(0...3))
     var labels: [String]
+}
+
+/// The structured new-mail suggestion (SuggestionPrompt says what each
+/// field means; the instruction carries the rules, the guides the shape).
+@Generable
+struct SuggestionCall {
+    @Guide(description: "reply, remind or nothing.")
+    var action: SuggestedAction
+    @Guide(description: "For remind: the day to bring the email back, YYYY-MM-DD. Empty otherwise.")
+    var remindOn: String
+    @Guide(description: "For remind: the hour of that day, 0 to 23. 8 otherwise.", .range(0...23))
+    var hour: Int
+}
+
+@Generable
+enum SuggestedAction: String {
+    case reply, remind, nothing
 }
 
 @Generable

@@ -612,6 +612,37 @@ CancellableIntent` with a dry-run parameter; progress is a Live Activity
 the dry-run switch and the rules (both synced) and "Siri triage and
 journal": run from the app, apply or leave as is, read every run back.
 
+### Suggestions for new mail
+
+Each new unread email gets one proposal: **Need reply** (someone waits on
+an answer) or **Remind me** on the date it names (a meeting, a deadline),
+or nothing. Nothing changes on its own: the row shows a sparkles chip,
+the thread shows a card with the proposal and a dismiss button, and the
+row's long-press menu has both. Accepting is the existing flag or
+reminder (`set_needs_reply` / `set_schedule`), which drops the proposal
+in the core; dismissing drops it without acting.
+
+The core runs it (`crates/ffi/src/suggest.rs`) at the end of `sync_all`,
+after triage, so background refresh and push-driven syncs get it too.
+It asks about unread inbox threads from the last three days that have
+no reminder and no flag, five per round, once per `msg_count` (the
+triage versioning rule: a dismissed proposal is never repeated, a new
+message makes the thread due again). It fetches the bodies first and
+sends the newest message's text, cut to 4,000 characters, through
+`AiBackend::suggest`. Only the shell's backends answer, in the user's
+provider order; OpenAI never gets a body without a tap. The backend
+(`FoundationModelsBackend.suggest`, prompt in `AI/SuggestionPrompt.swift`)
+fills a `@Generable` `SuggestionCall` (`reply` / `remind` / `nothing`,
+a day as `YYYY-MM-DD`, an hour). The day becomes a date in the user's
+time zone on the Swift side, because the core does not know the zone;
+the core drops dates in the past or more than a year out. The proposal
+is local (`threads.suggestion`, migration v18), like triage priority:
+each device analyzes its own new mail.
+
+Settings › AI › "Suggest for new mail" (`pref:ai.suggest`, synced, on
+unless turned off) shows when one of the app's models is available, and
+the footer says what is read.
+
 ### Attachment understanding (#67)
 
 Attachments reach the phone: `MailEngine.attachments` / `attachmentFile`

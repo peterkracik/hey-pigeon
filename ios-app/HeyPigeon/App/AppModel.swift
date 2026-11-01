@@ -219,6 +219,9 @@ final class AppModel {
         /// Settings › Triage › Siri triage: "Dry run" and the user's own rules.
         static let triageDryRun = "triage.dry_run"
         static let triageRules = "triage.rules"
+        /// Settings › AI › "Suggest for new mail" (the core reads it too:
+        /// crates/ffi/src/suggest.rs, unset = on).
+        static let suggest = "ai.suggest"
     }
 
     /// Group pinned messages at the top of the inbox.
@@ -249,6 +252,11 @@ final class AppModel {
                 if siriIndexEnabled { await SpotlightIndexer.refresh(self) } else { await SpotlightIndexer.clear() }
             }
         }
+    }
+    /// New unread mail gets an AI proposal: "Need reply" or "Remind me" on
+    /// the date it names. The core runs it after each sync; off stops it.
+    var suggestEnabled = true {
+        didSet { savePref(PrefName.suggest, suggestEnabled) }
     }
     /// "Triage my inbox" only reports what it would do; nothing changes.
     var triageDryRun = false {
@@ -330,6 +338,7 @@ final class AppModel {
         if let v = prefs[PrefName.siriIndex] as? Bool { siriIndexEnabled = v }
         if let v = prefs[PrefName.triageDryRun] as? Bool { triageDryRun = v }
         if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
+        if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
         adoptingPrefs = false
     }
 
@@ -871,6 +880,31 @@ final class AppModel {
     func rescheduleReminders() async {
         let unread = (try? engine.unreadCounts(accountId: nil))?["inbox"] ?? 0
         await ReminderScheduler.reschedule(scheduledThreads(accountId: nil), unread: unread)
+    }
+
+    /// Take the AI's proposal: the same flag or reminder the swipe sets,
+    /// which also drops the proposal in the core.
+    func acceptSuggestion(_ row: ThreadRow) {
+        switch row.openSuggestion {
+        case .needsReply:
+            guard !row.needsReply else { return }
+            toggleNeedsReply(row)
+        case .remind(let at):
+            // A proposal can outlive its date (the app was closed, the
+            // email sat unread): ask for a time instead of setting a past one.
+            if at > Date() { remind(row, at: at, onlyIfNoReply: false) } else { pendingRemind = row }
+        case nil:
+            return
+        }
+    }
+
+    /// Drop the AI's proposal; the thread stays where it is.
+    func dismissSuggestion(_ row: ThreadRow) {
+        Haptics.light()
+        do {
+            try engine.dismissSuggestion(threadId: row.id)
+            refreshOpenThread()
+        } catch { show(error.localizedDescription) }
     }
 
     /// Desktop `l`: add or remove one Gmail label.

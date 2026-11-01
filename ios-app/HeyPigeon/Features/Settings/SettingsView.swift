@@ -343,6 +343,15 @@ private struct AISection: View {
             if status?.configured == true {
                 Toggle("Auto-summarize", isOn: $model.autoSummarize)
             }
+            if anyApple {
+                Toggle(isOn: $model.suggestEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Suggest for new mail")
+                        Text("Need reply, or Remind me on the date an email names")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            }
             if !openaiConfigured {
                 HStack {
                     SecureField("sk-…", text: $key)
@@ -361,6 +370,11 @@ private struct AISection: View {
                 Text(anyApple
                     ? "On this \(Device.name), Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own model with a much larger window and deeper reasoning: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. What you prefer and the fallback order follow you to your other devices."
                     : "Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
+                if anyApple && model.suggestEnabled {
+                    // Privacy copy must be true (CLAUDE.md): this is the one
+                    // AI path that reads a body without a tap.
+                    Text("Suggest for new mail: each new unread email (up to \(Self.suggestChars.formatted()) characters of its text) is read by the model you prefer above — never ChatGPT — to propose Need reply or a reminder. Nothing changes until you accept.")
+                }
                 usageLines
             }
         }
@@ -368,6 +382,10 @@ private struct AISection: View {
         .task { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
     }
+
+    /// What the core sends of a new email's text (SUGGEST_BODY_CHARS in
+    /// crates/ffi/src/suggest.rs).
+    static let suggestChars = 4_000
 
     /// One line under each Apple row: answering · available · why not.
     private func providerLine(_ p: AIProviderInfo) -> String {

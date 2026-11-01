@@ -22,6 +22,7 @@ mod engine;
 mod push;
 mod secrets;
 mod settings;
+mod suggest;
 mod types;
 
 pub use ai::*;

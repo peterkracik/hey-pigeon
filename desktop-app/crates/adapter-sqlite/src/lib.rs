@@ -256,6 +256,18 @@ const MIGRATIONS: &[&str] = &[
     // re-derives every cached thread's `from_summary` / `last_from_addr`
     // from its stored messages, no network needed.
     "SELECT 1;",
+    // v18 — AI suggestion for a new unread email ("Need reply", or
+    // "Remind me" at a date the email names). `suggestion` is the proposal
+    // as JSON (`{"kind":"needs_reply"}`, `{"kind":"remind","at":<ms>}`),
+    // NULL when there is none (never asked, nothing to suggest, accepted or
+    // dismissed). `suggestion_msg_count` is the `msg_count` the last
+    // analysis covered — the triage versioning rule, so a new message makes
+    // the thread due again and a dismissed one is never re-proposed. Both
+    // local-only and absent from `upsert_thread`, like `priority`.
+    "
+    ALTER TABLE threads ADD COLUMN suggestion TEXT;
+    ALTER TABLE threads ADD COLUMN suggestion_msg_count INTEGER;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -594,11 +606,14 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         triage_label_ids: serde_json::from_str(&r.get::<_, String>(15)?).unwrap_or_default(),
         needs_reply: r.get(16)?,
         follow_up_since: r.get(17)?,
+        suggestion: r
+            .get::<_, Option<String>>(18)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply, follow_up_since";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply, follow_up_since, suggestion";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -1006,6 +1021,59 @@ impl Store for SqliteStore {
             let rows = stmt.query_map(params![limit], row_to_thread)?;
             rows.collect()
         })
+    }
+
+    fn list_threads_needing_suggestion(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        // Keep in lockstep with MemStore's filter.
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE is_read = 0 AND is_inbox = 1 AND is_archived = 0
+                   AND scheduled_at IS NULL AND needs_reply = 0
+                   AND last_msg_at >= ?1
+                   AND (suggestion_msg_count IS NULL OR suggestion_msg_count != msg_count)
+                 ORDER BY last_msg_at DESC
+                 LIMIT ?2"
+            ))?;
+            let rows = stmt.query_map(params![since, limit], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
+    fn set_thread_suggestion(
+        &self,
+        thread_id: &ThreadId,
+        suggestion: Option<&Suggestion>,
+        at_msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let json = suggestion
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(err)?;
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET suggestion = ?2, suggestion_msg_count = ?3 WHERE id = ?1",
+                params![thread_id, json, at_msg_count],
+            )
+        })?;
+        if n == 0 {
+            return Err(StoreError(format!("unknown thread {thread_id}")));
+        }
+        Ok(())
+    }
+
+    fn clear_thread_suggestion(&self, thread_id: &ThreadId) -> Result<bool, StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET suggestion = NULL WHERE id = ?1 AND suggestion IS NOT NULL",
+                params![thread_id],
+            )
+        })?;
+        Ok(n > 0)
     }
 
     fn set_thread_triage(
@@ -1935,6 +2003,7 @@ mod tests {
             scheduled_at: None,
             needs_reply: false,
             follow_up_since: None,
+            suggestion: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -2032,6 +2101,7 @@ mod tests {
             scheduled_at: None,
             needs_reply: false,
             follow_up_since: None,
+            suggestion: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -2555,6 +2625,69 @@ mod tests {
     }
 
     #[test]
+    fn suggestion_queue_versions_and_survives_reupsert() {
+        let s = store();
+        let unread = |id: &str, at: i64| {
+            seed_labelled(&s, id, &["INBOX"], true, false, at);
+            let mut t = s.get_thread(&id.to_string()).unwrap().unwrap();
+            t.is_read = false;
+            s.upsert_thread(&t).unwrap();
+        };
+        unread("new", 5_000);
+        unread("older", 4_000);
+        unread("too-old", 500);
+        seed_labelled(&s, "read", &["INBOX"], true, false, 5_000);
+        unread("flagged", 5_000);
+        s.set_needs_reply(&"flagged".to_string(), true).unwrap();
+        unread("snoozed", 5_000);
+        s.set_schedule(&"snoozed".to_string(), Some(9_000)).unwrap();
+
+        let ids = |since| -> Vec<String> {
+            s.list_threads_needing_suggestion(since, 10)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert_eq!(ids(1_000), vec!["new", "older"]);
+
+        let remind = Suggestion::Remind { at: 99_000 };
+        s.set_thread_suggestion(&"new".to_string(), Some(&remind), 1)
+            .unwrap();
+        s.set_thread_suggestion(&"older".to_string(), None, 1)
+            .unwrap();
+        assert!(ids(1_000).is_empty());
+
+        // Provider data never carries the suggestion.
+        let mut t = s.get_thread(&"new".to_string()).unwrap().unwrap();
+        t.subject = "Renamed".into();
+        s.upsert_thread(&t).unwrap();
+        assert_eq!(
+            s.get_thread(&"new".to_string())
+                .unwrap()
+                .unwrap()
+                .suggestion,
+            Some(remind)
+        );
+
+        // Dismissed: gone, and not due again for the same message…
+        assert!(s.clear_thread_suggestion(&"new".to_string()).unwrap());
+        assert!(!s.clear_thread_suggestion(&"new".to_string()).unwrap());
+        assert_eq!(
+            s.get_thread(&"new".to_string())
+                .unwrap()
+                .unwrap()
+                .suggestion,
+            None
+        );
+        assert!(ids(1_000).is_empty());
+        // …but a new message makes it due again.
+        t.msg_count = 2;
+        s.upsert_thread(&t).unwrap();
+        assert_eq!(ids(1_000), vec!["new"]);
+    }
+
+    #[test]
     fn manual_triage_labels_survive_reclassification_until_reset() {
         let s = store();
         seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
@@ -2875,6 +3008,7 @@ mod tests {
             scheduled_at: None,
             needs_reply: false,
             follow_up_since: None,
+            suggestion: None,
             labels: vec!["INBOX".to_string()],
             has_attachment: false,
             priority: None,

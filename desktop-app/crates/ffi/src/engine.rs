@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use heypigeon_adapter_gmail::oauth::{self, AuthRequest, ClientConfig};
 use heypigeon_adapter_gmail::GmailProvider;
@@ -23,6 +24,15 @@ use crate::types::*;
 pub(crate) const BACKFILL_DAYS: u32 = 30;
 /// Archive-walk pages (100 threads each) per `backfill_older` call.
 const OLDER_PAGES_PER_CALL: usize = 1;
+/// Minimum gap between archive-walk pages for one account. A page costs
+/// about 1,010 Gmail quota units (threads.list + 100 threads.get), and the
+/// per-user limit can be as low as 6,000 units a minute: back to back, the
+/// walk spent all of it and opening a thread failed with 403
+/// rateLimitExceeded. One page per 20 s keeps the walk near half the
+/// quota, leaving the rest for the delta sync and thread opens.
+const OLDER_PAGE_GAP: Duration = Duration::from_secs(20);
+/// How long the walk stays off an account after Gmail rate-limited it.
+const OLDER_RATE_LIMIT_PAUSE: Duration = Duration::from_secs(60);
 const KEYCHAIN_SERVICE: &str = "app.heypigeon";
 pub(crate) const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
@@ -66,6 +76,9 @@ pub struct Engine {
     listener: Mutex<Option<Arc<dyn EngineListener>>>,
     /// Accounts with a delta sync in flight (foreground + background can overlap).
     syncing: Mutex<HashSet<AccountId>>,
+    /// account → when the archive walk may fetch its next page
+    /// (`OLDER_PAGE_GAP`, `OLDER_RATE_LIMIT_PAUSE`).
+    older_due: Mutex<HashMap<AccountId, Instant>>,
     /// Accounts whose Google grant no longer works (edge-triggered).
     disconnected: Mutex<HashSet<AccountId>>,
     sync_status: Mutex<HashMap<AccountId, SyncStatusEntry>>,
@@ -122,6 +135,7 @@ impl Engine {
             pending_oauth: Mutex::new(None),
             listener: Mutex::new(None),
             syncing: Mutex::new(HashSet::new()),
+            older_due: Mutex::new(HashMap::new()),
             disconnected: Mutex::new(disconnected),
             sync_status: Mutex::new(HashMap::new()),
             classifying: Mutex::new(false),
@@ -646,11 +660,34 @@ impl Engine {
     /// below the newest page, so the shell appends it instead of resetting
     /// a scrolled list. An account mid-sync is skipped (still "more"); one
     /// that fails is skipped until the next call, so a network error ends
-    /// the shell's loop instead of spinning it.
+    /// the shell's loop instead of spinning it. Pages are paced to Gmail's
+    /// quota (`OLDER_PAGE_GAP`): the call sleeps until an account is due,
+    /// and a rate-limited account is paused, not dropped from the walk.
     pub async fn backfill_older(&self) -> Result<bool, EngineError> {
+        // Pace the walk to Gmail's per-minute quota: wait for the first
+        // account that is due, then fetch for every account that is.
+        let accounts = self.store.list_accounts()?;
+        let next_due = {
+            let due = self.older_due.lock().unwrap();
+            accounts
+                .iter()
+                .filter_map(|a| due.get(&a.id).copied())
+                .min()
+        };
+        if let Some(at) = next_due {
+            let now = Instant::now();
+            if at > now {
+                tokio::time::sleep(at - now).await;
+            }
+        }
         let mut more = false;
-        for a in self.store.list_accounts()? {
+        for a in accounts {
             if self.disconnected.lock().unwrap().contains(&a.id) {
+                continue;
+            }
+            let due = self.older_due.lock().unwrap().get(&a.id).copied();
+            if due.is_some_and(|at| at > Instant::now()) {
+                more = true;
                 continue;
             }
             if !self.syncing.lock().unwrap().insert(a.id.clone()) {
@@ -669,13 +706,31 @@ impl Engine {
                 .await
             };
             self.syncing.lock().unwrap().remove(&a.id);
-            match result {
-                Ok((_, done)) => more |= !done,
+            let gap = match result {
+                Ok((_, done)) => {
+                    more |= !done;
+                    OLDER_PAGE_GAP
+                }
                 Err(sync::SyncError::Mail(MailError::AuthExpired)) => {
                     self.mark_disconnected(&a.id);
+                    OLDER_PAGE_GAP
                 }
-                Err(e) => log::warn!("backfill_older({}) failed: {e}", a.id),
-            }
+                // Quota, not a failure: pause this account and keep the
+                // walk going, instead of ending it until the next launch.
+                Err(sync::SyncError::Mail(MailError::RateLimited { .. })) => {
+                    log::info!("backfill_older({}) rate limited, pausing", a.id);
+                    more = true;
+                    OLDER_RATE_LIMIT_PAUSE
+                }
+                Err(e) => {
+                    log::warn!("backfill_older({}) failed: {e}", a.id);
+                    OLDER_PAGE_GAP
+                }
+            };
+            self.older_due
+                .lock()
+                .unwrap()
+                .insert(a.id.clone(), Instant::now() + gap);
         }
         Ok(more)
     }

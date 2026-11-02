@@ -19,7 +19,7 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var model = model
         NavigationStack {
-            List {
+            SettingsList {
                 accountsSection
                 AISection()
                 SiriSection()
@@ -65,7 +65,6 @@ struct SettingsView: View {
                 }
                 .menuCard()
             }
-            .menuList()
             .navigationTitle("Settings")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {

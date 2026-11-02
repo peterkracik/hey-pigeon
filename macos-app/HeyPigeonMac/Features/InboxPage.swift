@@ -1,63 +1,38 @@
-// The window's root page: a slim title row over a hairline — the folder's
-// name and count with a chevron that opens the view's menu (the account,
-// Summarize, Ask), plain icon buttons for AI, search and compose, or the
-// search field — then the phone's list (ThreadRowView, GroupHeader) full width up to a readable
-// maximum, the Jev label pill at the bottom. A row's actions come three
-// ways, all through WindowState: the keyboard map, the bar that appears
-// when the pointer rests on a row (Done plus the four actions Settings puts
-// on the swipes), and a two-finger trackpad swipe (the same four, two per
-// side). A click opens the thread in place (ThreadPage); ⌘-click and
-// ⇧-click gather rows for the batch bar. Search results, the From / To /
-// Unread / account filters and the recent searches are the phone's Search
-// tab's pieces (Features/Search/SearchScreen.swift).
+// The window's root page, under the top bar (TopBar in MainWindow): the
+// list, full width up to a readable maximum, in the first desktop
+// client's shape — single-line rows with a done circle, like a to-do list
+// (MailRow), the day groups between them, a click opening the row's
+// latest message in place as a card with "Open full thread ›". ⌘-click
+// and ⇧-click gather rows for the batch bar. Search results, the From /
+// To / Unread / account filters and the recent searches are the phone's
+// Search tab's pieces (Features/Search/SearchScreen.swift); the field
+// itself is in the top bar.
 
 import AppKit
 import SwiftUI
-
-/// The readable column the list and the thread share, and the room the
-/// traffic lights take at the top left (the window has no title bar). The
-/// title row's sizes are in MacStyle.
-enum MacLayout {
-    static let maxWidth: CGFloat = 1040
-    static let trafficLights: CGFloat = 70
-}
 
 struct InboxPage: View {
     @Bindable var state: WindowState
     @Environment(AppModel.self) private var model
     @State private var picking: PersonField?
-    @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            InboxHeader(state: state, searchFocused: $searchFocused)
-            Hairline()
-            VStack(spacing: 0) {
-                if state.searching || model.isSearching {
-                    SearchFilterBar(picking: $picking)
-                    if model.isSearching { ResultCount(count: model.searchResults.count) }
-                }
-                content
+            if state.searching || model.isSearching {
+                SearchFilterBar(picking: $picking).padding(.top, 8)
+                if model.isSearching { ResultCount(count: model.searchResults.count) }
             }
-            .padding(.top, 6)
-            .frame(maxWidth: MacLayout.maxWidth)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            content
         }
+        .frame(maxWidth: MacLayout.maxWidth)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacTheme.content)
         .safeAreaInset(edge: .bottom) {
-            if state.selection.count > 1 {
-                BatchBar(state: state)
-            } else if model.tab == .inbox && !model.isSearching && !model.triageLabels.isEmpty {
-                TriageSplitBar().frame(maxWidth: 600)
-            }
+            if state.selection.count > 1 { BatchBar(state: state) }
         }
         .sheet(item: $picking) { field in PersonPicker(field: field) }
-        .onChange(of: state.searchFocusRequest) { _, _ in searchFocused = true }
-        .onChange(of: state.listFocusRequest) { _, _ in
-            searchFocused = false
-            listFocused = true
-        }
+        .onChange(of: state.listFocusRequest) { _, _ in listFocused = true }
     }
 
     @ViewBuilder private var content: some View {
@@ -78,15 +53,19 @@ struct InboxPage: View {
                 ForEach(model.groupedRows) { group in
                     Section {
                         ForEach(group.rows) { row in
-                            MacThreadRow(row: row, state: state)
+                            MailRow(row: row, state: state)
                         }
                     } header: {
-                        GroupHeader(group: group).padding(.horizontal, 16).padding(.top, 8)
+                        GroupHeader(group: group)
+                            .padding(.horizontal, 26).padding(.top, 14).padding(.bottom, 2)
                     }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollIndicators(.never)
+            .contentMargins(.top, 6, for: .scrollContent)
+            .contentMargins(.bottom, 40, for: .scrollContent)
             .focusable()
             .focusEffectDisabled()
             .focused($listFocused)
@@ -105,232 +84,18 @@ struct InboxPage: View {
                 model.pendingThreadId = nil
                 state.open(row, in: model)
             }
-            .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
+            .animation(.easeOut(duration: 0.18), value: model.rows.map(\.id))
+            .animation(.snappy(duration: 0.22), value: state.expanded)
         }
     }
 }
 
-/// The title row, in the title bar's place: with the sidebar away, the
-/// traffic lights' room and the sidebar button; the folder's title menu;
-/// the icon buttons — or, while searching, the field.
-private struct InboxHeader: View {
-    @Bindable var state: WindowState
-    var searchFocused: FocusState<Bool>.Binding
-    @Environment(AppModel.self) private var model
-
-    private var title: String { model.tab == .inbox ? model.folder.title : model.tab.title }
-    private var count: Int {
-        switch model.tab {
-        case .inbox: model.counts[model.folder.countKey] ?? 0
-        case .scheduled: model.scheduledCount
-        case .needReply: model.needReplyCount
-        case .search: 0
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            TrafficLightsGap(state: state)
-            if !state.sidebarVisible {
-                IconButton("sidebar.leading", help: "Show the sidebar (⌃⌘S)") { state.run(.toggleSidebar, in: model) }
-            }
-            if state.searching {
-                searchField
-            } else {
-                TitleMenu { viewMenu } label: {
-                    HStack(spacing: 6) {
-                        TitleText(text: title)
-                        if count > 0 {
-                            Text("\(count)").font(.system(size: 13)).foregroundStyle(Theme.textTertiary).monospacedDigit()
-                        }
-                        if model.accounts.count > 1 {
-                            Text("· \(model.currentAccount?.displayName ?? "All accounts")")
-                                .font(.system(size: 13)).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                        }
-                    }
-                }
-                .accessibilityLabel("\(title), \(count) unread")
-                Spacer(minLength: 8)
-                if model.isSyncing {
-                    ProgressView().controlSize(.small).padding(.trailing, 6)
-                }
-                if model.aiConfigured {
-                    IconButton("sparkles", help: "Summarize this view (⌥⌘I)") { model.openViewSummary() }
-                }
-                IconButton("magnifyingglass", help: "Search (/)") { state.run(.search, in: model) }
-                IconButton("square.and.pencil", help: "New message (⌘N)") { model.compose(SendDraft()) }
-            }
-        }
-        .titleRow()
-    }
-
-    /// The title's menu: the view's actions, then the account switch.
-    @ViewBuilder private var viewMenu: some View {
-        if model.aiConfigured {
-            Button { model.openViewSummary() } label: { Label("Summarize this view", systemImage: "sparkles") }
-        }
-        if model.tab == .inbox && InboxAsk.isAvailable(model) {
-            Button { model.askSheet = AskPresentation() } label: { Label("Ask my inbox…", systemImage: "questionmark.bubble") }
-        }
-        Button { state.run(.search, in: model) } label: { Label("Search", systemImage: "magnifyingglass") }
-        Button { Task { await model.sync() } } label: { Label("Check for new mail", systemImage: "arrow.clockwise") }
-        if model.accounts.count > 1 {
-            Divider()
-            Button { model.selectedAccountId = nil } label: {
-                Label("All accounts", systemImage: model.selectedAccountId == nil ? "checkmark" : "tray.2")
-            }
-            ForEach(model.accounts) { a in
-                Button { model.selectedAccountId = a.id } label: {
-                    Label(a.displayName, systemImage: a.id == model.selectedAccountId ? "checkmark" : "person.crop.circle")
-                }
-            }
-        }
-    }
-
-    private var searchField: some View {
-        @Bindable var model = model
-        return HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
-            TextField("Search mail", text: $model.searchText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused(searchFocused)
-                .onSubmit { model.rememberSearch() }
-                .onExitCommand { state.run(.escape, in: model) }
-            if !model.searchText.isEmpty {
-                Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
-                    .accessibilityLabel("Clear")
-            }
-            Button("Done") { state.run(.escape, in: model) }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .help("Leave the search (Esc)")
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .frame(maxWidth: 560)
-        .macPanel(cornerRadius: 8)
-        .frame(maxWidth: .infinity)
-    }
-}
-
-/// With the sidebar away, the traffic lights sit over the title row's left
-/// end: keep it clear of them.
+/// With the sidebar away, the traffic lights sit at the top bar's left
+/// end: keep it clear of them. (They are always in the top bar now; the
+/// gap is always kept.)
 struct TrafficLightsGap: View {
-    let state: WindowState
-
     var body: some View {
-        if !state.sidebarVisible {
-            Color.clear.frame(width: MacLayout.trafficLights, height: 1)
-        }
-    }
-}
-
-/// One row: the phone's three lines, flat on the content (only a tint on
-/// hover, a stronger one when it is the cursor or part of the selection), the unread bar on the left edge, the hover bar
-/// on the right, the context menu and the trackpad swipes.
-private struct MacThreadRow: View {
-    let row: ThreadRow
-    @Bindable var state: WindowState
-    @Environment(AppModel.self) private var model
-    @State private var hovering = false
-
-    private var selected: Bool { state.selection.contains(row.id) }
-
-    var body: some View {
-        ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
-                      highlight: model.isSearching ? model.searchTerms : [])
-            .padding(.horizontal, 16).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(alignment: .leading) {
-                if !row.isRead {
-                    RoundedRectangle(cornerRadius: 2).fill(Theme.unreadBar).frame(width: 3).padding(.vertical, 10)
-                }
-            }
-            .overlay(alignment: .trailing) {
-                if hovering { HoverActions(row: row, state: state).padding(.trailing, 10) }
-            }
-            .contentShape(Rectangle())
-            // A click opens; ⌘ and ⇧ gather rows for the batch bar.
-            .onTapGesture {
-                let modifiers = NSEvent.modifierFlags
-                if modifiers.contains(.command) {
-                    state.toggle(row.id, in: model)
-                } else if modifiers.contains(.shift) {
-                    state.extend(to: row.id, in: model)
-                } else {
-                    state.open(row, in: model)
-                }
-            }
-            .onHover { hovering = $0 }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 1)
-            .listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-            .contextMenu {
-                RowMenu(row: row)
-                Divider()
-                Button { state.openInWindow?(row.id) } label: { Label("Open in New Window", systemImage: "macwindow") }
-            }
-            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                swipe(model.swipeActions[0])
-                swipe(model.swipeActions[1])
-            }
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                swipe(model.swipeActions[2])
-                swipe(model.swipeActions[3])
-            }
-            .onAppear { model.loadMoreIfNeeded(current: row) }
-    }
-
-    private var background: Color {
-        if selected { return MacTheme.selected }
-        return hovering ? MacTheme.hover : .clear
-    }
-
-    private func swipe(_ action: RowAction) -> some View {
-        Button { state.run(action.command, in: model, rows: [row]) } label: {
-            Label(action.label(for: row), systemImage: action.glyph(for: row))
-        }
-        .tint(action.tint)
-    }
-}
-
-/// The desktop's hover actions on a small bordered panel: Done, then the four swipe
-/// actions from Settings (each once).
-private struct HoverActions: View {
-    let row: ThreadRow
-    @Bindable var state: WindowState
-    @Environment(AppModel.self) private var model
-
-    private var actions: [RowAction] {
-        var list: [RowAction] = [.done]
-        for a in model.swipeActions where !list.contains(a) { list.append(a) }
-        return list
-    }
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(actions) { action in
-                Button { state.run(action.command, in: model, rows: [row]) } label: {
-                    Image(systemName: action.glyph(for: row))
-                        .font(.footnote.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textPrimary)
-                .help("\(action.label(for: row)) (\(action.key))")
-                .accessibilityLabel(action.label(for: row))
-            }
-        }
-        .padding(.horizontal, 3).padding(.vertical, 1)
-        .macPanel(cornerRadius: 8)
+        Color.clear.frame(width: MacLayout.trafficLights, height: 1)
     }
 }
 
@@ -343,38 +108,25 @@ private struct BatchBar: View {
     var body: some View {
         HStack(spacing: 4) {
             Text("\(state.selection.count) selected")
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.leading, 10).padding(.trailing, 6)
             Divider().frame(height: 18)
-            action("Mark done", "checkmark", .markDone)
-            action("Read / unread", "envelope.open", .toggleRead)
-            action("Pin", "pin", .pin)
-            action("Need reply", "arrowshape.turn.up.left", .needReply)
-            action("Delete", "trash", .delete)
+            IconButton("checkmark.circle", help: "Mark done") { state.run(.markDone, in: model) }
+            IconButton("envelope.open", help: "Read / unread") { state.run(.toggleRead, in: model) }
+            IconButton("pin", help: "Pin") { state.run(.pin, in: model) }
+            IconButton("arrowshape.turn.up.left", help: "Need reply") { state.run(.needReply, in: model) }
+            IconButton("trash", help: "Delete") { state.run(.delete, in: model) }
             Divider().frame(height: 18)
             Button("Clear") { state.selection = [] }
                 .buttonStyle(.plain)
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10)
                 .help("Clear the selection (Esc)")
         }
-        .padding(.horizontal, 6).padding(.vertical, 5)
+        .padding(.horizontal, 6).padding(.vertical, 4)
         .macPanel(cornerRadius: 12)
-        .padding(.bottom, 12)
-    }
-
-    private func action(_ title: String, _ systemImage: String, _ command: MailCommand) -> some View {
-        Button { state.run(command, in: model) } label: {
-            Image(systemName: systemImage)
-                .font(.footnote.weight(.semibold))
-                .frame(width: 30, height: 30)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Theme.textPrimary)
-        .help(title)
-        .accessibilityLabel(title)
+        .padding(.bottom, 14)
     }
 }

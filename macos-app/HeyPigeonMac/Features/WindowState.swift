@@ -112,6 +112,12 @@ final class WindowState: Equatable {
     var sidebarVisible: Bool = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible") }
     }
+    /// The row opened in place: a click shows its latest message under the
+    /// row, the desktop's preview card, without leaving the list; its arrow
+    /// (or Return) opens the full thread.
+    var expanded: String?
+    /// Settings in the content area, from the top bar's gear or ⌘,.
+    var showSettings = false
     /// The header shows the search field (`/`, the magnifier).
     var searching = false
     var showPalette = false
@@ -218,7 +224,19 @@ final class WindowState: Equatable {
         select(row.id, in: model)
         if model.view == .drafts { model.openDraft(row); return }
         if !row.isRead { model.markRead(row) }
+        showSettings = false
         path = [row]
+    }
+
+    /// A click on a row: its preview opens under it (marked read, like the
+    /// phone's tap), or closes when it was the open one. A draft opens the
+    /// composer instead.
+    func expand(_ row: ThreadRow, in model: AppModel) {
+        select(row.id, in: model)
+        if expanded == row.id { expanded = nil; return }
+        if model.view == .drafts { model.openDraft(row); return }
+        if !row.isRead { model.markRead(row) }
+        expanded = row.id
     }
 
     /// Back to the list (Esc, the header's arrow, ⌘[), the cursor still on
@@ -265,6 +283,9 @@ final class WindowState: Equatable {
     /// a folder switch just clears it.
     func rowsChanged(in model: AppModel) {
         let ids = flatIds(model)
+        // The previewed row left (done, delete, a reminder): its card goes
+        // with it; the highlight moves on below as for any row.
+        if let open = expanded, !ids.contains(open) { expanded = nil }
         if let open = path.last {
             guard !ids.contains(open.id) else { return }
             pendingAdvance = false
@@ -377,6 +398,10 @@ final class WindowState: Equatable {
         case .compose:
             model.compose(SendDraft())
         case .search:
+            // The field is in the top bar, where an open thread shows its
+            // title: the search takes the list back.
+            showSettings = false
+            if isThreadOpen { path = [] }
             searching = true
             searchFocusRequest += 1
         case .palette:
@@ -385,15 +410,20 @@ final class WindowState: Equatable {
         case .shortcuts:
             showShortcuts.toggle()
         case .escape:
-            if isThreadOpen {
+            if showSettings {
+                showSettings = false
+                listFocusRequest += 1
+            } else if isThreadOpen {
                 close()
+            } else if expanded != nil {
+                expanded = nil
             } else if searching || model.isSearching {
                 endSearch(in: model)
             } else if !selection.isEmpty {
                 selection = []
             }
         case .back:
-            if isThreadOpen { close() }
+            if showSettings { showSettings = false } else if isThreadOpen { close() }
         case .toggleSidebar:
             sidebarVisible.toggle()
         case .next:
@@ -419,6 +449,8 @@ final class WindowState: Equatable {
         case .go(let view):
             selection = []
             path = []
+            expanded = nil
+            showSettings = false
             if searching || model.isSearching { endSearch(in: model) }
             model.show(view)
             listFocusRequest += 1

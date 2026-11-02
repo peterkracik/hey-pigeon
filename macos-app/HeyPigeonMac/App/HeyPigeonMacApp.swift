@@ -1,8 +1,9 @@
 // Hey Pigeon for the Mac: the iPhone app's model, engine, intents, Spotlight
 // index, widget snapshot and AI layer (ios-app/HeyPigeon, compiled for macOS)
-// under a Mac window — the phone's one column made bigger (the list, a
-// thread in its place, the folders in a drawer; no title bar, no toolbar),
-// the desktop's keyboard map, a menu bar, Settings (⌘,), an optional menu
+// under a Mac window in the first desktop client's shape (a top bar, the
+// folders in a sidebar, single-line rows that open in place, a full thread
+// or Settings in the list's place; no title bar, no toolbar), the
+// desktop's keyboard map, a menu bar, an optional menu
 // bar extra with the unread count, and a thread in its own window on ⌘↩.
 // The Mac never suspends the app, so sync is a timer while it runs plus
 // every activation (MacSyncLoop), and new-mail banners come from that
@@ -70,6 +71,7 @@ struct HeyPigeonMacApp: App {
         WindowGroup(id: MacWindows.main) {
             MainWindow()
                 .environment(model)
+                .environment(updater)
                 .preferredColorScheme(scheme)
                 .task {
                     await ReminderScheduler.requestPermission()
@@ -96,8 +98,9 @@ struct HeyPigeonMacApp: App {
                 }
         }
         .defaultSize(width: 1100, height: 760)
-        // No title bar: the pages draw their own header row where it would
-        // be (MainWindow hides the toolbar too), the traffic lights stay.
+        // No title bar: the window's top bar is drawn where it would be
+        // (MainWindow hides the toolbar too; WindowChrome keeps the traffic
+        // lights, centred in that bar).
         .windowStyle(.hiddenTitleBar)
         .commands { MacCommands(model: model, updater: updater) }
         .onChange(of: scenePhase) { _, phase in
@@ -121,14 +124,6 @@ struct HeyPigeonMacApp: App {
                 .preferredColorScheme(scheme)
         }
         .defaultSize(width: 760, height: 760)
-
-        // ⌘, — the same sections as the phone's Settings sheet, in a window.
-        Settings {
-            SettingsView()
-                .environment(model)
-                .environment(updater)
-                .preferredColorScheme(scheme)
-        }
 
         MenuBarExtra(isInserted: $menuBarExtra) {
             MenuBarExtraView()

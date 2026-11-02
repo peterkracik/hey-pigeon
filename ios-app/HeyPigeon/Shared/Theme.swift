@@ -131,8 +131,16 @@ extension View {
         #endif
     }
 
-    /// A section of a menu sheet, on a card.
-    func menuCard() -> some View { listRowBackground(Theme.card) }
+    /// A section of a menu sheet, on a card. On the Mac the grouped form
+    /// draws its own boxes, so the row background is left to it.
+    @ViewBuilder
+    func menuCard() -> some View {
+        #if os(iOS)
+        listRowBackground(Theme.card)
+        #else
+        self
+        #endif
+    }
 
     /// The menu sheets' presentation: full height on iOS; on the Mac a
     /// sheet is a window, so it gets a size instead.
@@ -143,7 +151,25 @@ extension View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         #else
-        frame(minWidth: 560, idealWidth: 600, minHeight: 640, idealHeight: 760)
+        frame(minWidth: 480, idealWidth: 600, minHeight: 420, idealHeight: 760)
+            .background(Theme.canvas)
+        #endif
+    }
+}
+
+/// Settings' container: the phone's menu list; on the Mac a grouped form,
+/// the boxed sections of System Settings, with no scroll bar.
+struct SettingsList<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        #if os(iOS)
+        List { content() }.menuList()
+        #else
+        Form { content() }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .scrollIndicators(.never)
             .background(Theme.canvas)
         #endif
     }

@@ -15,6 +15,7 @@ struct MacCommands: Commands {
     let model: AppModel
     let updater: MacUpdater
     @FocusedValue(\.windowState) private var state
+    @Environment(\.openWindow) private var openWindow
 
     private var hasSelection: Bool { state?.hasTarget ?? false }
     private var hasOne: Bool { state?.hasOneTarget ?? false }
@@ -25,6 +26,13 @@ struct MacCommands: Commands {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { updater.checkForUpdates() }
                 .disabled(!updater.canCheckForUpdates)
+        }
+
+        // ⌘, — Settings is a page of the main window (the top bar's gear),
+        // the phone's sections in the Mac's grouped form.
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { openSettings() }
+                .keyboardShortcut(",", modifiers: .command)
         }
 
         CommandGroup(before: .newItem) {
@@ -150,6 +158,20 @@ struct MacCommands: Commands {
     private func folder(_ title: String, _ view: MailView, _ key: Character) -> some View {
         Button(title) { run(.go(view)) }
             .keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+    }
+
+    /// Settings in the key window; a window first when none is open (the
+    /// new window's MainWindow picks the flag up as it appears).
+    private func openSettings() {
+        if let state {
+            state.searching = false
+            state.showSettings = true
+            return
+        }
+        model.showSettings = true
+        if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
+            openWindow(id: MacWindows.main)
+        }
     }
 
     private func run(_ command: MailCommand) {

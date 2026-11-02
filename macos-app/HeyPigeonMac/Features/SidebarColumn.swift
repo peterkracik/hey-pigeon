@@ -1,14 +1,12 @@
-// The sidebar, in the Claude desktop app's manner: a grey column under the
-// traffic lights with the sidebar and back buttons beside them, the
-// actions (New message, Search) as plain rows, the main folders with no
+// The sidebar: a grey column under the top bar — the main folders with no
 // header, then "Folders" and "Labels" as small grey headers that fold
-// their rows away, and at the bottom the account — its initial, its name,
+// their rows away, and at the bottom the account: its initial, its name,
 // a chevron that opens the switch (All accounts, each account, Add
-// account) — beside the Settings gear. A row only tints: on hover, and a
-// stronger tint on the folder the list shows. The phone shows the same
-// list as a sheet (Features/Sidebar/SidebarSheet); here ⌃⌘S and the
-// buttons slide it in and out, and a folder picked here closes the open
-// thread.
+// account). A row only tints: on hover, and a stronger tint on the folder
+// the list shows. New message, Search, Ask and Settings are the top bar's.
+// The phone shows the same list as a sheet
+// (Features/Sidebar/SidebarSheet); here ⌃⌘S and the top bar's button
+// slide it in and out, and a folder picked here closes the open thread.
 
 import SwiftUI
 
@@ -26,23 +24,8 @@ struct SidebarColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            topRow
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    SidebarRow(title: "New message", systemImage: "plus", help: "New message (⌘N)") {
-                        model.compose(SendDraft())
-                    }
-                    SidebarRow(title: "Search", systemImage: "magnifyingglass", help: "Search (/)",
-                               selected: state.searching || model.isSearching) {
-                        state.run(.search, in: model)
-                    }
-                    if model.tab == .inbox && InboxAsk.isAvailable(model) {
-                        SidebarRow(title: "Ask my inbox", systemImage: "questionmark.bubble", help: "Ask my inbox (⌥⌘A)") {
-                            model.askSheet = AskPresentation()
-                        }
-                    }
-
-                    Spacer().frame(height: 14)
                     folder(.inbox)
                     folder(.scheduled, count: model.scheduledCount, badge: model.dueCount)
                     folder(.needReply, count: model.needReplyCount)
@@ -68,6 +51,7 @@ struct SidebarColumn: View {
                     }
                 }
                 .padding(.horizontal, 8)
+                .padding(.top, 10)
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
@@ -77,25 +61,11 @@ struct SidebarColumn: View {
         .background(MacTheme.sidebar)
     }
 
-    /// The traffic lights' row: the room they take, then the sidebar and
-    /// back buttons beside them.
-    private var topRow: some View {
-        HStack(spacing: 2) {
-            Color.clear.frame(width: MacLayout.trafficLights, height: 1)
-            IconButton("sidebar.leading", help: "Hide the sidebar (⌃⌘S)") { state.run(.toggleSidebar, in: model) }
-            IconButton("chevron.left", help: "Back to the list (Esc)", disabled: !state.isThreadOpen) {
-                state.run(.back, in: model)
-            }
-            Spacer()
-        }
-        .titleRow()
-    }
-
     /// A folder row with its count; `badge` is the Scheduled row's due
     /// count, in the accent so a reminder that came due stands out.
     private func folder(_ view: MailView, count: Int? = nil, badge: Int = 0) -> some View {
         let n = count ?? model.counts[view.countKey] ?? 0
-        let selected = !model.isSearching && !state.searching && model.view == view
+        let selected = !model.isSearching && !state.searching && !state.showSettings && model.view == view
         return SidebarRow(title: view.title, systemImage: view.systemImage, help: view.title,
                           selected: selected, trailing: Self.badgeText(count: n, due: badge)) {
             state.run(.go(view), in: model)
@@ -183,7 +153,7 @@ private struct SectionHeader: View {
 }
 
 /// The sidebar's foot: the shown account (its initial on its colour, its
-/// name, the unread count) as a menu that switches it, and Settings.
+/// name, the unread count) as a menu that switches it.
 private struct AccountFooter: View {
     @Environment(AppModel.self) private var model
     @State private var hovering = false
@@ -233,15 +203,6 @@ private struct AccountFooter: View {
             .onHover { hovering = $0 }
             .accessibilityLabel("\(name). Switch account")
 
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Settings (⌘,)")
         }
         .padding(.horizontal, 8).padding(.vertical, 8)
     }

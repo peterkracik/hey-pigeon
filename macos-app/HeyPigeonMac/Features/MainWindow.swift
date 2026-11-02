@@ -1,9 +1,9 @@
-// The main window, the phone's shape made bigger: one column, the list full
-// width up to a readable maximum, a thread opening in its place
-// (NavigationStack, as in MailListScreen), the folders in a drawer on the
-// left that ⌃⌘S or the header's button puts away. No title bar and no
-// toolbar — the header rows are views (InboxPage, ThreadPage), glass circles
-// like the phone's. The sheets the phone presents from its root (Remind me,
+// The main window, laid out like the Claude desktop app: a grey sidebar on
+// the left (SidebarColumn) that ⌃⌘S or its button puts away, and the
+// content beside it — the list full width up to a readable maximum, a
+// thread opening in its place (NavigationStack, as in MailListScreen). No
+// title bar and no toolbar: each page draws a slim title row over a
+// hairline (InboxPage, ThreadPage), with the look in MacStyle. The sheets the phone presents from its root (Remind me,
 // compose, the summary, Ask my inbox) are presented here, the toast floats
 // over the bottom edge, and the keyboard map works wherever the focus is as
 // long as it is not a text field.
@@ -22,9 +22,9 @@ struct MainWindow: View {
         HStack(spacing: 0) {
             if state.sidebarVisible {
                 SidebarColumn(state: state)
-                    .frame(width: 232)
+                    .frame(width: MacLayout.sidebarWidth)
                     .transition(.move(edge: .leading).combined(with: .opacity))
-                Rectangle().fill(Theme.separator).frame(width: 1)
+                Rectangle().fill(MacTheme.hairline).frame(width: 1)
             }
             NavigationStack(path: $state.path) {
                 InboxPage(state: state)
@@ -34,7 +34,7 @@ struct MainWindow: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
-        .background(Theme.canvas)
+        .background(MacTheme.content)
         .frame(minWidth: 720, minHeight: 480)
         // The window has no toolbar: the header rows are the pages' own.
         .toolbarVisibility(.hidden, for: .windowToolbar)
@@ -91,7 +91,7 @@ struct MainWindow: View {
 }
 
 /// Bottom toast with an optional Undo — the archive action's safety net.
-/// The phone's, without the room it leaves for a tab bar.
+/// A bordered panel at the bottom edge, as the Claude app's notices are.
 struct MacToast: View {
     @Environment(AppModel.self) private var model
 
@@ -106,8 +106,8 @@ struct MacToast: View {
                         .foregroundStyle(Theme.accent)
                 }
             }
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .glassEffect(.regular.interactive(), in: .capsule)
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .macPanel()
             .padding(.bottom, 18)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .task(id: toast.id) {

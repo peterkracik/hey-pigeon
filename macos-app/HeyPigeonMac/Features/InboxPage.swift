@@ -1,7 +1,7 @@
-// The window's root page: a header row — the folders button, the folder's
-// name with its count and the account (the phone's ListTitle), the glass
-// circles for AI, search and compose, or the search field — then the
-// phone's list (ThreadRowView, GroupHeader) full width up to a readable
+// The window's root page: a slim title row over a hairline — the folder's
+// name and count with a chevron that opens the view's menu (the account,
+// Summarize, Ask), plain icon buttons for AI, search and compose, or the
+// search field — then the phone's list (ThreadRowView, GroupHeader) full width up to a readable
 // maximum, the Jev label pill at the bottom. A row's actions come three
 // ways, all through WindowState: the keyboard map, the bar that appears
 // when the pointer rests on a row (Done plus the four actions Settings puts
@@ -14,13 +14,12 @@
 import AppKit
 import SwiftUI
 
-/// The readable column the list, the header and the thread share, and the
-/// room the traffic lights take at the top left when the drawer is away
-/// (the window has no title bar).
+/// The readable column the list and the thread share, and the room the
+/// traffic lights take at the top left (the window has no title bar). The
+/// title row's sizes are in MacStyle.
 enum MacLayout {
     static let maxWidth: CGFloat = 1040
-    static let trafficLights: CGFloat = 62
-    static let headerTop: CGFloat = 10
+    static let trafficLights: CGFloat = 70
 }
 
 struct InboxPage: View {
@@ -33,15 +32,19 @@ struct InboxPage: View {
     var body: some View {
         VStack(spacing: 0) {
             InboxHeader(state: state, searchFocused: $searchFocused)
-            if state.searching || model.isSearching {
-                SearchFilterBar(picking: $picking)
-                if model.isSearching { ResultCount(count: model.searchResults.count) }
+            Hairline()
+            VStack(spacing: 0) {
+                if state.searching || model.isSearching {
+                    SearchFilterBar(picking: $picking)
+                    if model.isSearching { ResultCount(count: model.searchResults.count) }
+                }
+                content
             }
-            content
+            .padding(.top, 6)
+            .frame(maxWidth: MacLayout.maxWidth)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: MacLayout.maxWidth)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.canvas)
+        .background(MacTheme.content)
         .safeAreaInset(edge: .bottom) {
             if state.selection.count > 1 {
                 BatchBar(state: state)
@@ -107,51 +110,90 @@ struct InboxPage: View {
     }
 }
 
-/// The top row, in the title bar's place: the drawer button, the phone's
-/// title (folder · count · account), the glass circles — or, while
-/// searching, the field with its Done.
+/// The title row, in the title bar's place: with the sidebar away, the
+/// traffic lights' room and the sidebar button; the folder's title menu;
+/// the icon buttons — or, while searching, the field.
 private struct InboxHeader: View {
     @Bindable var state: WindowState
     var searchFocused: FocusState<Bool>.Binding
     @Environment(AppModel.self) private var model
 
+    private var title: String { model.tab == .inbox ? model.folder.title : model.tab.title }
+    private var count: Int {
+        switch model.tab {
+        case .inbox: model.counts[model.folder.countKey] ?? 0
+        case .scheduled: model.scheduledCount
+        case .needReply: model.needReplyCount
+        case .search: 0
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             TrafficLightsGap(state: state)
-            GlassCircle("sidebar.leading", help: "Folders and accounts (⌃⌘S)") { state.run(.toggleSidebar, in: model) }
+            if !state.sidebarVisible {
+                IconButton("sidebar.leading", help: "Show the sidebar (⌃⌘S)") { state.run(.toggleSidebar, in: model) }
+            }
             if state.searching {
                 searchField
             } else {
-                ListTitle(tab: model.tab)
+                TitleMenu { viewMenu } label: {
+                    HStack(spacing: 6) {
+                        TitleText(text: title)
+                        if count > 0 {
+                            Text("\(count)").font(.system(size: 13)).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                        }
+                        if model.accounts.count > 1 {
+                            Text("· \(model.currentAccount?.displayName ?? "All accounts")")
+                                .font(.system(size: 13)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        }
+                    }
+                }
+                .accessibilityLabel("\(title), \(count) unread")
                 Spacer(minLength: 8)
                 if model.isSyncing {
-                    ProgressView().controlSize(.small).padding(.trailing, 4)
+                    ProgressView().controlSize(.small).padding(.trailing, 6)
                 }
-                GlassEffectContainer(spacing: 8) {
-                    HStack(spacing: 8) {
-                        if model.aiConfigured {
-                            GlassCircle("sparkles", help: "Summarize this view (⌥⌘I)") { model.openViewSummary() }
-                        }
-                        if model.tab == .inbox && InboxAsk.isAvailable(model) {
-                            GlassCircle("questionmark.bubble", help: "Ask my inbox (⌥⌘A)") { model.askSheet = AskPresentation() }
-                        }
-                        GlassCircle("magnifyingglass", help: "Search (/)") { state.run(.search, in: model) }
-                        GlassCircle("square.and.pencil", help: "New message (⌘N)") { model.compose(SendDraft()) }
-                    }
+                if model.aiConfigured {
+                    IconButton("sparkles", help: "Summarize this view (⌥⌘I)") { model.openViewSummary() }
+                }
+                IconButton("magnifyingglass", help: "Search (/)") { state.run(.search, in: model) }
+                IconButton("square.and.pencil", help: "New message (⌘N)") { model.compose(SendDraft()) }
+            }
+        }
+        .titleRow()
+    }
+
+    /// The title's menu: the view's actions, then the account switch.
+    @ViewBuilder private var viewMenu: some View {
+        if model.aiConfigured {
+            Button { model.openViewSummary() } label: { Label("Summarize this view", systemImage: "sparkles") }
+        }
+        if model.tab == .inbox && InboxAsk.isAvailable(model) {
+            Button { model.askSheet = AskPresentation() } label: { Label("Ask my inbox…", systemImage: "questionmark.bubble") }
+        }
+        Button { state.run(.search, in: model) } label: { Label("Search", systemImage: "magnifyingglass") }
+        Button { Task { await model.sync() } } label: { Label("Check for new mail", systemImage: "arrow.clockwise") }
+        if model.accounts.count > 1 {
+            Divider()
+            Button { model.selectedAccountId = nil } label: {
+                Label("All accounts", systemImage: model.selectedAccountId == nil ? "checkmark" : "tray.2")
+            }
+            ForEach(model.accounts) { a in
+                Button { model.selectedAccountId = a.id } label: {
+                    Label(a.displayName, systemImage: a.id == model.selectedAccountId ? "checkmark" : "person.crop.circle")
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.top, MacLayout.headerTop)
-        .padding(.bottom, 6)
     }
 
     private var searchField: some View {
         @Bindable var model = model
         return HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textTertiary)
+            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
             TextField("Search mail", text: $model.searchText)
                 .textFieldStyle(.plain)
+                .font(.system(size: 13))
                 .focused(searchFocused)
                 .onSubmit { model.rememberSearch() }
                 .onExitCommand { state.run(.escape, in: model) }
@@ -163,17 +205,19 @@ private struct InboxHeader: View {
             }
             Button("Done") { state.run(.escape, in: model) }
                 .buttonStyle(.plain)
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .help("Leave the search (Esc)")
         }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .frame(maxWidth: 560)
+        .macPanel(cornerRadius: 8)
+        .frame(maxWidth: .infinity)
     }
 }
 
-/// With the drawer away, the traffic lights sit over the header's left
+/// With the sidebar away, the traffic lights sit over the title row's left
 /// end: keep it clear of them.
 struct TrafficLightsGap: View {
     let state: WindowState
@@ -185,36 +229,8 @@ struct TrafficLightsGap: View {
     }
 }
 
-/// The phone's glass circle: one icon on Liquid Glass.
-struct GlassCircle: View {
-    let systemImage: String
-    let help: String
-    let action: () -> Void
-
-    init(_ systemImage: String, help: String, action: @escaping () -> Void) {
-        self.systemImage = systemImage
-        self.help = help
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .frame(width: 34, height: 34)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
-
-/// One row: the phone's three lines on the phone's surfaces (unread on the
-/// card, read sunk into the canvas), the highlight when it is the cursor
-/// or part of the selection, the unread bar on the left edge, the hover bar
+/// One row: the phone's three lines, flat on the content (only a tint on
+/// hover, a stronger one when it is the cursor or part of the selection), the unread bar on the left edge, the hover bar
 /// on the right, the context menu and the trackpad swipes.
 private struct MacThreadRow: View {
     let row: ThreadRow
@@ -273,9 +289,8 @@ private struct MacThreadRow: View {
     }
 
     private var background: Color {
-        if selected { return Theme.sunken }
-        if hovering { return Theme.card }
-        return row.isRead ? Theme.rowRead : Theme.rowUnread
+        if selected { return MacTheme.selected }
+        return hovering ? MacTheme.hover : .clear
     }
 
     private func swipe(_ action: RowAction) -> some View {
@@ -286,7 +301,7 @@ private struct MacThreadRow: View {
     }
 }
 
-/// The desktop's hover actions as a glass pill: Done, then the four swipe
+/// The desktop's hover actions on a small bordered panel: Done, then the four swipe
 /// actions from Settings (each once).
 private struct HoverActions: View {
     let row: ThreadRow
@@ -314,13 +329,13 @@ private struct HoverActions: View {
                 .accessibilityLabel(action.label(for: row))
             }
         }
-        .padding(.horizontal, 4)
-        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 3).padding(.vertical, 1)
+        .macPanel(cornerRadius: 8)
     }
 }
 
 /// Several rows highlighted: how many, and the actions that make sense for
-/// all of them at once, on a glass pill at the bottom edge.
+/// all of them at once, on a bordered panel at the bottom edge.
 private struct BatchBar: View {
     @Bindable var state: WindowState
     @Environment(AppModel.self) private var model
@@ -345,8 +360,8 @@ private struct BatchBar: View {
                 .padding(.horizontal, 10)
                 .help("Clear the selection (Esc)")
         }
-        .padding(.horizontal, 6).padding(.vertical, 6)
-        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 6).padding(.vertical, 5)
+        .macPanel(cornerRadius: 12)
         .padding(.bottom, 12)
     }
 

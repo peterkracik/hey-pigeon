@@ -144,6 +144,43 @@ struct WindowStateTests {
         #expect(state.sidebarVisible == before)
     }
 
+    @Test func aClickOpensTheRowInPlaceAndEscapeOrASecondClickFoldsIt() async throws {
+        let row = try #require(try engine.threadRow(id: "t1"))
+        #expect(!row.isRead)
+        state.expand(row, in: model)
+        #expect(state.expanded == "t1" && state.selection == ["t1"] && !state.isThreadOpen)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(try engine.threadRow(id: "t1")?.isRead == true)
+        state.expand(row, in: model)
+        #expect(state.expanded == nil)
+        state.expand(row, in: model)
+        state.run(.escape, in: model)
+        #expect(state.expanded == nil && state.selection == ["t1"])
+        // Return from the open card: the full thread.
+        state.expand(row, in: model)
+        state.run(.open, in: model)
+        #expect(state.path.map(\.id) == ["t1"])
+    }
+
+    @Test func theOpenCardGoesWithItsRow() throws {
+        let ids = state.flatIds(model)
+        let row = try #require(model.row(forThreadId: ids[0]))
+        state.expand(row, in: model)
+        state.run(.markDone, in: model)
+        state.rowsChanged(in: model)
+        #expect(state.expanded == nil)
+        #expect(!state.flatIds(model).contains(ids[0]))
+    }
+
+    @Test func settingsIsAPageEscapeAndAFolderLeaveIt() {
+        state.showSettings = true
+        state.run(.escape, in: model)
+        #expect(!state.showSettings)
+        state.showSettings = true
+        state.run(.go(.starred), in: model)
+        #expect(!state.showSettings && model.view == .starred)
+    }
+
     @Test func escapeClearsTheSearchThenTheSelection() {
         model.searchText = "roadmap"
         state.select("t1", in: model)

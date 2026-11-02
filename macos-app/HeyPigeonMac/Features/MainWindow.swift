@@ -1,10 +1,13 @@
-// The main window, laid out like the Claude desktop app: a grey sidebar on
-// the left (SidebarColumn) that ⌃⌘S or its button puts away, and the
-// content beside it — the list full width up to a readable maximum, a
-// thread opening in its place (NavigationStack, as in MailListScreen). No
-// title bar and no toolbar: each page draws a slim title row over a
-// hairline (InboxPage, ThreadPage), with the look in MacStyle. The sheets the phone presents from its root (Remind me,
-// compose, the summary, Ask my inbox) are presented here, the toast floats
+// The main window, in the first desktop client's shape: one top bar across
+// the window (TopBar: the traffic lights, the sidebar button, the folder
+// and its triage tabs or the open thread's title, the icon buttons and
+// Settings), a hairline, then the grey sidebar (SidebarColumn, ⌃⌘S puts
+// it away) beside the content — the list full width up to a readable
+// maximum with rows that open in place, a full thread in its place
+// (NavigationStack, as in MailListScreen), or Settings. No title bar and
+// no toolbar (WindowChrome keeps the traffic lights in the top bar); the
+// look is in MacStyle. The sheets the phone presents from its root (Remind
+// me, compose, the summary, Ask my inbox) are presented here, the toast floats
 // over the bottom edge, and the keyboard map works wherever the focus is as
 // long as it is not a text field.
 
@@ -13,30 +16,46 @@ import SwiftUI
 struct MainWindow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
     @State private var state = WindowState()
 
     var body: some View {
         @Bindable var model = model
         @Bindable var state = state
-        HStack(spacing: 0) {
-            if state.sidebarVisible {
-                SidebarColumn(state: state)
-                    .frame(width: MacLayout.sidebarWidth)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                Rectangle().fill(MacTheme.hairline).frame(width: 1)
-            }
-            NavigationStack(path: $state.path) {
-                InboxPage(state: state)
-                    .navigationDestination(for: ThreadRow.self) { row in
-                        ThreadPage(row: row, state: state)
+        VStack(spacing: 0) {
+            TopBar(state: state)
+            Hairline()
+            HStack(spacing: 0) {
+                if state.sidebarVisible {
+                    SidebarColumn(state: state)
+                        .frame(width: MacLayout.sidebarWidth)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    Rectangle().fill(MacTheme.hairline).frame(width: 1)
+                }
+                if state.showSettings {
+                    SettingsView()
+                        .frame(maxWidth: 760)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity)
+                } else {
+                    NavigationStack(path: $state.path) {
+                        InboxPage(state: state)
+                            .navigationDestination(for: ThreadRow.self) { row in
+                                ThreadPage(row: row, state: state)
+                            }
                     }
+                }
             }
         }
         .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
+        .animation(.easeOut(duration: 0.15), value: state.showSettings)
         .background(MacTheme.content)
-        .frame(minWidth: 720, minHeight: 480)
-        // The window has no toolbar: the header rows are the pages' own.
+        // The top bar starts at the window's top edge: no room is kept for
+        // a title bar the window does not have.
+        .ignoresSafeArea(.container, edges: .top)
+        .background(WindowChrome())
+        .frame(minWidth: 760, minHeight: 480)
+        // The window has no toolbar: the shared views' toolbar items never
+        // draw over the top bar. WindowChrome keeps the traffic lights.
         .toolbarVisibility(.hidden, for: .windowToolbar)
         .focusedSceneValue(\.windowState, state)
         // Keys that reach the window itself (nothing else has focus): the
@@ -72,12 +91,13 @@ struct MainWindow: View {
         } message: {
             Text("\(model.disconnectedAccountId ?? "") needs to sign in again. Mail for it is stale until then.")
         }
-        // The model's sheet flags are the phone's; here Settings is a window
-        // and the sidebar the drawer.
-        .onChange(of: model.showSettings) { _, show in
+        // The model's sheet flags are the phone's; here Settings is a page
+        // of the window (the top bar's gear, ⌘,) and the sidebar the drawer.
+        .onChange(of: model.showSettings, initial: true) { _, show in
             guard show else { return }
             model.showSettings = false
-            openSettings()
+            state.searching = false
+            state.showSettings = true
         }
         .onChange(of: model.showSidebar) { _, show in
             guard show else { return }

@@ -17,8 +17,9 @@ too. There is no second model, engine or intent layer.
 HeyPigeonMac/
   App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
-  Features/   MainWindow (sidebar + NavigationStack), MacStyle (the look), SidebarColumn, InboxPage (title row,
-              list, search, batch bar), ThreadPage (title row over ThreadView; ThreadWindow), WindowState,
+  Features/   MainWindow (top bar + sidebar + NavigationStack or Settings), TopBar, WindowChrome (traffic
+              lights), MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
+              (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
@@ -45,22 +46,28 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   on the open thread else the highlighted rows (`focusRow`) and calls
   AppModel like the swipes do. Pure logic is static (`KeyboardMap.resolve`,
   `PaletteFilter`), tested in `HeyPigeonMacTests`.
-- **The Claude desktop app's look, no chrome.** The window has no title
-  bar (`.windowStyle(.hiddenTitleBar)`) and no toolbar
-  (`.toolbarVisibility(.hidden, for: .windowToolbar)`). A grey sidebar
-  (flat rows that only tint on hover and selection, small grey headers
-  that fold, the account menu and Settings at the foot) sits beside the
-  content; each page draws a slim title row over a hairline — a title
-  with a chevron menu, plain `IconButton`s — and leaves the traffic
-  lights room (`TrafficLightsGap`) when the sidebar is away. Floating
-  pieces (hover actions, batch bar, toast, search field) are `macPanel()`s,
-  not glass. The tokens and pieces live in `Features/MacStyle.swift`
-  (`MacTheme`, `MacLayout.titleRow`, which lines the row up with the
-  traffic lights). Nothing in the
-  Mac folder uses `.toolbar` or `.navigationTitle`; the shared views'
-  toolbar items simply do not render here, so a Mac page restates what
-  matters in its header (ThreadPage's menu). The list and the thread keep
-  to `MacLayout.maxWidth`.
+- **The first desktop client's shape, no chrome.** The window has no
+  title bar (`.windowStyle(.hiddenTitleBar)`) and no toolbar
+  (`.toolbarVisibility(.hidden, for: .windowToolbar)`, so the shared
+  views' toolbar items never draw). With the toolbar hidden macOS drops
+  the traffic lights, so `WindowChrome` (in the window's background)
+  unhides them and centres them in the `MacLayout.topBar` row, again on
+  every resize. One `TopBar` spans the window: the traffic lights' room
+  (`TrafficLightsGap`), the sidebar button, the folder and its triage
+  tabs (or the search field, or back + the open thread's title menu, or
+  back + "Settings"), and borderless `IconButton`s ending in the
+  Settings gear. Under it, the grey sidebar and the content. Rows
+  (`MailRow`) are single lines with a done circle, like the Svelte
+  client's to-do rows; a click opens the row **in place**
+  (`WindowState.expanded`, the latest message and "Open full thread ›"),
+  Return or the row's arrow opens the full thread (`path`). Settings is a
+  page of the window (`WindowState.showSettings`; ⌘, and the gear), not a
+  Settings scene; on the Mac `SettingsList` makes it a grouped form.
+  Scroll bars are hidden (`.scrollIndicators(.never)`). Floating pieces
+  are `macPanel()`s, not glass; tokens live in `Features/MacStyle.swift`.
+  Nothing in the Mac folder uses `.toolbar` or `.navigationTitle`; a Mac
+  page restates what matters in the top bar (the thread's menu). The list
+  and the thread keep to `MacLayout.maxWidth`.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the

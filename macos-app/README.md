@@ -7,11 +7,12 @@ widgets, AI layer and feature screens — compiled for macOS behind the
 platform door in `ios-app/HeyPigeon/Shared/Platform.swift` — plus what only
 a Mac has: a menu bar, the desktop's keyboard map, a command palette, hover
 actions, a Settings window, a menu bar extra, and a thread in its own
-window. The window follows the Claude desktop app's look: a grey sidebar
-(folders, labels, the account menu and Settings at the foot) that slides
-away, and beside it the list full width up to a readable maximum under a
-slim title row and a hairline, a thread opening in its place; no title
-bar, no toolbar, no glass. Design notes in
+window. The window follows the first desktop client (the Svelte one):
+one top bar with the traffic lights, the folder and its triage tabs and
+the icon buttons (Settings among them); a grey sidebar (folders, labels,
+the account menu) that slides away; single-line rows with a done circle,
+like a to-do list, that open in place with "Open full thread ›"; no
+title bar, no toolbar, no glass, no scroll bars. Design notes in
 [docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
 
 ```text
@@ -20,8 +21,9 @@ macos-app/
     App/                  HeyPigeonMacApp (scenes, deep links, scene phase), MacAppDelegate (notifications,
                           APNs, Dock menu), MacSyncLoop (the 30 s timer + new-mail banners), MacCommands (menus),
                           MacUpdater (Sparkle: in-app updates from the mac-latest release)
-    Features/             MainWindow (the sidebar + the NavigationStack, sheets, toast), MacStyle (colours,
-                          icon buttons, title menu, panels), SidebarColumn, InboxPage (the title row, the list, search, hover and swipe actions, the
+    Features/             MainWindow (the top bar, the sidebar, the NavigationStack or Settings, sheets,
+                          toast), TopBar, WindowChrome (the traffic lights), MacStyle (colours, icon buttons,
+                          panels), SidebarColumn, MailRow (the row + its in-place preview), InboxPage ( the list, search, hover and swipe actions, the
                           batch bar), ThreadPage (the title row over the shared ThreadView; + ThreadWindow),
                           WindowState (the open thread, the cursor, the keyboard map, every action),
                           CommandPalette (⌘K), ShortcutsSheet (?), MenuBarExtraView
@@ -38,7 +40,7 @@ macos-app/
 
 | | Phone | Mac |
 | --- | --- | --- |
-| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌃⌘S); no title bar or toolbar — a slim title row with a chevron menu and plain icon buttons over a hairline; Settings is a window (⌘,); ⌘↩ opens a thread in its own window |
+| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌃⌘S); one top bar with the folder's triage tabs and plain icon buttons; a click opens a row in place, Return or its arrow the full thread; no title bar or toolbar; Settings is a page of the window (⌘, or the gear); ⌘↩ opens a thread in its own window |
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
 | After Mark done | Undo toast, back to the list | Undo toast; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
 | Several at once | — | ⌘/⇧-click rows: a batch bar on a bordered panel at the bottom |

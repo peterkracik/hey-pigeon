@@ -1,10 +1,12 @@
-// The Mac window's look: quiet and flat, in the manner of the Claude
-// desktop app — a grey sidebar beside a plain content surface, a slim
-// title row over a hairline, rows that only tint on hover and selection,
-// borderless icon buttons that light up under the pointer, and floating
-// pieces (the hover actions, the batch bar, the toast, the search field)
-// on a bordered panel with a soft shadow instead of Liquid Glass. The
-// phone's tokens (Theme) stay the source for text and accent colours.
+// The Mac window's look, after the first desktop client (desktop-app, the
+// Svelte one) and the Claude desktop app: quiet and flat. One top bar
+// across the window with the traffic lights in it (WindowChrome), the
+// folder tabs and borderless icon buttons; a grey sidebar under it;
+// single-line rows with a done circle, like a to-do list, that only tint
+// on hover; the open row as a card; floating pieces (the batch bar, the
+// toast, the search field) on a bordered panel with a soft shadow instead
+// of Liquid Glass. The phone's tokens (Theme) stay the source for text
+// and accent colours.
 
 import SwiftUI
 
@@ -25,13 +27,18 @@ enum MacTheme {
     static let sectionHeader = Theme.textTertiary
 }
 
-extension MacLayout {
-    /// The title row's height: its contents line up with the traffic lights.
-    static let titleRow: CGFloat = 30
-    /// The room under the title row before the hairline.
-    static let titleBottom: CGFloat = 8
+/// The window's measures.
+enum MacLayout {
+    /// The readable column the list and the thread share.
+    static let maxWidth: CGFloat = 1120
+    /// The top bar's height; WindowChrome centres the traffic lights in it.
+    static let topBar: CGFloat = 52
+    /// The room the traffic lights take at the top bar's left end.
+    static let trafficLights: CGFloat = 82
     /// The sidebar's width.
-    static let sidebarWidth: CGFloat = 248
+    static let sidebarWidth: CGFloat = 232
+    /// The sender column of a row.
+    static let senderWidth: CGFloat = 180
 }
 
 /// One icon, no chrome until the pointer is on it: the title row's and the
@@ -53,9 +60,9 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .regular))
+                .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(disabled ? Theme.textTertiary.opacity(0.6) : Theme.textSecondary)
-                .frame(width: 28, height: 28)
+                .frame(width: 32, height: 32)
                 .background(hovering && !disabled ? MacTheme.selected : .clear,
                             in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .contentShape(Rectangle())
@@ -109,7 +116,7 @@ struct TitleText: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 14, weight: .medium))
+            .font(.system(size: 17, weight: .medium))
             .foregroundStyle(Theme.textPrimary)
             .lineLimit(1)
     }
@@ -130,13 +137,5 @@ extension View {
         return background(MacTheme.panel, in: shape)
             .overlay(shape.strokeBorder(MacTheme.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-    }
-
-    /// The title row's frame: the row height the traffic lights sit in, the
-    /// side padding, the room before the hairline.
-    func titleRow() -> some View {
-        frame(height: MacLayout.titleRow)
-            .padding(.horizontal, 10)
-            .padding(.bottom, MacLayout.titleBottom)
     }
 }

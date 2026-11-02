@@ -116,12 +116,24 @@ impl Engine {
         let disconnected: HashSet<AccountId> = store
             .list_accounts()?
             .into_iter()
-            .filter(|a| {
-                !matches!(
-                    secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)),
-                    Ok(Some(_))
-                )
-            })
+            // Only a token that is really absent means disconnected. A read
+            // that fails — the Keychain refuses while the iPhone is locked,
+            // which is exactly when background refresh and push launch the
+            // app — says nothing about the account, and marking it here
+            // showed the user as signed out until the next launch.
+            .filter(
+                |a| match secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)) {
+                    Ok(Some(_)) => false,
+                    Ok(None) => true,
+                    Err(e) => {
+                        log::warn!(
+                            "refresh token for {} unreadable ({e}); not marking it disconnected",
+                            a.id
+                        );
+                        false
+                    }
+                },
+            )
             .map(|a| a.id)
             .collect();
         for id in &disconnected {

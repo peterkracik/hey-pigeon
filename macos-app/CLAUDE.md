@@ -17,8 +17,8 @@ too. There is no second model, engine or intent layer.
 HeyPigeonMac/
   App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
-  Features/   MainWindow (drawer + NavigationStack), SidebarColumn (the drawer), InboxPage (header row,
-              list, search, batch bar), ThreadPage (header row over ThreadView; ThreadWindow), WindowState,
+  Features/   MainWindow (sidebar + NavigationStack), MacStyle (the look), SidebarColumn, InboxPage (title row,
+              list, search, batch bar), ThreadPage (title row over ThreadView; ThreadWindow), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
@@ -45,11 +45,18 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   on the open thread else the highlighted rows (`focusRow`) and calls
   AppModel like the swipes do. Pure logic is static (`KeyboardMap.resolve`,
   `PaletteFilter`), tested in `HeyPigeonMacTests`.
-- **The phone's shape, no chrome.** The window has no title bar
-  (`.windowStyle(.hiddenTitleBar)`) and no toolbar
-  (`.toolbarVisibility(.hidden, for: .windowToolbar)`): a page draws its
-  own header row with the phone's glass circles, and leaves the traffic
-  lights room (`TrafficLightsGap`) when the drawer is away. Nothing in the
+- **The Claude desktop app's look, no chrome.** The window has no title
+  bar (`.windowStyle(.hiddenTitleBar)`) and no toolbar
+  (`.toolbarVisibility(.hidden, for: .windowToolbar)`). A grey sidebar
+  (flat rows that only tint on hover and selection, small grey headers
+  that fold, the account menu and Settings at the foot) sits beside the
+  content; each page draws a slim title row over a hairline — a title
+  with a chevron menu, plain `IconButton`s — and leaves the traffic
+  lights room (`TrafficLightsGap`) when the sidebar is away. Floating
+  pieces (hover actions, batch bar, toast, search field) are `macPanel()`s,
+  not glass. The tokens and pieces live in `Features/MacStyle.swift`
+  (`MacTheme`, `MacLayout.titleRow`, which lines the row up with the
+  traffic lights). Nothing in the
   Mac folder uses `.toolbar` or `.navigationTitle`; the shared views'
   toolbar items simply do not render here, so a Mac page restates what
   matters in its header (ThreadPage's menu). The list and the thread keep

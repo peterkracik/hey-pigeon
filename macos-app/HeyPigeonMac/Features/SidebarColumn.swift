@@ -1,26 +1,22 @@
-// The folders drawer: the accounts (desktop 0/1/2) as a switch at the top,
-// then the folders in the desktop sidebar's order with Scheduled and Need
-// reply among them, the Gmail labels, and Add account · Settings at the
-// bottom. The phone shows the same list as a sheet
-// (Features/Sidebar/SidebarSheet); here ⌃⌘S and the header's button slide
-// it in and out, and a folder picked here closes the open thread.
+// The sidebar, in the Claude desktop app's manner: a grey column under the
+// traffic lights with the sidebar and back buttons beside them, the
+// actions (New message, Search) as plain rows, the main folders with no
+// header, then "Folders" and "Labels" as small grey headers that fold
+// their rows away, and at the bottom the account — its initial, its name,
+// a chevron that opens the switch (All accounts, each account, Add
+// account) — beside the Settings gear. A row only tints: on hover, and a
+// stronger tint on the folder the list shows. The phone shows the same
+// list as a sheet (Features/Sidebar/SidebarSheet); here ⌃⌘S and the
+// buttons slide it in and out, and a folder picked here closes the open
+// thread.
 
 import SwiftUI
 
 struct SidebarColumn: View {
     @Bindable var state: WindowState
     @Environment(AppModel.self) private var model
-
-    /// The highlighted folder: what the list shows, unless a search is on.
-    private var selection: Binding<MailView?> {
-        Binding(
-            get: { model.isSearching ? nil : model.view },
-            set: { view in
-                guard let view else { return }
-                state.run(.go(view), in: model)
-            }
-        )
-    }
+    @AppStorage("sidebarFoldersOpen") private var foldersOpen = true
+    @AppStorage("sidebarLabelsOpen") private var labelsOpen = true
 
     private var labels: [MailLabelItem] {
         model.labels.filter { l in
@@ -29,74 +25,81 @@ struct SidebarColumn: View {
     }
 
     var body: some View {
-        List(selection: selection) {
-            Section {
-                AccountRow(id: nil, title: "All accounts", color: nil, selected: model.selectedAccountId == nil, unread: model.engineUnread(accountId: nil)) {
-                    switchAccount(nil)
-                }
-                ForEach(model.accounts) { a in
-                    AccountRow(id: a.id, title: a.displayName, color: a.color, selected: model.selectedAccountId == a.id,
-                               unread: model.engineUnread(accountId: a.id),
-                               disconnected: model.accountStates[a.id]?.isConnected == false) {
-                        switchAccount(a.id)
+        VStack(spacing: 0) {
+            topRow
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    SidebarRow(title: "New message", systemImage: "plus", help: "New message (⌘N)") {
+                        model.compose(SendDraft())
+                    }
+                    SidebarRow(title: "Search", systemImage: "magnifyingglass", help: "Search (/)",
+                               selected: state.searching || model.isSearching) {
+                        state.run(.search, in: model)
+                    }
+                    if model.tab == .inbox && InboxAsk.isAvailable(model) {
+                        SidebarRow(title: "Ask my inbox", systemImage: "questionmark.bubble", help: "Ask my inbox (⌥⌘A)") {
+                            model.askSheet = AskPresentation()
+                        }
+                    }
+
+                    Spacer().frame(height: 14)
+                    folder(.inbox)
+                    folder(.scheduled, count: model.scheduledCount, badge: model.dueCount)
+                    folder(.needReply, count: model.needReplyCount)
+                    folder(.starred)
+                    folder(.drafts, count: model.draftsCount)
+
+                    SectionHeader(title: "Folders", open: $foldersOpen)
+                    if foldersOpen {
+                        folder(.sent)
+                        folder(.archive)
+                        folder(.all)
+                        folder(.spam)
+                        folder(.trash)
+                    }
+
+                    if !labels.isEmpty {
+                        SectionHeader(title: "Labels", open: $labelsOpen)
+                        if labelsOpen {
+                            ForEach(labels) { l in
+                                folder(.label(id: l.id, name: l.name))
+                            }
+                        }
                     }
                 }
-            } header: {
-                Text("Accounts")
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
             }
-            Section("Mail") {
-                folder(.inbox)
-                folder(.scheduled, count: model.scheduledCount, badge: model.dueCount)
-                folder(.needReply, count: model.needReplyCount)
-                folder(.starred)
-                folder(.sent)
-                folder(.drafts, count: model.draftsCount)
-                folder(.archive)
-                folder(.all)
-                folder(.spam)
-                folder(.trash)
-            }
-            if !labels.isEmpty {
-                Section("Labels") {
-                    ForEach(labels) { l in
-                        folder(.label(id: l.id, name: l.name))
-                    }
-                }
-            }
+            .scrollIndicators(.never)
+            Hairline()
+            AccountFooter()
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(Theme.canvas)
-        // The window has no title bar: the traffic lights sit over the
-        // drawer's top edge.
-        .safeAreaPadding(.top, 26)
-        .safeAreaInset(edge: .bottom) {
-            HStack(spacing: 6) {
-                Button { Task { await model.addAccount() } } label: { Label("Add account", systemImage: "plus.circle") }
-                    .help("Add a Google account")
-                Spacer()
-                SettingsLink { Image(systemName: "gearshape") }
-                    .help("Settings (⌘,)")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.textSecondary)
-            .font(.subheadline)
-            .padding(.horizontal, 14).padding(.vertical, 10)
-        }
+        .background(MacTheme.sidebar)
     }
 
-    private func switchAccount(_ id: String?) {
-        model.selectedAccountId = id
-        Haptics.light()
+    /// The traffic lights' row: the room they take, then the sidebar and
+    /// back buttons beside them.
+    private var topRow: some View {
+        HStack(spacing: 2) {
+            Color.clear.frame(width: MacLayout.trafficLights, height: 1)
+            IconButton("sidebar.leading", help: "Hide the sidebar (⌃⌘S)") { state.run(.toggleSidebar, in: model) }
+            IconButton("chevron.left", help: "Back to the list (Esc)", disabled: !state.isThreadOpen) {
+                state.run(.back, in: model)
+            }
+            Spacer()
+        }
+        .titleRow()
     }
 
     /// A folder row with its count; `badge` is the Scheduled row's due
     /// count, in the accent so a reminder that came due stands out.
     private func folder(_ view: MailView, count: Int? = nil, badge: Int = 0) -> some View {
         let n = count ?? model.counts[view.countKey] ?? 0
-        return Label(view.title, systemImage: view.systemImage)
-            .badge(Self.badgeText(count: n, due: badge))
-            .tag(view)
+        let selected = !model.isSearching && !state.searching && model.view == view
+        return SidebarRow(title: view.title, systemImage: view.systemImage, help: view.title,
+                          selected: selected, trailing: Self.badgeText(count: n, due: badge)) {
+            state.run(.go(view), in: model)
+        }
     }
 
     /// The due count in the accent when there is one, else the plain count.
@@ -106,48 +109,167 @@ struct SidebarColumn: View {
     }
 }
 
-/// One account (or "All accounts"): the colour dot, the name, its unread
-/// count; a checkmark on the one the lists show.
-private struct AccountRow: View {
-    let id: String?
+/// One sidebar row: an icon, a title, an optional count; tinted on hover
+/// and when it is the shown folder.
+private struct SidebarRow: View {
     let title: String
-    let color: AccountColor?
-    let selected: Bool
-    let unread: Int
-    var disconnected = false
+    let systemImage: String
+    let help: String
+    var selected = false
+    var trailing: Text?
     let action: () -> Void
-    @Environment(AppModel.self) private var model
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                if let color {
-                    Circle().fill(Theme.tagForeground(color)).frame(width: 9, height: 9)
-                } else {
-                    HStack(spacing: -3) {
-                        ForEach(model.accounts.prefix(3)) { a in
-                            Circle().fill(Theme.tagForeground(a.color)).frame(width: 9, height: 9)
-                        }
-                    }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.body.weight(selected ? .semibold : .regular)).lineLimit(1)
-                    if disconnected {
-                        Text("Disconnected").font(.caption).foregroundStyle(.red)
-                    }
-                }
+            HStack(spacing: 9) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13))
+                    .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
                 Spacer(minLength: 4)
-                if unread > 0 {
-                    Text("\(unread)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
-                }
-                if selected {
-                    Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
+                if let trailing {
+                    trailing
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .monospacedDigit()
                 }
             }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title), \(unread) unread\(selected ? ", shown" : "")")
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var background: Color {
+        if selected { return MacTheme.selected }
+        return hovering ? MacTheme.hover : .clear
+    }
+}
+
+/// A small grey group header with a chevron that folds its rows away.
+private struct SectionHeader: View {
+    let title: String
+    @Binding var open: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) { open.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Text(title).font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(open ? 0 : -90))
+                Spacer()
+            }
+            .foregroundStyle(MacTheme.sectionHeader)
+            .padding(.horizontal, 8)
+            .padding(.top, 18).padding(.bottom, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(open ? "expanded" : "collapsed")")
+    }
+}
+
+/// The sidebar's foot: the shown account (its initial on its colour, its
+/// name, the unread count) as a menu that switches it, and Settings.
+private struct AccountFooter: View {
+    @Environment(AppModel.self) private var model
+    @State private var hovering = false
+
+    private var name: String { model.currentAccount?.displayName ?? (model.accounts.isEmpty ? "No account" : "All accounts") }
+    private var detail: String {
+        let unread = model.engineUnread(accountId: model.selectedAccountId)
+        if let a = model.currentAccount, a.email != a.displayName { return a.email }
+        return unread > 0 ? "\(unread) unread" : "Up to date"
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Menu {
+                Button { switchAccount(nil) } label: {
+                    Label("All accounts", systemImage: model.selectedAccountId == nil ? "checkmark" : "tray.2")
+                }
+                ForEach(model.accounts) { a in
+                    Button { switchAccount(a.id) } label: {
+                        let off = model.accountStates[a.id]?.isConnected == false
+                        let unread = model.engineUnread(accountId: a.id)
+                        Label(a.displayName + (off ? " — disconnected" : unread > 0 ? " (\(unread))" : ""),
+                              systemImage: a.id == model.selectedAccountId ? "checkmark" : "person.crop.circle")
+                    }
+                }
+                Divider()
+                Button { Task { await model.addAccount() } } label: { Label("Add account…", systemImage: "plus") }
+            } label: {
+                HStack(spacing: 8) {
+                    avatar
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 5)
+                .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .onHover { hovering = $0 }
+            .accessibilityLabel("\(name). Switch account")
+
+            SettingsLink {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Settings (⌘,)")
+        }
+        .padding(.horizontal, 8).padding(.vertical, 8)
+    }
+
+    /// The account's initial on its colour; for All accounts, the first
+    /// few accounts' dots.
+    @ViewBuilder private var avatar: some View {
+        if let a = model.currentAccount {
+            Text(String(a.displayName.prefix(1)).uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.tagForeground(a.color))
+                .frame(width: 24, height: 24)
+                .background(Theme.tagBackground(a.color), in: Circle())
+        } else {
+            HStack(spacing: -4) {
+                ForEach(model.accounts.prefix(3)) { a in
+                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 10, height: 10)
+                        .overlay(Circle().strokeBorder(MacTheme.sidebar, lineWidth: 1.5))
+                }
+            }
+            .frame(width: 24, height: 24)
+            .background(MacTheme.selected, in: Circle())
+        }
+    }
+
+    private func switchAccount(_ id: String?) {
+        model.selectedAccountId = id
+        Haptics.light()
     }
 }
 

@@ -1,5 +1,6 @@
-// The open thread, in the list's place: a header row (back, the people, the
-// AI sparkle, the actions menu) over the phone's thread screen
+// The open thread, in the list's place: a title row over a hairline (back
+// when the sidebar is away, the people as a title menu with the thread's
+// actions, the AI sparkle, Open in New Window) over the phone's thread screen
 // (Features/Thread/ThreadView — messages, attachments, the Reply pill and
 // the glass triage bar). The thread's "close" (after done, delete, mark
 // unread, move) hands the window to the next thread, or back to the list
@@ -20,12 +21,13 @@ struct ThreadPage: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            Hairline()
             ThreadView(row: row) { state.closeOpen(in: model) }
                 .id(row.id)
+                .frame(maxWidth: MacLayout.maxWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: MacLayout.maxWidth)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.canvas)
+        .background(MacTheme.content)
         // Focusable so the key map works after a click in the thread, with
         // no ring drawn around the page.
         .focusable()
@@ -36,41 +38,28 @@ struct ThreadPage: View {
         .onChange(of: row.id) { _, _ in focused = true }
     }
 
+    /// The title row: the sidebar button when the sidebar is away, back,
+    /// the people as a title whose chevron opens the thread's actions, the
+    /// AI sparkle.
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             TrafficLightsGap(state: state)
-            GlassCircle("chevron.left", help: "Back to the list (Esc)") { state.run(.back, in: model) }
-            Text(current.fromSummary)
-                .font(Theme.display(17, relativeTo: .headline))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    if model.aiConfigured {
-                        GlassCircle("sparkles", help: "Summarize the thread (I)") { state.run(.summarizeThread, in: model) }
-                    }
-                    Menu {
-                        ThreadMenu(row: current, state: state)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Circle())
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
-                    .glassEffect(.regular.interactive(), in: .circle)
-                    .help("More")
-                    .accessibilityLabel("More")
-                }
+            if !state.sidebarVisible {
+                IconButton("sidebar.leading", help: "Show the sidebar (⌃⌘S)") { state.run(.toggleSidebar, in: model) }
+                IconButton("chevron.left", help: "Back to the list (Esc)") { state.run(.back, in: model) }
             }
+            TitleMenu { ThreadMenu(row: current, state: state) } label: {
+                TitleText(text: current.fromSummary)
+            }
+            .help("Thread actions")
+            .accessibilityLabel("\(current.fromSummary). Thread actions")
+            Spacer(minLength: 8)
+            if model.aiConfigured {
+                IconButton("sparkles", help: "Summarize the thread (I)") { state.run(.summarizeThread, in: model) }
+            }
+            IconButton("macwindow", help: "Open in New Window (⌘↩)") { state.run(.openInWindow, in: model) }
         }
-        .padding(.horizontal, 12)
-        .padding(.top, MacLayout.headerTop)
-        .padding(.bottom, 4)
+        .titleRow()
     }
 }
 

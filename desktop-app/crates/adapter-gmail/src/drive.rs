@@ -78,16 +78,35 @@ fn classify_403(body: &str) -> String {
     }
 }
 
+fn drive_err(e: heypigeon_core::ports::MailError) -> SyncError {
+    use heypigeon_core::ports::MailError;
+    match e {
+        MailError::AuthExpired => SyncError::AuthExpired,
+        MailError::Network(why) => SyncError::Network(why),
+        other => SyncError::Provider(other.to_string()),
+    }
+}
+
 fn net(e: reqwest::Error) -> SyncError {
     SyncError::Network(e.to_string())
 }
 
 impl GmailProvider {
     async fn drive_token(&self, account_id: &AccountId) -> Result<String, SyncError> {
-        self.access_token(account_id).await.map_err(|e| match e {
-            heypigeon_core::ports::MailError::AuthExpired => SyncError::AuthExpired,
-            other => SyncError::Provider(other.to_string()),
-        })
+        self.access_token(account_id).await.map_err(drive_err)
+    }
+
+    /// [`check`], with a 401 resolved the way Gmail calls resolve it: drop
+    /// the access token and refresh; only a refused grant is `AuthExpired`.
+    async fn drive_check(
+        &self,
+        account_id: &AccountId,
+        resp: reqwest::Response,
+    ) -> Result<reqwest::Response, SyncError> {
+        match check(resp).await {
+            Err(SyncError::AuthExpired) => Err(drive_err(self.unauthorized(account_id).await)),
+            other => other,
+        }
     }
 }
 
@@ -111,7 +130,8 @@ impl SyncTransport for GmailProvider {
                 .send()
                 .await
                 .map_err(net)?;
-            let page: WireFileList = check(resp)
+            let page: WireFileList = self
+                .drive_check(account_id, resp)
                 .await?
                 .json()
                 .await
@@ -136,7 +156,13 @@ impl SyncTransport for GmailProvider {
             .send()
             .await
             .map_err(net)?;
-        Ok(check(resp).await?.bytes().await.map_err(net)?.to_vec())
+        Ok(self
+            .drive_check(account_id, resp)
+            .await?
+            .bytes()
+            .await
+            .map_err(net)?
+            .to_vec())
     }
 
     async fn upload(
@@ -175,7 +201,8 @@ impl SyncTransport for GmailProvider {
             }
         };
         let resp = req.bearer_auth(token).send().await.map_err(net)?;
-        let file: WireFile = check(resp)
+        let file: WireFile = self
+            .drive_check(account_id, resp)
             .await?
             .json()
             .await

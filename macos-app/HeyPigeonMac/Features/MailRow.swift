@@ -139,10 +139,10 @@ struct MailRow: View {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
         }
         if row.needsReply {
-            Chip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Color(hex: 0x2A6BAE))
+            RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Color(hex: 0x2A6BAE))
         }
         if let at = row.scheduledAt {
-            Chip(text: Formatters.rowTime(at), systemImage: row.isFollowUp ? "arrow.uturn.left.circle" : "clock",
+            RowChip(text: Formatters.rowTime(at), systemImage: row.isFollowUp ? "arrow.uturn.left.circle" : "clock",
                  tint: at < Date() ? Theme.accent : Theme.textSecondary)
         }
         if row.isPinned {
@@ -217,7 +217,7 @@ private struct DoneCircle: View {
 }
 
 /// A small tinted label: Reply, a reminder's time.
-private struct Chip: View {
+private struct RowChip: View {
     let text: String
     let systemImage: String
     let tint: Color

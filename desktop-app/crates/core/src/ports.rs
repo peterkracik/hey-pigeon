@@ -617,6 +617,30 @@ pub trait Store {
         Ok(())
     }
 
+    /// New mail the model has not grouped yet (`ffi::bundles`' AI pass):
+    /// in no bundle, newer than `since`, not trash, spam or triaged as
+    /// spam, and not yet asked about at its current `msg_count`. Newest
+    /// first.
+    fn list_threads_needing_bundling(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let _ = (since, limit);
+        Ok(Vec::new())
+    }
+
+    /// The model was asked about this thread at `msg_count` (whatever it
+    /// answered): it is not asked again until a new message arrives.
+    fn set_thread_bundling_done(
+        &self,
+        thread_id: &ThreadId,
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, msg_count);
+        Ok(())
+    }
+
     fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
         let _ = thread_id;
         Ok(Vec::new())

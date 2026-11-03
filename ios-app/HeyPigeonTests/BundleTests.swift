@@ -130,3 +130,38 @@ struct BundleModelTests {
         #expect(c.open.isEmpty)
     }
 }
+
+/// The model's answer, mapped against the bundles it was shown
+/// (AI/BundlePrompt.swift). No model needed.
+@MainActor
+struct BundlePromptTests {
+    let shown: [(id: String, name: String)] = [(id: "b1", name: "Lisbon trip"), (id: "b2", name: "Zalando order")]
+
+    @Test func joinNamesAListedBundleWithoutCase() {
+        #expect(BundlePrompt.decision(action: "join", bundle: " lisbon TRIP ", name: "", kind: "other", candidates: shown)
+                == .join(bundleId: "b1"))
+        #expect(BundlePrompt.decision(action: "join", bundle: "Rome trip", name: "", kind: "other", candidates: shown)
+                == .noBundle, "an unlisted name is no bundle")
+    }
+
+    @Test func newNeedsANameAndARealKind() {
+        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "Acme website", kind: "project", candidates: shown)
+                == .new(name: "Acme website", category: .project))
+        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "", kind: "trip", candidates: shown) == .noBundle)
+        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "Stuff", kind: "other", candidates: shown) == .noBundle)
+        // A "new" bundle with a listed name joins it.
+        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "Zalando Order", kind: "shopping", candidates: shown)
+                == .join(bundleId: "b2"))
+        #expect(BundlePrompt.decision(action: "nothing", bundle: "", name: "", kind: "other", candidates: shown) == .noBundle)
+    }
+
+    @Test func thePromptListsTheBundlesAndTheEmail() {
+        let p = BundlePrompt.prompt(subject: "Seat for AT 1326", from: "news@atlantic.test", snippet: "Choose your seat",
+                                    bundles: [(name: "Lisbon trip", category: .trip, description: "",
+                                               examples: ["Booking confirmed"])])
+        #expect(p.contains("- Lisbon trip (trip) — has: \"Booking confirmed\""))
+        #expect(p.contains("Subject: Seat for AT 1326"))
+        #expect(p.contains("Preview: Choose your seat"))
+        #expect(BundlePrompt.prompt(subject: "", from: "a@b.test", snippet: "", bundles: []).contains("Existing bundles: none yet."))
+    }
+}

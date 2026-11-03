@@ -303,6 +303,15 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (bundle_id, thread_id)
     );
     ",
+    // v20 — automatic bundles. `bundles.origin` (user | ai): the model's
+    // bundles stay on this device until the user touches one.
+    // `bundle_ai_msg_count` is the `msg_count` the model last grouped the
+    // thread at — the triage versioning rule, so each message is asked
+    // about once. Local-only, absent from `upsert_thread`.
+    "
+    ALTER TABLE bundles ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
+    ALTER TABLE threads ADD COLUMN bundle_ai_msg_count INTEGER;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1028,7 +1037,7 @@ impl Store for SqliteStore {
     fn list_bundles(&self) -> Result<Vec<Bundle>, StoreError> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, name, kind, description, status, created_at, updated_at
+                "SELECT id, name, kind, description, status, created_at, updated_at, origin
                    FROM bundles
                   ORDER BY status = 'archived', name COLLATE NOCASE",
             )?;
@@ -1039,6 +1048,7 @@ impl Store for SqliteStore {
                     kind: BundleKind::parse(&r.get::<_, String>(2)?),
                     description: r.get(3)?,
                     status: BundleStatus::parse(&r.get::<_, String>(4)?),
+                    origin: BundleOrigin::parse(&r.get::<_, String>(7)?),
                     created_at: r.get(5)?,
                     updated_at: r.get(6)?,
                 })
@@ -1050,12 +1060,12 @@ impl Store for SqliteStore {
     fn upsert_bundle(&self, b: &Bundle) -> Result<(), StoreError> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO bundles (id, name, kind, description, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO bundles (id, name, kind, description, status, created_at, updated_at, origin)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
                    name = excluded.name, kind = excluded.kind,
                    description = excluded.description, status = excluded.status,
-                   updated_at = excluded.updated_at",
+                   updated_at = excluded.updated_at, origin = excluded.origin",
                 params![
                     b.id,
                     b.name,
@@ -1063,7 +1073,8 @@ impl Store for SqliteStore {
                     b.description,
                     b.status.as_str(),
                     b.created_at,
-                    b.updated_at
+                    b.updated_at,
+                    b.origin.as_str()
                 ],
             )
             .map(|_| ())
@@ -1213,6 +1224,47 @@ impl Store for SqliteStore {
                 params![thread_id, msg_count],
             )?;
             tx.commit()
+        })
+    }
+
+    fn list_threads_needing_bundling(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let junk = format!(
+            "({} OR {} OR {})",
+            has_label_sql("labels", "TRASH"),
+            has_label_sql("labels", "SPAM"),
+            has_label_sql("labels", "DRAFT")
+        );
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE bundle_id IS NULL
+                   AND last_msg_at >= ?1
+                   AND (bundle_ai_msg_count IS NULL OR bundle_ai_msg_count != msg_count)
+                   AND (priority IS NULL OR priority != 'spam')
+                   AND NOT {junk}
+                 ORDER BY last_msg_at DESC
+                 LIMIT ?2"
+            ))?;
+            let rows = stmt.query_map(params![since, limit], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
+    fn set_thread_bundling_done(
+        &self,
+        thread_id: &ThreadId,
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE threads SET bundle_ai_msg_count = ?2 WHERE id = ?1",
+                params![thread_id, msg_count],
+            )
+            .map(|_| ())
         })
     }
 
@@ -2602,12 +2654,14 @@ mod tests {
             kind: BundleKind::Trip,
             description: String::new(),
             status: BundleStatus::Active,
+            origin: BundleOrigin::User,
             created_at: 1,
             updated_at: 1,
         };
         s.upsert_bundle(&b).unwrap();
         b.name = "Lisbon".into();
         b.status = BundleStatus::Archived;
+        b.origin = BundleOrigin::Ai;
         b.updated_at = 2;
         s.upsert_bundle(&b).unwrap();
         assert_eq!(s.list_bundles().unwrap(), vec![b.clone()]);

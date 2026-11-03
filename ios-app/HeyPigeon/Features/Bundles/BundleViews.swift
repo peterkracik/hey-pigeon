@@ -116,7 +116,7 @@ struct BundlesSheet: View {
             ContentUnavailableView {
                 Label("No bundles yet", systemImage: "square.stack")
             } description: {
-                Text("A bundle keeps the mail about one trip, order or project together. Choose Add to bundle… on an email, or create one with +.")
+                Text("Bundles make themselves: mail about one trip, order or project is grouped as it arrives. To group something yourself, choose Add to bundle… on an email, or create one with +.")
             }
             .background(Theme.canvas)
         } else {
@@ -259,6 +259,14 @@ struct BundleScreen: View {
             if !c.bundle.description.isEmpty {
                 Section {
                     Text(c.bundle.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                }
+                .menuCard()
+            }
+            if c.bundle.isAutomatic {
+                Section {
+                    Label("Made automatically. Remove an email that doesn't belong, or rename the bundle, and it's yours.",
+                          systemImage: "sparkles")
+                        .font(.footnote).foregroundStyle(Theme.textTertiary)
                 }
                 .menuCard()
             }

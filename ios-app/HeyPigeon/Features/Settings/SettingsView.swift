@@ -377,6 +377,13 @@ private struct AISection: View {
                             .font(.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
+                Toggle(isOn: $model.autoBundlesEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Make bundles")
+                        Text("Group new mail about a trip, an order or a project")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
             }
             if !openaiConfigured {
                 HStack {
@@ -400,6 +407,11 @@ private struct AISection: View {
                     // Privacy copy must be true (CLAUDE.md): this is the one
                     // AI path that reads a body without a tap.
                     Text("Suggest for new mail: each new unread email (up to \(Self.suggestChars.formatted()) characters of its text) is read by the model you prefer above — never ChatGPT — to propose Need reply or a reminder. Nothing changes until you accept.")
+                }
+                if anyApple && model.autoBundlesEnabled {
+                    // Privacy copy must be true (CLAUDE.md): what the
+                    // bundling pass sends (crates/ffi/src/bundles.rs).
+                    Text("Make bundles: the sender, subject and preview line of each new email, with the names of your bundles, go to the model you prefer above — never ChatGPT. Bundles it makes stay on this \(Device.name) until you edit one.")
                 }
                 usageLines
             }

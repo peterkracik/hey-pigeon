@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use heypigeon_core::ports::{AiError, AiProvider, ChatRole, CompletionRequest, ModelInfo};
 
+use crate::bundles::{BundleCandidate, BundleChoice};
 use crate::types::*;
 
 /// Provider id of the shell's on-device backend (`pref:ai.provider`).
@@ -64,6 +65,16 @@ pub trait AiBackend: Send + Sync {
         body: String,
         received_at: i64,
     ) -> Result<Option<ThreadSuggestion>, EngineError>;
+    /// Group one new email (docs/bundles.md): join one of `bundles`, start
+    /// a new trip, shopping or project bundle, or none. Sees the sender,
+    /// subject and preview line only, like `classify` — never the body.
+    async fn bundle(
+        &self,
+        subject: String,
+        from: String,
+        snippet: String,
+        bundles: Vec<BundleCandidate>,
+    ) -> Result<BundleChoice, EngineError>;
 }
 
 /// The core's view of the shell's backend.
@@ -135,6 +146,10 @@ pub(crate) mod fakes {
         pub(crate) suggestions_asked: Mutex<Vec<(String, String)>>,
         /// What `suggest` answers (`Err` when the string is set).
         pub(crate) suggestion: Mutex<Result<Option<ThreadSuggestion>, String>>,
+        /// What `bundle` answers per subject (falls back to `NoBundle`),
+        /// and what it was shown: the subject and the candidate names.
+        pub(crate) bundle_answers: Mutex<Vec<(String, BundleChoice)>>,
+        pub(crate) bundles_asked: Mutex<Vec<(String, Vec<String>)>>,
         pub(crate) verdict: TriageVerdict,
         pub(crate) answer: String,
     }
@@ -155,6 +170,8 @@ pub(crate) mod fakes {
                 classifications: Mutex::new(Vec::new()),
                 suggestions_asked: Mutex::new(Vec::new()),
                 suggestion: Mutex::new(Ok(None)),
+                bundle_answers: Mutex::new(Vec::new()),
+                bundles_asked: Mutex::new(Vec::new()),
                 verdict,
                 answer: answer.to_string(),
             })
@@ -199,6 +216,26 @@ pub(crate) mod fakes {
                 .unwrap()
                 .clone()
                 .map_err(EngineError::Ai)
+        }
+        async fn bundle(
+            &self,
+            subject: String,
+            _from: String,
+            _snippet: String,
+            bundles: Vec<BundleCandidate>,
+        ) -> Result<BundleChoice, EngineError> {
+            self.bundles_asked.lock().unwrap().push((
+                subject.clone(),
+                bundles.into_iter().map(|b| b.name).collect(),
+            ));
+            Ok(self
+                .bundle_answers
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(s, _)| *s == subject)
+                .map(|(_, c)| c.clone())
+                .unwrap_or(BundleChoice::NoBundle))
         }
     }
 }

@@ -292,6 +292,9 @@ struct BundleItem: Identifiable, Hashable {
     let openCount: Int
     /// Newest message in the bundle; nil when it is empty.
     let lastActivityAt: Date?
+    /// Made by the model and not touched by the user yet: it stays on this
+    /// device until the user edits it.
+    var isAutomatic = false
 }
 
 /// What a key fact identifies.

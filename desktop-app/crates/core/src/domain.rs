@@ -166,6 +166,11 @@ pub struct Bundle {
     #[serde(default)]
     pub description: String,
     pub status: BundleStatus,
+    /// Who made it. An `Ai` bundle stays on this device (every device
+    /// groups its own mail) until the user touches it — renames, archives,
+    /// adds or removes an email — which makes it `User` and synced.
+    #[serde(default)]
+    pub origin: BundleOrigin,
     /// Epoch ms.
     pub created_at: i64,
     /// Epoch ms of the last edit to the bundle row (not its threads).
@@ -229,14 +234,41 @@ impl BundleStatus {
     }
 }
 
+/// Who made a bundle (`Bundle::origin`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BundleOrigin {
+    #[default]
+    User,
+    Ai,
+}
+
+impl BundleOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BundleOrigin::User => "user",
+            BundleOrigin::Ai => "ai",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "ai" => BundleOrigin::Ai,
+            _ => BundleOrigin::User,
+        }
+    }
+}
+
 /// How a thread got into its bundle. `User` is sticky: nothing automatic
 /// moves it. `Link` came from a shared booking ref, order or tracking
 /// number (`bundles::extract_anchors`) with a thread already in the bundle.
+/// `Ai` is the model's grouping of new mail.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum BundleSource {
     User,
     Link,
+    Ai,
 }
 
 impl BundleSource {
@@ -244,12 +276,14 @@ impl BundleSource {
         match self {
             BundleSource::User => "user",
             BundleSource::Link => "link",
+            BundleSource::Ai => "ai",
         }
     }
 
     pub fn parse(s: &str) -> Self {
         match s {
             "user" => BundleSource::User,
+            "ai" => BundleSource::Ai,
             _ => BundleSource::Link,
         }
     }

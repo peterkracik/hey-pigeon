@@ -79,6 +79,29 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
         }
     }
 
+    func bundle(subject: String, from: String, snippet: String, bundles: [BundleCandidate]) async throws -> BundleChoice {
+        let session = provider.session(instructions: BundlePrompt.instructions, task: .classification)
+        let shown = bundles.map { b in
+            (name: b.name, category: BundleCategory(b.kind), description: b.description, examples: b.examples)
+        }
+        let prompt = BundlePrompt.prompt(subject: subject, from: from, snippet: snippet, bundles: shown)
+        let call: BundleCall
+        do {
+            let response = try await session.respond(to: String(prompt.prefix(provider.promptBudget)), generating: BundleCall.self)
+            ledger.record(provider: provider.id, response.usage)
+            call = response.content
+        } catch let error as LanguageModelSession.GenerationError {
+            throw EngineError.Ai(message: Self.describe(error))
+        }
+        let decision = BundlePrompt.decision(action: call.action.rawValue, bundle: call.bundle, name: call.name,
+                                             kind: call.kind.rawValue, candidates: bundles.map { (id: $0.id, name: $0.name) })
+        switch decision {
+        case .join(let id): return .existing(bundleId: id)
+        case .new(let name, let category): return .new(name: name, kind: category.ffi)
+        case .noBundle: return .noBundle
+        }
+    }
+
     // MARK: Completion with chunking
 
     private func answer(system: String, prompt: String, depth: Int) async throws -> String {
@@ -163,6 +186,50 @@ struct SuggestionCall {
 @Generable
 enum SuggestedAction: String {
     case reply, remind, nothing
+}
+
+/// The structured bundling answer (BundlePrompt says what each field means).
+@Generable
+struct BundleCall {
+    @Guide(description: "join, new or nothing.")
+    var action: BundleAction
+    @Guide(description: "For join: the name of the listed bundle, exactly as listed. Empty otherwise.")
+    var bundle: String
+    @Guide(description: "For new: a short name for the bundle, like \"Lisbon trip\" or \"Zalando order\". Empty otherwise.")
+    var name: String
+    @Guide(description: "For new: trip, shopping or project. For join and nothing: other.")
+    var kind: BundleKindAnswer
+}
+
+@Generable
+enum BundleAction: String {
+    case join, new, nothing
+}
+
+@Generable
+enum BundleKindAnswer: String {
+    case trip, shopping, project, other
+}
+
+extension BundleCategory {
+    /// The core's kind for this category (and back).
+    var ffi: BundleKind {
+        switch self {
+        case .trip: .trip
+        case .shopping: .shopping
+        case .project: .project
+        case .other: .other
+        }
+    }
+
+    init(_ kind: BundleKind) {
+        switch kind {
+        case .trip: self = .trip
+        case .shopping: self = .shopping
+        case .project: self = .project
+        case .other: self = .other
+        }
+    }
 }
 
 @Generable

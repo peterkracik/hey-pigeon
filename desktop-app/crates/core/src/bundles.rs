@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
-use crate::domain::{now_ms, Bundle, BundleSource, BundleStatus, ThreadId};
+use crate::domain::{now_ms, Bundle, BundleOrigin, BundleSource, BundleStatus, ThreadId};
 use crate::ports::{Store, StoreError};
 
 /// What an anchor identifies. Decides how the bundle view labels the fact.
@@ -530,6 +530,7 @@ pub fn new_bundle(name: &str, kind: crate::domain::BundleKind, description: &str
         kind,
         description: description.to_string(),
         status: BundleStatus::Active,
+        origin: BundleOrigin::User,
         created_at: now,
         updated_at: now,
     }

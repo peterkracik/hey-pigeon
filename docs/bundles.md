@@ -5,14 +5,48 @@ season of orders, like Christmas shopping), a project. The AI fills it,
 the user can always correct it, and every correction teaches it. Opening a
 bundle shows a summary of the key facts first, then its threads.
 
-Status: rollout step 1 is built (manual bundles, extraction and hard
-links, key facts, the chip, the Bundles list, the bundle view, "Add to
-bundle…"), plus folded inbox rows on iPhone and iPad. Model assignment,
-the AI narrative and suggested bundles are not built yet. Code:
+Status: built — bundles make themselves (the model groups new mail:
+"Automatic bundles" below), shared booking, order and tracking numbers link
+mail, key facts, the chip, the Bundles list, the bundle view, "Add to
+bundle…", and folded inbox rows on iPhone and iPad. Not built yet: the AI
+narrative and attention line, auto-archive, folding on the Mac. Code:
 `crates/core/src/bundles.rs` (extraction, linking, facts),
-`crates/ffi/src/bundles.rs` (the engine API),
+`crates/ffi/src/bundles.rs` (the engine API and the model pass),
+`ios-app/HeyPigeon/AI/BundlePrompt.swift` (the prompt),
 `ios-app/HeyPigeon/Features/Bundles/BundleViews.swift` (the screens),
 `AppModel.fold` (folding).
+
+## Automatic bundles (as built)
+
+The user does not make bundles; they fix them. After each sync round the
+shell's model (on device or Apple's cloud, never ChatGPT) reads each new
+email from the last 30 days that is in no bundle — sender, subject and
+preview line only, never the body — together with the active bundles (name,
+kind, a few subjects each), and answers one of:
+- **join** a listed bundle (by its exact name),
+- **new**: a trip ("Lisbon trip"), shopping ("Zalando order", "Christmas
+  shopping") or project ("Acme website") bundle no listed one covers,
+- **nothing**: newsletters, promotions, notices, monthly bills, chat.
+
+Rules around the answer (`ffi::bundles`):
+- Each email is asked about once per message (`threads.bundle_ai_msg_count`),
+  at most 10 per round, the batch read oldest first so the first email about
+  a trip names it.
+- A new name equal to a listed one joins it; a bare kind ("Shopping") is
+  refused, so no catch-all bundle forms.
+- A model bundle is **hidden until a second email joins** (one receipt is not
+  a bundle) and is dropped if it still holds one email after three weeks.
+- The model's bundles stay **on this device**: every device groups its own
+  mail, like triage. Any user edit — remove an email, add one, rename,
+  archive — **adopts** the bundle: it becomes the user's and syncs. A synced
+  bundle arriving with the same name and kind as a local model bundle
+  absorbs it, so two devices end up with one.
+- An email the user removed is never put back in that bundle.
+- Settings › AI › "Make bundles" (`pref:bundles.auto`, unset = on).
+
+This replaces "Suggested bundles" below: the model creates instead of
+proposing, and the hidden-until-two rule does the job the suggestion card
+was for.
 
 ## Bundles vs. triage labels
 

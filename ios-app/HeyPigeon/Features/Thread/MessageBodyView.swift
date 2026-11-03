@@ -30,7 +30,6 @@ struct MessageBodyView: View {
     @State private var hasQuote = false
     @Environment(\.colorScheme) private var scheme
     @Environment(AppModel.self) private var model
-    @Environment(\.openURL) private var openURL
 
     private var imagesAllowed: Bool {
         allowedSendersRaw.split(separator: "\n").contains(Substring(senderAddress.lowercased()))
@@ -83,8 +82,8 @@ struct MessageBodyView: View {
     private func open(_ url: URL) {
         if url.scheme?.lowercased() == "mailto" {
             model.compose(SendDraft(mailto: url))
-        } else {
-            openURL(url)
+        } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            Browser.open(url)
         }
     }
 
@@ -327,7 +326,7 @@ private struct HTMLView {
         """
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var parent: HTMLView
         var loadedKey: String?
         init(_ parent: HTMLView) { self.parent = parent }
@@ -341,10 +340,22 @@ private struct HTMLView {
                 decisionHandler(.allow)
                 return
             }
-            if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+            if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
                 parent.onLink(url)
             }
             decisionHandler(.cancel)
+        }
+
+        /// target="_blank" links ask for a new web view instead of
+        /// navigating; without this they did nothing. Never a new view:
+        /// the link goes the same way as any other tap.
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                     for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView?
+        {
+            if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+                parent.onLink(url)
+            }
+            return nil
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -483,6 +494,10 @@ extension HTMLView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let web = WKWebView(frame: .zero, configuration: configuration())
         web.navigationDelegate = context.coordinator
+        web.uiDelegate = context.coordinator
+        // A long press's preview, once tapped, loaded the page in place of
+        // the message. The press still offers the system's link menu.
+        web.allowsLinkPreview = false
         web.scrollView.isScrollEnabled = false
         web.isOpaque = false
         web.backgroundColor = .clear
@@ -498,6 +513,7 @@ extension HTMLView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let web = PassthroughWebView(frame: .zero, configuration: configuration())
         web.navigationDelegate = context.coordinator
+        web.uiDelegate = context.coordinator
         // Transparent, so the message card's colour shows through as on iOS.
         web.setValue(false, forKey: "drawsBackground")
         return web

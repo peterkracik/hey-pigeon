@@ -11,6 +11,8 @@ struct ThreadRowView: View {
     let showAccountDot: Bool
     /// Search words to underline in the subject and snippet.
     var highlight: [String] = []
+    /// The bundle chip; off inside the bundle's own view.
+    var showsBundle = true
     @Environment(AppModel.self) private var model
 
     private var account: MailAccount? { model.accounts.first { $0.id == row.accountId } }
@@ -60,6 +62,9 @@ struct ThreadRowView: View {
                     Chip(text: s.title, systemImage: "sparkles",
                          background: Theme.accentSoft, foreground: Theme.textPrimary, capsule: true)
                         .accessibilityLabel("Suggested: \(s.title)")
+                }
+                if showsBundle, let b = model.bundle(id: row.bundleId) {
+                    BundleChip(bundle: b)
                 }
                 ForEach(triageNames, id: \.self) { name in
                     Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)

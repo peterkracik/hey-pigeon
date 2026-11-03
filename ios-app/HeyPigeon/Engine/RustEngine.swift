@@ -370,6 +370,33 @@ final class RustEngine: MailEngine {
     func renameTriageLabel(id: String, name: String) throws { try engine.renameTriageLabel(id: id, newName: name) }
     func deleteTriageLabel(id: String) throws { try engine.deleteTriageLabel(id: id) }
     func reanalyzeTriage() throws { try engine.reanalyzeAllTriage() }
+
+    func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
+    func bundleContents(id: String) throws -> BundleContents? {
+        try engine.bundleDetail(bundleId: id).map {
+            BundleContents(
+                bundle: BundleItem($0.bundle),
+                facts: $0.facts.map(BundleFactItem.init),
+                threads: $0.threads.map { ThreadRow($0) }
+            )
+        }
+    }
+    func createBundle(name: String, category: BundleCategory, description: String, threadIds: [String]) throws -> BundleItem {
+        BundleItem(try engine.createBundle(name: name, kind: category.ffi, description: description, threadIds: threadIds))
+    }
+    func updateBundle(id: String, name: String, category: BundleCategory, description: String) throws {
+        try engine.updateBundle(bundleId: id, name: name, kind: category.ffi, description: description)
+    }
+    func setBundleArchived(id: String, _ archived: Bool) throws {
+        try engine.setBundleArchived(bundleId: id, archived: archived)
+    }
+    func deleteBundle(id: String) throws { try engine.deleteBundle(bundleId: id) }
+    @discardableResult
+    func addToBundle(threadId: String, bundleId: String) throws -> Int {
+        Int(try engine.addToBundle(threadId: threadId, bundleId: bundleId))
+    }
+    func removeFromBundle(threadId: String) throws { try engine.removeFromBundle(threadId: threadId) }
+    func suggestedBundle(threadId: String) throws -> String? { try engine.suggestBundle(threadId: threadId) }
 }
 
 // MARK: - Mapping
@@ -420,8 +447,50 @@ private extension ThreadRow {
                 case .needsReply: .needsReply
                 case .remind(let at): .remind(at: Date(epochMs: at))
                 }
-            }
+            },
+            bundleId: t.bundleId
         )
+    }
+}
+
+private extension BundleCategory {
+    var ffi: BundleKind {
+        switch self {
+        case .trip: .trip
+        case .shopping: .shopping
+        case .project: .project
+        case .other: .other
+        }
+    }
+}
+
+private extension BundleItem {
+    init(_ b: MailBundle) {
+        let category: BundleCategory = switch b.kind {
+        case .trip: .trip
+        case .shopping: .shopping
+        case .project: .project
+        case .other: .other
+        }
+        self.init(
+            id: b.id, name: b.name, category: category, description: b.description,
+            isArchived: b.archived, createdAt: Date(epochMs: b.createdAt),
+            threadCount: Int(b.threadCount), openCount: Int(b.openCount),
+            lastActivityAt: b.lastActivityAt > 0 ? Date(epochMs: b.lastActivityAt) : nil
+        )
+    }
+}
+
+private extension BundleFactItem {
+    init(_ f: BundleFact) {
+        let category: BundleFactCategory = switch f.kind {
+        case .flight: .flight
+        case .booking: .booking
+        case .order: .order
+        case .invoice: .invoice
+        case .tracking: .tracking
+        }
+        self.init(category: category, value: f.value, threadId: f.threadId, at: Date(epochMs: f.at))
     }
 }
 

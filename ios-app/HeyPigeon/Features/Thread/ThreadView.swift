@@ -144,6 +144,9 @@ struct ThreadView: View {
                     Button { model.pendingRemind = current } label: {
                         Label(current.scheduledAt == nil ? "Remind me" : "Change reminder", systemImage: "clock")
                     }
+                    Button { model.pendingBundlePick = current } label: {
+                        Label(current.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
+                    }
                     if !accountLabels.isEmpty {
                         Menu {
                             ForEach(accountLabels) { label in

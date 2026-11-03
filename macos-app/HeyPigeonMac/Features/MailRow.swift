@@ -135,6 +135,11 @@ struct MailRow: View {
     }
 
     @ViewBuilder private var badges: some View {
+        // The Mac lists bundle mail row by row (no folding), so the chip
+        // is what ties a row to its bundle.
+        if let b = model.bundle(id: row.bundleId) {
+            RowChip(text: b.name, systemImage: b.category.systemImage, tint: Theme.tagForeground(.sky))
+        }
         if row.hasAttachment {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
         }

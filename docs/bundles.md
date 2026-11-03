@@ -5,8 +5,14 @@ season of orders, like Christmas shopping), a project. The AI fills it,
 the user can always correct it, and every correction teaches it. Opening a
 bundle shows a summary of the key facts first, then its threads.
 
-Status: design, not built. Applies to the Rust core (`desktop-app/crates`)
-and both Swift apps (`ios-app/HeyPigeon` is the shared shell).
+Status: rollout step 1 is built (manual bundles, extraction and hard
+links, key facts, the chip, the Bundles list, the bundle view, "Add to
+bundle…"), plus folded inbox rows on iPhone and iPad. Model assignment,
+the AI narrative and suggested bundles are not built yet. Code:
+`crates/core/src/bundles.rs` (extraction, linking, facts),
+`crates/ffi/src/bundles.rs` (the engine API),
+`ios-app/HeyPigeon/Features/Bundles/BundleViews.swift` (the screens),
+`AppModel.fold` (folding).
 
 ## Bundles vs. triage labels
 
@@ -38,6 +44,17 @@ Non-goals (v1):
   chose (`ai.provider`), under the same rules as triage.
 
 ## Model
+
+> As built (SQLite v19): membership is two columns on `threads`
+> (`bundle_id`, `bundle_source`: user | link) rather than `bundle_threads`,
+> because a thread is in one bundle at most. Anchors live in
+> `thread_anchors (thread_id, anchor)` with `threads.anchors_msg_count`
+> (the triage versioning rule), exclusions in `bundle_exclusions`. Facts are
+> derived from the anchors on read (`core::bundles::bundle_facts`), so there
+> is no `bundle_facts` table yet; `bundle_summaries` comes with step 3. The
+> sync keys are `bundle:<id>` (app-wide) and `bundle_thread:<thread_id>`
+> (`{ "bundle", "excluded" }`) on the thread's account file.
+> The sketch below is the full design.
 
 ```text
 bundles (
@@ -295,13 +312,27 @@ Bundle view, top to bottom:
 Bundle actions: rename, edit description, archive or reopen, delete (removes
 the bundle, never the mail).
 
-### Later: folded inbox rows
+### Folded inbox rows
 
-As an option, a bundle's inbox threads show as one row ("✈ Lisbon trip · 4"). A
-new unread email in the bundle lifts the row to the top with an unread badge.
-This declutters the inbox most, and it can also hide mail. Ship it only after
-the evaluation numbers ("Quality") hold up, behind a pref
-(`bundles.fold_inbox`, off by default).
+On iPhone and iPad, a bundle's **quiet** inbox mail shares one row:
+"✈ Lisbon trip · 3 updates · Seat chosen, Your receipt, …". Mail that
+needs the user keeps its own row, with the chip. A thread is quiet when it
+is:
+- read
+- not high or medium priority (triage)
+- not flagged Need reply, no reminder, no open AI suggestion
+- not pinned, not a draft
+
+A bundle folds only with **two or more** quiet threads in the inbox; one
+alone stays a normal row. The folded row sits at the top of the day group
+of its newest email. Tapping it opens the bundle; its swipe (and its menu)
+is **Mark all done**, with one Undo. Folding applies to the plain inbox
+only: a search, a label filter or another folder lists every thread.
+
+It is on by default (Settings › "Fold bundle updates", `pref:bundles.fold_inbox`,
+synced), because only mail that asks nothing of the user folds. The Mac
+lists every thread with its chip for now: its keyboard selection walks
+threads, and a folded row needs its own place in that map.
 
 ## Storage and sync
 
@@ -313,8 +344,8 @@ the evaluation numbers ("Quality") hold up, behind a pref
   - user exclusions, which must sync because they are user intent
 - `link` and `ai` memberships, facts, anchors and summaries stay local. Every
   device recomputes them, the same rule as "Jev's own results stay local".
-- Prefs: `bundles.enabled` (default on once shipped), `bundles.suggest`
-  (default on), `bundles.fold_inbox` (default off).
+- Prefs: `bundles.fold_inbox` (unset = on). Later: `bundles.suggest`
+  (default on) with suggested bundles.
 
 ## Quality
 
@@ -330,14 +361,15 @@ the evaluation numbers ("Quality") hold up, behind a pref
 
 ## Rollout
 
-1. **Manual bundles + extraction + hard links.** Tables, devsync keys, the row
+1. **Manual bundles + extraction + hard links.** Built, with folding on
+   iPhone and iPad. Tables, devsync keys, the row
    chip, Bundles list, bundle view with key facts and the done fold, "Add to
    bundle…". It's useful without any model.
 2. **Model assignment** to existing bundles: `classify_bundle`, thresholds,
    in-thread suggestions, learning from edits, the evaluation set.
 3. **Summary narrative and attention line** through the group summarizer.
 4. **Suggested bundles and auto-archive.**
-5. **Folded inbox rows**, behind the pref.
+5. **Folded inbox rows** on the Mac (built on iPhone and iPad).
 
 ## Open questions
 

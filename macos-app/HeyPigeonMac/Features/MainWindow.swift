@@ -66,6 +66,10 @@ struct MainWindow: View {
         .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
         .overlay(alignment: .bottom) { MacToast() }
         .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
+        .sheet(item: $model.pendingBundlePick) { row in AddToBundleSheet(row: row) }
+        .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
+            BundlesSheet(initialBundleId: model.bundlesStartId)
+        }
         .sheet(item: $model.composeDraft) { draft in
             ComposeView(draft: draft)
                 .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)

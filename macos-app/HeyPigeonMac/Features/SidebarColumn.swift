@@ -34,6 +34,11 @@ struct SidebarColumn: View {
                     folder(.needReply, count: model.needReplyCount)
                     folder(.starred)
                     folder(.drafts, count: model.draftsCount)
+                    // Bundles open as a sheet (BundlesSheet), not a list view.
+                    SidebarRow(title: "Bundles", systemImage: "square.stack", help: "Bundles",
+                               trailing: model.activeBundles.isEmpty ? nil : Text("\(model.activeBundles.count)")) {
+                        model.openBundles()
+                    }
 
                     SectionHeader(title: "Folders", open: $foldersOpen)
                     if foldersOpen {

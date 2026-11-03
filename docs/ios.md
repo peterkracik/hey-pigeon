@@ -82,17 +82,17 @@ floating "splits" pill above the tab bar. Here that maps to:
 │ ─────────────────────────────────────────────────────────│
 │   …                                                      │
 │        ( Inbox 2 · Invoices · Travel · Newsletters )     │  ← Jev label pill (Settings › Triage)
-│   (  Inbox  ·  Scheduled  ·  Need reply  )   (🔍)        │  ← tab bar + search
+│   (  Inbox  ·  Remind me  ·  Need reply  )   (🔍)        │  ← tab bar + search
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **Tabs = the rail.** Inbox, Scheduled (reminders) and Need reply are the
+- **Tabs = the rail.** Inbox, Remind me (reminders) and Need reply are the
   tab bar; Search is the system's separate search circle. Inbox carries an
-  unread badge, Scheduled the number of reminders due today, Need reply its
+  unread badge, Remind me the number of reminders due today, Need reply its
   count. The app icon badge is unified unread + reminders due today.
 - **The sidebar (≡)** is the desktop sidebar as a sheet: the accounts
   (All / each account) nested under Inbox, then the desktop's folders in
-  its order — Starred · Sent · Drafts · Archive · Scheduled · Need reply ·
+  its order — Starred · Sent · Drafts · Archive · Remind me · Need reply ·
   All emails · Spam · Trash — the Gmail labels, Add account and Settings.
   Picking a folder shows it in the Inbox tab.
 - **The label pill** above the tab bar is the desktop's label tabs under the
@@ -101,7 +101,7 @@ floating "splits" pill above the tab bar. Here that maps to:
   stay in the sidebar. Accounts (desktop `0`/`1`/`2`) switch in the sidebar,
   nested under Inbox, and the choice applies across all tabs.
 - **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
-  Last 7 days · Older. Scheduled buckets by due date; Need reply has no
+  Last 7 days · Older. Remind me buckets by due date; Need reply has no
   Pinned group.
 - **Rows:** flat, edge to edge, one colour. Unread is a bar on the left
   edge (white on dark, the accent on light) and the bold sender. In the

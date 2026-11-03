@@ -268,6 +268,31 @@ struct AppModelTests {
         #expect(!model.isSearchPending && model.searchResults.isEmpty)
     }
 
+    @Test func sidebarShowsPinnedLabelsUntilExpanded() {
+        let all = ["a", "b", "c", "d"].map { MailLabelItem(id: $0, accountId: "x", name: $0.uppercased()) }
+        // Nothing pinned: nothing to hide.
+        var r = AppModel.sidebarLabels(all, pinned: [], expanded: false, current: nil)
+        #expect(r.shown.map(\.id) == ["a", "b", "c", "d"] && r.hidden == 0)
+        // Pinned only, in the list's order; the open label stays in view.
+        r = AppModel.sidebarLabels(all, pinned: ["c", "a"], expanded: false, current: "d")
+        #expect(r.shown.map(\.id) == ["a", "c", "d"] && r.hidden == 1)
+        // ••• opens the whole list.
+        r = AppModel.sidebarLabels(all, pinned: ["c"], expanded: true, current: nil)
+        #expect(r.shown.count == 4 && r.hidden == 0)
+        // A pin for a label this list doesn't hold (another account) hides nothing.
+        r = AppModel.sidebarLabels(all, pinned: ["zz"], expanded: false, current: nil)
+        #expect(r.shown.count == 4)
+    }
+
+    @Test func pinningALabelIsASyncedPref() throws {
+        let label = try #require(model.labels.first)
+        model.togglePinned(label)
+        #expect(model.pinnedLabelIds == [label.id])
+        #expect(try engine.prefs()["sidebar.pinned_labels"] as? [String] == [label.id])
+        model.togglePinned(label)
+        #expect(model.pinnedLabelIds.isEmpty)
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

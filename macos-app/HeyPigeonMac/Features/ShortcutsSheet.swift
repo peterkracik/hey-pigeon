@@ -22,7 +22,7 @@ struct ShortcutsSheet: View {
             ("C · ⌘N", "New message"), ("R", "Reply"), ("A", "Reply all"), ("F", "Forward"),
         ]),
         ("Go", [
-            ("G then I", "Inbox"), ("G then S", "Scheduled"), ("G then N", "Need reply"), ("G then P", "Pinned (Starred)"),
+            ("G then I", "Inbox"), ("G then S", "Remind me"), ("G then N", "Need reply"), ("G then P", "Pinned (Starred)"),
             ("G then D", "Drafts"), ("G then T", "Sent"), ("G then A", "Archive"),
             ("0 · 1 · 2", "All accounts · the first · the second"), ("⌘1 … ⌘8", "The folders, in the sidebar's order"),
         ]),

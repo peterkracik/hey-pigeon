@@ -337,14 +337,14 @@ struct MailLabelQuery: EntityStringQuery {
 // MARK: - Folder
 
 /// The sidebar's folders and the two tabs, as a fixed list the system can
-/// put in a phrase: "Open Scheduled in Hey Pigeon".
+/// put in a phrase: "Open Need reply in Hey Pigeon".
 enum MailFolder: String, AppEnum {
     case inbox, scheduled, needReply, starred, drafts, sent, archive, all, spam, trash
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Folder")
     static let caseDisplayRepresentations: [MailFolder: DisplayRepresentation] = [
         .inbox: "Inbox",
-        .scheduled: "Scheduled",
+        .scheduled: "Remind me",
         .needReply: "Need reply",
         .starred: "Starred",
         .drafts: "Drafts",

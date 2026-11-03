@@ -243,6 +243,37 @@ final class AppModel {
         /// Settings › AI › "Suggest for new mail" (the core reads it too:
         /// crates/ffi/src/suggest.rs, unset = on).
         static let suggest = "ai.suggest"
+        /// The labels pinned in the sidebar (both apps), by label id.
+        static let pinnedLabels = "sidebar.pinned_labels"
+    }
+
+    /// Labels pinned in the sidebar. With any pinned, the sidebar shows
+    /// only those (and the open one) until ••• expands the whole list.
+    /// Synced, like the other prefs: the Mac and the phone pin the same.
+    var pinnedLabelIds: Set<String> = [] {
+        didSet { savePref(PrefName.pinnedLabels, pinnedLabelIds.sorted()) }
+    }
+
+    func togglePinned(_ label: MailLabelItem) {
+        if pinnedLabelIds.contains(label.id) { pinnedLabelIds.remove(label.id) } else { pinnedLabelIds.insert(label.id) }
+        Haptics.light()
+    }
+
+    /// The sidebar's label rows: everything when nothing is pinned or the
+    /// list is expanded; otherwise the pinned ones and the label the list
+    /// shows now (so the open one never disappears), in the given order.
+    /// `hidden` is how many rows ••• would add.
+    static func sidebarLabels(_ all: [MailLabelItem], pinned: Set<String>, expanded: Bool,
+                              current: String?) -> (shown: [MailLabelItem], hidden: Int) {
+        guard !expanded, all.contains(where: { pinned.contains($0.id) }) else { return (all, 0) }
+        let shown = all.filter { pinned.contains($0.id) || $0.id == current }
+        return (shown, all.count - shown.count)
+    }
+
+    /// The id of the label the list shows, if it shows one.
+    var currentLabelId: String? {
+        if case .label(let id, _) = view { return id }
+        return nil
     }
 
     /// Group pinned messages at the top of the inbox.
@@ -360,6 +391,7 @@ final class AppModel {
         if let v = prefs[PrefName.triageDryRun] as? Bool { triageDryRun = v }
         if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
+        if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
         adoptingPrefs = false
     }
 

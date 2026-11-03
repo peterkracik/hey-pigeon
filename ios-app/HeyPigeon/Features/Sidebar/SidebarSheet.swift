@@ -1,12 +1,16 @@
 // The sidebar: accounts (desktop 0/1/2), folders, labels, Settings — the
 // desktop sidebar as a sheet, opened from the top-left circle. Same canvas
 // as the main screens, sections on white cards, close in the nav bar.
+// Each label has a pin; once any is pinned, the card shows only those,
+// with ••• for the rest (AppModel.sidebarLabels, shared with the Mac).
 
 import SwiftUI
 
 struct SidebarSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// ••• in the labels card: the unpinned labels too. Per device.
+    @AppStorage("sidebarAllLabels") private var allLabels = false
 
     var body: some View {
         NavigationStack {
@@ -47,11 +51,20 @@ struct SidebarSheet: View {
             }
             .menuCard()
             if !model.labels.isEmpty {
+                let rows = AppModel.sidebarLabels(model.labels, pinned: model.pinnedLabelIds,
+                                                  expanded: allLabels, current: model.currentLabelId)
                 Section {
-                    ForEach(model.labels) { l in
-                        Button { go(.label(id: l.id, name: l.name)) } label: {
-                            Label(l.name, systemImage: "tag")
+                    ForEach(rows.shown) { l in labelRow(l) }
+                    if rows.hidden > 0 || allLabels && !model.pinnedLabelIds.isEmpty {
+                        Button {
+                            withAnimation(.snappy(duration: 0.2)) { allLabels.toggle() }
+                        } label: {
+                            Image(systemName: allLabels ? "chevron.up" : "ellipsis")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(maxWidth: .infinity)
                         }
+                        .accessibilityLabel(allLabels ? "Show pinned labels only" : "Show all labels, \(rows.hidden) more")
                     }
                 }
                 .menuCard()
@@ -90,6 +103,35 @@ struct SidebarSheet: View {
                     Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                 }
             }
+        }
+    }
+
+    /// A label, with a pin on the right: pinned labels are the ones the
+    /// card shows until ••• opens the rest.
+    private func labelRow(_ l: MailLabelItem) -> some View {
+        let view = MailView.label(id: l.id, name: l.name)
+        let pinned = model.pinnedLabelIds.contains(l.id)
+        return HStack {
+            Button { go(view) } label: {
+                HStack {
+                    Label(l.name, systemImage: "tag")
+                    Spacer()
+                    if model.tab == .inbox && model.folder == view {
+                        Image(systemName: "checkmark").font(.footnote.weight(.semibold))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button { model.togglePinned(l) } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.footnote)
+                    .foregroundStyle(pinned ? Theme.textPrimary : Theme.textTertiary)
+                    .frame(width: 32, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(pinned ? "Unpin \(l.name)" : "Pin \(l.name)")
         }
     }
 

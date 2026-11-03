@@ -22,10 +22,10 @@ struct ScheduledControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "app.heypigeon.control.scheduled") {
             ControlWidgetButton(action: OpenHeyPigeonIntent(target: .scheduled)) {
-                Label("Scheduled", systemImage: "clock")
+                Label("Remind me", systemImage: "clock")
             }
         }
-        .displayName("Scheduled")
+        .displayName("Remind me")
         .description("Open your reminders in Hey Pigeon.")
     }
 }

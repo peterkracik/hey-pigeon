@@ -40,7 +40,7 @@ struct MarkDoneIntent: AppIntent {
 struct RemindMeIntent: AppIntent {
     static let title: LocalizedStringResource = "Remind Me"
     static let description = IntentDescription(
-        "Sets a reminder on an email. It leaves the inbox for Scheduled and comes back when the time comes.",
+        "Sets a reminder on an email. It leaves the inbox for Remind me and comes back when the time comes.",
         categoryName: "Triage"
     )
 

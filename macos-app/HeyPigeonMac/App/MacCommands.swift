@@ -102,7 +102,7 @@ struct MacCommands: Commands {
 
         CommandMenu("Go") {
             folder("Inbox", .inbox, "1")
-            folder("Scheduled", .scheduled, "2")
+            folder("Remind me", .scheduled, "2")
             folder("Need Reply", .needReply, "3")
             folder("Starred", .starred, "4")
             folder("Drafts", .drafts, "5")

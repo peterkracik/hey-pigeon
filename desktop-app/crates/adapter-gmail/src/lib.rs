@@ -1046,6 +1046,7 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         needs_reply: false,
         follow_up_since: None,
         suggestion: None,
+        bundle_id: None,
         labels,
         has_attachment: wire
             .messages

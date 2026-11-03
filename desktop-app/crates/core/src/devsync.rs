@@ -20,7 +20,10 @@
 //! `account:<field>` → string, for `display_name` / `color` / `signature`.
 //! App-wide, on the *first* account's file only (see `app_wide_account`):
 //! `triage_label:<id>` → `{ "name" }` (tombstone deletes) and
-//! `pref:<name>` → any JSON (tombstone clears). Secrets — API keys, OAuth
+//! `pref:<name>` → any JSON (tombstone clears), `bundle:<id>` → the bundle
+//! row (tombstone deletes). Per thread, `bundle_thread:<thread_id>` →
+//! `{ "bundle", "excluded" }`: the user put the thread in that bundle, or
+//! took it out (links stay local — every device re-derives them). Secrets — API keys, OAuth
 //! tokens — never enter the map; each device keeps its own keychain.
 // ponytail: tombstones are never garbage-collected. They cost ~80 bytes
 // each and a personal mailbox produces a few hundred a year; GC needs a
@@ -33,7 +36,10 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{now_ms, AccountId, SyncEntry, ThreadId, TriageLabel};
+use crate::domain::{
+    now_ms, AccountId, Bundle, BundleKind, BundleSource, BundleStatus, SyncEntry, ThreadId,
+    TriageLabel,
+};
 use crate::ports::{RemoteFile, Store, StoreError, SyncError, SyncTransport};
 
 const FILE_PREFIX: &str = "state-";
@@ -45,6 +51,8 @@ const THREAD_TRIAGE_PREFIX: &str = "thread_triage:";
 const ACCOUNT_PREFIX: &str = "account:";
 const TRIAGE_LABEL_PREFIX: &str = "triage_label:";
 const PREF_PREFIX: &str = "pref:";
+const BUNDLE_PREFIX: &str = "bundle:";
+const BUNDLE_THREAD_PREFIX: &str = "bundle_thread:";
 /// `account:<field>` names — the three per-account settings that sync.
 pub const ACCOUNT_FIELD_DISPLAY_NAME: &str = "display_name";
 pub const ACCOUNT_FIELD_COLOR: &str = "color";
@@ -121,6 +129,22 @@ pub fn triage_label_key(id: &str) -> String {
 
 fn triage_label_id(key: &str) -> Option<&str> {
     key.strip_prefix(TRIAGE_LABEL_PREFIX)
+}
+
+pub fn bundle_key(id: &str) -> String {
+    format!("{BUNDLE_PREFIX}{id}")
+}
+
+fn bundle_id_of(key: &str) -> Option<&str> {
+    key.strip_prefix(BUNDLE_PREFIX)
+}
+
+pub fn bundle_thread_key(thread_id: &ThreadId) -> String {
+    format!("{BUNDLE_THREAD_PREFIX}{thread_id}")
+}
+
+fn bundle_thread_of(key: &str) -> Option<&str> {
+    key.strip_prefix(BUNDLE_THREAD_PREFIX)
 }
 
 pub fn pref_key(name: &str) -> String {
@@ -320,6 +344,65 @@ pub fn record_triage_label<S: Store>(
     )
 }
 
+/// Convenience for the bundle family: `Some(bundle)` creates or updates,
+/// `None` deletes. App-wide like triage labels; no-op without an account.
+pub fn record_bundle<S: Store>(
+    store: &S,
+    id: &str,
+    bundle: Option<&Bundle>,
+) -> Result<(), StoreError> {
+    let Some(account_id) = app_wide_account(store)? else {
+        return Ok(());
+    };
+    record_local(store, &account_id, &bundle_key(id), bundle.map(bundle_json))
+}
+
+fn bundle_json(b: &Bundle) -> serde_json::Value {
+    serde_json::json!({
+        "name": b.name,
+        "kind": b.kind.as_str(),
+        "description": b.description,
+        "status": b.status.as_str(),
+        "created_at": b.created_at,
+        "updated_at": b.updated_at,
+    })
+}
+
+fn bundle_from_json(id: &str, v: &serde_json::Value) -> Option<Bundle> {
+    let name = v.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let str_of = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default();
+    let int_of = |k: &str| v.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+    Some(Bundle {
+        id: id.to_string(),
+        name: name.to_string(),
+        kind: BundleKind::parse(str_of("kind")),
+        description: str_of("description").to_string(),
+        status: BundleStatus::parse(str_of("status")),
+        created_at: int_of("created_at"),
+        updated_at: int_of("updated_at"),
+    })
+}
+
+/// The user's own bundle choice for a thread, on the thread's account
+/// file: `excluded: false` put it in `bundle_id`, `true` took it out.
+pub fn record_bundle_thread<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    thread_id: &ThreadId,
+    bundle_id: &str,
+    excluded: bool,
+) -> Result<(), StoreError> {
+    record_local(
+        store,
+        account_id,
+        &bundle_thread_key(thread_id),
+        Some(serde_json::json!({ "bundle": bundle_id, "excluded": excluded })),
+    )
+}
+
 /// Convenience for the preference family (`pref:<name>`): `None` writes a
 /// tombstone. App-wide like labels; no-op without an account.
 pub fn record_pref<S: Store>(
@@ -354,6 +437,12 @@ fn seed_app_wide<S: Store>(store: &S, account_id: &AccountId) -> Result<usize, S
                 &triage_label_key(&label.id),
                 Some(serde_json::json!({ "name": label.name })),
             )?;
+            n += 1;
+        }
+    }
+    for b in store.list_bundles()? {
+        if !known.contains(&bundle_key(&b.id)) {
+            record_local(store, account_id, &bundle_key(&b.id), Some(bundle_json(&b)))?;
             n += 1;
         }
     }
@@ -671,6 +760,71 @@ fn apply_entries<S: Store>(
                     applied.settings += 1;
                 }
             }
+        } else if let Some(thread_id) = bundle_thread_of(&entry.key) {
+            let Some(v) = entry.value.as_ref() else {
+                continue;
+            };
+            let Some(bundle_id) = v.get("bundle").and_then(|b| b.as_str()) else {
+                continue;
+            };
+            let excluded = v.get("excluded").and_then(|e| e.as_bool()).unwrap_or(false);
+            let Some(thread) = store.get_thread(&thread_id.to_string())? else {
+                continue; // not backfilled yet — retried on the next round
+            };
+            if excluded {
+                if store.is_excluded_from_bundle(bundle_id, &thread.id)?
+                    && thread.bundle_id.as_deref() != Some(bundle_id)
+                {
+                    continue;
+                }
+                store.exclude_from_bundle(bundle_id, &thread.id)?;
+                if thread.bundle_id.as_deref() == Some(bundle_id) {
+                    store.set_thread_bundle(&thread.id, None)?;
+                }
+                applied.threads += 1;
+            } else {
+                if thread.bundle_id.as_deref() == Some(bundle_id)
+                    && store.thread_bundle_source(&thread.id)? == Some(BundleSource::User)
+                {
+                    continue;
+                }
+                // The bundle row rides the first account's file and may
+                // land a round later; retried until it does.
+                if !store.list_bundles()?.iter().any(|b| b.id == bundle_id) {
+                    continue;
+                }
+                store.clear_bundle_exclusion(bundle_id, &thread.id)?;
+                store.set_thread_bundle(&thread.id, Some((bundle_id, BundleSource::User)))?;
+                applied.threads += 1;
+            }
+        } else if let Some(id) = bundle_id_of(&entry.key) {
+            if !app_wide {
+                continue;
+            }
+            let local = store.list_bundles()?.into_iter().find(|b| b.id == id);
+            match entry.value.as_ref().and_then(|v| bundle_from_json(id, v)) {
+                Some(want) => {
+                    let same = local.as_ref().is_some_and(|l| {
+                        l.name == want.name
+                            && l.kind == want.kind
+                            && l.description == want.description
+                            && l.status == want.status
+                    });
+                    if same {
+                        continue;
+                    }
+                    store.upsert_bundle(&want)?;
+                    applied.settings += 1;
+                }
+                None => {
+                    if entry.value.is_some() || local.is_none() {
+                        continue;
+                    }
+                    store.delete_bundle(id)?;
+                    applied.settings += 1;
+                    applied.threads += 1;
+                }
+            }
         } else if let Some(name) = pref_name(&entry.key) {
             if !app_wide {
                 continue;
@@ -710,6 +864,7 @@ mod tests {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
             labels: vec!["INBOX".into()],
             has_attachment: false,
             priority: None,
@@ -1020,6 +1175,52 @@ mod tests {
             vec!["label-9".to_string()],
             "pin lifted: Jev owns the labels again"
         );
+    }
+
+    #[tokio::test]
+    async fn bundles_and_user_choices_round_trip() {
+        let remote = Arc::new(MemTransport::default());
+        let acc = "acc".to_string();
+        let a = device_store("acc", "dev-a");
+        let b = device_store("acc", "dev-b");
+        let t1: ThreadId = "t1".into();
+
+        // A makes a bundle and puts t1 in it; B gets both.
+        let trip = crate::bundles::new_bundle("Lisbon", BundleKind::Trip, "December");
+        a.upsert_bundle(&trip).unwrap();
+        record_bundle(&a, &trip.id, Some(&trip)).unwrap();
+        a.set_thread_bundle(&t1, Some((&trip.id, BundleSource::User)))
+            .unwrap();
+        record_bundle_thread(&a, &acc, &t1, &trip.id, false).unwrap();
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        assert!(sync_account(&*remote, &b, &acc).await.unwrap().any());
+        assert_eq!(b.list_bundles().unwrap(), vec![trip.clone()]);
+        assert_eq!(
+            b.get_thread(&t1).unwrap().unwrap().bundle_id.as_deref(),
+            Some(trip.id.as_str())
+        );
+        assert_eq!(
+            b.thread_bundle_source(&t1).unwrap(),
+            Some(BundleSource::User)
+        );
+
+        // B takes t1 out: A drops it and remembers the exclusion.
+        b.set_thread_bundle(&t1, None).unwrap();
+        b.exclude_from_bundle(&trip.id, &t1).unwrap();
+        record_bundle_thread(&b, &acc, &t1, &trip.id, true).unwrap();
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        assert!(sync_account(&*remote, &a, &acc).await.unwrap().any());
+        assert!(a.get_thread(&t1).unwrap().unwrap().bundle_id.is_none());
+        assert!(a.is_excluded_from_bundle(&trip.id, &t1).unwrap());
+        // Re-merging the same map changes nothing.
+        assert!(!sync_account(&*remote, &a, &acc).await.unwrap().any());
+
+        // A deletes the bundle: gone on B too.
+        a.delete_bundle(&trip.id).unwrap();
+        record_bundle(&a, &trip.id, None).unwrap();
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        assert!(b.list_bundles().unwrap().is_empty());
     }
 
     #[tokio::test]

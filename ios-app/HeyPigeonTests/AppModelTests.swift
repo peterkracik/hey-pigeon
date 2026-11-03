@@ -234,7 +234,9 @@ struct AppModelTests {
         #expect(!model.isSearching && model.searchResults.isEmpty)
     }
 
-    @Test func otherTabsShowTheirWholeListWhileASearchIsKept() {
+    /// iOS only: the Mac has no Search tab and searches in the list it is on.
+    @Test(.enabled(if: AppModel.searchHasOwnTab))
+    func otherTabsShowTheirWholeListWhileASearchIsKept() {
         model.navigate(to: .search)
         model.searchFilters.unreadOnly = true
         let results = Set(model.groupedRows.flatMap(\.rows).map(\.id))
@@ -242,7 +244,9 @@ struct AppModelTests {
 
         model.navigate(to: .inbox)
         #expect(!model.showsSearchResults)
-        #expect(model.groupedRows.flatMap(\.rows).map(\.id) == model.rows.map(\.id))
+        let inbox = Set(model.groupedRows.flatMap(\.rows).map(\.id))
+        #expect(inbox == Set(model.rows.map(\.id)))
+        #expect(inbox != results) // the read threads are back
 
         // The query is still there when the user comes back to Search.
         model.navigate(to: .search)

@@ -35,6 +35,9 @@ struct ComposeView: View {
     @State private var savedFrom: String?
     /// Sent or discarded: leaving must not save a draft.
     @State private var finished = false
+    /// Switching between dialog and full screen on the phone: this view
+    /// closes and a new one opens with the draft, so it must not save it.
+    @State private var handingOver = false
     /// Known addresses for the recipient fields' autocomplete.
     @State private var people: [PersonSuggestion] = []
     @Environment(\.scenePhase) private var scenePhase
@@ -126,6 +129,14 @@ struct ComposeView: View {
                     Button { close() } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("Close and save draft")
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { toggleFullScreen() } label: {
+                        Image(systemName: model.composeFullScreen
+                              ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    }
+                    .help(model.composeFullScreen ? "Show as a window" : "Full screen")
+                    .accessibilityLabel(model.composeFullScreen ? "Show as a window" : "Full screen")
+                }
             }
             .task { people = model.searchPeople() }
             .onAppear {
@@ -142,7 +153,7 @@ struct ComposeView: View {
                 if savedSnapshot == nil, draft.bodyRich == nil { savedSnapshot = snapshot }
             }
             // A swipe down closes like the X: whatever changed is kept as a draft.
-            .onDisappear { if !finished { saveDraft() } }
+            .onDisappear { if !finished && !handingOver { saveDraft() } }
             // The model's copy follows the editor, so Siri's "send it" sends
             // what is on screen, not what the composer opened with — once
             // typing pauses: each copy re-renders everything that observes
@@ -477,6 +488,16 @@ struct ComposeView: View {
         attachments = d.attachments
         if let from = d.fromAccountId, !from.isEmpty { fromId = from }
         pristine = false
+    }
+
+    /// Dialog ⇄ full screen. Where the switch reopens the composer, the
+    /// model's draft takes what is typed first, so nothing is lost.
+    private func toggleFullScreen() {
+        if ComposePresentation.switchReopens {
+            handingOver = true
+            model.composeDraft = composed
+        }
+        withAnimation(.snappy(duration: 0.25)) { model.composeFullScreen.toggle() }
     }
 
     /// X: close, keeping the message as a Gmail draft (saved on disappear).

@@ -400,7 +400,7 @@ enum MailView: Hashable {
     var title: String {
         switch self {
         case .inbox: "Inbox"
-        case .scheduled: "Scheduled"
+        case .scheduled: "Remind me"
         case .needReply: "Need reply"
         case .starred: "Starred"
         case .drafts: "Drafts"
@@ -518,7 +518,7 @@ enum MainTab: Hashable {
     var title: String {
         switch self {
         case .inbox: "Inbox"
-        case .scheduled: "Scheduled"
+        case .scheduled: "Remind me"
         case .needReply: "Need reply"
         case .search: "Search"
         }

@@ -46,7 +46,7 @@ enum ControlTarget: String, AppEnum {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Hey Pigeon screen")
     static let caseDisplayRepresentations: [ControlTarget: DisplayRepresentation] = [
         .inbox: "Inbox",
-        .scheduled: "Scheduled",
+        .scheduled: "Remind me",
         .needReply: "Need reply",
         .compose: "Compose",
     ]

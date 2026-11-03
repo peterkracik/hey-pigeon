@@ -135,6 +135,19 @@ final class AppModel {
     var searchFilters = SearchFilters() { didSet { runSearch() } }
     private(set) var searchResults: [ThreadRow] = [] { didSet { regroup() } }
     var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty || !searchFilters.isEmpty }
+    /// Whether the list shows the search results instead of the view. On
+    /// iOS search is its own tab: the query stays there for when the user
+    /// comes back, and Inbox, Scheduled and Need reply show their whole
+    /// list (they used to show the search results). The Mac searches in
+    /// the list it is on, so there any search replaces the list.
+    var showsSearchResults: Bool {
+        isSearching && (tab == .search || !Self.searchHasOwnTab)
+    }
+    #if os(iOS)
+    static let searchHasOwnTab = true
+    #else
+    static let searchHasOwnTab = false
+    #endif
     /// The typed words (hand-typed operators left out), underlined in result rows.
     var searchTerms: [String] {
         searchText.split(whereSeparator: \.isWhitespace).map(String.init).filter { !$0.contains(":") }
@@ -571,8 +584,8 @@ final class AppModel {
 
     private func regroup() {
         groupedRows = Self.group(
-            isSearching ? searchResults : rows,
-            view: view, searching: isSearching,
+            showsSearchResults ? searchResults : rows,
+            view: view, searching: showsSearchResults,
             triageFilterId: tab == .inbox ? triageFilterId : nil,
             pinList: pinListEnabled
         )

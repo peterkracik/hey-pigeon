@@ -234,6 +234,23 @@ struct AppModelTests {
         #expect(!model.isSearching && model.searchResults.isEmpty)
     }
 
+    @Test func otherTabsShowTheirWholeListWhileASearchIsKept() {
+        model.navigate(to: .search)
+        model.searchFilters.unreadOnly = true
+        let results = Set(model.groupedRows.flatMap(\.rows).map(\.id))
+        #expect(results == Set(model.searchResults.map(\.id)))
+
+        model.navigate(to: .inbox)
+        #expect(!model.showsSearchResults)
+        #expect(model.groupedRows.flatMap(\.rows).map(\.id) == model.rows.map(\.id))
+
+        // The query is still there when the user comes back to Search.
+        model.navigate(to: .search)
+        #expect(model.showsSearchResults)
+        #expect(Set(model.groupedRows.flatMap(\.rows).map(\.id)) == results)
+        model.searchFilters = SearchFilters()
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

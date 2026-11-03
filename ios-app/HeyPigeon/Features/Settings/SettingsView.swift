@@ -45,6 +45,14 @@ struct SettingsView: View {
                                 .font(.caption).foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    if !model.imageSenders.isEmpty && !model.loadRemoteImages {
+                        HStack {
+                            Text(model.imageSenders.count == 1 ? "Images always load from 1 sender"
+                                 : "Images always load from \(model.imageSenders.count) senders")
+                            Spacer()
+                            Button("Forget") { model.imageSenders = [] }
+                        }
+                    }
                     swipePicker(Self.swipeTitles[0], 0)
                     swipePicker(Self.swipeTitles[1], 1)
                     swipePicker(Self.swipeTitles[2], 2)

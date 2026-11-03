@@ -1,6 +1,7 @@
 // Untrusted mail HTML, rendered as safely as a WKWebView allows:
 // JavaScript off, strict CSP, remote images blocked until the user allows
-// the sender (or turns on Settings › Load remote images), inline `cid:`
+// one message or always for the sender (or turns on Settings › Load
+// remote images), inline `cid:`
 // pictures fetched from Gmail and inlined as data: URIs, every web link handed to the default browser and every
 // mailto: link to the app's own composer. The HTML arrives already sanitized by the core
 // (ammonia); this is the second layer.
@@ -29,7 +30,8 @@ struct MessageBodyView: View {
     var inlineImages: [AttachmentItem] = []
     /// The HTML with its `cid:` pictures inlined, once they are here.
     @State private var inlinedHTML: String?
-    @AppStorage("allowedImageSenders") private var allowedSendersRaw = ""
+    /// "Load": this message's web pictures, this time only.
+    @State private var loadOnce = false
     @State private var height: CGFloat = 80
     /// The trailing quoted history ("On … wrote:") stays folded behind a
     /// ••• button, like the desktop's quote pill.
@@ -39,8 +41,7 @@ struct MessageBodyView: View {
     @Environment(AppModel.self) private var model
 
     private var imagesAllowed: Bool {
-        model.loadRemoteImages
-            || allowedSendersRaw.split(separator: "\n").contains(Substring(senderAddress.lowercased()))
+        loadOnce || model.loadsImages(from: senderAddress)
     }
 
     var body: some View {
@@ -52,15 +53,12 @@ struct MessageBodyView: View {
                 // part of the message and show without asking.
                 if !imagesAllowed && InlineImages.hasRemoteImages(html) {
                     HStack(spacing: 6) {
-                        Text("Remote images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text("Images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
                         Spacer()
-                        Button("Load") { allowedSendersRaw += "\n\(senderAddress.lowercased())" }
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Load images from \(senderAddress)")
+                        imageButton("Load") { loadOnce = true }
+                            .accessibilityLabel("Load images in this message")
+                        imageButton("Always for this sender") { model.alwaysLoadImages(from: senderAddress) }
+                            .accessibilityLabel("Always load images from \(senderAddress)")
                     }
                 }
                 HTMLView(html: inlinedHTML ?? html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, showQuoted: showQuoted,
@@ -118,6 +116,16 @@ struct MessageBodyView: View {
         } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             Browser.open(url)
         }
+    }
+
+    private func imageButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.textPrimary)
+            .lineLimit(1)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .buttonStyle(.plain)
     }
 
     private var quoteButton: some View {

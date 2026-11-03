@@ -314,7 +314,17 @@ struct AppModelTests {
     @Test func loadRemoteImagesIsASyncedPref() throws {
         model.loadRemoteImages = true
         #expect(try engine.prefs()["mail.remote_images"] as? Bool == true)
+        #expect(model.loadsImages(from: "anyone@x.test"))
         model.loadRemoteImages = false
+    }
+
+    @Test func alwaysLoadingASendersImagesIsSynced() throws {
+        #expect(!model.loadsImages(from: "news@shop.test"))
+        model.alwaysLoadImages(from: "News@Shop.test")
+        #expect(model.loadsImages(from: "news@shop.test"))
+        #expect(!model.loadsImages(from: "other@shop.test"))
+        #expect(try engine.prefs()["mail.image_senders"] as? [String] == ["news@shop.test"])
+        model.imageSenders = []
     }
 
     @Test func recentSearchesDedupeAndCap() {

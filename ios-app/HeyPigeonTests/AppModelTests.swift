@@ -327,6 +327,25 @@ struct AppModelTests {
         model.imageSenders = []
     }
 
+    @Test func triageLabelsFollowTheUsersOrder() {
+        let l = ["a", "b", "c", "d"].map { TriageLabelItem(id: $0, name: $0.uppercased()) }
+        // Ordered ones first; a new label (d) and an unknown id (zz) don't break it.
+        #expect(AppModel.orderedTriageLabels(l, by: ["c", "zz", "a"]).map(\.id) == ["c", "a", "b", "d"])
+        #expect(AppModel.orderedTriageLabels(l, by: []).map(\.id) == ["a", "b", "c", "d"])
+    }
+
+    @Test func movingATriageLabelIsSynced() throws {
+        let before = model.triageLabels.map(\.id)
+        try #require(before.count >= 2)
+        model.moveTriageLabels(from: [before.count - 1], to: 0)
+        let after = model.triageLabels.map(\.id)
+        #expect(after.first == before.last)
+        #expect(try engine.prefs()["triage.label_order"] as? [String] == after)
+        // A reload keeps the order.
+        model.reloadAccounts()
+        #expect(model.triageLabels.map(\.id) == after)
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

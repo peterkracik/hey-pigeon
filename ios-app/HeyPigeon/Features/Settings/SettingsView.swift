@@ -740,13 +740,14 @@ private struct TriageSection: View {
                 }
             }
             // The labels: the categories Jev sorts mail into, and the
-            // segments of the bottom pill.
+            // segments of the bottom pill, in this order (drag to change it).
             ForEach(model.triageLabels) { l in
                 Text(l.name)
                     .swipeActions {
                         Button(role: .destructive) { delete(l) } label: { Label("Remove", systemImage: "trash") }
                     }
             }
+            .onMove { model.moveTriageLabels(from: $0, to: $1) }
             if model.triageLabels.isEmpty {
                 Text("No labels yet").font(.footnote).foregroundStyle(Theme.textTertiary)
             }
@@ -761,8 +762,8 @@ private struct TriageSection: View {
             Text("Triage")
         } footer: {
             Text(onDevice
-                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this \(Device.name) that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. Swipe a label left to remove it."
-                : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
+                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this \(Device.name) that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. \(Self.labelHint)"
+                : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. \(Self.labelHint)")
         }
         .menuCard()
         .task { load() }
@@ -770,6 +771,13 @@ private struct TriageSection: View {
     }
 
     private func load() { status = try? model.engine.triageStatus() }
+
+    /// How to reorder and remove a label, in this platform's gestures.
+    #if os(macOS)
+    private static let labelHint = "Drag a label to change the order the bar shows; swipe it left to remove it."
+    #else
+    private static let labelHint = "Touch and hold a label, then drag it to change the order the bar shows; swipe it left to remove it."
+    #endif
 
     private func connect() {
         saving = true

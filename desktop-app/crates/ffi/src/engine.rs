@@ -86,6 +86,8 @@ pub struct Engine {
     pub(crate) classifying: Mutex<bool>,
     /// Guards the AI suggestion pass from overlapping runs (suggest.rs).
     pub(crate) suggesting: Mutex<bool>,
+    /// Guards the AI bundling pass from overlapping runs (bundles.rs).
+    pub(crate) bundling: Mutex<bool>,
     /// Last Jev failure; None after a clean run (settings.rs).
     pub(crate) triage_last_error: Mutex<Option<String>>,
     /// The shell's AI backends, one per provider it can offer on this device
@@ -154,6 +156,7 @@ impl Engine {
             sync_status: Mutex::new(HashMap::new()),
             classifying: Mutex::new(false),
             suggesting: Mutex::new(false),
+            bundling: Mutex::new(false),
             triage_last_error: Mutex::new(None),
             ai_backends: Mutex::new(Vec::new()),
         }))
@@ -672,6 +675,8 @@ impl Engine {
         // Then the "Need reply" / "Remind me" proposals for new unread
         // mail, on the same cadence (suggest.rs).
         self.suggest_pending().await;
+        // Then the model groups new mail into bundles (bundles.rs).
+        self.bundle_pending().await;
         Ok(changed)
     }
 

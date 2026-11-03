@@ -60,7 +60,7 @@ impl Engine {
     /// The shell backend that answers: the preferred provider, then the
     /// fallback order, skipping anything that is not a shell backend on
     /// this device (OpenAI is never sent a body for this).
-    fn suggestion_backend(&self) -> Result<Option<Arc<dyn AiBackend>>, EngineError> {
+    pub(crate) fn suggestion_backend(&self) -> Result<Option<Arc<dyn AiBackend>>, EngineError> {
         Ok(self
             .provider_candidates()?
             .iter()

@@ -2,19 +2,27 @@
 //! thing — a trip, an order, a project — grouped so the app can show it
 //! together with its key facts.
 //!
-//! This is rollout step 1: bundles are made by hand, and the deterministic
-//! layer (`core::bundles`) keeps them filled — an email sharing a booking
-//! reference, order, invoice, tracking or flight number with one already in
-//! a bundle joins it. Model-based assignment comes later behind the same
-//! API. The user's own choices (add, remove) are sticky and reach their
-//! other devices through the sync map; the links are re-derived on every
-//! device, like triage results.
+//! Bundles make themselves. After each sync round the shell's model reads
+//! each new email (sender, subject, preview) with the active bundles and
+//! answers join one, start a trip / shopping / project bundle, or none
+//! (`bundle_pending`). The deterministic layer (`core::bundles`) also links
+//! mail sharing a booking, order, invoice, tracking or flight number. The
+//! user only steps in to fix a wrong email or make a bundle the model did
+//! not see.
+//!
+//! The model's bundles (`BundleOrigin::Ai`) stay on this device — every
+//! device groups its own mail, like triage — and stay hidden until a second
+//! email joins (one receipt is not a bundle); one that never grows goes
+//! away after `AI_SINGLE_TTL_MS`. Any user edit adopts the bundle
+//! (`BundleOrigin::User`): from then on it syncs, and another device's
+//! twin of the same name folds into it (`devsync::merge_ai_twins`). The
+//! user's own choices (add, remove) are sticky and sync as well.
 
 use std::sync::Arc;
 
 use heypigeon_core::bundles::{self as core_bundles, AnchorKind};
 use heypigeon_core::devsync;
-use heypigeon_core::domain::{self, now_ms, BundleSource, BundleStatus};
+use heypigeon_core::domain::{self, now_ms, BundleOrigin, BundleSource, BundleStatus};
 use heypigeon_core::ports::Store;
 
 use crate::engine::Engine;
@@ -24,6 +32,36 @@ use crate::types::*;
 /// work (no network, no model), so the first round after an upgrade can
 /// cover a mailbox's recent history quickly; the rest follows.
 const ANCHOR_BATCH: u32 = 500;
+/// The switch (`pref:bundles.auto`, synced). Unset = on: it only runs when
+/// one of the shell's models is there to answer.
+pub(crate) const AUTO_BUNDLES_PREF: &str = "bundles.auto";
+/// Emails the model groups per sync round; the next round continues.
+const BUNDLE_BATCH: u32 = 10;
+/// Mail from the last month is grouped; older mail is left alone (the
+/// first sync of a mailbox would otherwise ask about years of it).
+const BUNDLE_WINDOW_MS: i64 = 30 * 86_400_000;
+/// The model sees at most this many bundles, most recently active first.
+const MAX_CANDIDATES: usize = 15;
+/// A model bundle that still holds one email after this long is dropped.
+const AI_SINGLE_TTL_MS: i64 = 21 * 86_400_000;
+/// Names that are a kind, not a thing: "Shopping" would swallow every
+/// order the user ever makes.
+const GENERIC_NAMES: &[&str] = &[
+    "trip",
+    "travel",
+    "shopping",
+    "order",
+    "orders",
+    "purchase",
+    "project",
+    "work",
+    "other",
+    "misc",
+    "general",
+    "receipts",
+    "newsletter",
+    "newsletters",
+];
 
 /// What a bundle is about (`domain::BundleKind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -65,6 +103,8 @@ pub struct MailBundle {
     /// The user's one line; empty when none.
     pub description: String,
     pub archived: bool,
+    /// The model made it and the user has not touched it yet.
+    pub automatic: bool,
     /// Epoch ms.
     pub created_at: i64,
     /// Threads in the bundle, done ones included (trash and spam never).
@@ -118,17 +158,61 @@ pub struct BundleDetail {
     pub threads: Vec<MailThread>,
 }
 
+/// One bundle as the model sees it when grouping an email.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BundleCandidate {
+    pub id: String,
+    pub name: String,
+    pub kind: BundleKind,
+    /// The user's one line; empty when none.
+    pub description: String,
+    /// Subjects of emails already in it, newest first (at most three).
+    pub examples: Vec<String>,
+}
+
+/// The model's answer for one email.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum BundleChoice {
+    /// It belongs to this candidate (`BundleCandidate::id`).
+    Existing { bundle_id: String },
+    /// It is about a specific trip, purchase or project none of the
+    /// candidates covers.
+    New { name: String, kind: BundleKind },
+    /// Not part of anything worth a bundle.
+    NoBundle,
+}
+
 /// Open = still waiting in the inbox (not done).
 fn is_open(t: &domain::Thread) -> bool {
     t.is_inbox && !t.is_archived
 }
 
+/// A model bundle with fewer than two emails is still forming: hidden.
+fn is_forming(b: &MailBundle) -> bool {
+    b.automatic && b.thread_count < 2
+}
+
+/// One line, single spaces, at most 40 characters.
+fn clean_name(name: &str) -> String {
+    let one_line = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    one_line
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '.')
+        .chars()
+        .take(40)
+        .collect()
+}
+
 #[uniffi::export]
 impl Engine {
-    /// Every bundle: active first, then archived, each by name.
+    /// Every bundle: active first, then archived, each by name. A model
+    /// bundle shows once it holds two emails.
     pub fn list_bundles(&self) -> Result<Vec<MailBundle>, EngineError> {
         let bundles = self.store.list_bundles()?;
-        bundles.iter().map(|b| self.mail_bundle(b)).collect()
+        let all: Vec<MailBundle> = bundles
+            .iter()
+            .map(|b| self.mail_bundle(b))
+            .collect::<Result<_, _>>()?;
+        Ok(all.into_iter().filter(|b| !is_forming(b)).collect())
     }
 
     /// The bundle view: the row, its key facts and its threads. `None`
@@ -253,6 +337,11 @@ impl Engine {
         };
         self.store.set_thread_bundle(&thread_id, None)?;
         self.store.exclude_from_bundle(&bundle_id, &thread_id)?;
+        // A correction makes the bundle the user's: it syncs from now on,
+        // and so does this exclusion.
+        if let Some(b) = self.bundle(&bundle_id)? {
+            self.adopt(b)?;
+        }
         devsync::record_bundle_thread(
             &self.store,
             &thread.account_id,
@@ -311,6 +400,7 @@ impl Engine {
     fn save_bundle(self: &Arc<Self>, b: &domain::Bundle) -> Result<(), EngineError> {
         let mut b = b.clone();
         b.updated_at = now_ms();
+        b.origin = BundleOrigin::User;
         self.store.upsert_bundle(&b)?;
         devsync::record_bundle(&self.store, &b.id, Some(&b))?;
         self.push_app_wide_later();
@@ -340,17 +430,218 @@ impl Engine {
             bundle_id,
             false,
         )?;
-        // Adding mail to an archived bundle means it is current again.
-        if b.status == BundleStatus::Archived {
+        // Adding mail to an archived bundle means it is current again; any
+        // hand edit makes a model bundle the user's.
+        if b.status == BundleStatus::Archived || b.origin == BundleOrigin::Ai {
             b.status = BundleStatus::Active;
-            b.updated_at = now_ms();
-            self.store.upsert_bundle(&b)?;
-            devsync::record_bundle(&self.store, &b.id, Some(&b))?;
-            self.push_app_wide_later();
+            self.adopt(b)?;
         }
         let joined = core_bundles::spread_from(&self.store, &thread_id, bundle_id)?;
         self.push_devsync_later(thread.account_id);
         Ok(joined.len() as u32)
+    }
+
+    /// The user touched this bundle: it becomes theirs and syncs.
+    fn adopt(self: &Arc<Self>, mut b: domain::Bundle) -> Result<(), EngineError> {
+        b.origin = BundleOrigin::User;
+        b.updated_at = now_ms();
+        self.store.upsert_bundle(&b)?;
+        devsync::record_bundle(&self.store, &b.id, Some(&b))?;
+        self.push_app_wide_later();
+        Ok(())
+    }
+
+    fn auto_bundles_enabled(&self) -> Result<bool, EngineError> {
+        Ok(self
+            .store
+            .get_pref(AUTO_BUNDLES_PREF)?
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true))
+    }
+
+    /// Group up to `BUNDLE_BATCH` new emails. Called at the end of
+    /// `sync_all`, after the suggestion pass; overlapping rounds are skipped.
+    pub(crate) async fn bundle_pending(&self) {
+        {
+            let mut running = self.bundling.lock().unwrap();
+            if *running {
+                return;
+            }
+            *running = true;
+        }
+        let result = self.bundle_pending_inner().await;
+        *self.bundling.lock().unwrap() = false;
+        match result {
+            Ok(0) => {}
+            Ok(n) => {
+                log::info!("bundles: grouped {n} email(s)");
+                self.notify_threads_updated();
+            }
+            Err(e) => log::warn!("bundles: {e}"),
+        }
+    }
+
+    /// Returns how many threads joined a bundle.
+    async fn bundle_pending_inner(&self) -> Result<usize, EngineError> {
+        let mut changed = self.prune_ai_bundles()?;
+        if !self.auto_bundles_enabled()? {
+            return Ok(changed);
+        }
+        let Some(backend) = self.suggestion_backend()? else {
+            return Ok(changed);
+        };
+        let now = now_ms();
+        let pending = self
+            .store
+            .list_threads_needing_bundling(now - BUNDLE_WINDOW_MS, BUNDLE_BATCH)?;
+        if pending.is_empty() {
+            return Ok(changed);
+        }
+        let mut candidates = self.candidates()?;
+        // The batch is the newest mail, read oldest first: the first email
+        // about a trip names its bundle, the later ones join it.
+        for thread in pending.into_iter().rev() {
+            // Linked by a shared number since the list was read.
+            if self
+                .store
+                .get_thread(&thread.id)?
+                .and_then(|t| t.bundle_id)
+                .is_some()
+            {
+                self.store
+                    .set_thread_bundling_done(&thread.id, thread.msg_count)?;
+                continue;
+            }
+            let answer = backend
+                .bundle(
+                    thread.subject.clone(),
+                    thread.last_from_addr.clone(),
+                    thread.snippet.clone(),
+                    candidates.clone(),
+                )
+                .await;
+            // Asked once per message whatever the answer, so one email the
+            // model declines cannot block the queue; an error ends the
+            // round (a model that is not ready costs one email, not ten).
+            self.store
+                .set_thread_bundling_done(&thread.id, thread.msg_count)?;
+            let choice = answer?;
+            let Some(bundle_id) = self.resolve(choice, &mut candidates)? else {
+                continue;
+            };
+            if self.store.is_excluded_from_bundle(&bundle_id, &thread.id)? {
+                continue;
+            }
+            self.store
+                .set_thread_bundle(&thread.id, Some((&bundle_id, BundleSource::Ai)))?;
+            // Its booking or order number may bring older mail along.
+            core_bundles::spread_from(&self.store, &thread.id, &bundle_id)?;
+            if let Some(c) = candidates.iter_mut().find(|c| c.id == bundle_id) {
+                c.examples.insert(0, thread.subject.clone());
+                c.examples.truncate(3);
+            }
+            changed += 1;
+        }
+        Ok(changed)
+    }
+
+    /// The bundle an answer points at, creating a model bundle for `New`.
+    /// A new name equal to a candidate's (without case) joins that one; a
+    /// generic name ("Shopping") or an unknown id is no bundle.
+    fn resolve(
+        &self,
+        choice: BundleChoice,
+        candidates: &mut Vec<BundleCandidate>,
+    ) -> Result<Option<String>, EngineError> {
+        match choice {
+            BundleChoice::NoBundle => Ok(None),
+            BundleChoice::Existing { bundle_id } => Ok(candidates
+                .iter()
+                .any(|c| c.id == bundle_id)
+                .then_some(bundle_id)),
+            BundleChoice::New { name, kind } => {
+                let name = clean_name(&name);
+                if name.is_empty() || GENERIC_NAMES.contains(&name.to_lowercase().as_str()) {
+                    return Ok(None);
+                }
+                if let Some(c) = candidates
+                    .iter()
+                    .find(|c| c.name.to_lowercase() == name.to_lowercase())
+                {
+                    return Ok(Some(c.id.clone()));
+                }
+                let mut b = core_bundles::new_bundle(&name, kind.into(), "");
+                b.origin = BundleOrigin::Ai;
+                self.store.upsert_bundle(&b)?;
+                candidates.insert(
+                    0,
+                    BundleCandidate {
+                        id: b.id.clone(),
+                        name: b.name.clone(),
+                        kind,
+                        description: String::new(),
+                        examples: Vec::new(),
+                    },
+                );
+                Ok(Some(b.id))
+            }
+        }
+    }
+
+    /// Active bundles, most recently active first, with a few subjects
+    /// each so the model sees what is in them.
+    fn candidates(&self) -> Result<Vec<BundleCandidate>, EngineError> {
+        let mut out: Vec<(i64, BundleCandidate)> = Vec::new();
+        for b in self.store.list_bundles()? {
+            if b.status == BundleStatus::Archived {
+                continue;
+            }
+            let threads = self.store.list_bundle_threads(&b.id)?;
+            let last = threads
+                .first()
+                .map(|t| t.last_msg_at)
+                .unwrap_or(b.created_at);
+            out.push((
+                last,
+                BundleCandidate {
+                    id: b.id.clone(),
+                    name: b.name.clone(),
+                    kind: b.kind.into(),
+                    description: b.description.clone(),
+                    examples: threads.iter().take(3).map(|t| t.subject.clone()).collect(),
+                },
+            ));
+        }
+        out.sort_by(|a, b| b.0.cmp(&a.0));
+        Ok(out
+            .into_iter()
+            .take(MAX_CANDIDATES)
+            .map(|(_, c)| c)
+            .collect())
+    }
+
+    /// Model bundles that came to nothing: empty ones, and ones still
+    /// holding a single email `AI_SINGLE_TTL_MS` after it arrived. Returns
+    /// how many threads left a bundle.
+    fn prune_ai_bundles(&self) -> Result<usize, EngineError> {
+        let now = now_ms();
+        let mut left = 0;
+        for b in self.store.list_bundles()? {
+            if b.origin != BundleOrigin::Ai {
+                continue;
+            }
+            let threads = self.store.list_bundle_threads(&b.id)?;
+            let stale = match threads.as_slice() {
+                [] => true,
+                [only] => now - only.last_msg_at.max(b.created_at) > AI_SINGLE_TTL_MS,
+                _ => false,
+            };
+            if stale {
+                left += threads.len();
+                self.store.delete_bundle(&b.id)?;
+            }
+        }
+        Ok(left)
     }
 
     fn mail_bundle(&self, b: &domain::Bundle) -> Result<MailBundle, EngineError> {
@@ -361,6 +652,7 @@ impl Engine {
             kind: b.kind.into(),
             description: b.description.clone(),
             archived: b.status == BundleStatus::Archived,
+            automatic: b.origin == BundleOrigin::Ai,
             created_at: b.created_at,
             thread_count: threads.len() as u32,
             open_count: threads.iter().filter(|t| is_open(t)).count() as u32,
@@ -496,6 +788,149 @@ mod tests {
             Some(trip.id.clone())
         );
         assert_eq!(e.suggest_bundle("lunch".into()).unwrap(), None);
+    }
+
+    fn scripted(answers: &[(&str, BundleChoice)]) -> Arc<crate::ai::fakes::ScriptedBackend> {
+        let b = crate::ai::fakes::ScriptedBackend::new(
+            "",
+            TriageVerdict {
+                priority: Priority::Low,
+                label_ids: vec![],
+            },
+        );
+        *b.bundle_answers.lock().unwrap() = answers
+            .iter()
+            .map(|(s, c)| (s.to_string(), c.clone()))
+            .collect();
+        b
+    }
+
+    fn new_bundle(name: &str, kind: BundleKind) -> BundleChoice {
+        BundleChoice::New {
+            name: name.into(),
+            kind,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_model_creates_and_fills_bundles_and_hides_single_ones() {
+        let e = open("auto");
+        let now = now_ms();
+        add(&e, "flight", "Your flight to Lisbon", now - 3_000, false);
+        add(&e, "hotel", "Casa Alfama: your stay", now - 2_000, false);
+        add(&e, "shoe", "Order confirmed at Zalando", now - 1_000, false);
+        add(&e, "news", "The Weekly Byte #212", now, false);
+        add(&e, "generic", "Thanks for shopping", now - 500, false);
+        let backend = scripted(&[
+            (
+                "Your flight to Lisbon",
+                new_bundle("Lisbon trip", BundleKind::Trip),
+            ),
+            // Same name, other case: joins the bundle the flight started.
+            (
+                "Casa Alfama: your stay",
+                new_bundle("lisbon Trip", BundleKind::Trip),
+            ),
+            (
+                "Order confirmed at Zalando",
+                new_bundle("Zalando order", BundleKind::Shopping),
+            ),
+            (
+                "Thanks for shopping",
+                new_bundle("Shopping", BundleKind::Shopping),
+            ),
+        ]);
+        e.set_ai_backend(Some(backend.clone()));
+
+        e.bundle_pending().await;
+        let listed = e.list_bundles().unwrap();
+        assert_eq!(
+            listed.len(),
+            1,
+            "the one-email Zalando bundle is still forming"
+        );
+        assert_eq!(listed[0].name, "Lisbon trip");
+        assert!(listed[0].automatic);
+        assert_eq!(listed[0].thread_count, 2);
+        assert_eq!(
+            e.get_thread_row("news".into()).unwrap().unwrap().bundle_id,
+            None
+        );
+        assert_eq!(
+            e.get_thread_row("generic".into())
+                .unwrap()
+                .unwrap()
+                .bundle_id,
+            None,
+            "a kind is not a bundle name"
+        );
+        // Later emails were shown the bundles made earlier in the round.
+        let asked = backend.bundles_asked.lock().unwrap().clone();
+        let hotel = asked
+            .iter()
+            .find(|(s, _)| s == "Casa Alfama: your stay")
+            .unwrap();
+        assert_eq!(hotel.1, vec!["Lisbon trip".to_string()]);
+
+        // Each email is asked about once.
+        let before = backend.bundles_asked.lock().unwrap().len();
+        e.bundle_pending().await;
+        assert_eq!(backend.bundles_asked.lock().unwrap().len(), before);
+
+        // A correction adopts the bundle: it is the user's now.
+        e.remove_from_bundle("hotel".into()).unwrap();
+        let b = e.list_bundles().unwrap();
+        assert!(b.is_empty() || !b[0].automatic);
+        let all = e.store.list_bundles().unwrap();
+        let lisbon = all.iter().find(|b| b.name == "Lisbon trip").unwrap();
+        assert_eq!(lisbon.origin, BundleOrigin::User);
+        // A user-owned bundle with one email stays (only model ones prune).
+        e.bundle_pending().await;
+        assert!(e
+            .store
+            .list_bundles()
+            .unwrap()
+            .iter()
+            .any(|b| b.id == lisbon.id));
+    }
+
+    #[tokio::test]
+    async fn off_means_no_model_calls_and_old_singles_are_pruned() {
+        let e = open("auto-off");
+        let now = now_ms();
+        add(&e, "t1", "Your flight to Rome", now, false);
+        let backend = scripted(&[(
+            "Your flight to Rome",
+            new_bundle("Rome trip", BundleKind::Trip),
+        )]);
+        e.set_ai_backend(Some(backend.clone()));
+        e.store
+            .set_pref(AUTO_BUNDLES_PREF, Some(&serde_json::json!(false)))
+            .unwrap();
+        e.bundle_pending().await;
+        assert!(backend.bundles_asked.lock().unwrap().is_empty());
+
+        // A model bundle left with one old email goes away.
+        let mut b = core_bundles::new_bundle("Paris trip", domain::BundleKind::Trip, "");
+        b.origin = BundleOrigin::Ai;
+        b.created_at = now - AI_SINGLE_TTL_MS - 1;
+        e.store.upsert_bundle(&b).unwrap();
+        add(&e, "old", "Paris hotel", now - AI_SINGLE_TTL_MS - 1, false);
+        e.store
+            .set_thread_bundle(&"old".to_string(), Some((&b.id, BundleSource::Ai)))
+            .unwrap();
+        e.bundle_pending().await;
+        assert!(!e.store.list_bundles().unwrap().iter().any(|x| x.id == b.id));
+        assert_eq!(
+            e.get_thread_row("old".into()).unwrap().unwrap().bundle_id,
+            None
+        );
+    }
+
+    #[test]
+    fn names_are_one_short_line() {
+        assert_eq!(clean_name("  \"Lisbon\n trip.\" "), "Lisbon trip");
+        assert_eq!(clean_name(&"x".repeat(60)).len(), 40);
     }
 
     #[test]

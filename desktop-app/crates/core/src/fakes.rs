@@ -58,6 +58,7 @@ struct MemStoreInner {
     bundle_exclusions: std::collections::HashSet<(String, ThreadId)>,
     thread_anchors: HashMap<ThreadId, Vec<String>>,
     anchor_versions: HashMap<ThreadId, i64>,
+    bundling_versions: HashMap<ThreadId, i64>,
 }
 
 impl MemStore {
@@ -488,6 +489,40 @@ impl Store for MemStore {
         a.dedup();
         g.thread_anchors.insert(thread_id.clone(), a);
         g.anchor_versions.insert(thread_id.clone(), msg_count);
+        Ok(())
+    }
+
+    fn list_threads_needing_bundling(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let junk = |t: &Thread| {
+            t.labels
+                .iter()
+                .any(|l| l == "TRASH" || l == "SPAM" || l == "DRAFT")
+        };
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| t.bundle_id.is_none() && t.last_msg_at >= since && !junk(t))
+            .filter(|t| t.priority != Some(Priority::Spam))
+            .filter(|t| g.bundling_versions.get(&t.id) != Some(&t.msg_count))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
+    fn set_thread_bundling_done(
+        &self,
+        thread_id: &ThreadId,
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.bundling_versions.insert(thread_id.clone(), msg_count);
         Ok(())
     }
 

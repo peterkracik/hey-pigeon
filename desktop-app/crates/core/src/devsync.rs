@@ -37,8 +37,8 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    now_ms, AccountId, Bundle, BundleKind, BundleSource, BundleStatus, SyncEntry, ThreadId,
-    TriageLabel,
+    now_ms, AccountId, Bundle, BundleKind, BundleOrigin, BundleSource, BundleStatus, SyncEntry,
+    ThreadId, TriageLabel,
 };
 use crate::ports::{RemoteFile, Store, StoreError, SyncError, SyncTransport};
 
@@ -351,6 +351,10 @@ pub fn record_bundle<S: Store>(
     id: &str,
     bundle: Option<&Bundle>,
 ) -> Result<(), StoreError> {
+    // The model's own bundles stay on this device until the user adopts one.
+    if bundle.is_some_and(|b| b.origin == BundleOrigin::Ai) {
+        return Ok(());
+    }
     let Some(account_id) = app_wide_account(store)? else {
         return Ok(());
     };
@@ -381,9 +385,36 @@ fn bundle_from_json(id: &str, v: &serde_json::Value) -> Option<Bundle> {
         kind: BundleKind::parse(str_of("kind")),
         description: str_of("description").to_string(),
         status: BundleStatus::parse(str_of("status")),
+        // Only bundles the user owns reach the map.
+        origin: BundleOrigin::User,
         created_at: int_of("created_at"),
         updated_at: int_of("updated_at"),
     })
+}
+
+/// Move the threads of local AI bundles named like `bundle` (same kind,
+/// name compared without case) into it and delete those bundles. Returns
+/// how many threads moved.
+fn merge_ai_twins<S: Store>(store: &S, bundle: &Bundle) -> Result<usize, StoreError> {
+    let mut moved = 0;
+    for twin in store.list_bundles()? {
+        if twin.id == bundle.id
+            || twin.origin != BundleOrigin::Ai
+            || twin.kind != bundle.kind
+            || twin.name.to_lowercase() != bundle.name.to_lowercase()
+        {
+            continue;
+        }
+        for t in store.list_bundle_threads(&twin.id)? {
+            let source = store
+                .thread_bundle_source(&t.id)?
+                .unwrap_or(BundleSource::Ai);
+            store.set_thread_bundle(&t.id, Some((&bundle.id, source)))?;
+            moved += 1;
+        }
+        store.delete_bundle(&twin.id)?;
+    }
+    Ok(moved)
 }
 
 /// The user's own bundle choice for a thread, on the thread's account
@@ -441,7 +472,7 @@ fn seed_app_wide<S: Store>(store: &S, account_id: &AccountId) -> Result<usize, S
         }
     }
     for b in store.list_bundles()? {
-        if !known.contains(&bundle_key(&b.id)) {
+        if b.origin == BundleOrigin::User && !known.contains(&bundle_key(&b.id)) {
             record_local(store, account_id, &bundle_key(&b.id), Some(bundle_json(&b)))?;
             n += 1;
         }
@@ -815,6 +846,10 @@ fn apply_entries<S: Store>(
                     }
                     store.upsert_bundle(&want)?;
                     applied.settings += 1;
+                    // This device's model may have grouped the same mail
+                    // under its own bundle of that name: fold it into the
+                    // user's, so the two devices end up with one.
+                    applied.threads += merge_ai_twins(store, &want)?;
                 }
                 None => {
                     if entry.value.is_some() || local.is_none() {
@@ -1221,6 +1256,48 @@ mod tests {
         sync_account(&*remote, &a, &acc).await.unwrap();
         sync_account(&*remote, &b, &acc).await.unwrap();
         assert!(b.list_bundles().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ai_bundles_stay_local_and_merge_into_a_synced_twin() {
+        let remote = Arc::new(MemTransport::default());
+        let acc = "acc".to_string();
+        let a = device_store("acc", "dev-a");
+        let b = device_store("acc", "dev-b");
+        let t1: ThreadId = "t1".into();
+
+        // B's model grouped t1 under its own "Lisbon trip": never synced.
+        let mut local = crate::bundles::new_bundle("Lisbon trip", BundleKind::Trip, "");
+        local.origin = BundleOrigin::Ai;
+        b.upsert_bundle(&local).unwrap();
+        record_bundle(&b, &local.id, Some(&local)).unwrap();
+        b.set_thread_bundle(&t1, Some((&local.id, BundleSource::Ai)))
+            .unwrap();
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        assert!(a.list_bundles().unwrap().is_empty());
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        assert!(
+            a.list_bundles().unwrap().is_empty(),
+            "an AI bundle never leaves its device"
+        );
+
+        // A's user-owned "Lisbon Trip" arrives: B folds its twin into it.
+        let owned = crate::bundles::new_bundle("Lisbon Trip", BundleKind::Trip, "");
+        a.upsert_bundle(&owned).unwrap();
+        record_bundle(&a, &owned.id, Some(&owned)).unwrap();
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        assert!(sync_account(&*remote, &b, &acc).await.unwrap().any());
+        let ids: Vec<String> = b
+            .list_bundles()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.id)
+            .collect();
+        assert_eq!(ids, vec![owned.id.clone()]);
+        assert_eq!(
+            b.get_thread(&t1).unwrap().unwrap().bundle_id.as_deref(),
+            Some(owned.id.as_str())
+        );
     }
 
     #[tokio::test]

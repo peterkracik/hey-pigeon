@@ -144,9 +144,9 @@ final class AppModel {
         isSearching && (tab == .search || !Self.searchHasOwnTab)
     }
     #if os(iOS)
-    static let searchHasOwnTab = true
+    nonisolated static let searchHasOwnTab = true
     #else
-    static let searchHasOwnTab = false
+    nonisolated static let searchHasOwnTab = false
     #endif
     /// The typed words (hand-typed operators left out), underlined in result rows.
     var searchTerms: [String] {

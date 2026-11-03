@@ -222,6 +222,9 @@ struct AttachmentItem: Identifiable, Hashable {
     let mimeType: String
     /// Bytes as the provider reports them; 0 when unknown.
     let size: Int
+    /// The part's Content-ID: the HTML body shows it as `cid:` (an inline
+    /// picture, a signature logo). Nil for an ordinary attachment.
+    var contentId: String? = nil
 
     var id: String { messageId + "|" + attachmentId }
     var isImage: Bool { mimeType.lowercased().hasPrefix("image/") }
@@ -695,7 +698,9 @@ protocol MailEngine: AnyObject {
     /// asked for when a message with a paperclip is on screen.
     func attachments(threadId: String) async throws -> [AttachmentItem]
     /// The attachment's bytes as a cached file, fetched once. Never called
-    /// without the user tapping (or the on-device triage hook asking).
+    /// without the user tapping (or the on-device triage hook asking),
+    /// except for the inline pictures a body shows as `cid:`: those are
+    /// part of the message, from Gmail, not a remote image.
     func attachmentFile(_ attachment: AttachmentItem) async throws -> URL
 
     func perform(_ action: MailAction, accountId: String) async throws

@@ -245,6 +245,8 @@ pub struct MailAttachment {
     pub mime_type: String,
     /// Bytes as the provider reports them; 0 when unknown.
     pub size: i64,
+    /// Content-ID without angle brackets, for the body's `cid:` images.
+    pub content_id: Option<String>,
 }
 
 /// One outgoing attachment (standard base64 content).

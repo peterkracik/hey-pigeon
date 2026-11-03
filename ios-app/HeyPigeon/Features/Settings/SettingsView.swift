@@ -37,6 +37,14 @@ struct SettingsView: View {
                                 .font(.caption).foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    Toggle(isOn: $model.loadRemoteImages) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Load remote images")
+                            // Privacy copy: what loading a picture from the web tells the sender.
+                            Text("Show pictures from the web in every message without asking. The sender's server can then see that you opened the message, when, and your IP address.")
+                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                        }
+                    }
                     swipePicker(Self.swipeTitles[0], 0)
                     swipePicker(Self.swipeTitles[1], 1)
                     swipePicker(Self.swipeTitles[2], 2)

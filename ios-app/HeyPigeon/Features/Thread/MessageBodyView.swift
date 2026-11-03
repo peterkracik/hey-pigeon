@@ -1,6 +1,7 @@
 // Untrusted mail HTML, rendered as safely as a WKWebView allows:
 // JavaScript off, strict CSP, remote images blocked until the user allows
-// the sender, every web link handed to the default browser and every
+// the sender (or turns on Settings › Load remote images), inline `cid:`
+// pictures fetched from Gmail and inlined as data: URIs, every web link handed to the default browser and every
 // mailto: link to the app's own composer. The HTML arrives already sanitized by the core
 // (ammonia); this is the second layer.
 //
@@ -22,6 +23,12 @@ struct MessageBodyView: View {
     let html: String?
     let text: String
     let senderAddress: String
+    /// The message's parts with a Content-ID: the pictures its HTML shows
+    /// as `cid:` (a signature logo). Fetched from Gmail and inlined as
+    /// `data:` URIs, which the CSP allows; a web view cannot load `cid:`.
+    var inlineImages: [AttachmentItem] = []
+    /// The HTML with its `cid:` pictures inlined, once they are here.
+    @State private var inlinedHTML: String?
     @AppStorage("allowedImageSenders") private var allowedSendersRaw = ""
     @State private var height: CGFloat = 80
     /// The trailing quoted history ("On … wrote:") stays folded behind a
@@ -32,7 +39,8 @@ struct MessageBodyView: View {
     @Environment(AppModel.self) private var model
 
     private var imagesAllowed: Bool {
-        allowedSendersRaw.split(separator: "\n").contains(Substring(senderAddress.lowercased()))
+        model.loadRemoteImages
+            || allowedSendersRaw.split(separator: "\n").contains(Substring(senderAddress.lowercased()))
     }
 
     var body: some View {
@@ -40,7 +48,9 @@ struct MessageBodyView: View {
             if let html, !html.isEmpty {
                 // A plain case-insensitive scan: the locale-aware variant was
                 // far slower on long newsletters, on every render.
-                if !imagesAllowed && html.range(of: "<img", options: .caseInsensitive) != nil {
+                // Only remote pictures are held back: inline (cid:) ones are
+                // part of the message and show without asking.
+                if !imagesAllowed && InlineImages.hasRemoteImages(html) {
                     HStack(spacing: 6) {
                         Text("Remote images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
                         Spacer()
@@ -53,9 +63,10 @@ struct MessageBodyView: View {
                             .accessibilityLabel("Load images from \(senderAddress)")
                     }
                 }
-                HTMLView(html: html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, showQuoted: showQuoted,
+                HTMLView(html: inlinedHTML ?? html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, showQuoted: showQuoted,
                          height: $height, hasQuote: $hasQuote) { url in open(url) }
                     .frame(height: height)
+                    .task(id: InlineImages.taskKey(html: html, images: inlineImages)) { await inlinePictures(html) }
                 if hasQuote && !showQuoted { quoteButton }
             } else if let split = Self.splitQuoted(text) {
                 SelectableText(text: Self.linkified(split.main)) { url in open(url) }
@@ -73,6 +84,28 @@ struct MessageBodyView: View {
                 SelectableText(text: Self.linkified(text)) { url in open(url) }
             }
         }
+    }
+
+    /// Fetch the pictures the HTML refers to by `cid:` (cached after the
+    /// first time) and swap them in. A picture that cannot be fetched
+    /// stays a broken image, as before; the rest still show.
+    private func inlinePictures(_ html: String) async {
+        let wanted = InlineImages.references(in: html)
+        let parts = inlineImages.filter { a in
+            a.isImage && a.size <= InlineImages.maxBytes
+                && a.contentId.map { wanted.contains(InlineImages.normalize($0)) } == true
+        }
+        guard !parts.isEmpty else { return }
+        var uris: [String: String] = [:]
+        for a in parts {
+            guard let id = a.contentId,
+                  let file = try? await model.engine.attachmentFile(a),
+                  let data = try? Data(contentsOf: file), data.count <= InlineImages.maxBytes
+            else { continue }
+            uris[InlineImages.normalize(id)] = "data:\(a.mimeType);base64,\(data.base64EncodedString())"
+        }
+        guard !Task.isCancelled, !uris.isEmpty else { return }
+        inlinedHTML = InlineImages.inlined(html, dataURIs: uris)
     }
 
     /// Web links leave the app for the user's default browser. A mailto:
@@ -259,6 +292,64 @@ private struct SelectableText: NSViewRepresentable {
     }
 }
 #endif
+
+// MARK: - Inline pictures
+
+/// The `cid:` pictures of an HTML body: which ones it refers to, and the
+/// body with them swapped for `data:` URIs. Pure, so it is tested.
+enum InlineImages {
+    /// Bigger inline parts are left alone: a data URI that size makes the
+    /// web view crawl, and no signature is that big.
+    static let maxBytes = 5_000_000
+
+    // NSRegularExpression is immutable and safe to share across threads.
+    nonisolated(unsafe) private static let cid = try? NSRegularExpression(pattern: #"cid:([^"'\s)>]+)"#, options: .caseInsensitive)
+    nonisolated(unsafe) private static let remote = try? NSRegularExpression(
+        pattern: #"<img\b[^>]*\bsrc\s*=\s*["']?\s*(https?:|//)"#, options: .caseInsensitive)
+
+    /// Content-IDs compare case-insensitively and may be percent-encoded
+    /// in the src (`image001.png%4001DB…`).
+    static func normalize(_ id: String) -> String {
+        (id.removingPercentEncoding ?? id).lowercased()
+    }
+
+    static func references(in html: String) -> Set<String> {
+        guard let cid else { return [] }
+        let ns = html as NSString
+        return Set(cid.matches(in: html, range: NSRange(location: 0, length: ns.length)).map {
+            normalize(ns.substring(with: $0.range(at: 1)))
+        })
+    }
+
+    /// Each `cid:<id>` with a picture in `dataURIs` (keyed by the
+    /// normalized id) becomes that URI; the others stay as they were.
+    static func inlined(_ html: String, dataURIs: [String: String]) -> String {
+        guard let cid, !dataURIs.isEmpty else { return html }
+        let out = NSMutableString(string: html)
+        for m in cid.matches(in: html, range: NSRange(location: 0, length: out.length)).reversed() {
+            let id = normalize(out.substring(with: m.range(at: 1)))
+            if let uri = dataURIs[id] { out.replaceCharacters(in: m.range, with: uri) }
+        }
+        return out as String
+    }
+
+    /// Whether the body shows a picture from the web (what "Load" is for).
+    static func hasRemoteImages(_ html: String) -> Bool {
+        guard let remote else { return false }
+        return remote.firstMatch(in: html, range: NSRange(location: 0, length: (html as NSString).length)) != nil
+    }
+
+    /// Re-run the fetch when the body or its parts change, not on every render.
+    static func taskKey(html: String, images: [AttachmentItem]) -> String {
+        "\(html.hashValue)|" + images.map(\.id).joined(separator: ",")
+    }
+
+    /// Whether the body shows this part inline, so its chip is redundant.
+    static func isShownInline(_ a: AttachmentItem, in html: String?) -> Bool {
+        guard let html, let id = a.contentId else { return false }
+        return references(in: html).contains(normalize(id))
+    }
+}
 
 // MARK: - HTML
 

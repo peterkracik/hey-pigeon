@@ -334,6 +334,9 @@ pub struct AttachmentRef {
     pub mime_type: String,
     /// Bytes, as the provider reports it (0 when unknown).
     pub size: i64,
+    /// The part's Content-ID without the angle brackets: the HTML body
+    /// shows it as `<img src="cid:…">` (signatures, inline pictures).
+    pub content_id: Option<String>,
 }
 
 /// One attachment on an outgoing Send mutation.

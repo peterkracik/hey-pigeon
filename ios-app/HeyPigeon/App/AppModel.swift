@@ -245,6 +245,14 @@ final class AppModel {
         static let suggest = "ai.suggest"
         /// The labels pinned in the sidebar (both apps), by label id.
         static let pinnedLabels = "sidebar.pinned_labels"
+        /// Settings › Inbox › "Load remote images" (off: ask per sender).
+        static let remoteImages = "mail.remote_images"
+    }
+
+    /// Load every message's web pictures without the per-sender "Load".
+    /// Off by default: a remote picture tells the sender the mail was opened.
+    var loadRemoteImages = false {
+        didSet { savePref(PrefName.remoteImages, loadRemoteImages) }
     }
 
     /// Labels pinned in the sidebar. With any pinned, the sidebar shows
@@ -392,6 +400,7 @@ final class AppModel {
         if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
+        if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         adoptingPrefs = false
     }
 

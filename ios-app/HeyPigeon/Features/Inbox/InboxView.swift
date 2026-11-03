@@ -160,6 +160,12 @@ struct TriageSplitBar: View {
             }
             .padding(4)
         }
+        // Sideways only. The bar sits in the list's bottom inset, over the
+        // tab bar, and the scroll view took that safe area as content inset:
+        // the labels slid down, were cut off and the bar scrolled up and down.
+        .ignoresSafeArea(.container, edges: .vertical)
+        .fixedSize(horizontal: false, vertical: true)
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .glassEffect(.regular, in: .capsule)
         .padding(.horizontal, 16)
         .padding(.bottom, 6)

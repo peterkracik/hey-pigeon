@@ -40,7 +40,7 @@ should reach UIKit or AppKit:
 The platform door also hides the modifiers that exist on one platform
 only, so a feature file never writes a bare `#if`: `sheetSize` (detents on
 iOS, a frame on the Mac), `dismissKeyboardOnScroll`, `hidesTabBar`,
-`alwaysShownSearch`, `hidesNavigationBarInCompactWidth`, `siriEntity`, and
+`alwaysShownSearch`, `siriEntity`, and
 `Theme`'s `menuSectionSpacing` / `menuSheet`. `PlatformImage`,
 `PlatformFont` and `PlatformColor` name the UIKit / AppKit types for the
 few places that draw (the notification avatar, the attachment downscale).

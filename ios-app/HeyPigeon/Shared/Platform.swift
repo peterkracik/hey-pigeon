@@ -172,6 +172,20 @@ enum RemoteNotifications {
     }
 }
 
+/// Web links from mail. Straight to the system, not SwiftUI's `openURL`:
+/// that one may present the page inside the app, over the message, and a
+/// mail client hands links to the user's default browser (DESIGN.md).
+@MainActor
+enum Browser {
+    static func open(_ url: URL) {
+        #if canImport(UIKit)
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        #elseif canImport(AppKit)
+        NSWorkspace.shared.open(url)
+        #endif
+    }
+}
+
 /// Doors into the system's Settings app.
 @MainActor
 enum SystemSettings {
@@ -329,18 +343,6 @@ extension View {
         #endif
     }
 
-    /// The phone's Search tab hides its navigation bar (the field lives in
-    /// the tab bar, so an empty bar would only push the filters down);
-    /// regular widths and the Mac keep theirs.
-    @ViewBuilder
-    func hidesNavigationBarInCompactWidth() -> some View {
-        #if os(iOS)
-        modifier(CompactNavigationBarHider())
-        #else
-        self
-        #endif
-    }
-
     /// iOS 26 view annotation: Siri's on-screen awareness sees this view as
     /// the entity ("mark these done"). The Mac has no on-screen Siri.
     @ViewBuilder
@@ -365,16 +367,6 @@ extension View {
         #endif
     }
 }
-
-#if os(iOS)
-private struct CompactNavigationBarHider: ViewModifier {
-    @Environment(\.horizontalSizeClass) private var sizeClass
-
-    func body(content: Content) -> some View {
-        content.toolbarVisibility(sizeClass == .compact ? .hidden : .automatic, for: .navigationBar)
-    }
-}
-#endif
 
 /// `dismissKeyboardOnScroll`'s two iOS behaviours.
 enum KeyboardScrollDismissal {

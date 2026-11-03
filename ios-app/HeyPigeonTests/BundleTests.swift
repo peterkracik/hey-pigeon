@@ -26,6 +26,7 @@ private func prioritized(_ id: String, _ priority: TriageLevel, bundle: String) 
               priority: priority, triageLabelIds: [], labels: ["INBOX"], bundleId: bundle)
 }
 
+@MainActor
 struct BundleFoldTests {
     let now = Date()
 

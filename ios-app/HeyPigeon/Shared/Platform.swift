@@ -368,6 +368,17 @@ extension View {
     }
 }
 
+/// How the composer's full-screen switch works here. The phone swaps a
+/// sheet for a full-screen cover, so the composer is closed and opened
+/// again with what was typed; the Mac resizes the same sheet.
+enum ComposePresentation {
+    #if os(iOS)
+    static let switchReopens = true
+    #else
+    static let switchReopens = false
+    #endif
+}
+
 /// `dismissKeyboardOnScroll`'s two iOS behaviours.
 enum KeyboardScrollDismissal {
     case immediately, interactively

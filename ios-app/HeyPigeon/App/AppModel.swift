@@ -302,6 +302,14 @@ final class AppModel {
         loadRemoteImages || imageSenders.contains(address.lowercased())
     }
 
+    /// The composer opens full screen instead of as a dialog (the phone: a
+    /// full-screen cover; the Mac: the sheet fills the window). Its button
+    /// switches it while writing; remembered per device, not synced: what
+    /// fits a phone is not what fits a Mac.
+    var composeFullScreen = UserDefaults.standard.bool(forKey: "composeFullScreen") {
+        didSet { UserDefaults.standard.set(composeFullScreen, forKey: "composeFullScreen") }
+    }
+
     /// Load every message's web pictures without the per-sender "Load".
     /// Off by default: a remote picture tells the sender the mail was opened.
     var loadRemoteImages = false {

@@ -293,6 +293,40 @@ struct AppModelTests {
         #expect(model.pinnedLabelIds.isEmpty)
     }
 
+    @Test func inlinePicturesSwapCidForData() {
+        let html = #"<p>Hi</p><img src="cid:image001.png@01DB"><img src='CID:Sig%40x'><img src="cid:missing">"#
+        #expect(InlineImages.references(in: html) == ["image001.png@01db", "sig@x", "missing"])
+        let out = InlineImages.inlined(html, dataURIs: ["image001.png@01db": "data:image/png;base64,AA", "sig@x": "data:image/gif;base64,BB"])
+        #expect(out == #"<p>Hi</p><img src="data:image/png;base64,AA"><img src='data:image/gif;base64,BB'><img src="cid:missing">"#)
+        // Only web pictures need the per-sender "Load".
+        #expect(!InlineImages.hasRemoteImages(html))
+        #expect(InlineImages.hasRemoteImages(#"<IMG width=1 src="https://t.example/p.gif">"#))
+        #expect(InlineImages.hasRemoteImages(#"<img src=//cdn.example/a.png>"#))
+        // The chip for a picture the body shows goes away; a real file stays.
+        let logo = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "a", filename: "logo.png",
+                                  mimeType: "image/png", size: 10, contentId: "Image001.png@01DB")
+        let pdf = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "b", filename: "x.pdf",
+                                 mimeType: "application/pdf", size: 10)
+        #expect(InlineImages.isShownInline(logo, in: html))
+        #expect(!InlineImages.isShownInline(pdf, in: html))
+    }
+
+    @Test func loadRemoteImagesIsASyncedPref() throws {
+        model.loadRemoteImages = true
+        #expect(try engine.prefs()["mail.remote_images"] as? Bool == true)
+        #expect(model.loadsImages(from: "anyone@x.test"))
+        model.loadRemoteImages = false
+    }
+
+    @Test func alwaysLoadingASendersImagesIsSynced() throws {
+        #expect(!model.loadsImages(from: "news@shop.test"))
+        model.alwaysLoadImages(from: "News@Shop.test")
+        #expect(model.loadsImages(from: "news@shop.test"))
+        #expect(!model.loadsImages(from: "other@shop.test"))
+        #expect(try engine.prefs()["mail.image_senders"] as? [String] == ["news@shop.test"])
+        model.imageSenders = []
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

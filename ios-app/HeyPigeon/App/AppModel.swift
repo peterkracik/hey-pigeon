@@ -245,6 +245,32 @@ final class AppModel {
         static let suggest = "ai.suggest"
         /// The labels pinned in the sidebar (both apps), by label id.
         static let pinnedLabels = "sidebar.pinned_labels"
+        /// Settings › Inbox › "Load remote images" (off: ask per sender).
+        static let remoteImages = "mail.remote_images"
+        /// "Always load from this sender": lowercased addresses.
+        static let imageSenders = "mail.image_senders"
+    }
+
+    /// Senders whose web pictures always load. Synced, so the Mac and the
+    /// phone trust the same senders; it used to be a per-device list.
+    var imageSenders: Set<String> = [] {
+        didSet { savePref(PrefName.imageSenders, imageSenders.sorted()) }
+    }
+
+    func alwaysLoadImages(from address: String) {
+        imageSenders.insert(address.lowercased())
+        Haptics.light()
+    }
+
+    /// Whether a message from this address shows its web pictures at once.
+    func loadsImages(from address: String) -> Bool {
+        loadRemoteImages || imageSenders.contains(address.lowercased())
+    }
+
+    /// Load every message's web pictures without the per-sender "Load".
+    /// Off by default: a remote picture tells the sender the mail was opened.
+    var loadRemoteImages = false {
+        didSet { savePref(PrefName.remoteImages, loadRemoteImages) }
     }
 
     /// Labels pinned in the sidebar. With any pinned, the sidebar shows
@@ -373,6 +399,11 @@ final class AppModel {
             (PrefName.pinList, "pinListEnabled", defaults.object(forKey: "pinListEnabled") as? Bool),
             (PrefName.autoSummarize, "autoSummarize", defaults.object(forKey: "autoSummarize") as? Bool),
             (PrefName.swipeActions, "swipeActions", defaults.stringArray(forKey: "swipeActions")),
+            // The old per-device "Load" list, newline-separated.
+            (PrefName.imageSenders, "allowedImageSenders",
+             defaults.string(forKey: "allowedImageSenders")
+                .map { $0.split(separator: "\n").map(String.init).filter { !$0.isEmpty } }
+                .flatMap { $0.isEmpty ? nil : Array(Set($0)).sorted() }),
         ]
         for item in legacy where prefs[item.name] == nil {
             guard let value = item.value else { continue }
@@ -392,6 +423,8 @@ final class AppModel {
         if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
+        if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
+        if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
         adoptingPrefs = false
     }
 

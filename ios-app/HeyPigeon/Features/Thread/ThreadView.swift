@@ -621,10 +621,15 @@ struct MessageRow: View {
             }
             .buttonStyle(.plain)
             if expanded {
-                MessageBodyView(html: message.bodyHTML, text: message.bodyText ?? message.snippet, senderAddress: message.fromAddress)
+                MessageBodyView(html: message.bodyHTML, text: message.bodyText ?? message.snippet,
+                                senderAddress: message.fromAddress,
+                                inlineImages: attachments.filter { $0.contentId != nil })
                     .padding(.top, 12)
-                if !attachments.isEmpty {
-                    AttachmentChips(attachments: attachments).padding(.top, 10)
+                // A picture the body already shows (a signature logo) is
+                // not offered again as a file.
+                let files = attachments.filter { !InlineImages.isShownInline($0, in: message.bodyHTML) }
+                if !files.isEmpty {
+                    AttachmentChips(attachments: files).padding(.top, 10)
                 }
             }
         }

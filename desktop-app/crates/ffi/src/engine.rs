@@ -406,6 +406,7 @@ impl Engine {
                 filename: a.filename,
                 mime_type: a.mime_type,
                 size: a.size,
+                content_id: a.content_id,
             })
             .collect())
     }
@@ -438,6 +439,7 @@ impl Engine {
             filename: attachment.filename.clone(),
             mime_type: attachment.mime_type.clone(),
             size: attachment.size,
+            content_id: attachment.content_id.clone(),
         };
         let fetched = {
             let provider = self.provider.read().await;
@@ -1302,6 +1304,7 @@ mod tests {
             filename: "../../etc/passwd:report.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 1,
+            content_id: None,
         };
         let key = attachment_cache_key(&a);
         assert_eq!(key.len(), 16);

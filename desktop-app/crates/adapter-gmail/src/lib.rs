@@ -1347,7 +1347,7 @@ impl MailProvider for GmailProvider {
         if let Some(p) = wire.payload.as_ref() {
             collect_attachments(p, &mut pending);
         }
-        for (filename, mime_type, body) in pending {
+        for (filename, mime_type, body, _) in pending {
             let data = match (body.data.as_deref(), body.attachment_id.as_deref()) {
                 (Some(d), _) => d.to_string(),
                 (None, Some(aid)) => {
@@ -1412,7 +1412,7 @@ impl MailProvider for GmailProvider {
             }
             parts
                 .get(index)
-                .and_then(|(_, _, body)| body.data.clone())
+                .and_then(|(_, _, body, _)| body.data.clone())
                 .ok_or_else(|| MailError::Provider("attachment part is gone".into()))?
         } else {
             let aid = &attachment.attachment_id;
@@ -1609,11 +1609,32 @@ fn to_draft(w: &WireMessage) -> DraftContent {
     }
 }
 
-/// Attachment parts (non-empty filename), depth first: filename, mime, body.
-fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<(String, String, &'a WireBody)>) {
-    if !part.filename.is_empty() {
+/// One attachment part: filename, mime type, body, Content-ID.
+type WireAttachment<'a> = (String, String, &'a WireBody, Option<String>);
+
+/// Attachment parts, depth first: every part with a filename, and an image
+/// part with a Content-ID but no name (an inline picture the HTML body
+/// shows as `cid:`; Outlook and Apple Mail send signatures that way).
+fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<WireAttachment<'a>>) {
+    let content_id = header(part, "Content-ID")
+        .map(|v| {
+            v.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .trim()
+                .to_string()
+        })
+        .filter(|v| !v.is_empty());
+    let inline_image = content_id.is_some() && part.mime_type.starts_with("image/");
+    if !part.filename.is_empty() || inline_image {
         if let Some(b) = part.body.as_ref() {
-            out.push((part.filename.clone(), part.mime_type.clone(), b));
+            let name = if part.filename.is_empty() {
+                let ext = part.mime_type.trim_start_matches("image/");
+                format!("inline.{}", if ext.is_empty() { "img" } else { ext })
+            } else {
+                part.filename.clone()
+            };
+            out.push((name, part.mime_type.clone(), b, content_id));
         }
     }
     for p in &part.parts {
@@ -1632,7 +1653,7 @@ fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
         if let Some(p) = m.payload.as_ref() {
             collect_attachments(p, &mut parts);
         }
-        for (index, (filename, mime_type, body)) in parts.into_iter().enumerate() {
+        for (index, (filename, mime_type, body, content_id)) in parts.into_iter().enumerate() {
             out.push(AttachmentRef {
                 message_id: m.id.clone(),
                 attachment_id: body
@@ -1646,6 +1667,7 @@ fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
                     mime_type
                 },
                 size: body.size,
+                content_id,
             });
         }
     }
@@ -2209,6 +2231,43 @@ mod tests {
             (list[2].message_id.as_str(), list[2].filename.as_str()),
             ("m2", "photo.png")
         );
+    }
+
+    #[test]
+    fn inline_images_carry_their_content_id_even_without_a_name() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "messages": [{
+                "id": "m1",
+                "labelIds": ["INBOX"],
+                "internalDate": "1756600000000",
+                "payload": {
+                    "mimeType": "multipart/related",
+                    "headers": [],
+                    "parts": [
+                        {"mimeType": "text/html", "headers": [], "body": {"data": "aGk"}},
+                        {"mimeType": "image/png", "filename": "logo.png",
+                         "headers": [{"name": "Content-ID", "value": "<image001.png@01DB>"}],
+                         "body": {"attachmentId": "a1", "size": 900}},
+                        {"mimeType": "image/gif", "filename": "",
+                         "headers": [{"name": "content-id", "value": " <sig> "}],
+                         "body": {"data": "R0lG", "size": 3}},
+                        {"mimeType": "text/plain", "filename": "",
+                         "headers": [{"name": "Content-ID", "value": "<not-an-image>"}],
+                         "body": {"data": "aGk"}}
+                    ]
+                }
+            }]
+        });
+        let wire: WireThread = serde_json::from_value(json).unwrap();
+        let list = thread_attachments(&wire);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].content_id.as_deref(), Some("image001.png@01DB"));
+        assert_eq!(list[0].filename, "logo.png");
+        // A nameless inline picture is listed too, named from its type.
+        assert_eq!(list[1].content_id.as_deref(), Some("sig"));
+        assert_eq!(list[1].filename, "inline.gif");
+        assert_eq!(list[1].attachment_id, "inline:1");
     }
 
     #[test]

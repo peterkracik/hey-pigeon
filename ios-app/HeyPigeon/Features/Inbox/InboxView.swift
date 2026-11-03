@@ -27,6 +27,10 @@ struct MailListScreen: View {
                     Color.clear
                 }
             }
+            // Pull to refresh on the list only. Applied after the bottom
+            // inset it reached the label bar's scroll view too: a slightly
+            // vertical swipe on the labels pulled the bar down with a spinner.
+            .refreshable { await model.sync() }
             .background(Theme.canvas)
             // ListTitle is the principal item. No .toolbar(removing: .title)
             // here: the principal counts as the title and went with it.
@@ -62,7 +66,6 @@ struct MailListScreen: View {
             .safeAreaInset(edge: .bottom) {
                 if tab == .inbox && !model.triageLabels.isEmpty { TriageSplitBar() }
             }
-            .refreshable { await model.sync() }
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }
             }

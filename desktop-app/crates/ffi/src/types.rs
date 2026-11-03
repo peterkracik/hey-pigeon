@@ -83,6 +83,8 @@ pub struct MailThread {
     /// The AI's proposal for this new unread email, waiting for the user
     /// to accept or dismiss it. Local-only.
     pub suggestion: Option<ThreadSuggestion>,
+    /// The bundle this thread belongs to (`MailBundle::id`), if any.
+    pub bundle_id: Option<String>,
 }
 
 /// What the AI proposes for a new unread email (`domain::Suggestion`).
@@ -136,6 +138,7 @@ impl From<domain::Thread> for MailThread {
             needs_reply: t.needs_reply,
             follow_up_since: t.follow_up_since,
             suggestion: t.suggestion.map(Into::into),
+            bundle_id: t.bundle_id,
         }
     }
 }

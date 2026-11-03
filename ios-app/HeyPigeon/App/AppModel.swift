@@ -45,10 +45,30 @@ struct RowGroup: Identifiable {
     let title: String
     let rows: [ThreadRow]
     let isPinned: Bool
+    /// Bundles whose quiet mail folds into one row in this group
+    /// (`AppModel.fold`), newest first. Their threads are not in `rows`.
+    var folds: [BundleFold] = []
     var id: String { title }
     /// Rows worth summarizing: not done.
     var active: [ThreadRow] { rows.filter { !$0.isDone } }
     var summaryKey: String { title + "|" + active.map(\.id).joined(separator: ",") }
+}
+
+/// One folded inbox row: a bundle's mail that needs nothing from the user
+/// (read, low priority, no flag), shown as "Lisbon trip · 3 updates"
+/// (docs/bundles.md "Folded inbox rows"). Anything that asks for action
+/// keeps its own row with the bundle chip.
+struct BundleFold: Identifiable, Hashable {
+    let bundle: BundleItem
+    /// Newest first.
+    let rows: [ThreadRow]
+    var id: String { bundle.id }
+    var newest: Date { rows.first?.lastMessageAt ?? .distantPast }
+    /// "3 updates · Seat chosen, Your receipt" — the subjects, newest first.
+    var summary: String {
+        let subjects = rows.prefix(3).map { $0.subject.isEmpty ? "(no subject)" : $0.subject }
+        return "\(rows.count) updates · " + subjects.joined(separator: ", ")
+    }
 }
 
 @MainActor
@@ -177,6 +197,15 @@ final class AppModel {
     var composeDraft: SendDraft?
     var showSidebar = false
     var showSettings = false
+    /// The Bundles list (a sheet on both platforms).
+    var showBundles = false
+    /// The bundle the sheet opens on (a folded inbox row was tapped).
+    var bundlesStartId: String?
+    /// "Add to bundle…" for this thread (AddToBundleSheet).
+    var pendingBundlePick: ThreadRow?
+    /// Every bundle, active first; re-read on each reload (counts move with
+    /// the mail).
+    private(set) var bundles: [BundleItem] = []
     /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
     var askSheet: AskPresentation?
 
@@ -251,6 +280,8 @@ final class AppModel {
         static let imageSenders = "mail.image_senders"
         /// The triage labels in the user's order (ids), Settings › Triage.
         static let triageLabelOrder = "triage.label_order"
+        /// Settings › Inbox › "Fold bundle updates" (unset = on).
+        static let foldBundles = "bundles.fold_inbox"
     }
 
     /// The user's order of the triage labels, by id. The core lists them
@@ -352,6 +383,15 @@ final class AppModel {
             regroup()
         }
     }
+    /// Fold a bundle's quiet mail (read, low priority, no flag) into one
+    /// inbox row. iPhone and iPad; the Mac lists the rows with their chips.
+    var foldBundlesEnabled = true {
+        didSet {
+            savePref(PrefName.foldBundles, foldBundlesEnabled)
+            regroup()
+        }
+    }
+
     /// Generate AI summaries without a click.
     var autoSummarize = false {
         didSet { savePref(PrefName.autoSummarize, autoSummarize) }
@@ -456,6 +496,7 @@ final class AppModel {
         }
         adoptingPrefs = true
         if let v = prefs[PrefName.pinList] as? Bool { pinListEnabled = v }
+        if let v = prefs[PrefName.foldBundles] as? Bool { foldBundlesEnabled = v }
         if let v = prefs[PrefName.autoSummarize] as? Bool { autoSummarize = v }
         if let raw = prefs[PrefName.swipeActions] as? [String] {
             let actions = raw.compactMap(RowAction.init(rawValue:))
@@ -551,6 +592,8 @@ final class AppModel {
     }
 
     func reload() {
+        // Before the rows: their regroup folds by bundle.
+        bundles = (try? engine.bundles()) ?? []
         let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? []
         rows = Self.unique(page)
         hasMore = view.isPaged && page.count == Self.pageSize
@@ -727,16 +770,61 @@ final class AppModel {
             showsSearchResults ? searchResults : rows,
             view: view, searching: showsSearchResults,
             triageFilterId: tab == .inbox ? triageFilterId : nil,
-            pinList: pinListEnabled
+            pinList: pinListEnabled,
+            bundles: Self.foldsOnThisPlatform && foldBundlesEnabled ? bundles : []
         )
+    }
+
+    /// The phone and the iPad fold; the Mac's list keeps one row per thread
+    /// (its keyboard selection walks threads).
+    static var foldsOnThisPlatform: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Split the inbox's rows into bundle folds and the rest. A thread
+    /// folds when it needs nothing from the user: read, not high or medium
+    /// priority, no Need reply, no reminder, no open AI suggestion, not
+    /// pinned, not a draft. A bundle folds only with two or more such
+    /// threads — one alone keeps its row and chip.
+    static func fold(_ rows: [ThreadRow], bundles: [BundleItem]) -> (folds: [BundleFold], rest: [ThreadRow]) {
+        let known = Dictionary(uniqueKeysWithValues: bundles.map { ($0.id, $0) })
+        func quiet(_ r: ThreadRow) -> Bool {
+            guard let b = r.bundleId, known[b] != nil else { return false }
+            return r.isRead && !r.needsReply && r.scheduledAt == nil && r.openSuggestion == nil
+                && !r.isPinned && r.priority != .high && r.priority != .medium
+                && !r.labels.contains("DRAFT")
+        }
+        var byBundle: [String: [ThreadRow]] = [:]
+        for r in rows where quiet(r) { byBundle[r.bundleId ?? "", default: []].append(r) }
+        let folded = byBundle.filter { $0.value.count >= 2 }
+        let foldedIds = Set(folded.values.flatMap { $0.map(\.id) })
+        let folds = folded.compactMap { entry -> BundleFold? in
+            guard let b = known[entry.key] else { return nil }
+            return BundleFold(bundle: b, rows: entry.value.sorted { $0.lastMessageAt > $1.lastMessageAt })
+        }
+        .sorted { $0.newest > $1.newest }
+        return (folds, rows.filter { !foldedIds.contains($0.id) })
     }
 
     /// Pure grouping; the day boundaries are computed once for the list.
     static func group(_ rows: [ThreadRow], view: MailView, searching: Bool,
-                      triageFilterId: String?, pinList: Bool, now: Date = Date()) -> [RowGroup] {
+                      triageFilterId: String?, pinList: Bool, bundles: [BundleItem] = [],
+                      now: Date = Date()) -> [RowGroup] {
         var source = rows
         if let f = triageFilterId, !searching {
             source = source.filter { $0.triageLabelIds.contains(f) }
+        }
+        // Folding only in the plain inbox: a search, a label filter or a
+        // folder shows every thread it matches.
+        var folds: [BundleFold] = []
+        if view == .inbox && !searching && triageFilterId == nil && !bundles.isEmpty {
+            let split = fold(source, bundles: bundles)
+            folds = split.folds
+            source = split.rest
         }
         if view == .scheduled && !searching {
             let due = Formatters.dueGrouper(now: now)
@@ -753,7 +841,17 @@ final class AppModel {
             }
         }
         let day = Formatters.dayGrouper(now: now)
-        return head + bucket(source, titles: ["Today", "Last 7 days", "Older"]) { day($0.lastMessageAt) }
+        let groups = bucket(source, titles: ["Today", "Last 7 days", "Older"]) { day($0.lastMessageAt) }
+        guard !folds.isEmpty else { return head + groups }
+        // A fold sits at the top of the day group of its newest email.
+        var foldsByTitle: [String: [BundleFold]] = [:]
+        for f in folds { foldsByTitle[day(f.newest), default: []].append(f) }
+        let rowsByTitle = Dictionary(uniqueKeysWithValues: groups.map { ($0.title, $0.rows) })
+        return head + ["Today", "Last 7 days", "Older"].compactMap { t in
+            let rows = rowsByTitle[t] ?? []
+            let f = foldsByTitle[t] ?? []
+            return rows.isEmpty && f.isEmpty ? nil : RowGroup(title: t, rows: rows, isPinned: false, folds: f)
+        }
     }
 
     private static func bucket(_ rows: [ThreadRow], titles: [String], key: (ThreadRow) -> String) -> [RowGroup] {
@@ -1232,6 +1330,108 @@ final class AppModel {
 
     func show(_ text: String, undo: (() -> Void)? = nil) {
         toast = Toast(text: text, undo: undo)
+    }
+
+    // MARK: Bundles (docs/bundles.md)
+
+    /// The Bundles sheet, on the list or on one bundle.
+    func openBundles(at id: String? = nil) {
+        bundlesStartId = id
+        showSidebar = false
+        showBundles = true
+    }
+
+    func bundle(id: String?) -> BundleItem? {
+        guard let id else { return nil }
+        return bundles.first { $0.id == id }
+    }
+
+    var activeBundles: [BundleItem] { bundles.filter { !$0.isArchived } }
+    var archivedBundles: [BundleItem] { bundles.filter(\.isArchived) }
+
+    func bundleContents(id: String) -> BundleContents? {
+        try? engine.bundleContents(id: id)
+    }
+
+    /// The bundle the picker offers first: the one this thread shares a
+    /// booking, order or tracking number with.
+    func suggestedBundle(for row: ThreadRow) -> BundleItem? {
+        bundle(id: try? engine.suggestedBundle(threadId: row.id))
+    }
+
+    /// "New bundle…" (from the picker: with that thread in it).
+    @discardableResult
+    func createBundle(name: String, category: BundleCategory, description: String, threadIds: [String] = []) -> BundleItem? {
+        do {
+            let b = try engine.createBundle(name: name, category: category, description: description, threadIds: threadIds)
+            Haptics.light()
+            reload()
+            show(threadIds.isEmpty ? "Bundle created" : "Added to \(b.name)")
+            return b
+        } catch {
+            show(error.localizedDescription)
+            return nil
+        }
+    }
+
+    func updateBundle(_ b: BundleItem, name: String, category: BundleCategory, description: String) {
+        do {
+            try engine.updateBundle(id: b.id, name: name, category: category, description: description)
+            reload()
+        } catch { show(error.localizedDescription) }
+    }
+
+    func setBundleArchived(_ b: BundleItem, _ archived: Bool) {
+        do {
+            try engine.setBundleArchived(id: b.id, archived)
+            reload()
+            show(archived ? "Bundle archived" : "Bundle reopened")
+        } catch { show(error.localizedDescription) }
+    }
+
+    /// The mail stays where it is; only the grouping goes.
+    func deleteBundle(_ b: BundleItem) {
+        do {
+            try engine.deleteBundle(id: b.id)
+            reload()
+            show("Bundle deleted")
+        } catch { show(error.localizedDescription) }
+    }
+
+    func addToBundle(_ row: ThreadRow, bundleId: String) {
+        do {
+            let more = try engine.addToBundle(threadId: row.id, bundleId: bundleId)
+            Haptics.light()
+            reload()
+            let name = bundle(id: bundleId)?.name ?? "bundle"
+            show(more > 0 ? "Added to \(name) with \(more) related" : "Added to \(name)") { [weak self] in
+                self?.removeFromBundle(row, quietly: true)
+            }
+        } catch { show(error.localizedDescription) }
+    }
+
+    /// The thread leaves its bundle for good: nothing automatic puts it back.
+    func removeFromBundle(_ row: ThreadRow, quietly: Bool = false) {
+        let from = bundle(id: row.bundleId)
+        do {
+            try engine.removeFromBundle(threadId: row.id)
+            reload()
+            guard !quietly, let from else { return }
+            show("Removed from \(from.name)") { [weak self] in
+                self?.addToBundle(row, bundleId: from.id)
+            }
+        } catch { show(error.localizedDescription) }
+    }
+
+    /// The folded row's swipe: every email in it done at once, one Undo.
+    func markDone(_ fold: BundleFold) {
+        Haptics.archive()
+        let rows = fold.rows
+        for row in rows { perform(.archive(threadId: row.id), on: row) }
+        regroup()
+        show(rows.count == 1 ? "Marked done" : "Marked \(rows.count) done") { [weak self] in
+            for row in rows { self?.perform(.unarchive(threadId: row.id), on: row) }
+        }
     }
 
     // MARK: AI summaries (desktop InboxList + ThreadView), shown in a sheet

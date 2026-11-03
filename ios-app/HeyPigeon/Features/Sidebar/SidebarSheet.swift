@@ -43,6 +43,7 @@ struct SidebarSheet: View {
                 folderRow(.sent)
                 folderRow(.drafts, count: model.draftsCount)
                 folderRow(.archive)
+                bundlesRow
                 tabRow(.scheduled, count: model.scheduledCount)
                 tabRow(.needReply, count: model.needReplyCount)
                 folderRow(.all)
@@ -132,6 +133,19 @@ struct SidebarSheet: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(pinned ? "Unpin \(l.name)" : "Pin \(l.name)")
+        }
+    }
+
+    /// Bundles open their own sheet; this one closes first.
+    private var bundlesRow: some View {
+        Button { model.openBundles() } label: {
+            HStack {
+                Label("Bundles", systemImage: "square.stack")
+                Spacer()
+                if !model.activeBundles.isEmpty {
+                    Text("\(model.activeBundles.count)").font(.subheadline).foregroundStyle(Theme.textTertiary)
+                }
+            }
         }
     }
 

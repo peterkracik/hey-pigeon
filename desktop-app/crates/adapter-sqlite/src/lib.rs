@@ -268,6 +268,41 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE threads ADD COLUMN suggestion TEXT;
     ALTER TABLE threads ADD COLUMN suggestion_msg_count INTEGER;
     ",
+    // v19 — bundles (docs/bundles.md). App-local like triage labels; ids are
+    // random hex minted by the core. A thread is in at most one bundle, so
+    // membership is two columns on `threads` (`bundle_source`: user | link)
+    // rather than a join table. `thread_anchors` holds the identifiers
+    // `bundles::extract_anchors` found (`order:112-334`), indexed by anchor
+    // for the link lookup; `anchors_msg_count` is the triage versioning
+    // rule, so a new message makes the thread due for a rescan. Exclusions
+    // are the user's "not this one": nothing automatic re-adds the thread.
+    // All local-only and absent from `upsert_thread`, like `priority`.
+    "
+    CREATE TABLE bundles (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status      TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+    );
+    ALTER TABLE threads ADD COLUMN bundle_id TEXT;
+    ALTER TABLE threads ADD COLUMN bundle_source TEXT;
+    ALTER TABLE threads ADD COLUMN anchors_msg_count INTEGER;
+    CREATE INDEX threads_by_bundle ON threads(bundle_id);
+    CREATE TABLE thread_anchors (
+        thread_id TEXT NOT NULL,
+        anchor    TEXT NOT NULL,
+        PRIMARY KEY (thread_id, anchor)
+    );
+    CREATE INDEX thread_anchors_by_anchor ON thread_anchors(anchor);
+    CREATE TABLE bundle_exclusions (
+        bundle_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        PRIMARY KEY (bundle_id, thread_id)
+    );
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -530,6 +565,11 @@ impl SqliteStore {
                 params![account_id],
             )?;
             tx.execute(
+                "DELETE FROM thread_anchors WHERE thread_id IN
+                   (SELECT id FROM threads WHERE account_id = ?1)",
+                params![account_id],
+            )?;
+            tx.execute(
                 "DELETE FROM threads WHERE account_id = ?1",
                 params![account_id],
             )?;
@@ -609,11 +649,12 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
         suggestion: r
             .get::<_, Option<String>>(18)?
             .and_then(|s| serde_json::from_str(&s).ok()),
+        bundle_id: r.get(19)?,
     })
 }
 
 const THREAD_COLS: &str =
-    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply, follow_up_since, suggestion";
+    "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply, follow_up_since, suggestion, bundle_id";
 
 /// `THREAD_COLS` with a table qualifier (joins in search).
 fn thread_cols(prefix: &str) -> String {
@@ -749,6 +790,10 @@ impl Store for SqliteStore {
         self.with(|c| {
             c.execute(
                 "DELETE FROM messages WHERE thread_id = ?1",
+                params![thread_id],
+            )?;
+            c.execute(
+                "DELETE FROM thread_anchors WHERE thread_id = ?1",
                 params![thread_id],
             )?;
             c.execute("DELETE FROM threads WHERE id = ?1", params![thread_id])
@@ -978,6 +1023,234 @@ impl Store for SqliteStore {
             )
             .map(|_| ())
         })
+    }
+
+    fn list_bundles(&self) -> Result<Vec<Bundle>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT id, name, kind, description, status, created_at, updated_at
+                   FROM bundles
+                  ORDER BY status = 'archived', name COLLATE NOCASE",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok(Bundle {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    kind: BundleKind::parse(&r.get::<_, String>(2)?),
+                    description: r.get(3)?,
+                    status: BundleStatus::parse(&r.get::<_, String>(4)?),
+                    created_at: r.get(5)?,
+                    updated_at: r.get(6)?,
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
+    fn upsert_bundle(&self, b: &Bundle) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO bundles (id, name, kind, description, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name, kind = excluded.kind,
+                   description = excluded.description, status = excluded.status,
+                   updated_at = excluded.updated_at",
+                params![
+                    b.id,
+                    b.name,
+                    b.kind.as_str(),
+                    b.description,
+                    b.status.as_str(),
+                    b.created_at,
+                    b.updated_at
+                ],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn delete_bundle(&self, id: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            tx.execute(
+                "UPDATE threads SET bundle_id = NULL, bundle_source = NULL WHERE bundle_id = ?1",
+                params![id],
+            )?;
+            tx.execute(
+                "DELETE FROM bundle_exclusions WHERE bundle_id = ?1",
+                params![id],
+            )?;
+            tx.execute("DELETE FROM bundles WHERE id = ?1", params![id])?;
+            tx.commit()
+        })
+    }
+
+    fn set_thread_bundle(
+        &self,
+        thread_id: &ThreadId,
+        bundle: Option<(&str, BundleSource)>,
+    ) -> Result<bool, StoreError> {
+        let (id, source) = match bundle {
+            Some((id, source)) => (Some(id), Some(source.as_str())),
+            None => (None, None),
+        };
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET bundle_id = ?2, bundle_source = ?3 WHERE id = ?1",
+                params![thread_id, id, source],
+            )
+        })?;
+        Ok(n > 0)
+    }
+
+    fn thread_bundle_source(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<BundleSource>, StoreError> {
+        let source: Option<String> = self.with(|c| {
+            c.query_row(
+                "SELECT bundle_source FROM threads WHERE id = ?1 AND bundle_id IS NOT NULL",
+                params![thread_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
+        })?;
+        Ok(source.map(|s| BundleSource::parse(&s)))
+    }
+
+    fn exclude_from_bundle(&self, bundle_id: &str, thread_id: &ThreadId) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT OR IGNORE INTO bundle_exclusions (bundle_id, thread_id) VALUES (?1, ?2)",
+                params![bundle_id, thread_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn clear_bundle_exclusion(
+        &self,
+        bundle_id: &str,
+        thread_id: &ThreadId,
+    ) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM bundle_exclusions WHERE bundle_id = ?1 AND thread_id = ?2",
+                params![bundle_id, thread_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn is_excluded_from_bundle(
+        &self,
+        bundle_id: &str,
+        thread_id: &ThreadId,
+    ) -> Result<bool, StoreError> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT 1 FROM bundle_exclusions WHERE bundle_id = ?1 AND thread_id = ?2",
+                params![bundle_id, thread_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|r| r.is_some())
+        })
+    }
+
+    fn list_bundle_threads(&self, bundle_id: &str) -> Result<Vec<Thread>, StoreError> {
+        let junk = format!(
+            "({} OR {})",
+            has_label_sql("labels", "TRASH"),
+            has_label_sql("labels", "SPAM")
+        );
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                  WHERE bundle_id = ?1 AND NOT {junk}
+                  ORDER BY last_msg_at DESC"
+            ))?;
+            let rows = stmt.query_map(params![bundle_id], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
+    fn list_threads_needing_anchors(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE anchors_msg_count IS NULL OR anchors_msg_count != msg_count
+                 ORDER BY last_msg_at DESC
+                 LIMIT ?1"
+            ))?;
+            let rows = stmt.query_map(params![limit], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
+    fn set_thread_anchors(
+        &self,
+        thread_id: &ThreadId,
+        anchors: &[String],
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            tx.execute(
+                "DELETE FROM thread_anchors WHERE thread_id = ?1",
+                params![thread_id],
+            )?;
+            for anchor in anchors {
+                tx.execute(
+                    "INSERT OR IGNORE INTO thread_anchors (thread_id, anchor) VALUES (?1, ?2)",
+                    params![thread_id, anchor],
+                )?;
+            }
+            tx.execute(
+                "UPDATE threads SET anchors_msg_count = ?2 WHERE id = ?1",
+                params![thread_id, msg_count],
+            )?;
+            tx.commit()
+        })
+    }
+
+    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT anchor FROM thread_anchors WHERE thread_id = ?1 ORDER BY anchor",
+            )?;
+            let rows = stmt.query_map(params![thread_id], |r| r.get(0))?;
+            rows.collect()
+        })
+    }
+
+    fn threads_with_anchors(
+        &self,
+        anchors: &[String],
+    ) -> Result<Vec<(ThreadId, Vec<String>)>, StoreError> {
+        if anchors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = serde_json::to_string(anchors).map_err(err)?;
+        let pairs: Vec<(String, String)> = self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT thread_id, anchor FROM thread_anchors
+                  WHERE anchor IN (SELECT value FROM json_each(?1))
+                  ORDER BY thread_id, anchor",
+            )?;
+            let rows = stmt.query_map(params![list], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect()
+        })?;
+        let mut out: Vec<(ThreadId, Vec<String>)> = Vec::new();
+        for (thread, anchor) in pairs {
+            match out.last_mut() {
+                Some((t, a)) if *t == thread => a.push(anchor),
+                _ => out.push((thread, vec![anchor])),
+            }
+        }
+        Ok(out)
     }
 
     fn rename_triage_label(&self, id: &str, new_name: &str) -> Result<(), StoreError> {
@@ -2004,6 +2277,7 @@ mod tests {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -2102,6 +2376,7 @@ mod tests {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,
@@ -2312,6 +2587,90 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(ids(&s, &ThreadFilter::Label("L2".to_string())), ["t2"]);
+    }
+
+    #[test]
+    fn bundles_membership_anchors_and_exclusions() {
+        let s = store();
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        seed_labelled(&s, "t2", &["INBOX"], true, false, 900);
+        seed_labelled(&s, "junk", &["TRASH"], true, false, 800);
+
+        let mut b = Bundle {
+            id: "b1".into(),
+            name: "Lisbon trip".into(),
+            kind: BundleKind::Trip,
+            description: String::new(),
+            status: BundleStatus::Active,
+            created_at: 1,
+            updated_at: 1,
+        };
+        s.upsert_bundle(&b).unwrap();
+        b.name = "Lisbon".into();
+        b.status = BundleStatus::Archived;
+        b.updated_at = 2;
+        s.upsert_bundle(&b).unwrap();
+        assert_eq!(s.list_bundles().unwrap(), vec![b.clone()]);
+
+        let t1 = "t1".to_string();
+        assert!(s
+            .set_thread_bundle(&t1, Some(("b1", BundleSource::User)))
+            .unwrap());
+        s.set_thread_bundle(&"junk".to_string(), Some(("b1", BundleSource::Link)))
+            .unwrap();
+        assert!(!s
+            .set_thread_bundle(&"nope".to_string(), Some(("b1", BundleSource::User)))
+            .unwrap());
+        assert_eq!(
+            s.thread_bundle_source(&t1).unwrap(),
+            Some(BundleSource::User)
+        );
+        assert_eq!(
+            s.get_thread(&t1).unwrap().unwrap().bundle_id.as_deref(),
+            Some("b1")
+        );
+        // Trash never shows in a bundle.
+        let ids: Vec<String> = s
+            .list_bundle_threads("b1")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, vec!["t1"]);
+        // A provider re-upsert keeps the membership (local-only column).
+        seed_labelled(&s, "t1", &["INBOX"], false, false, 1100);
+        assert_eq!(
+            s.get_thread(&t1).unwrap().unwrap().bundle_id.as_deref(),
+            Some("b1")
+        );
+
+        assert_eq!(s.list_threads_needing_anchors(10).unwrap().len(), 3);
+        s.set_thread_anchors(&t1, &["order:1".into(), "booking:K7".into()], 1)
+            .unwrap();
+        s.set_thread_anchors(&"t2".to_string(), &["order:1".into()], 1)
+            .unwrap();
+        assert_eq!(s.list_threads_needing_anchors(10).unwrap().len(), 1);
+        assert_eq!(
+            s.thread_anchors(&t1).unwrap(),
+            vec!["booking:K7", "order:1"]
+        );
+        assert_eq!(
+            s.threads_with_anchors(&["order:1".into()]).unwrap(),
+            vec![
+                ("t1".to_string(), vec!["order:1".to_string()]),
+                ("t2".to_string(), vec!["order:1".to_string()])
+            ]
+        );
+
+        s.exclude_from_bundle("b1", &"t2".to_string()).unwrap();
+        assert!(s.is_excluded_from_bundle("b1", &"t2".to_string()).unwrap());
+        s.clear_bundle_exclusion("b1", &"t2".to_string()).unwrap();
+        assert!(!s.is_excluded_from_bundle("b1", &"t2".to_string()).unwrap());
+
+        s.delete_bundle("b1").unwrap();
+        assert!(s.list_bundles().unwrap().is_empty());
+        assert!(s.get_thread(&t1).unwrap().unwrap().bundle_id.is_none());
+        assert_eq!(s.thread_bundle_source(&t1).unwrap(), None);
     }
 
     #[test]
@@ -3009,6 +3368,7 @@ mod tests {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
             labels: vec!["INBOX".to_string()],
             has_attachment: false,
             priority: None,

@@ -663,6 +663,9 @@ impl Engine {
         if changed {
             self.notify_threads_updated();
         }
+        // Bundles: link new mail by shared booking, order and tracking
+        // numbers. Local and cheap, so before the model passes.
+        self.link_bundles_pending();
         // Jev triage rides the sync cadence, never its own timer (desktop
         // does the same at the end of its poll tick).
         self.classify_pending().await;
@@ -1086,6 +1089,7 @@ pub(crate) mod tests_support {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
         }
     }
 }

@@ -18,6 +18,7 @@
 uniffi::setup_scaffolding!();
 
 mod ai;
+mod bundles;
 mod engine;
 mod push;
 mod secrets;
@@ -26,5 +27,6 @@ mod suggest;
 mod types;
 
 pub use ai::*;
+pub use bundles::*;
 pub use engine::*;
 pub use types::*;

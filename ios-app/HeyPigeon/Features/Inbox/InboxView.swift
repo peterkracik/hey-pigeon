@@ -202,6 +202,7 @@ struct ThreadList: View {
         List {
             ForEach(model.groupedRows) { group in
                 Section {
+                    ForEach(group.folds) { fold in foldCell(fold) }
                     ForEach(group.rows) { row in cell(row) }
                 } header: {
                     GroupHeader(group: group)
@@ -249,6 +250,31 @@ struct ThreadList: View {
         .listRowSeparator(.hidden)
         .contextMenu { RowMenu(row: row) }
         .onAppear { model.loadMoreIfNeeded(current: row) }
+    }
+
+    /// A bundle's quiet mail as one row (AppModel.fold): tap opens the
+    /// bundle, any swipe marks every email in it done.
+    private func foldCell(_ fold: BundleFold) -> some View {
+        let done = SwipeAction(title: "Mark all done", systemImage: "checkmark", tint: Theme.accent) {
+            model.markDone(fold)
+        }
+        return SwipeableRow(leading: [done, done], trailing: [done, done], background: Theme.card) {
+            BundleFoldRow(fold: fold)
+                .padding(.horizontal, 16).padding(.vertical, 7)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    Keyboard.dismiss()
+                    model.openBundles(at: fold.bundle.id)
+                }
+        }
+        .padding(.bottom, 1)
+        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .contextMenu {
+            Button { model.openBundles(at: fold.bundle.id) } label: { Label("Open bundle", systemImage: "square.stack") }
+            Button { model.markDone(fold) } label: { Label("Mark all done", systemImage: "checkmark") }
+        }
     }
 
     private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {
@@ -319,6 +345,9 @@ struct RowMenu: View {
         }
         Button { model.pendingRemind = row } label: {
             Label(row.scheduledAt == nil ? "Remind me" : "Change reminder", systemImage: "clock")
+        }
+        Button { model.pendingBundlePick = row } label: {
+            Label(row.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
         }
         Button { model.togglePin(row) } label: {
             Label(row.isPinned ? "Unpin" : "Pin", systemImage: row.isPinned ? "pin.slash" : "pin")

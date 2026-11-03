@@ -837,6 +837,7 @@ mod tests {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
             labels: vec!["INBOX".to_string(), "UNREAD".to_string()],
             has_attachment: false,
             priority: None,

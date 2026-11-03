@@ -148,6 +148,10 @@ struct RootView: View {
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
             .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
             .sheet(item: $model.pendingRemind, onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
+            .sheet(item: $model.pendingBundlePick, onDismiss: { Keyboard.dismiss() }) { row in AddToBundleSheet(row: row) }
+            .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
+                BundlesSheet(initialBundleId: model.bundlesStartId)
+            }
             // The composer as a dialog or full screen (its button switches).
             // Each presentation only clears the draft when it is the one in
             // use, so switching does not close the composer.

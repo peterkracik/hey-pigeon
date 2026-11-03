@@ -37,6 +37,17 @@ struct SettingsView: View {
                                 .font(.caption).foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    // The Mac lists every thread with its chip; only the
+                    // phone and the iPad fold.
+                    if AppModel.foldsOnThisPlatform {
+                        Toggle(isOn: $model.foldBundlesEnabled) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Fold bundle updates")
+                                Text("Read confirmations, receipts and shipping updates in a bundle share one row in your inbox. Mail that needs you keeps its own row.")
+                                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                    }
                     Toggle(isOn: $model.loadRemoteImages) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Load remote images")

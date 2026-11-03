@@ -677,6 +677,10 @@ protocol MailEngine: AnyObject {
     /// the whole list comes back, whatever `before` and `limit` say.
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func search(_ query: String, limit: Int) throws -> [ThreadRow]
+    /// `search` off the main thread, for the words typed in the field: a
+    /// short word ranks nearly every message and froze the keyboard when
+    /// it ran on the main actor. No results on an error.
+    func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow]
     func thread(id: String) async throws -> ThreadDetail?
     /// The thread with whatever messages the store already holds — bodies
     /// only when it was opened before. No network: what the Spotlight index
@@ -764,4 +768,11 @@ protocol MailEngine: AnyObject {
     func renameTriageLabel(id: String, name: String) throws
     func deleteTriageLabel(id: String) throws
     func reanalyzeTriage() throws
+}
+
+extension MailEngine {
+    /// The mock answers in memory, so the plain call is enough.
+    func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow] {
+        (try? search(query, limit: limit)) ?? []
+    }
 }

@@ -255,6 +255,19 @@ struct AppModelTests {
         model.searchFilters = SearchFilters()
     }
 
+    @Test func typedWordsSearchAfterAPauseAndTheNewestQueryWins() async throws {
+        let subject = try #require(model.rows.first?.subject)
+        let word = try #require(subject.split(separator: " ").first.map(String.init))
+        model.searchText = "zzzz-no-such-word"
+        model.searchText = word // within the typing pause: the first never runs
+        #expect(model.isSearchPending)
+        for _ in 0..<100 where model.isSearchPending { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(!model.isSearchPending)
+        #expect(!model.searchResults.isEmpty)
+        model.searchText = ""
+        #expect(!model.isSearchPending && model.searchResults.isEmpty)
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

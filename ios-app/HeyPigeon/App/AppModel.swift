@@ -130,10 +130,18 @@ final class AppModel {
     /// The core caps a search at this many threads (Search shows "50+").
     static let searchLimit = 50
 
-    var searchText = "" { didSet { runSearch() } }
+    var searchText = "" {
+        didSet { if searchText != oldValue { runSearch(after: Self.typingPause) } }
+    }
     /// The Search tab's filter buttons, added to the typed words as operators.
     var searchFilters = SearchFilters() { didSet { runSearch() } }
     private(set) var searchResults: [ThreadRow] = [] { didSet { regroup() } }
+    /// A typed search is on its way: the list keeps the previous results
+    /// (or nothing) instead of flashing "No results".
+    private(set) var isSearchPending = false
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// Keystrokes closer together than this make one query, not one each.
+    static let typingPause: Duration = .milliseconds(150)
     var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty || !searchFilters.isEmpty }
     /// Whether the list shows the search results instead of the view. On
     /// iOS search is its own tab: the query stays there for when the user
@@ -499,10 +507,33 @@ final class AppModel {
         return rows.filter { seen.insert($0.id).inserted }
     }
 
-    private func runSearch() {
-        guard isSearching else { searchResults = []; return }
+    /// Filters alone are a plain filtered scan, newest first: answered at
+    /// once. Typed words go through the ranked full-text search, which runs
+    /// off the main thread (the first letter matched nearly every message
+    /// and the keyboard stalled), after `pause`; the newest query wins.
+    private func runSearch(after pause: Duration = .zero) {
+        searchTask?.cancel()
+        searchTask = nil
+        guard isSearching else {
+            searchResults = []
+            isSearchPending = false
+            return
+        }
         let query = (searchFilters.operators + [searchText]).joined(separator: " ")
-        searchResults = Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? [])
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            searchResults = Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? [])
+            isSearchPending = false
+            return
+        }
+        isSearchPending = true
+        searchTask = Task { [weak self] in
+            if pause > .zero { try? await Task.sleep(for: pause) }
+            guard !Task.isCancelled, let engine = self?.engine else { return }
+            let rows = await engine.searchInBackground(query, limit: Self.searchLimit)
+            guard !Task.isCancelled, let self else { return }
+            searchResults = Self.unique(rows)
+            isSearchPending = false
+        }
     }
 
     // MARK: Search — recent searches and the From / To people

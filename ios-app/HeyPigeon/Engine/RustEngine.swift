@@ -128,6 +128,18 @@ final class RustEngine: MailEngine {
     }
 
     func search(_ query: String, limit: Int) throws -> [ThreadRow] {
+        try Self.search(engine, query, limit: limit)
+    }
+
+    func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow] {
+        let engine = engine
+        return await Task.detached(priority: .userInitiated) {
+            (try? Self.search(engine, query, limit: limit)) ?? []
+        }.value
+    }
+
+    /// The FTS query and the row mapping, callable from any thread.
+    private nonisolated static func search(_ engine: Engine, _ query: String, limit: Int) throws -> [ThreadRow] {
         try engine.search(query: query, limit: UInt32(limit)).map { hit in
             ThreadRow(hit.thread, snippet: hit.snippet.highlightMarkersStripped)
         }

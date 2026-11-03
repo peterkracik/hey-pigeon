@@ -234,6 +234,40 @@ struct AppModelTests {
         #expect(!model.isSearching && model.searchResults.isEmpty)
     }
 
+    /// iOS only: the Mac has no Search tab and searches in the list it is on.
+    @Test(.enabled(if: AppModel.searchHasOwnTab))
+    func otherTabsShowTheirWholeListWhileASearchIsKept() {
+        model.navigate(to: .search)
+        model.searchFilters.unreadOnly = true
+        let results = Set(model.groupedRows.flatMap(\.rows).map(\.id))
+        #expect(results == Set(model.searchResults.map(\.id)))
+
+        model.navigate(to: .inbox)
+        #expect(!model.showsSearchResults)
+        let inbox = Set(model.groupedRows.flatMap(\.rows).map(\.id))
+        #expect(inbox == Set(model.rows.map(\.id)))
+        #expect(inbox != results) // the read threads are back
+
+        // The query is still there when the user comes back to Search.
+        model.navigate(to: .search)
+        #expect(model.showsSearchResults)
+        #expect(Set(model.groupedRows.flatMap(\.rows).map(\.id)) == results)
+        model.searchFilters = SearchFilters()
+    }
+
+    @Test func typedWordsSearchAfterAPauseAndTheNewestQueryWins() async throws {
+        let subject = try #require(model.rows.first?.subject)
+        let word = try #require(subject.split(separator: " ").first.map(String.init))
+        model.searchText = "zzzz-no-such-word"
+        model.searchText = word // within the typing pause: the first never runs
+        #expect(model.isSearchPending)
+        for _ in 0..<100 where model.isSearchPending { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(!model.isSearchPending)
+        #expect(!model.searchResults.isEmpty)
+        model.searchText = ""
+        #expect(!model.isSearchPending && model.searchResults.isEmpty)
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

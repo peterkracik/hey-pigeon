@@ -15,7 +15,9 @@ struct SearchScreen: View {
         @Bindable var model = model
         NavigationStack(path: $path) {
             Group {
-                if model.isSearching && model.groupedRows.isEmpty {
+                if model.isSearching && model.groupedRows.isEmpty && model.isSearchPending {
+                    Color.clear
+                } else if model.isSearching && model.groupedRows.isEmpty {
                     EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
                 } else if model.isSearching {
                     VStack(spacing: 0) {

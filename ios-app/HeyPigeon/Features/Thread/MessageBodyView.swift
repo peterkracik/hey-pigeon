@@ -430,19 +430,20 @@ private struct HTMLView {
         var loadedKey: String?
         init(_ parent: HTMLView) { self.parent = parent }
 
-        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void)
-        {
+        /// The async form on purpose: the completion-handler one written
+        /// without the SDK's `@MainActor @Sendable` on the handler only
+        /// nearly matched the protocol (a warning, not an error), so WebKit
+        /// never saw it and followed every link inside the message.
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
             // Only the initial loadHTMLString navigates in place. Every click
             // leaves for the default browser — never in-app navigation (DESIGN.md).
             if action.navigationType == .other, action.request.url?.scheme == "about" {
-                decisionHandler(.allow)
-                return
+                return .allow
             }
             if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
                 parent.onLink(url)
             }
-            decisionHandler(.cancel)
+            return .cancel
         }
 
         /// target="_blank" links ask for a new web view instead of

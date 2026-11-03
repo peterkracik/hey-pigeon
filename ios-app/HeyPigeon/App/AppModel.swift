@@ -249,6 +249,41 @@ final class AppModel {
         static let remoteImages = "mail.remote_images"
         /// "Always load from this sender": lowercased addresses.
         static let imageSenders = "mail.image_senders"
+        /// The triage labels in the user's order (ids), Settings › Triage.
+        static let triageLabelOrder = "triage.label_order"
+    }
+
+    /// The user's order of the triage labels, by id. The core lists them
+    /// alphabetically; this is laid over that list (`orderedTriageLabels`).
+    /// Synced, so the bar shows the same order on every device.
+    var triageLabelOrder: [String] = [] {
+        didSet {
+            savePref(PrefName.triageLabelOrder, triageLabelOrder)
+            triageLabels = Self.orderedTriageLabels(triageLabels, by: triageLabelOrder)
+        }
+    }
+
+    /// Settings › Triage's drag: the new order becomes the synced one.
+    func moveTriageLabels(from source: IndexSet, to destination: Int) {
+        var ids = triageLabels.map(\.id)
+        ids.move(fromOffsets: source, toOffset: destination)
+        triageLabelOrder = ids
+    }
+
+    /// Labels in `order` first, in that order; the rest (new ones, or ones
+    /// another device added) after them in the core's order. Ids in the
+    /// order that no longer exist are skipped.
+    static func orderedTriageLabels(_ labels: [TriageLabelItem], by order: [String]) -> [TriageLabelItem] {
+        guard !order.isEmpty else { return labels }
+        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        return labels.enumerated().sorted { a, b in
+            switch (rank[a.element.id], rank[b.element.id]) {
+            case let (x?, y?): x < y
+            case (.some, nil): true
+            case (nil, .some): false
+            case (nil, nil): a.offset < b.offset
+            }
+        }.map(\.element)
     }
 
     /// Senders whose web pictures always load. Synced, so the Mac and the
@@ -425,6 +460,7 @@ final class AppModel {
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
+        if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
         adoptingPrefs = false
     }
 
@@ -496,7 +532,7 @@ final class AppModel {
         accounts = (try? engine.accounts()) ?? []
         accountStates = Dictionary(uniqueKeysWithValues: ((try? engine.accountStates()) ?? []).map { ($0.id, $0) })
         labels = (try? engine.labels()) ?? []
-        triageLabels = (try? engine.triageLabels()) ?? []
+        triageLabels = Self.orderedTriageLabels((try? engine.triageLabels()) ?? [], by: triageLabelOrder)
         aiConfigured = (try? engine.aiStatus())?.configured ?? false
         if let selected = selectedAccountId, !accounts.contains(where: { $0.id == selected }) {
             selectedAccountId = nil

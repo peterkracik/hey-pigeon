@@ -282,6 +282,9 @@ final class AppModel {
         static let triageLabelOrder = "triage.label_order"
         /// Settings › Inbox › "Fold bundle updates" (unset = on).
         static let foldBundles = "bundles.fold_inbox"
+        /// Settings › AI › "Make bundles" (the core reads it too:
+        /// crates/ffi/src/bundles.rs, unset = on).
+        static let autoBundles = "bundles.auto"
     }
 
     /// The user's order of the triage labels, by id. The core lists them
@@ -419,6 +422,10 @@ final class AppModel {
     var suggestEnabled = true {
         didSet { savePref(PrefName.suggest, suggestEnabled) }
     }
+    /// The model groups new mail into trip, shopping and project bundles.
+    var autoBundlesEnabled = true {
+        didSet { savePref(PrefName.autoBundles, autoBundlesEnabled) }
+    }
     /// "Triage my inbox" only reports what it would do; nothing changes.
     var triageDryRun = false {
         didSet { savePref(PrefName.triageDryRun, triageDryRun) }
@@ -506,6 +513,7 @@ final class AppModel {
         if let v = prefs[PrefName.triageDryRun] as? Bool { triageDryRun = v }
         if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
+        if let v = prefs[PrefName.autoBundles] as? Bool { autoBundlesEnabled = v }
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }

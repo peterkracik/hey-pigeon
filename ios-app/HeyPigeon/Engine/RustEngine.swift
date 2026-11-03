@@ -453,30 +453,14 @@ private extension ThreadRow {
     }
 }
 
-private extension BundleCategory {
-    var ffi: BundleKind {
-        switch self {
-        case .trip: .trip
-        case .shopping: .shopping
-        case .project: .project
-        case .other: .other
-        }
-    }
-}
-
 private extension BundleItem {
     init(_ b: MailBundle) {
-        let category: BundleCategory = switch b.kind {
-        case .trip: .trip
-        case .shopping: .shopping
-        case .project: .project
-        case .other: .other
-        }
         self.init(
-            id: b.id, name: b.name, category: category, description: b.description,
+            id: b.id, name: b.name, category: BundleCategory(b.kind), description: b.description,
             isArchived: b.archived, createdAt: Date(epochMs: b.createdAt),
             threadCount: Int(b.threadCount), openCount: Int(b.openCount),
-            lastActivityAt: b.lastActivityAt > 0 ? Date(epochMs: b.lastActivityAt) : nil
+            lastActivityAt: b.lastActivityAt > 0 ? Date(epochMs: b.lastActivityAt) : nil,
+            isAutomatic: b.automatic
         )
     }
 }

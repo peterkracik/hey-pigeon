@@ -23,6 +23,18 @@ final class MockEngine: MailEngine {
     private var aiModel = "gpt-4o-mini"
     private var jevKey: String?
     private var autoTriage = false
+    /// A bundle as the core stores it; the counts are derived on read.
+    private struct MockBundle {
+        let id: String
+        var name: String
+        var category: BundleCategory
+        var description: String
+        var isArchived: Bool
+        let createdAt: Date
+    }
+    private var bundleStore: [MockBundle] = []
+    /// The user's "not this one" choices (bundle id, thread id).
+    private var bundleExclusions: Set<[String]> = []
 
     init() {
         accountList = [
@@ -71,6 +83,11 @@ final class MockEngine: MailEngine {
                 "Your invoice for October was paid.", hoursAgo: 200, triage: ["tl1"]),
         ]
         rows = Dictionary(uniqueKeysWithValues: sample.map { ($0.id, $0) })
+        // One bundle so the chip, the list and the bundle view have
+        // something to show: the Lisbon check-in email.
+        bundleStore = [MockBundle(id: "b1", name: "Lisbon trip", category: .trip, description: "",
+                                  isArchived: false, createdAt: now.addingTimeInterval(-86_400 * 7))]
+        update("t4") { $0.bundleId = "b1" }
     }
 
     func accounts() throws -> [MailAccount] { accountList }
@@ -421,24 +438,115 @@ final class MockEngine: MailEngine {
     }
     func reanalyzeTriage() throws {}
 
+    // Bundles. The core's identifier links (crates/core/src/bundles.rs) are
+    // tested in Rust; the mock keeps only the user's own choices.
+
+    func bundles() throws -> [BundleItem] {
+        bundleStore
+            .sorted { ($0.isArchived ? 1 : 0, $0.name.lowercased()) < ($1.isArchived ? 1 : 0, $1.name.lowercased()) }
+            .map(item)
+    }
+
+    func bundleContents(id: String) throws -> BundleContents? {
+        guard let b = bundleStore.first(where: { $0.id == id }) else { return nil }
+        // Trashed mock rows are removed outright, so nothing to filter.
+        let threads = rows.values.filter { $0.bundleId == id }.sorted { $0.lastMessageAt > $1.lastMessageAt }
+        let facts = threads.compactMap { t -> BundleFactItem? in
+            // The one identifier the sample mail carries: a flight number.
+            guard let flight = t.snippet.split(separator: " ").first(where: { $0.hasPrefix("LH") }) else { return nil }
+            return BundleFactItem(category: .flight, value: String(flight), threadId: t.id, at: t.lastMessageAt)
+        }
+        return BundleContents(bundle: item(b), facts: facts, threads: threads)
+    }
+
+    func createBundle(name: String, category: BundleCategory, description: String, threadIds: [String]) throws -> BundleItem {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { throw MockError.invalid("bundle name cannot be empty") }
+        let b = MockBundle(id: "b\(bundleStore.count + 1)-\(UUID().uuidString.prefix(4))", name: trimmed,
+                           category: category, description: description, isArchived: false, createdAt: Date())
+        bundleStore.append(b)
+        for id in threadIds { update(id) { $0.bundleId = b.id } }
+        onThreadsUpdated?()
+        return item(b)
+    }
+
+    func updateBundle(id: String, name: String, category: BundleCategory, description: String) throws {
+        guard let i = bundleStore.firstIndex(where: { $0.id == id }) else { return }
+        bundleStore[i].name = name
+        bundleStore[i].category = category
+        bundleStore[i].description = description
+    }
+
+    func setBundleArchived(id: String, _ archived: Bool) throws {
+        guard let i = bundleStore.firstIndex(where: { $0.id == id }) else { return }
+        bundleStore[i].isArchived = archived
+    }
+
+    func deleteBundle(id: String) throws {
+        bundleStore.removeAll { $0.id == id }
+        for r in rows.values where r.bundleId == id { update(r.id) { $0.bundleId = nil } }
+        bundleExclusions = bundleExclusions.filter { $0.first != id }
+        onThreadsUpdated?()
+    }
+
+    @discardableResult
+    func addToBundle(threadId: String, bundleId: String) throws -> Int {
+        guard let i = bundleStore.firstIndex(where: { $0.id == bundleId }) else { return 0 }
+        bundleExclusions.remove([bundleId, threadId])
+        update(threadId) { $0.bundleId = bundleId }
+        // Like the core: adding mail to an archived bundle reopens it.
+        bundleStore[i].isArchived = false
+        onThreadsUpdated?()
+        return 0
+    }
+
+    func removeFromBundle(threadId: String) throws {
+        guard let b = rows[threadId]?.bundleId else { return }
+        bundleExclusions.insert([b, threadId])
+        update(threadId) { $0.bundleId = nil }
+        onThreadsUpdated?()
+    }
+
+    func suggestedBundle(threadId: String) throws -> String? { nil }
+
+    private func item(_ b: MockBundle) -> BundleItem {
+        let threads = rows.values.filter { $0.bundleId == b.id }
+        return BundleItem(id: b.id, name: b.name, category: b.category, description: b.description,
+                          isArchived: b.isArchived, createdAt: b.createdAt, threadCount: threads.count,
+                          openCount: threads.filter { !$0.isDone }.count,
+                          lastActivityAt: threads.map(\.lastMessageAt).max())
+    }
+
+    /// What the core's `EngineError::Invalid` would say.
+    enum MockError: LocalizedError {
+        case invalid(String)
+        var errorDescription: String? {
+            switch self {
+            case .invalid(let why): why
+            }
+        }
+    }
+
     // ThreadRow is immutable on purpose; rebuild it through a mutable copy.
     private struct Draft {
         var isRead: Bool, isArchived: Bool, scheduledAt: Date?, isFollowUp: Bool,
             needsReply: Bool, isStarred: Bool, labels: [String], triageLabelIds: [String],
-            suggestion: MailSuggestion?
+            suggestion: MailSuggestion?, bundleId: String?
     }
 
     private func update(_ id: String, _ change: (inout Draft) -> Void) {
         guard let r = rows[id] else { return }
         var d = Draft(isRead: r.isRead, isArchived: r.isArchived, scheduledAt: r.scheduledAt,
                       isFollowUp: r.isFollowUp, needsReply: r.needsReply, isStarred: r.isStarred,
-                      labels: r.labels, triageLabelIds: r.triageLabelIds, suggestion: r.suggestion)
+                      labels: r.labels, triageLabelIds: r.triageLabelIds, suggestion: r.suggestion,
+                      bundleId: r.bundleId)
         change(&d)
         rows[id] = ThreadRow(id: r.id, accountId: r.accountId, subject: r.subject, snippet: r.snippet,
                              lastMessageAt: r.lastMessageAt, isRead: d.isRead, isArchived: d.isArchived,
                              messageCount: r.messageCount, fromSummary: r.fromSummary, lastFromAddress: r.lastFromAddress,
                              scheduledAt: d.scheduledAt, isFollowUp: d.isFollowUp, needsReply: d.needsReply,
                              isStarred: d.isStarred, hasAttachment: r.hasAttachment, priority: r.priority,
-                             triageLabelIds: d.triageLabelIds, labels: d.labels, suggestion: d.suggestion)
+                             triageLabelIds: d.triageLabelIds, labels: d.labels, suggestion: d.suggestion,
+                             bundleId: d.bundleId)
     }
 }

@@ -1,5 +1,5 @@
-// The Search tab. The field (the tab bar's search slot) holds only the
-// words; the filters are buttons along the top — From, To, Unread and the
+// The Search tab. The field (always on screen, under the title) holds
+// only the words; the filters are buttons along the top — From, To, Unread and the
 // account — that the model turns into the core's operators. With nothing
 // typed the screen lists recent searches. Results use the inbox's rows and
 // gestures, with the matching words underlined.
@@ -15,7 +15,9 @@ struct SearchScreen: View {
         @Bindable var model = model
         NavigationStack(path: $path) {
             Group {
-                if model.isSearching && model.groupedRows.isEmpty {
+                if model.isSearching && model.groupedRows.isEmpty && model.isSearchPending {
+                    Color.clear
+                } else if model.isSearching && model.groupedRows.isEmpty {
                     EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
                 } else if model.isSearching {
                     VStack(spacing: 0) {
@@ -30,10 +32,11 @@ struct SearchScreen: View {
             .background(Theme.canvas)
             .safeAreaInset(edge: .top, spacing: 0) { SearchFilterBar(picking: $picking) }
             .navigationTitle("Search")
-            // On the phone the field lives in the tab bar, so the empty
-            // navigation bar would only push the filters down.
-            .hidesNavigationBarInCompactWidth()
-            .searchable(text: $model.searchText, prompt: "Search")
+            .inlineNavigationTitle()
+            // Pinned in the navigation bar's drawer. Left to the system the
+            // field went with the hidden navigation bar on the phone and
+            // there was no way to type a free-text search at all.
+            .alwaysShownSearch(text: $model.searchText, prompt: "Search mail")
             .onSubmit(of: .search) { model.rememberSearch() }
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }

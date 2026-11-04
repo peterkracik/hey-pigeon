@@ -45,10 +45,30 @@ struct RowGroup: Identifiable {
     let title: String
     let rows: [ThreadRow]
     let isPinned: Bool
+    /// Bundles whose quiet mail folds into one row in this group
+    /// (`AppModel.fold`), newest first. Their threads are not in `rows`.
+    var folds: [BundleFold] = []
     var id: String { title }
     /// Rows worth summarizing: not done.
     var active: [ThreadRow] { rows.filter { !$0.isDone } }
     var summaryKey: String { title + "|" + active.map(\.id).joined(separator: ",") }
+}
+
+/// One folded inbox row: a bundle's mail that needs nothing from the user
+/// (read, low priority, no flag), shown as "Lisbon trip · 3 updates"
+/// (docs/bundles.md "Folded inbox rows"). Anything that asks for action
+/// keeps its own row with the bundle chip.
+struct BundleFold: Identifiable, Hashable {
+    let bundle: BundleItem
+    /// Newest first.
+    let rows: [ThreadRow]
+    var id: String { bundle.id }
+    var newest: Date { rows.first?.lastMessageAt ?? .distantPast }
+    /// "3 updates · Seat chosen, Your receipt" — the subjects, newest first.
+    var summary: String {
+        let subjects = rows.prefix(3).map { $0.subject.isEmpty ? "(no subject)" : $0.subject }
+        return "\(rows.count) updates · " + subjects.joined(separator: ", ")
+    }
 }
 
 @MainActor
@@ -130,11 +150,32 @@ final class AppModel {
     /// The core caps a search at this many threads (Search shows "50+").
     static let searchLimit = 50
 
-    var searchText = "" { didSet { runSearch() } }
+    var searchText = "" {
+        didSet { if searchText != oldValue { runSearch(after: Self.typingPause) } }
+    }
     /// The Search tab's filter buttons, added to the typed words as operators.
     var searchFilters = SearchFilters() { didSet { runSearch() } }
     private(set) var searchResults: [ThreadRow] = [] { didSet { regroup() } }
+    /// A typed search is on its way: the list keeps the previous results
+    /// (or nothing) instead of flashing "No results".
+    private(set) var isSearchPending = false
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// Keystrokes closer together than this make one query, not one each.
+    static let typingPause: Duration = .milliseconds(150)
     var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty || !searchFilters.isEmpty }
+    /// Whether the list shows the search results instead of the view. On
+    /// iOS search is its own tab: the query stays there for when the user
+    /// comes back, and Inbox, Scheduled and Need reply show their whole
+    /// list (they used to show the search results). The Mac searches in
+    /// the list it is on, so there any search replaces the list.
+    var showsSearchResults: Bool {
+        isSearching && (tab == .search || !Self.searchHasOwnTab)
+    }
+    #if os(iOS)
+    nonisolated static let searchHasOwnTab = true
+    #else
+    nonisolated static let searchHasOwnTab = false
+    #endif
     /// The typed words (hand-typed operators left out), underlined in result rows.
     var searchTerms: [String] {
         searchText.split(whereSeparator: \.isWhitespace).map(String.init).filter { !$0.contains(":") }
@@ -156,6 +197,15 @@ final class AppModel {
     var composeDraft: SendDraft?
     var showSidebar = false
     var showSettings = false
+    /// The Bundles list (a sheet on both platforms).
+    var showBundles = false
+    /// The bundle the sheet opens on (a folded inbox row was tapped).
+    var bundlesStartId: String?
+    /// "Add to bundle…" for this thread (AddToBundleSheet).
+    var pendingBundlePick: ThreadRow?
+    /// Every bundle, active first; re-read on each reload (counts move with
+    /// the mail).
+    private(set) var bundles: [BundleItem] = []
     /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
     var askSheet: AskPresentation?
 
@@ -222,6 +272,111 @@ final class AppModel {
         /// Settings › AI › "Suggest for new mail" (the core reads it too:
         /// crates/ffi/src/suggest.rs, unset = on).
         static let suggest = "ai.suggest"
+        /// The labels pinned in the sidebar (both apps), by label id.
+        static let pinnedLabels = "sidebar.pinned_labels"
+        /// Settings › Inbox › "Load remote images" (off: ask per sender).
+        static let remoteImages = "mail.remote_images"
+        /// "Always load from this sender": lowercased addresses.
+        static let imageSenders = "mail.image_senders"
+        /// The triage labels in the user's order (ids), Settings › Triage.
+        static let triageLabelOrder = "triage.label_order"
+        /// Settings › Inbox › "Fold bundle updates" (unset = on).
+        static let foldBundles = "bundles.fold_inbox"
+        /// Settings › AI › "Make bundles" (the core reads it too:
+        /// crates/ffi/src/bundles.rs, unset = on).
+        static let autoBundles = "bundles.auto"
+    }
+
+    /// The user's order of the triage labels, by id. The core lists them
+    /// alphabetically; this is laid over that list (`orderedTriageLabels`).
+    /// Synced, so the bar shows the same order on every device.
+    var triageLabelOrder: [String] = [] {
+        didSet {
+            savePref(PrefName.triageLabelOrder, triageLabelOrder)
+            triageLabels = Self.orderedTriageLabels(triageLabels, by: triageLabelOrder)
+        }
+    }
+
+    /// Settings › Triage's drag: the new order becomes the synced one.
+    func moveTriageLabels(from source: IndexSet, to destination: Int) {
+        var ids = triageLabels.map(\.id)
+        ids.move(fromOffsets: source, toOffset: destination)
+        triageLabelOrder = ids
+    }
+
+    /// Labels in `order` first, in that order; the rest (new ones, or ones
+    /// another device added) after them in the core's order. Ids in the
+    /// order that no longer exist are skipped.
+    static func orderedTriageLabels(_ labels: [TriageLabelItem], by order: [String]) -> [TriageLabelItem] {
+        guard !order.isEmpty else { return labels }
+        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        return labels.enumerated().sorted { a, b in
+            switch (rank[a.element.id], rank[b.element.id]) {
+            case let (x?, y?): x < y
+            case (.some, nil): true
+            case (nil, .some): false
+            case (nil, nil): a.offset < b.offset
+            }
+        }.map(\.element)
+    }
+
+    /// Senders whose web pictures always load. Synced, so the Mac and the
+    /// phone trust the same senders; it used to be a per-device list.
+    var imageSenders: Set<String> = [] {
+        didSet { savePref(PrefName.imageSenders, imageSenders.sorted()) }
+    }
+
+    func alwaysLoadImages(from address: String) {
+        imageSenders.insert(address.lowercased())
+        Haptics.light()
+    }
+
+    /// Whether a message from this address shows its web pictures at once.
+    func loadsImages(from address: String) -> Bool {
+        loadRemoteImages || imageSenders.contains(address.lowercased())
+    }
+
+    /// The composer opens full screen instead of as a dialog (the phone: a
+    /// full-screen cover; the Mac: the sheet fills the window). Its button
+    /// switches it while writing; remembered per device, not synced: what
+    /// fits a phone is not what fits a Mac.
+    var composeFullScreen = UserDefaults.standard.bool(forKey: "composeFullScreen") {
+        didSet { UserDefaults.standard.set(composeFullScreen, forKey: "composeFullScreen") }
+    }
+
+    /// Load every message's web pictures without the per-sender "Load".
+    /// Off by default: a remote picture tells the sender the mail was opened.
+    var loadRemoteImages = false {
+        didSet { savePref(PrefName.remoteImages, loadRemoteImages) }
+    }
+
+    /// Labels pinned in the sidebar. With any pinned, the sidebar shows
+    /// only those (and the open one) until ••• expands the whole list.
+    /// Synced, like the other prefs: the Mac and the phone pin the same.
+    var pinnedLabelIds: Set<String> = [] {
+        didSet { savePref(PrefName.pinnedLabels, pinnedLabelIds.sorted()) }
+    }
+
+    func togglePinned(_ label: MailLabelItem) {
+        if pinnedLabelIds.contains(label.id) { pinnedLabelIds.remove(label.id) } else { pinnedLabelIds.insert(label.id) }
+        Haptics.light()
+    }
+
+    /// The sidebar's label rows: everything when nothing is pinned or the
+    /// list is expanded; otherwise the pinned ones and the label the list
+    /// shows now (so the open one never disappears), in the given order.
+    /// `hidden` is how many rows ••• would add.
+    static func sidebarLabels(_ all: [MailLabelItem], pinned: Set<String>, expanded: Bool,
+                              current: String?) -> (shown: [MailLabelItem], hidden: Int) {
+        guard !expanded, all.contains(where: { pinned.contains($0.id) }) else { return (all, 0) }
+        let shown = all.filter { pinned.contains($0.id) || $0.id == current }
+        return (shown, all.count - shown.count)
+    }
+
+    /// The id of the label the list shows, if it shows one.
+    var currentLabelId: String? {
+        if case .label(let id, _) = view { return id }
+        return nil
     }
 
     /// Group pinned messages at the top of the inbox.
@@ -231,6 +386,15 @@ final class AppModel {
             regroup()
         }
     }
+    /// Fold a bundle's quiet mail (read, low priority, no flag) into one
+    /// inbox row. iPhone and iPad; the Mac lists the rows with their chips.
+    var foldBundlesEnabled = true {
+        didSet {
+            savePref(PrefName.foldBundles, foldBundlesEnabled)
+            regroup()
+        }
+    }
+
     /// Generate AI summaries without a click.
     var autoSummarize = false {
         didSet { savePref(PrefName.autoSummarize, autoSummarize) }
@@ -257,6 +421,10 @@ final class AppModel {
     /// the date it names. The core runs it after each sync; off stops it.
     var suggestEnabled = true {
         didSet { savePref(PrefName.suggest, suggestEnabled) }
+    }
+    /// The model groups new mail into trip, shopping and project bundles.
+    var autoBundlesEnabled = true {
+        didSet { savePref(PrefName.autoBundles, autoBundlesEnabled) }
     }
     /// "Triage my inbox" only reports what it would do; nothing changes.
     var triageDryRun = false {
@@ -321,6 +489,11 @@ final class AppModel {
             (PrefName.pinList, "pinListEnabled", defaults.object(forKey: "pinListEnabled") as? Bool),
             (PrefName.autoSummarize, "autoSummarize", defaults.object(forKey: "autoSummarize") as? Bool),
             (PrefName.swipeActions, "swipeActions", defaults.stringArray(forKey: "swipeActions")),
+            // The old per-device "Load" list, newline-separated.
+            (PrefName.imageSenders, "allowedImageSenders",
+             defaults.string(forKey: "allowedImageSenders")
+                .map { $0.split(separator: "\n").map(String.init).filter { !$0.isEmpty } }
+                .flatMap { $0.isEmpty ? nil : Array(Set($0)).sorted() }),
         ]
         for item in legacy where prefs[item.name] == nil {
             guard let value = item.value else { continue }
@@ -330,6 +503,7 @@ final class AppModel {
         }
         adoptingPrefs = true
         if let v = prefs[PrefName.pinList] as? Bool { pinListEnabled = v }
+        if let v = prefs[PrefName.foldBundles] as? Bool { foldBundlesEnabled = v }
         if let v = prefs[PrefName.autoSummarize] as? Bool { autoSummarize = v }
         if let raw = prefs[PrefName.swipeActions] as? [String] {
             let actions = raw.compactMap(RowAction.init(rawValue:))
@@ -339,6 +513,11 @@ final class AppModel {
         if let v = prefs[PrefName.triageDryRun] as? Bool { triageDryRun = v }
         if let v = prefs[PrefName.triageRules] as? String { triageRules = v }
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
+        if let v = prefs[PrefName.autoBundles] as? Bool { autoBundlesEnabled = v }
+        if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
+        if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
+        if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
+        if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
         adoptingPrefs = false
     }
 
@@ -410,7 +589,7 @@ final class AppModel {
         accounts = (try? engine.accounts()) ?? []
         accountStates = Dictionary(uniqueKeysWithValues: ((try? engine.accountStates()) ?? []).map { ($0.id, $0) })
         labels = (try? engine.labels()) ?? []
-        triageLabels = (try? engine.triageLabels()) ?? []
+        triageLabels = Self.orderedTriageLabels((try? engine.triageLabels()) ?? [], by: triageLabelOrder)
         aiConfigured = (try? engine.aiStatus())?.configured ?? false
         if let selected = selectedAccountId, !accounts.contains(where: { $0.id == selected }) {
             selectedAccountId = nil
@@ -421,6 +600,8 @@ final class AppModel {
     }
 
     func reload() {
+        // Before the rows: their regroup folds by bundle.
+        bundles = (try? engine.bundles()) ?? []
         let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? []
         rows = Self.unique(page)
         hasMore = view.isPaged && page.count == Self.pageSize
@@ -486,10 +667,33 @@ final class AppModel {
         return rows.filter { seen.insert($0.id).inserted }
     }
 
-    private func runSearch() {
-        guard isSearching else { searchResults = []; return }
+    /// Filters alone are a plain filtered scan, newest first: answered at
+    /// once. Typed words go through the ranked full-text search, which runs
+    /// off the main thread (the first letter matched nearly every message
+    /// and the keyboard stalled), after `pause`; the newest query wins.
+    private func runSearch(after pause: Duration = .zero) {
+        searchTask?.cancel()
+        searchTask = nil
+        guard isSearching else {
+            searchResults = []
+            isSearchPending = false
+            return
+        }
         let query = (searchFilters.operators + [searchText]).joined(separator: " ")
-        searchResults = Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? [])
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            searchResults = Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? [])
+            isSearchPending = false
+            return
+        }
+        isSearchPending = true
+        searchTask = Task { [weak self] in
+            if pause > .zero { try? await Task.sleep(for: pause) }
+            guard !Task.isCancelled, let engine = self?.engine else { return }
+            let rows = await engine.searchInBackground(query, limit: Self.searchLimit)
+            guard !Task.isCancelled, let self else { return }
+            searchResults = Self.unique(rows)
+            isSearchPending = false
+        }
     }
 
     // MARK: Search — recent searches and the From / To people
@@ -571,19 +775,64 @@ final class AppModel {
 
     private func regroup() {
         groupedRows = Self.group(
-            isSearching ? searchResults : rows,
-            view: view, searching: isSearching,
+            showsSearchResults ? searchResults : rows,
+            view: view, searching: showsSearchResults,
             triageFilterId: tab == .inbox ? triageFilterId : nil,
-            pinList: pinListEnabled
+            pinList: pinListEnabled,
+            bundles: Self.foldsOnThisPlatform && foldBundlesEnabled ? bundles : []
         )
+    }
+
+    /// The phone and the iPad fold; the Mac's list keeps one row per thread
+    /// (its keyboard selection walks threads).
+    static var foldsOnThisPlatform: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Split the inbox's rows into bundle folds and the rest. A thread
+    /// folds when it needs nothing from the user: read, not high or medium
+    /// priority, no Need reply, no reminder, no open AI suggestion, not
+    /// pinned, not a draft. A bundle folds only with two or more such
+    /// threads — one alone keeps its row and chip.
+    static func fold(_ rows: [ThreadRow], bundles: [BundleItem]) -> (folds: [BundleFold], rest: [ThreadRow]) {
+        let known = Dictionary(uniqueKeysWithValues: bundles.map { ($0.id, $0) })
+        func quiet(_ r: ThreadRow) -> Bool {
+            guard let b = r.bundleId, known[b] != nil else { return false }
+            return r.isRead && !r.needsReply && r.scheduledAt == nil && r.openSuggestion == nil
+                && !r.isPinned && r.priority != .high && r.priority != .medium
+                && !r.labels.contains("DRAFT")
+        }
+        var byBundle: [String: [ThreadRow]] = [:]
+        for r in rows where quiet(r) { byBundle[r.bundleId ?? "", default: []].append(r) }
+        let folded = byBundle.filter { $0.value.count >= 2 }
+        let foldedIds = Set(folded.values.flatMap { $0.map(\.id) })
+        let folds = folded.compactMap { entry -> BundleFold? in
+            guard let b = known[entry.key] else { return nil }
+            return BundleFold(bundle: b, rows: entry.value.sorted { $0.lastMessageAt > $1.lastMessageAt })
+        }
+        .sorted { $0.newest > $1.newest }
+        return (folds, rows.filter { !foldedIds.contains($0.id) })
     }
 
     /// Pure grouping; the day boundaries are computed once for the list.
     static func group(_ rows: [ThreadRow], view: MailView, searching: Bool,
-                      triageFilterId: String?, pinList: Bool, now: Date = Date()) -> [RowGroup] {
+                      triageFilterId: String?, pinList: Bool, bundles: [BundleItem] = [],
+                      now: Date = Date()) -> [RowGroup] {
         var source = rows
         if let f = triageFilterId, !searching {
             source = source.filter { $0.triageLabelIds.contains(f) }
+        }
+        // Folding only in the plain inbox: a search, a label filter or a
+        // folder shows every thread it matches.
+        var folds: [BundleFold] = []
+        if view == .inbox && !searching && triageFilterId == nil && !bundles.isEmpty {
+            let split = fold(source, bundles: bundles)
+            folds = split.folds
+            source = split.rest
         }
         if view == .scheduled && !searching {
             let due = Formatters.dueGrouper(now: now)
@@ -600,7 +849,17 @@ final class AppModel {
             }
         }
         let day = Formatters.dayGrouper(now: now)
-        return head + bucket(source, titles: ["Today", "Last 7 days", "Older"]) { day($0.lastMessageAt) }
+        let groups = bucket(source, titles: ["Today", "Last 7 days", "Older"]) { day($0.lastMessageAt) }
+        guard !folds.isEmpty else { return head + groups }
+        // A fold sits at the top of the day group of its newest email.
+        var foldsByTitle: [String: [BundleFold]] = [:]
+        for f in folds { foldsByTitle[day(f.newest), default: []].append(f) }
+        let rowsByTitle = Dictionary(uniqueKeysWithValues: groups.map { ($0.title, $0.rows) })
+        return head + ["Today", "Last 7 days", "Older"].compactMap { t in
+            let rows = rowsByTitle[t] ?? []
+            let f = foldsByTitle[t] ?? []
+            return rows.isEmpty && f.isEmpty ? nil : RowGroup(title: t, rows: rows, isPinned: false, folds: f)
+        }
     }
 
     private static func bucket(_ rows: [ThreadRow], titles: [String], key: (ThreadRow) -> String) -> [RowGroup] {
@@ -1079,6 +1338,108 @@ final class AppModel {
 
     func show(_ text: String, undo: (() -> Void)? = nil) {
         toast = Toast(text: text, undo: undo)
+    }
+
+    // MARK: Bundles (docs/bundles.md)
+
+    /// The Bundles sheet, on the list or on one bundle.
+    func openBundles(at id: String? = nil) {
+        bundlesStartId = id
+        showSidebar = false
+        showBundles = true
+    }
+
+    func bundle(id: String?) -> BundleItem? {
+        guard let id else { return nil }
+        return bundles.first { $0.id == id }
+    }
+
+    var activeBundles: [BundleItem] { bundles.filter { !$0.isArchived } }
+    var archivedBundles: [BundleItem] { bundles.filter(\.isArchived) }
+
+    func bundleContents(id: String) -> BundleContents? {
+        try? engine.bundleContents(id: id)
+    }
+
+    /// The bundle the picker offers first: the one this thread shares a
+    /// booking, order or tracking number with.
+    func suggestedBundle(for row: ThreadRow) -> BundleItem? {
+        bundle(id: try? engine.suggestedBundle(threadId: row.id))
+    }
+
+    /// "New bundle…" (from the picker: with that thread in it).
+    @discardableResult
+    func createBundle(name: String, category: BundleCategory, description: String, threadIds: [String] = []) -> BundleItem? {
+        do {
+            let b = try engine.createBundle(name: name, category: category, description: description, threadIds: threadIds)
+            Haptics.light()
+            reload()
+            show(threadIds.isEmpty ? "Bundle created" : "Added to \(b.name)")
+            return b
+        } catch {
+            show(error.localizedDescription)
+            return nil
+        }
+    }
+
+    func updateBundle(_ b: BundleItem, name: String, category: BundleCategory, description: String) {
+        do {
+            try engine.updateBundle(id: b.id, name: name, category: category, description: description)
+            reload()
+        } catch { show(error.localizedDescription) }
+    }
+
+    func setBundleArchived(_ b: BundleItem, _ archived: Bool) {
+        do {
+            try engine.setBundleArchived(id: b.id, archived)
+            reload()
+            show(archived ? "Bundle archived" : "Bundle reopened")
+        } catch { show(error.localizedDescription) }
+    }
+
+    /// The mail stays where it is; only the grouping goes.
+    func deleteBundle(_ b: BundleItem) {
+        do {
+            try engine.deleteBundle(id: b.id)
+            reload()
+            show("Bundle deleted")
+        } catch { show(error.localizedDescription) }
+    }
+
+    func addToBundle(_ row: ThreadRow, bundleId: String) {
+        do {
+            let more = try engine.addToBundle(threadId: row.id, bundleId: bundleId)
+            Haptics.light()
+            reload()
+            let name = bundle(id: bundleId)?.name ?? "bundle"
+            show(more > 0 ? "Added to \(name) with \(more) related" : "Added to \(name)") { [weak self] in
+                self?.removeFromBundle(row, quietly: true)
+            }
+        } catch { show(error.localizedDescription) }
+    }
+
+    /// The thread leaves its bundle for good: nothing automatic puts it back.
+    func removeFromBundle(_ row: ThreadRow, quietly: Bool = false) {
+        let from = bundle(id: row.bundleId)
+        do {
+            try engine.removeFromBundle(threadId: row.id)
+            reload()
+            guard !quietly, let from else { return }
+            show("Removed from \(from.name)") { [weak self] in
+                self?.addToBundle(row, bundleId: from.id)
+            }
+        } catch { show(error.localizedDescription) }
+    }
+
+    /// The folded row's swipe: every email in it done at once, one Undo.
+    func markDone(_ fold: BundleFold) {
+        Haptics.archive()
+        let rows = fold.rows
+        for row in rows { perform(.archive(threadId: row.id), on: row) }
+        regroup()
+        show(rows.count == 1 ? "Marked done" : "Marked \(rows.count) done") { [weak self] in
+            for row in rows { self?.perform(.unarchive(threadId: row.id), on: row) }
+        }
     }
 
     // MARK: AI summaries (desktop InboxList + ThreadView), shown in a sheet

@@ -518,6 +518,144 @@ pub trait Store {
         Ok(())
     }
 
+    // ---- bundles (docs/bundles.md) ----
+    // App-local like triage labels. A thread is in at most one bundle
+    // (`Thread::bundle_id`); how it got there (`BundleSource`) decides
+    // whether anything automatic may move it. Default impls keep other
+    // adapters compiling; the SQLite adapter and MemStore implement them.
+
+    /// Every bundle, active first, then by name.
+    fn list_bundles(&self) -> Result<Vec<Bundle>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    /// Insert a bundle under its own id, or replace the row with that id
+    /// (rename, archive, a copy arriving from another device). Ids are
+    /// minted by the caller (`bundles::new_bundle_id`), random like
+    /// triage label ids.
+    fn upsert_bundle(&self, bundle: &Bundle) -> Result<(), StoreError> {
+        let _ = bundle;
+        Err(StoreError("bundles not supported by this store".into()))
+    }
+
+    /// Delete a bundle: its threads leave it (the mail stays) and its
+    /// exclusions go with it.
+    fn delete_bundle(&self, id: &str) -> Result<(), StoreError> {
+        let _ = id;
+        Err(StoreError("bundles not supported by this store".into()))
+    }
+
+    /// Put a thread in a bundle (`Some`) or take it out (`None`).
+    /// Ok(false) = unknown thread.
+    fn set_thread_bundle(
+        &self,
+        thread_id: &ThreadId,
+        bundle: Option<(&str, BundleSource)>,
+    ) -> Result<bool, StoreError> {
+        let _ = (thread_id, bundle);
+        Err(StoreError("bundles not supported by this store".into()))
+    }
+
+    /// How the thread got into its bundle; `None` when it is in none.
+    fn thread_bundle_source(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<BundleSource>, StoreError> {
+        let _ = thread_id;
+        Ok(None)
+    }
+
+    /// The user took this thread out of this bundle: nothing automatic may
+    /// put it back. `clear_bundle_exclusion` undoes it (the user added the
+    /// thread again).
+    fn exclude_from_bundle(&self, bundle_id: &str, thread_id: &ThreadId) -> Result<(), StoreError> {
+        let _ = (bundle_id, thread_id);
+        Err(StoreError("bundles not supported by this store".into()))
+    }
+
+    fn clear_bundle_exclusion(
+        &self,
+        bundle_id: &str,
+        thread_id: &ThreadId,
+    ) -> Result<(), StoreError> {
+        let _ = (bundle_id, thread_id);
+        Ok(())
+    }
+
+    fn is_excluded_from_bundle(
+        &self,
+        bundle_id: &str,
+        thread_id: &ThreadId,
+    ) -> Result<bool, StoreError> {
+        let _ = (bundle_id, thread_id);
+        Ok(false)
+    }
+
+    /// The bundle's threads, done ones included (a bundle is a reference,
+    /// not a to-do list), newest first. Trash and spam never show.
+    fn list_bundle_threads(&self, bundle_id: &str) -> Result<Vec<Thread>, StoreError> {
+        let _ = bundle_id;
+        Ok(Vec::new())
+    }
+
+    /// Threads whose anchors (`bundles::extract_anchors`) are missing or
+    /// stale: never scanned, or a message arrived since. Newest first.
+    fn list_threads_needing_anchors(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
+        let _ = limit;
+        Ok(Vec::new())
+    }
+
+    /// Replace a thread's anchors and record the `msg_count` the scan
+    /// covered, so `list_threads_needing_anchors` skips it until it grows.
+    fn set_thread_anchors(
+        &self,
+        thread_id: &ThreadId,
+        anchors: &[String],
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, anchors, msg_count);
+        Ok(())
+    }
+
+    /// New mail the model has not grouped yet (`ffi::bundles`' AI pass):
+    /// in no bundle, newer than `since`, not trash, spam or triaged as
+    /// spam, and not yet asked about at its current `msg_count`. Newest
+    /// first.
+    fn list_threads_needing_bundling(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let _ = (since, limit);
+        Ok(Vec::new())
+    }
+
+    /// The model was asked about this thread at `msg_count` (whatever it
+    /// answered): it is not asked again until a new message arrives.
+    fn set_thread_bundling_done(
+        &self,
+        thread_id: &ThreadId,
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, msg_count);
+        Ok(())
+    }
+
+    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+        let _ = thread_id;
+        Ok(Vec::new())
+    }
+
+    /// Every thread (by id) carrying any of `anchors`, with the anchors it
+    /// carries from that list.
+    fn threads_with_anchors(
+        &self,
+        anchors: &[String],
+    ) -> Result<Vec<(ThreadId, Vec<String>)>, StoreError> {
+        let _ = anchors;
+        Ok(Vec::new())
+    }
+
     /// Unread inbox threads the AI has not looked at since their last
     /// message, newer than `since` (epoch ms), newest first: no reminder,
     /// not flagged "needs reply", not done. Same versioning as triage —

@@ -128,6 +128,18 @@ final class RustEngine: MailEngine {
     }
 
     func search(_ query: String, limit: Int) throws -> [ThreadRow] {
+        try Self.search(engine, query, limit: limit)
+    }
+
+    func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow] {
+        let engine = engine
+        return await Task.detached(priority: .userInitiated) {
+            (try? Self.search(engine, query, limit: limit)) ?? []
+        }.value
+    }
+
+    /// The FTS query and the row mapping, callable from any thread.
+    private nonisolated static func search(_ engine: Engine, _ query: String, limit: Int) throws -> [ThreadRow] {
         try engine.search(query: query, limit: UInt32(limit)).map { hit in
             ThreadRow(hit.thread, snippet: hit.snippet.highlightMarkersStripped)
         }
@@ -183,14 +195,16 @@ final class RustEngine: MailEngine {
     func attachments(threadId: String) async throws -> [AttachmentItem] {
         try await engine.listAttachments(threadId: threadId).map {
             AttachmentItem(threadId: $0.threadId, messageId: $0.messageId, attachmentId: $0.attachmentId,
-                           filename: $0.filename, mimeType: $0.mimeType, size: Int($0.size))
+                           filename: $0.filename, mimeType: $0.mimeType, size: Int($0.size),
+                           contentId: $0.contentId)
         }
     }
 
     func attachmentFile(_ a: AttachmentItem) async throws -> URL {
         let path = try await engine.fetchAttachment(attachment: MailAttachment(
             threadId: a.threadId, messageId: a.messageId, attachmentId: a.attachmentId,
-            filename: a.filename, mimeType: a.mimeType, size: Int64(a.size)
+            filename: a.filename, mimeType: a.mimeType, size: Int64(a.size),
+            contentId: a.contentId
         ))
         return URL(fileURLWithPath: path)
     }
@@ -356,6 +370,33 @@ final class RustEngine: MailEngine {
     func renameTriageLabel(id: String, name: String) throws { try engine.renameTriageLabel(id: id, newName: name) }
     func deleteTriageLabel(id: String) throws { try engine.deleteTriageLabel(id: id) }
     func reanalyzeTriage() throws { try engine.reanalyzeAllTriage() }
+
+    func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
+    func bundleContents(id: String) throws -> BundleContents? {
+        try engine.bundleDetail(bundleId: id).map {
+            BundleContents(
+                bundle: BundleItem($0.bundle),
+                facts: $0.facts.map(BundleFactItem.init),
+                threads: $0.threads.map { ThreadRow($0) }
+            )
+        }
+    }
+    func createBundle(name: String, category: BundleCategory, description: String, threadIds: [String]) throws -> BundleItem {
+        BundleItem(try engine.createBundle(name: name, kind: category.ffi, description: description, threadIds: threadIds))
+    }
+    func updateBundle(id: String, name: String, category: BundleCategory, description: String) throws {
+        try engine.updateBundle(bundleId: id, name: name, kind: category.ffi, description: description)
+    }
+    func setBundleArchived(id: String, _ archived: Bool) throws {
+        try engine.setBundleArchived(bundleId: id, archived: archived)
+    }
+    func deleteBundle(id: String) throws { try engine.deleteBundle(bundleId: id) }
+    @discardableResult
+    func addToBundle(threadId: String, bundleId: String) throws -> Int {
+        Int(try engine.addToBundle(threadId: threadId, bundleId: bundleId))
+    }
+    func removeFromBundle(threadId: String) throws { try engine.removeFromBundle(threadId: threadId) }
+    func suggestedBundle(threadId: String) throws -> String? { try engine.suggestBundle(threadId: threadId) }
 }
 
 // MARK: - Mapping
@@ -406,8 +447,34 @@ private extension ThreadRow {
                 case .needsReply: .needsReply
                 case .remind(let at): .remind(at: Date(epochMs: at))
                 }
-            }
+            },
+            bundleId: t.bundleId
         )
+    }
+}
+
+private extension BundleItem {
+    init(_ b: MailBundle) {
+        self.init(
+            id: b.id, name: b.name, category: BundleCategory(b.kind), description: b.description,
+            isArchived: b.archived, createdAt: Date(epochMs: b.createdAt),
+            threadCount: Int(b.threadCount), openCount: Int(b.openCount),
+            lastActivityAt: b.lastActivityAt > 0 ? Date(epochMs: b.lastActivityAt) : nil,
+            isAutomatic: b.automatic
+        )
+    }
+}
+
+private extension BundleFactItem {
+    init(_ f: BundleFact) {
+        let category: BundleFactCategory = switch f.kind {
+        case .flight: .flight
+        case .booking: .booking
+        case .order: .order
+        case .invoice: .invoice
+        case .tracking: .tracking
+        }
+        self.init(category: category, value: f.value, threadId: f.threadId, at: Date(epochMs: f.at))
     }
 }
 

@@ -37,6 +37,33 @@ struct SettingsView: View {
                                 .font(.caption).foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    // The Mac lists every thread with its chip; only the
+                    // phone and the iPad fold.
+                    if AppModel.foldsOnThisPlatform {
+                        Toggle(isOn: $model.foldBundlesEnabled) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Fold bundle updates")
+                                Text("Read confirmations, receipts and shipping updates in a bundle share one row in your inbox. Mail that needs you keeps its own row.")
+                                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                    }
+                    Toggle(isOn: $model.loadRemoteImages) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Load remote images")
+                            // Privacy copy: what loading a picture from the web tells the sender.
+                            Text("Show pictures from the web in every message without asking. The sender's server can then see that you opened the message, when, and your IP address.")
+                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                    if !model.imageSenders.isEmpty && !model.loadRemoteImages {
+                        HStack {
+                            Text(model.imageSenders.count == 1 ? "Images always load from 1 sender"
+                                 : "Images always load from \(model.imageSenders.count) senders")
+                            Spacer()
+                            Button("Forget") { model.imageSenders = [] }
+                        }
+                    }
                     swipePicker(Self.swipeTitles[0], 0)
                     swipePicker(Self.swipeTitles[1], 1)
                     swipePicker(Self.swipeTitles[2], 2)
@@ -350,6 +377,13 @@ private struct AISection: View {
                             .font(.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
+                Toggle(isOn: $model.autoBundlesEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Make bundles")
+                        Text("Group new mail about a trip, an order or a project")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
             }
             if !openaiConfigured {
                 HStack {
@@ -373,6 +407,11 @@ private struct AISection: View {
                     // Privacy copy must be true (CLAUDE.md): this is the one
                     // AI path that reads a body without a tap.
                     Text("Suggest for new mail: each new unread email (up to \(Self.suggestChars.formatted()) characters of its text) is read by the model you prefer above — never ChatGPT — to propose Need reply or a reminder. Nothing changes until you accept.")
+                }
+                if anyApple && model.autoBundlesEnabled {
+                    // Privacy copy must be true (CLAUDE.md): what the
+                    // bundling pass sends (crates/ffi/src/bundles.rs).
+                    Text("Make bundles: the sender, subject and preview line of each new email, with the names of your bundles, go to the model you prefer above — never ChatGPT. Bundles it makes stay on this \(Device.name) until you edit one.")
                 }
                 usageLines
             }
@@ -724,13 +763,14 @@ private struct TriageSection: View {
                 }
             }
             // The labels: the categories Jev sorts mail into, and the
-            // segments of the bottom pill.
+            // segments of the bottom pill, in this order (drag to change it).
             ForEach(model.triageLabels) { l in
                 Text(l.name)
                     .swipeActions {
                         Button(role: .destructive) { delete(l) } label: { Label("Remove", systemImage: "trash") }
                     }
             }
+            .onMove { model.moveTriageLabels(from: $0, to: $1) }
             if model.triageLabels.isEmpty {
                 Text("No labels yet").font(.footnote).foregroundStyle(Theme.textTertiary)
             }
@@ -745,8 +785,8 @@ private struct TriageSection: View {
             Text("Triage")
         } footer: {
             Text(onDevice
-                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this \(Device.name) that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. Swipe a label left to remove it."
-                : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. Swipe a label left to remove it.")
+                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this \(Device.name) that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. \(Self.labelHint)"
+                : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. \(Self.labelHint)")
         }
         .menuCard()
         .task { load() }
@@ -754,6 +794,13 @@ private struct TriageSection: View {
     }
 
     private func load() { status = try? model.engine.triageStatus() }
+
+    /// How to reorder and remove a label, in this platform's gestures.
+    #if os(macOS)
+    private static let labelHint = "Drag a label to change the order the bar shows; swipe it left to remove it."
+    #else
+    private static let labelHint = "Touch and hold a label, then drag it to change the order the bar shows; swipe it left to remove it."
+    #endif
 
     private func connect() {
         saving = true

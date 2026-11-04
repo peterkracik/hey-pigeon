@@ -17,6 +17,8 @@ struct MainWindow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     @State private var state = WindowState()
+    /// The window's size, for the composer's full-screen sheet.
+    @State private var windowSize = CGSize(width: 1000, height: 760)
 
     var body: some View {
         @Bindable var model = model
@@ -54,6 +56,7 @@ struct MainWindow: View {
         .ignoresSafeArea(.container, edges: .top)
         .background(WindowChrome())
         .frame(minWidth: 760, minHeight: 480)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
         // The window has no toolbar: the shared views' toolbar items never
         // draw over the top bar. WindowChrome keeps the traffic lights.
         .toolbarVisibility(.hidden, for: .windowToolbar)
@@ -63,9 +66,13 @@ struct MainWindow: View {
         .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
         .overlay(alignment: .bottom) { MacToast() }
         .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
+        .sheet(item: $model.pendingBundlePick) { row in AddToBundleSheet(row: row) }
+        .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
+            BundlesSheet(initialBundleId: model.bundlesStartId)
+        }
         .sheet(item: $model.composeDraft) { draft in
             ComposeView(draft: draft)
-                .frame(minWidth: 720, idealWidth: 800, minHeight: 600, idealHeight: 720)
+                .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)
         }
         .sheet(item: $model.summarySheet) { p in SummarySheet(presentation: p) }
         .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
@@ -135,5 +142,19 @@ struct MacToast: View {
                 if model.toast?.id == toast.id { withAnimation { model.toast = nil } }
             }
         }
+    }
+}
+
+private extension View {
+    /// The composer's sheet: a dialog, or (its full-screen button) as big
+    /// as the window allows; a sheet cannot outgrow its window. One frame
+    /// call, not an if/else: a branch would be a new view and the switch
+    /// would throw away what is typed.
+    func composeSheetSize(fullScreen: Bool, window: CGSize) -> some View {
+        let w = max(720, window.width - 24), h = max(600, window.height - 24)
+        return frame(minWidth: fullScreen ? w : 720, idealWidth: fullScreen ? w : 800,
+                     maxWidth: fullScreen ? w : nil,
+                     minHeight: fullScreen ? h : 600, idealHeight: fullScreen ? h : 720,
+                     maxHeight: fullScreen ? h : nil)
     }
 }

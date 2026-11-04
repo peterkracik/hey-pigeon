@@ -40,6 +40,8 @@ struct InboxPage: View {
             RecentSearches()
         } else if !model.hasLoadedOnce {
             SkeletonList()
+        } else if model.groupedRows.isEmpty && model.isSearching && model.isSearchPending {
+            Color.clear
         } else if model.groupedRows.isEmpty {
             EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt)
         } else {

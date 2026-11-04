@@ -86,6 +86,8 @@ pub struct Engine {
     pub(crate) classifying: Mutex<bool>,
     /// Guards the AI suggestion pass from overlapping runs (suggest.rs).
     pub(crate) suggesting: Mutex<bool>,
+    /// Guards the AI bundling pass from overlapping runs (bundles.rs).
+    pub(crate) bundling: Mutex<bool>,
     /// Last Jev failure; None after a clean run (settings.rs).
     pub(crate) triage_last_error: Mutex<Option<String>>,
     /// The shell's AI backends, one per provider it can offer on this device
@@ -116,12 +118,24 @@ impl Engine {
         let disconnected: HashSet<AccountId> = store
             .list_accounts()?
             .into_iter()
-            .filter(|a| {
-                !matches!(
-                    secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)),
-                    Ok(Some(_))
-                )
-            })
+            // Only a token that is really absent means disconnected. A read
+            // that fails — the Keychain refuses while the iPhone is locked,
+            // which is exactly when background refresh and push launch the
+            // app — says nothing about the account, and marking it here
+            // showed the user as signed out until the next launch.
+            .filter(
+                |a| match secrets.get(&heypigeon_adapter_gmail::refresh_token_key(&a.id)) {
+                    Ok(Some(_)) => false,
+                    Ok(None) => true,
+                    Err(e) => {
+                        log::warn!(
+                            "refresh token for {} unreadable ({e}); not marking it disconnected",
+                            a.id
+                        );
+                        false
+                    }
+                },
+            )
             .map(|a| a.id)
             .collect();
         for id in &disconnected {
@@ -142,6 +156,7 @@ impl Engine {
             sync_status: Mutex::new(HashMap::new()),
             classifying: Mutex::new(false),
             suggesting: Mutex::new(false),
+            bundling: Mutex::new(false),
             triage_last_error: Mutex::new(None),
             ai_backends: Mutex::new(Vec::new()),
         }))
@@ -394,6 +409,7 @@ impl Engine {
                 filename: a.filename,
                 mime_type: a.mime_type,
                 size: a.size,
+                content_id: a.content_id,
             })
             .collect())
     }
@@ -426,6 +442,7 @@ impl Engine {
             filename: attachment.filename.clone(),
             mime_type: attachment.mime_type.clone(),
             size: attachment.size,
+            content_id: attachment.content_id.clone(),
         };
         let fetched = {
             let provider = self.provider.read().await;
@@ -649,12 +666,17 @@ impl Engine {
         if changed {
             self.notify_threads_updated();
         }
+        // Bundles: link new mail by shared booking, order and tracking
+        // numbers. Local and cheap, so before the model passes.
+        self.link_bundles_pending();
         // Jev triage rides the sync cadence, never its own timer (desktop
         // does the same at the end of its poll tick).
         self.classify_pending().await;
         // Then the "Need reply" / "Remind me" proposals for new unread
         // mail, on the same cadence (suggest.rs).
         self.suggest_pending().await;
+        // Then the model groups new mail into bundles (bundles.rs).
+        self.bundle_pending().await;
         Ok(changed)
     }
 
@@ -1072,6 +1094,7 @@ pub(crate) mod tests_support {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
         }
     }
 }
@@ -1290,6 +1313,7 @@ mod tests {
             filename: "../../etc/passwd:report.pdf".into(),
             mime_type: "application/pdf".into(),
             size: 1,
+            content_id: None,
         };
         let key = attachment_cache_key(&a);
         assert_eq!(key.len(), 16);

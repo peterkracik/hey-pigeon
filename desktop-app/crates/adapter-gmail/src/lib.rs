@@ -7,7 +7,7 @@ pub mod push;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine;
 use heypigeon_core::domain::*;
@@ -36,7 +36,15 @@ pub fn refresh_token_key(account_id: &str) -> String {
 
 struct CachedToken {
     access_token: String,
-    expires_at: Instant,
+    /// Wall clock, not `Instant`: on Apple targets `Instant` is uptime and
+    /// stops while the device sleeps, so a token cached in the evening still
+    /// looked fresh the next morning, Gmail answered 401, and the account
+    /// was shown as signed out.
+    expires_at: SystemTime,
+}
+
+fn expiry(expires_in: u64) -> SystemTime {
+    SystemTime::now() + Duration::from_secs(expires_in.saturating_sub(60))
 }
 
 pub struct GmailProvider {
@@ -88,8 +96,7 @@ impl GmailProvider {
             account_id.clone(),
             CachedToken {
                 access_token: tokens.access_token.clone(),
-                expires_at: Instant::now()
-                    + Duration::from_secs(tokens.expires_in.saturating_sub(60)),
+                expires_at: expiry(tokens.expires_in),
             },
         );
         Ok(())
@@ -98,7 +105,7 @@ impl GmailProvider {
     async fn access_token(&self, account_id: &AccountId) -> Result<String, MailError> {
         let mut cache = self.tokens.lock().await;
         if let Some(t) = cache.get(account_id) {
-            if t.expires_at > Instant::now() {
+            if t.expires_at > SystemTime::now() {
                 return Ok(t.access_token.clone());
             }
         }
@@ -111,12 +118,21 @@ impl GmailProvider {
         // transport failure (offline, DNS) must stay `Network`: the app
         // tells the user to re-connect on `AuthExpired`, and a flaky
         // connection must never trigger that.
+        //
+        // Only `invalid_grant` is that rejection (revoked, expired, password
+        // changed). Any other token-endpoint answer — a 5xx, a rate limit,
+        // `temporarily_unavailable` — is Google having a moment, and must not
+        // sign the user out either.
         let tokens = oauth::refresh(&self.client, &refresh_token)
             .await
             .map_err(|e| match e {
-                oauth::OauthError::Token(body) => {
+                oauth::OauthError::Token(body) if is_invalid_grant(&body) => {
                     log::warn!("token refresh for {account_id} rejected: {body}");
                     MailError::AuthExpired
+                }
+                oauth::OauthError::Token(body) => {
+                    log::warn!("token refresh for {account_id} failed, will retry: {body}");
+                    MailError::Network(format!("token refresh failed: {body}"))
                 }
                 oauth::OauthError::Http(e) if e.is_decode() => MailError::Provider(e.to_string()),
                 other => MailError::Network(other.to_string()),
@@ -126,11 +142,35 @@ impl GmailProvider {
             account_id.clone(),
             CachedToken {
                 access_token: access.clone(),
-                expires_at: Instant::now()
-                    + Duration::from_secs(tokens.expires_in.saturating_sub(60)),
+                expires_at: expiry(tokens.expires_in),
             },
         );
         Ok(access)
+    }
+
+    /// An API call answered 401. That says the *access* token was refused,
+    /// not the grant: it may have been cached too long or revoked early by
+    /// Google. Drop it and refresh; only a refused refresh (`invalid_grant`)
+    /// is `AuthExpired`. Otherwise the caller gets a retryable `Network`
+    /// error and the next attempt uses the fresh token.
+    pub(crate) async fn unauthorized(&self, account_id: &AccountId) -> MailError {
+        self.tokens.lock().await.remove(account_id);
+        match self.access_token(account_id).await {
+            Ok(_) => MailError::Network("access token refused; refreshed it".into()),
+            Err(e) => e,
+        }
+    }
+
+    /// [`Self::check`], with a 401 resolved by [`Self::unauthorized`].
+    async fn check_for(
+        &self,
+        account_id: &AccountId,
+        resp: reqwest::Response,
+    ) -> Result<reqwest::Response, MailError> {
+        match Self::check(resp).await {
+            Err(MailError::AuthExpired) => Err(self.unauthorized(account_id).await),
+            other => other,
+        }
     }
 
     /// Contact photo for a sender via the People API (contacts +
@@ -256,6 +296,7 @@ impl GmailProvider {
         // exponential backoff (Gmail's documented remedy) and only reaches
         // the caller once the retries run out.
         let mut attempt = 0;
+        let mut refreshed = false;
         loop {
             self.wait_cooldown(account_id).await;
             let token = self.access_token(account_id).await?;
@@ -280,6 +321,13 @@ impl GmailProvider {
                     log::info!("gmail rate limited ({account_id}), retrying in {wait:?}");
                     self.start_cooldown(account_id, wait);
                     attempt += 1;
+                }
+                // A refused access token: drop it and go round once more,
+                // which refreshes (and only then reports `AuthExpired`, if
+                // Google refuses the grant itself).
+                Err(MailError::AuthExpired) if !refreshed => {
+                    self.tokens.lock().await.remove(account_id);
+                    refreshed = true;
                 }
                 Err(e) => {
                     if let MailError::RateLimited { retry_after_secs } = &e {
@@ -329,7 +377,7 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp).await.map(|_| ())
+        self.check_for(account_id, resp).await.map(|_| ())
     }
 
     /// `post_json` for the few endpoints whose response body matters
@@ -350,7 +398,7 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp)
+        self.check_for(account_id, resp)
             .await?
             .json::<T>()
             .await
@@ -407,7 +455,7 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp)
+        self.check_for(account_id, resp)
             .await?
             .json()
             .await
@@ -529,7 +577,7 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp).await.map(|_| ())
+        self.check_for(account_id, resp).await.map(|_| ())
     }
 
     async fn delete(&self, account_id: &AccountId, url: &str) -> Result<(), MailError> {
@@ -542,7 +590,7 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|e| MailError::Network(e.to_string()))?;
-        Self::check(resp).await.map(|_| ())
+        self.check_for(account_id, resp).await.map(|_| ())
     }
 
     async fn check(resp: reqwest::Response) -> Result<reqwest::Response, MailError> {
@@ -572,6 +620,14 @@ impl GmailProvider {
             _ => MailError::Provider(format!("{status}: {body}")),
         })
     }
+}
+
+/// Is this token-endpoint error body Google refusing the grant itself?
+fn is_invalid_grant(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(|e| e == "invalid_grant"))
+        .unwrap_or(false)
 }
 
 /// Is this 403 body Gmail's rate limit rather than a real permission
@@ -990,6 +1046,7 @@ fn to_thread(account_id: &AccountId, wire: &WireThread) -> (Thread, Vec<Message>
         needs_reply: false,
         follow_up_since: None,
         suggestion: None,
+        bundle_id: None,
         labels,
         has_attachment: wire
             .messages
@@ -1291,7 +1348,7 @@ impl MailProvider for GmailProvider {
         if let Some(p) = wire.payload.as_ref() {
             collect_attachments(p, &mut pending);
         }
-        for (filename, mime_type, body) in pending {
+        for (filename, mime_type, body, _) in pending {
             let data = match (body.data.as_deref(), body.attachment_id.as_deref()) {
                 (Some(d), _) => d.to_string(),
                 (None, Some(aid)) => {
@@ -1356,7 +1413,7 @@ impl MailProvider for GmailProvider {
             }
             parts
                 .get(index)
-                .and_then(|(_, _, body)| body.data.clone())
+                .and_then(|(_, _, body, _)| body.data.clone())
                 .ok_or_else(|| MailError::Provider("attachment part is gone".into()))?
         } else {
             let aid = &attachment.attachment_id;
@@ -1553,11 +1610,32 @@ fn to_draft(w: &WireMessage) -> DraftContent {
     }
 }
 
-/// Attachment parts (non-empty filename), depth first: filename, mime, body.
-fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<(String, String, &'a WireBody)>) {
-    if !part.filename.is_empty() {
+/// One attachment part: filename, mime type, body, Content-ID.
+type WireAttachment<'a> = (String, String, &'a WireBody, Option<String>);
+
+/// Attachment parts, depth first: every part with a filename, and an image
+/// part with a Content-ID but no name (an inline picture the HTML body
+/// shows as `cid:`; Outlook and Apple Mail send signatures that way).
+fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<WireAttachment<'a>>) {
+    let content_id = header(part, "Content-ID")
+        .map(|v| {
+            v.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .trim()
+                .to_string()
+        })
+        .filter(|v| !v.is_empty());
+    let inline_image = content_id.is_some() && part.mime_type.starts_with("image/");
+    if !part.filename.is_empty() || inline_image {
         if let Some(b) = part.body.as_ref() {
-            out.push((part.filename.clone(), part.mime_type.clone(), b));
+            let name = if part.filename.is_empty() {
+                let ext = part.mime_type.trim_start_matches("image/");
+                format!("inline.{}", if ext.is_empty() { "img" } else { ext })
+            } else {
+                part.filename.clone()
+            };
+            out.push((name, part.mime_type.clone(), b, content_id));
         }
     }
     for p in &part.parts {
@@ -1576,7 +1654,7 @@ fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
         if let Some(p) = m.payload.as_ref() {
             collect_attachments(p, &mut parts);
         }
-        for (index, (filename, mime_type, body)) in parts.into_iter().enumerate() {
+        for (index, (filename, mime_type, body, content_id)) in parts.into_iter().enumerate() {
             out.push(AttachmentRef {
                 message_id: m.id.clone(),
                 attachment_id: body
@@ -1590,6 +1668,7 @@ fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
                     mime_type
                 },
                 size: body.size,
+                content_id,
             });
         }
     }
@@ -1656,6 +1735,27 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_invalid_grant_counts_as_a_refused_grant() {
+        assert!(is_invalid_grant(
+            r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#
+        ));
+        // Transient token-endpoint failures must never sign the user out.
+        assert!(!is_invalid_grant(r#"{"error":"temporarily_unavailable"}"#));
+        assert!(!is_invalid_grant(r#"{"error":"internal_failure"}"#));
+        assert!(!is_invalid_grant("<html>502 Bad Gateway</html>"));
+        assert!(!is_invalid_grant(""));
+    }
+
+    #[test]
+    fn token_expiry_is_wall_clock_and_keeps_a_minute_of_margin() {
+        let at = expiry(3600);
+        let left = at.duration_since(SystemTime::now()).unwrap();
+        assert!(left <= Duration::from_secs(3540) && left > Duration::from_secs(3530));
+        // An already-expired lifetime is "now", not a panic or the far future.
+        assert!(expiry(0) <= SystemTime::now() + Duration::from_secs(1));
+    }
 
     #[test]
     fn rate_limit_403_is_told_apart_from_permission_denied() {
@@ -2132,6 +2232,43 @@ mod tests {
             (list[2].message_id.as_str(), list[2].filename.as_str()),
             ("m2", "photo.png")
         );
+    }
+
+    #[test]
+    fn inline_images_carry_their_content_id_even_without_a_name() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "messages": [{
+                "id": "m1",
+                "labelIds": ["INBOX"],
+                "internalDate": "1756600000000",
+                "payload": {
+                    "mimeType": "multipart/related",
+                    "headers": [],
+                    "parts": [
+                        {"mimeType": "text/html", "headers": [], "body": {"data": "aGk"}},
+                        {"mimeType": "image/png", "filename": "logo.png",
+                         "headers": [{"name": "Content-ID", "value": "<image001.png@01DB>"}],
+                         "body": {"attachmentId": "a1", "size": 900}},
+                        {"mimeType": "image/gif", "filename": "",
+                         "headers": [{"name": "content-id", "value": " <sig> "}],
+                         "body": {"data": "R0lG", "size": 3}},
+                        {"mimeType": "text/plain", "filename": "",
+                         "headers": [{"name": "Content-ID", "value": "<not-an-image>"}],
+                         "body": {"data": "aGk"}}
+                    ]
+                }
+            }]
+        });
+        let wire: WireThread = serde_json::from_value(json).unwrap();
+        let list = thread_attachments(&wire);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].content_id.as_deref(), Some("image001.png@01DB"));
+        assert_eq!(list[0].filename, "logo.png");
+        // A nameless inline picture is listed too, named from its type.
+        assert_eq!(list[1].content_id.as_deref(), Some("sig"));
+        assert_eq!(list[1].filename, "inline.gif");
+        assert_eq!(list[1].attachment_id, "inline:1");
     }
 
     #[test]

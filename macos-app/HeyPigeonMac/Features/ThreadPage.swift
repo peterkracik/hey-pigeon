@@ -49,6 +49,10 @@ struct ThreadMenu: View {
         Divider()
         item("Add label…", "tag", .label)
         item("Move to folder…", "folder", .move)
+        // A sheet of its own (AddToBundleSheet); nothing for the window to advance.
+        Button { model.pendingBundlePick = row } label: {
+            Label(row.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
+        }
         item("Forward", "arrowshape.turn.up.right", .forward)
         Divider()
         item("Open in New Window", "macwindow", .openInWindow)

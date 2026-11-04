@@ -2,7 +2,8 @@
 // header, then "Folders" and "Labels" as small grey headers that fold
 // their rows away, and at the bottom the account: its initial, its name,
 // a chevron that opens the switch (All accounts, each account, Add
-// account). A row only tints: on hover, and a stronger tint on the folder
+// account). Labels carry a pin on hover; once any is pinned, only the
+// pinned ones show, with ••• for the rest (AppModel.sidebarLabels). A row only tints: on hover, and a stronger tint on the folder
 // the list shows. New message, Search, Ask and Settings are the top bar's.
 // The phone shows the same list as a sheet
 // (Features/Sidebar/SidebarSheet); here ⌃⌘S and the top bar's button
@@ -15,6 +16,8 @@ struct SidebarColumn: View {
     @Environment(AppModel.self) private var model
     @AppStorage("sidebarFoldersOpen") private var foldersOpen = true
     @AppStorage("sidebarLabelsOpen") private var labelsOpen = true
+    /// ••• under the labels: the unpinned ones too. Per Mac.
+    @AppStorage("sidebarAllLabels") private var allLabels = false
 
     private var labels: [MailLabelItem] {
         model.labels.filter { l in
@@ -31,6 +34,11 @@ struct SidebarColumn: View {
                     folder(.needReply, count: model.needReplyCount)
                     folder(.starred)
                     folder(.drafts, count: model.draftsCount)
+                    // Bundles open as a sheet (BundlesSheet), not a list view.
+                    SidebarRow(title: "Bundles", systemImage: "square.stack", help: "Bundles",
+                               trailing: model.activeBundles.isEmpty ? nil : Text("\(model.activeBundles.count)")) {
+                        model.openBundles()
+                    }
 
                     SectionHeader(title: "Folders", open: $foldersOpen)
                     if foldersOpen {
@@ -44,8 +52,13 @@ struct SidebarColumn: View {
                     if !labels.isEmpty {
                         SectionHeader(title: "Labels", open: $labelsOpen)
                         if labelsOpen {
-                            ForEach(labels) { l in
-                                folder(.label(id: l.id, name: l.name))
+                            let rows = AppModel.sidebarLabels(labels, pinned: model.pinnedLabelIds,
+                                                              expanded: allLabels, current: model.currentLabelId)
+                            ForEach(rows.shown) { l in
+                                folder(.label(id: l.id, name: l.name), pin: l)
+                            }
+                            if rows.hidden > 0 || allLabels && labels.contains(where: { model.pinnedLabelIds.contains($0.id) }) {
+                                MoreLabelsRow(expanded: $allLabels, hidden: rows.hidden)
                             }
                         }
                     }
@@ -63,11 +76,13 @@ struct SidebarColumn: View {
 
     /// A folder row with its count; `badge` is the Scheduled row's due
     /// count, in the accent so a reminder that came due stands out.
-    private func folder(_ view: MailView, count: Int? = nil, badge: Int = 0) -> some View {
+    /// `pin`: a label row, with the pin that keeps it in the short list.
+    private func folder(_ view: MailView, count: Int? = nil, badge: Int = 0, pin label: MailLabelItem? = nil) -> some View {
         let n = count ?? model.counts[view.countKey] ?? 0
         let selected = !model.isSearching && !state.searching && !state.showSettings && model.view == view
         return SidebarRow(title: view.title, systemImage: view.systemImage, help: view.title,
-                          selected: selected, trailing: Self.badgeText(count: n, due: badge)) {
+                          selected: selected, trailing: Self.badgeText(count: n, due: badge),
+                          pin: label.map { l in .init(isOn: model.pinnedLabelIds.contains(l.id)) { model.togglePinned(l) } }) {
             state.run(.go(view), in: model)
         }
     }
@@ -87,8 +102,18 @@ private struct SidebarRow: View {
     let help: String
     var selected = false
     var trailing: Text?
+    var pin: Pin?
     let action: () -> Void
     @State private var hovering = false
+
+    /// A label row's pin, shown on hover in place of the count: filled
+    /// when the label is in the short list.
+    struct Pin {
+        let isOn: Bool
+        let toggle: () -> Void
+    }
+
+    private var showsPin: Bool { pin != nil && hovering }
 
     var body: some View {
         Button(action: action) {
@@ -102,7 +127,9 @@ private struct SidebarRow: View {
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if let trailing {
+                if showsPin {
+                    Color.clear.frame(width: 18, height: 1)
+                } else if let trailing {
                     trailing
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
@@ -115,6 +142,22 @@ private struct SidebarRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Over the row's button, so a click on the pin is the pin's.
+        .overlay(alignment: .trailing) {
+            if let pin, showsPin {
+                Button(action: pin.toggle) {
+                    Image(systemName: pin.isOn ? "pin.fill" : "pin")
+                        .font(.system(size: 11))
+                        .foregroundStyle(pin.isOn ? Theme.textSecondary : Theme.textTertiary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 6)
+                .help(pin.isOn ? "Unpin" : "Pin to the short list")
+                .accessibilityLabel(pin.isOn ? "Unpin \(title)" : "Pin \(title)")
+            }
+        }
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -123,6 +166,38 @@ private struct SidebarRow: View {
     private var background: Color {
         if selected { return MacTheme.selected }
         return hovering ? MacTheme.hover : .clear
+    }
+}
+
+/// ••• under the pinned labels: opens the whole list; "Show less" folds
+/// it back to the pinned ones.
+private struct MoreLabelsRow: View {
+    @Binding var expanded: Bool
+    let hidden: Int
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: expanded ? "chevron.up" : "ellipsis")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 18)
+                Text(expanded ? "Show less" : "\(hidden) more")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(expanded ? "Show pinned labels only" : "Show all labels, \(hidden) more")
     }
 }
 

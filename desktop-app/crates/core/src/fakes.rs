@@ -53,6 +53,12 @@ struct MemStoreInner {
     suggestion_versions: HashMap<ThreadId, i64>,
     /// App-wide preferences (`Store::get_pref` & co.).
     prefs: std::collections::BTreeMap<String, serde_json::Value>,
+    bundles: Vec<Bundle>,
+    bundle_sources: HashMap<ThreadId, BundleSource>,
+    bundle_exclusions: std::collections::HashSet<(String, ThreadId)>,
+    thread_anchors: HashMap<ThreadId, Vec<String>>,
+    anchor_versions: HashMap<ThreadId, i64>,
+    bundling_versions: HashMap<ThreadId, i64>,
 }
 
 impl MemStore {
@@ -146,6 +152,7 @@ impl Store for MemStore {
             t.needs_reply = old.needs_reply;
             t.follow_up_since = old.follow_up_since;
             t.suggestion = old.suggestion;
+            t.bundle_id = old.bundle_id.clone();
         }
         g.threads.insert(t.id.clone(), t);
         Ok(())
@@ -178,6 +185,7 @@ impl Store for MemStore {
         let mut g = self.inner.lock().unwrap();
         g.threads.remove(thread_id);
         g.messages.retain(|_, m| &m.thread_id != thread_id);
+        g.thread_anchors.remove(thread_id);
         Ok(())
     }
 
@@ -336,6 +344,208 @@ impl Store for MemStore {
         g.triage_versions.clear();
         g.triage_labels_manual.clear();
         Ok(())
+    }
+
+    fn list_bundles(&self) -> Result<Vec<Bundle>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v = g.bundles.clone();
+        v.sort_by(|a, b| {
+            (a.status == BundleStatus::Archived)
+                .cmp(&(b.status == BundleStatus::Archived))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        Ok(v)
+    }
+
+    fn upsert_bundle(&self, bundle: &Bundle) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.bundles.iter_mut().find(|b| b.id == bundle.id) {
+            // Match SQLite: `created_at` is the first device's.
+            Some(b) => {
+                let created_at = b.created_at;
+                *b = bundle.clone();
+                b.created_at = created_at;
+            }
+            None => g.bundles.push(bundle.clone()),
+        }
+        Ok(())
+    }
+
+    fn delete_bundle(&self, id: &str) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.bundles.retain(|b| b.id != id);
+        let members: Vec<ThreadId> = g
+            .threads
+            .values()
+            .filter(|t| t.bundle_id.as_deref() == Some(id))
+            .map(|t| t.id.clone())
+            .collect();
+        for tid in members {
+            if let Some(t) = g.threads.get_mut(&tid) {
+                t.bundle_id = None;
+            }
+            g.bundle_sources.remove(&tid);
+        }
+        g.bundle_exclusions.retain(|(b, _)| b != id);
+        Ok(())
+    }
+
+    fn set_thread_bundle(
+        &self,
+        thread_id: &ThreadId,
+        bundle: Option<(&str, BundleSource)>,
+    ) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let Some(t) = g.threads.get_mut(thread_id) else {
+            return Ok(false);
+        };
+        t.bundle_id = bundle.map(|(id, _)| id.to_string());
+        match bundle {
+            Some((_, source)) => g.bundle_sources.insert(thread_id.clone(), source),
+            None => g.bundle_sources.remove(thread_id),
+        };
+        Ok(true)
+    }
+
+    fn thread_bundle_source(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<BundleSource>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let in_bundle = g
+            .threads
+            .get(thread_id)
+            .is_some_and(|t| t.bundle_id.is_some());
+        Ok(if in_bundle {
+            g.bundle_sources.get(thread_id).copied()
+        } else {
+            None
+        })
+    }
+
+    fn exclude_from_bundle(&self, bundle_id: &str, thread_id: &ThreadId) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.bundle_exclusions
+            .insert((bundle_id.to_string(), thread_id.clone()));
+        Ok(())
+    }
+
+    fn clear_bundle_exclusion(
+        &self,
+        bundle_id: &str,
+        thread_id: &ThreadId,
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.bundle_exclusions
+            .remove(&(bundle_id.to_string(), thread_id.clone()));
+        Ok(())
+    }
+
+    fn is_excluded_from_bundle(
+        &self,
+        bundle_id: &str,
+        thread_id: &ThreadId,
+    ) -> Result<bool, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.bundle_exclusions
+            .contains(&(bundle_id.to_string(), thread_id.clone())))
+    }
+
+    fn list_bundle_threads(&self, bundle_id: &str) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| t.bundle_id.as_deref() == Some(bundle_id))
+            .filter(|t| !t.labels.iter().any(|l| l == "TRASH" || l == "SPAM"))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        Ok(v)
+    }
+
+    fn list_threads_needing_anchors(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| g.anchor_versions.get(&t.id) != Some(&t.msg_count))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
+    fn set_thread_anchors(
+        &self,
+        thread_id: &ThreadId,
+        anchors: &[String],
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let mut a = anchors.to_vec();
+        a.sort();
+        a.dedup();
+        g.thread_anchors.insert(thread_id.clone(), a);
+        g.anchor_versions.insert(thread_id.clone(), msg_count);
+        Ok(())
+    }
+
+    fn list_threads_needing_bundling(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let junk = |t: &Thread| {
+            t.labels
+                .iter()
+                .any(|l| l == "TRASH" || l == "SPAM" || l == "DRAFT")
+        };
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| t.bundle_id.is_none() && t.last_msg_at >= since && !junk(t))
+            .filter(|t| t.priority != Some(Priority::Spam))
+            .filter(|t| g.bundling_versions.get(&t.id) != Some(&t.msg_count))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
+    fn set_thread_bundling_done(
+        &self,
+        thread_id: &ThreadId,
+        msg_count: i64,
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.bundling_versions.insert(thread_id.clone(), msg_count);
+        Ok(())
+    }
+
+    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.thread_anchors.get(thread_id).cloned().unwrap_or_default())
+    }
+
+    fn threads_with_anchors(
+        &self,
+        anchors: &[String],
+    ) -> Result<Vec<(ThreadId, Vec<String>)>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut out: Vec<(ThreadId, Vec<String>)> = g
+            .thread_anchors
+            .iter()
+            .filter_map(|(tid, a)| {
+                let hit: Vec<String> = a.iter().filter(|x| anchors.contains(x)).cloned().collect();
+                (!hit.is_empty()).then(|| (tid.clone(), hit))
+            })
+            .collect();
+        out.sort();
+        Ok(out)
     }
 
     fn list_threads_needing_triage(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
@@ -814,6 +1024,7 @@ impl FakeProvider {
                     needs_reply: false,
                     follow_up_since: None,
                     suggestion: None,
+                    bundle_id: None,
                     labels: vec!["INBOX".to_string()],
                     // Every 5th sample thread carries an attachment — just
                     // enough variety to eyeball the icon in Fake-backend dev mode.
@@ -1047,6 +1258,7 @@ mod tests {
             needs_reply: false,
             follow_up_since: None,
             suggestion: None,
+            bundle_id: None,
             labels: labels.iter().map(|s| s.to_string()).collect(),
             has_attachment: false,
             priority: None,

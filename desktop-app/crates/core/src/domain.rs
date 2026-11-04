@@ -82,6 +82,10 @@ pub struct Thread {
     /// the user accepts or dismisses it, or flags the thread themselves.
     #[serde(default)]
     pub suggestion: Option<Suggestion>,
+    /// The bundle this thread belongs to (`Bundle::id`), if any. App-local
+    /// like `triage_label_ids`; a thread is in at most one bundle.
+    #[serde(default)]
+    pub bundle_id: Option<String>,
 }
 
 /// What the AI proposes for a new unread email. The user accepts it (one
@@ -146,6 +150,143 @@ impl Priority {
 pub struct TriageLabel {
     pub id: String,
     pub name: String,
+}
+
+/// A bundle: the mail about one specific thing — a trip, an order (or a
+/// season of them), a project (docs/bundles.md). App-local like
+/// `TriageLabel`: never a Gmail label, synced between devices through the
+/// sync map (`bundle:<id>`), ids random so two devices never collide.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Bundle {
+    pub id: String,
+    pub name: String,
+    pub kind: BundleKind,
+    /// The user's one line ("everything about the Acme website"); empty
+    /// when none. It goes into the model's prompt once assignment lands.
+    #[serde(default)]
+    pub description: String,
+    pub status: BundleStatus,
+    /// Who made it. An `Ai` bundle stays on this device (every device
+    /// groups its own mail) until the user touches it — renames, archives,
+    /// adds or removes an email — which makes it `User` and synced.
+    #[serde(default)]
+    pub origin: BundleOrigin,
+    /// Epoch ms.
+    pub created_at: i64,
+    /// Epoch ms of the last edit to the bundle row (not its threads).
+    pub updated_at: i64,
+}
+
+/// What a bundle is about. It decides which facts the bundle view leads
+/// with and, later, when the bundle ends on its own.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BundleKind {
+    Trip,
+    Shopping,
+    Project,
+    Other,
+}
+
+impl BundleKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BundleKind::Trip => "trip",
+            BundleKind::Shopping => "shopping",
+            BundleKind::Project => "project",
+            BundleKind::Other => "other",
+        }
+    }
+
+    /// Unknown strings (a newer device's kind) read as `Other`.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "trip" => BundleKind::Trip,
+            "shopping" => BundleKind::Shopping,
+            "project" => BundleKind::Project,
+            _ => BundleKind::Other,
+        }
+    }
+}
+
+/// Active bundles show in the Bundles list and take new mail; archived
+/// ones are kept for search and reopen when a linked email arrives.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BundleStatus {
+    Active,
+    Archived,
+}
+
+impl BundleStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BundleStatus::Active => "active",
+            BundleStatus::Archived => "archived",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "archived" => BundleStatus::Archived,
+            _ => BundleStatus::Active,
+        }
+    }
+}
+
+/// Who made a bundle (`Bundle::origin`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BundleOrigin {
+    #[default]
+    User,
+    Ai,
+}
+
+impl BundleOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BundleOrigin::User => "user",
+            BundleOrigin::Ai => "ai",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "ai" => BundleOrigin::Ai,
+            _ => BundleOrigin::User,
+        }
+    }
+}
+
+/// How a thread got into its bundle. `User` is sticky: nothing automatic
+/// moves it. `Link` came from a shared booking ref, order or tracking
+/// number (`bundles::extract_anchors`) with a thread already in the bundle.
+/// `Ai` is the model's grouping of new mail.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BundleSource {
+    User,
+    Link,
+    Ai,
+}
+
+impl BundleSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BundleSource::User => "user",
+            BundleSource::Link => "link",
+            BundleSource::Ai => "ai",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "user" => BundleSource::User,
+            "ai" => BundleSource::Ai,
+            _ => BundleSource::Link,
+        }
+    }
 }
 
 /// One Gmail label (user-created only — system labels map to folders).
@@ -334,6 +475,9 @@ pub struct AttachmentRef {
     pub mime_type: String,
     /// Bytes, as the provider reports it (0 when unknown).
     pub size: i64,
+    /// The part's Content-ID without the angle brackets: the HTML body
+    /// shows it as `<img src="cid:…">` (signatures, inline pictures).
+    pub content_id: Option<String>,
 }
 
 /// One attachment on an outgoing Send mutation.

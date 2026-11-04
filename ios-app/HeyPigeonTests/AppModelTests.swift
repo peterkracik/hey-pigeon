@@ -234,6 +234,118 @@ struct AppModelTests {
         #expect(!model.isSearching && model.searchResults.isEmpty)
     }
 
+    /// iOS only: the Mac has no Search tab and searches in the list it is on.
+    @Test(.enabled(if: AppModel.searchHasOwnTab))
+    func otherTabsShowTheirWholeListWhileASearchIsKept() {
+        model.navigate(to: .search)
+        model.searchFilters.unreadOnly = true
+        let results = Set(model.groupedRows.flatMap(\.rows).map(\.id))
+        #expect(results == Set(model.searchResults.map(\.id)))
+
+        model.navigate(to: .inbox)
+        #expect(!model.showsSearchResults)
+        let inbox = Set(model.groupedRows.flatMap(\.rows).map(\.id))
+        #expect(inbox == Set(model.rows.map(\.id)))
+        #expect(inbox != results) // the read threads are back
+
+        // The query is still there when the user comes back to Search.
+        model.navigate(to: .search)
+        #expect(model.showsSearchResults)
+        #expect(Set(model.groupedRows.flatMap(\.rows).map(\.id)) == results)
+        model.searchFilters = SearchFilters()
+    }
+
+    @Test func typedWordsSearchAfterAPauseAndTheNewestQueryWins() async throws {
+        let subject = try #require(model.rows.first?.subject)
+        let word = try #require(subject.split(separator: " ").first.map(String.init))
+        model.searchText = "zzzz-no-such-word"
+        model.searchText = word // within the typing pause: the first never runs
+        #expect(model.isSearchPending)
+        for _ in 0..<100 where model.isSearchPending { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(!model.isSearchPending)
+        #expect(!model.searchResults.isEmpty)
+        model.searchText = ""
+        #expect(!model.isSearchPending && model.searchResults.isEmpty)
+    }
+
+    @Test func sidebarShowsPinnedLabelsUntilExpanded() {
+        let all = ["a", "b", "c", "d"].map { MailLabelItem(id: $0, accountId: "x", name: $0.uppercased()) }
+        // Nothing pinned: nothing to hide.
+        var r = AppModel.sidebarLabels(all, pinned: [], expanded: false, current: nil)
+        #expect(r.shown.map(\.id) == ["a", "b", "c", "d"] && r.hidden == 0)
+        // Pinned only, in the list's order; the open label stays in view.
+        r = AppModel.sidebarLabels(all, pinned: ["c", "a"], expanded: false, current: "d")
+        #expect(r.shown.map(\.id) == ["a", "c", "d"] && r.hidden == 1)
+        // ••• opens the whole list.
+        r = AppModel.sidebarLabels(all, pinned: ["c"], expanded: true, current: nil)
+        #expect(r.shown.count == 4 && r.hidden == 0)
+        // A pin for a label this list doesn't hold (another account) hides nothing.
+        r = AppModel.sidebarLabels(all, pinned: ["zz"], expanded: false, current: nil)
+        #expect(r.shown.count == 4)
+    }
+
+    @Test func pinningALabelIsASyncedPref() throws {
+        let label = try #require(model.labels.first)
+        model.togglePinned(label)
+        #expect(model.pinnedLabelIds == [label.id])
+        #expect(try engine.prefs()["sidebar.pinned_labels"] as? [String] == [label.id])
+        model.togglePinned(label)
+        #expect(model.pinnedLabelIds.isEmpty)
+    }
+
+    @Test func inlinePicturesSwapCidForData() {
+        let html = #"<p>Hi</p><img src="cid:image001.png@01DB"><img src='CID:Sig%40x'><img src="cid:missing">"#
+        #expect(InlineImages.references(in: html) == ["image001.png@01db", "sig@x", "missing"])
+        let out = InlineImages.inlined(html, dataURIs: ["image001.png@01db": "data:image/png;base64,AA", "sig@x": "data:image/gif;base64,BB"])
+        #expect(out == #"<p>Hi</p><img src="data:image/png;base64,AA"><img src='data:image/gif;base64,BB'><img src="cid:missing">"#)
+        // Only web pictures need the per-sender "Load".
+        #expect(!InlineImages.hasRemoteImages(html))
+        #expect(InlineImages.hasRemoteImages(#"<IMG width=1 src="https://t.example/p.gif">"#))
+        #expect(InlineImages.hasRemoteImages(#"<img src=//cdn.example/a.png>"#))
+        // The chip for a picture the body shows goes away; a real file stays.
+        let logo = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "a", filename: "logo.png",
+                                  mimeType: "image/png", size: 10, contentId: "Image001.png@01DB")
+        let pdf = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "b", filename: "x.pdf",
+                                 mimeType: "application/pdf", size: 10)
+        #expect(InlineImages.isShownInline(logo, in: html))
+        #expect(!InlineImages.isShownInline(pdf, in: html))
+    }
+
+    @Test func loadRemoteImagesIsASyncedPref() throws {
+        model.loadRemoteImages = true
+        #expect(try engine.prefs()["mail.remote_images"] as? Bool == true)
+        #expect(model.loadsImages(from: "anyone@x.test"))
+        model.loadRemoteImages = false
+    }
+
+    @Test func alwaysLoadingASendersImagesIsSynced() throws {
+        #expect(!model.loadsImages(from: "news@shop.test"))
+        model.alwaysLoadImages(from: "News@Shop.test")
+        #expect(model.loadsImages(from: "news@shop.test"))
+        #expect(!model.loadsImages(from: "other@shop.test"))
+        #expect(try engine.prefs()["mail.image_senders"] as? [String] == ["news@shop.test"])
+        model.imageSenders = []
+    }
+
+    @Test func triageLabelsFollowTheUsersOrder() {
+        let l = ["a", "b", "c", "d"].map { TriageLabelItem(id: $0, name: $0.uppercased()) }
+        // Ordered ones first; a new label (d) and an unknown id (zz) don't break it.
+        #expect(AppModel.orderedTriageLabels(l, by: ["c", "zz", "a"]).map(\.id) == ["c", "a", "b", "d"])
+        #expect(AppModel.orderedTriageLabels(l, by: []).map(\.id) == ["a", "b", "c", "d"])
+    }
+
+    @Test func movingATriageLabelIsSynced() throws {
+        let before = model.triageLabels.map(\.id)
+        try #require(before.count >= 2)
+        model.moveTriageLabels(from: [before.count - 1], to: 0)
+        let after = model.triageLabels.map(\.id)
+        #expect(after.first == before.last)
+        #expect(try engine.prefs()["triage.label_order"] as? [String] == after)
+        // A reload keeps the order.
+        model.reloadAccounts()
+        #expect(model.triageLabels.map(\.id) == after)
+    }
+
     @Test func recentSearchesDedupeAndCap() {
         model.clearRecentSearches()
         defer { model.clearRecentSearches() }

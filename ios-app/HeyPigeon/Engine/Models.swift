@@ -86,6 +86,8 @@ struct ThreadRow: Identifiable, Hashable {
     let labels: [String]
     /// The AI's proposal for this new email, until accepted or dismissed.
     var suggestion: MailSuggestion? = nil
+    /// The bundle this thread belongs to (`BundleItem.id`), if any.
+    var bundleId: String? = nil
 
     /// The proposal, while it still means something: the core drops it when
     /// the user flags the thread, but a row from before that (or a thread
@@ -222,6 +224,9 @@ struct AttachmentItem: Identifiable, Hashable {
     let mimeType: String
     /// Bytes as the provider reports them; 0 when unknown.
     let size: Int
+    /// The part's Content-ID: the HTML body shows it as `cid:` (an inline
+    /// picture, a signature logo). Nil for an ordinary attachment.
+    var contentId: String? = nil
 
     var id: String { messageId + "|" + attachmentId }
     var isImage: Bool { mimeType.lowercased().hasPrefix("image/") }
@@ -246,6 +251,96 @@ struct MailLabelItem: Identifiable, Hashable {
 struct TriageLabelItem: Identifiable, Hashable {
     let id: String
     let name: String
+}
+
+/// What a bundle is about (docs/bundles.md). Decides its icon and which
+/// facts the bundle view leads with.
+enum BundleCategory: String, CaseIterable, Identifiable, Hashable {
+    case trip, shopping, project, other
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .trip: "Trip"
+        case .shopping: "Shopping"
+        case .project: "Project"
+        case .other: "Other"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .trip: "airplane"
+        case .shopping: "bag"
+        case .project: "folder"
+        case .other: "square.stack"
+        }
+    }
+}
+
+/// One bundle as the Bundles list shows it: the mail about one specific
+/// thing (a trip, an order, a project), app-local and synced.
+struct BundleItem: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let category: BundleCategory
+    /// The user's one line; empty when none.
+    let description: String
+    let isArchived: Bool
+    let createdAt: Date
+    /// Threads in the bundle, done ones included.
+    let threadCount: Int
+    /// Of those, still in the inbox.
+    let openCount: Int
+    /// Newest message in the bundle; nil when it is empty.
+    let lastActivityAt: Date?
+    /// Made by the model and not touched by the user yet: it stays on this
+    /// device until the user edits it.
+    var isAutomatic = false
+}
+
+/// What a key fact identifies.
+enum BundleFactCategory: String, Hashable {
+    case flight, booking, order, invoice, tracking
+    var title: String {
+        switch self {
+        case .flight: "Flight"
+        case .booking: "Booking"
+        case .order: "Order"
+        case .invoice: "Invoice"
+        case .tracking: "Tracking"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .flight: "airplane"
+        case .booking: "ticket"
+        case .order: "bag"
+        case .invoice: "doc.text"
+        case .tracking: "shippingbox"
+        }
+    }
+}
+
+/// One key fact in the bundle view: an identifier found in the bundle's
+/// mail and the email it came from (tapping it opens that email).
+struct BundleFactItem: Identifiable, Hashable {
+    let category: BundleFactCategory
+    /// As found, upper-cased: `AT1323`, `112-334`.
+    let value: String
+    let threadId: String
+    let at: Date
+    var id: String { "\(category.rawValue):\(value)" }
+}
+
+/// Everything the bundle view shows.
+struct BundleContents: Hashable {
+    let bundle: BundleItem
+    let facts: [BundleFactItem]
+    /// Newest first, done ones included — a bundle is a reference, not a
+    /// to-do list.
+    let threads: [ThreadRow]
+
+    var open: [ThreadRow] { threads.filter { !$0.isDone } }
+    var done: [ThreadRow] { threads.filter(\.isDone) }
 }
 
 /// An account's connection and sync health, for Settings and the sidebar.
@@ -400,7 +495,7 @@ enum MailView: Hashable {
     var title: String {
         switch self {
         case .inbox: "Inbox"
-        case .scheduled: "Scheduled"
+        case .scheduled: "Remind me"
         case .needReply: "Need reply"
         case .starred: "Starred"
         case .drafts: "Drafts"
@@ -518,7 +613,7 @@ enum MainTab: Hashable {
     var title: String {
         switch self {
         case .inbox: "Inbox"
-        case .scheduled: "Scheduled"
+        case .scheduled: "Remind me"
         case .needReply: "Need reply"
         case .search: "Search"
         }
@@ -677,6 +772,10 @@ protocol MailEngine: AnyObject {
     /// the whole list comes back, whatever `before` and `limit` say.
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func search(_ query: String, limit: Int) throws -> [ThreadRow]
+    /// `search` off the main thread, for the words typed in the field: a
+    /// short word ranks nearly every message and froze the keyboard when
+    /// it ran on the main actor. No results on an error.
+    func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow]
     func thread(id: String) async throws -> ThreadDetail?
     /// The thread with whatever messages the store already holds — bodies
     /// only when it was opened before. No network: what the Spotlight index
@@ -691,7 +790,9 @@ protocol MailEngine: AnyObject {
     /// asked for when a message with a paperclip is on screen.
     func attachments(threadId: String) async throws -> [AttachmentItem]
     /// The attachment's bytes as a cached file, fetched once. Never called
-    /// without the user tapping (or the on-device triage hook asking).
+    /// without the user tapping (or the on-device triage hook asking),
+    /// except for the inline pictures a body shows as `cid:`: those are
+    /// part of the message, from Gmail, not a remote image.
     func attachmentFile(_ attachment: AttachmentItem) async throws -> URL
 
     func perform(_ action: MailAction, accountId: String) async throws
@@ -764,4 +865,31 @@ protocol MailEngine: AnyObject {
     func renameTriageLabel(id: String, name: String) throws
     func deleteTriageLabel(id: String) throws
     func reanalyzeTriage() throws
+
+    // Bundles (docs/bundles.md). App-local, synced between devices.
+    /// Active first, then archived, each by name.
+    func bundles() throws -> [BundleItem]
+    /// Nil for an unknown id (deleted on another device).
+    func bundleContents(id: String) throws -> BundleContents?
+    /// "New bundle…", optionally from selected threads, which join it.
+    func createBundle(name: String, category: BundleCategory, description: String, threadIds: [String]) throws -> BundleItem
+    func updateBundle(id: String, name: String, category: BundleCategory, description: String) throws
+    func setBundleArchived(id: String, _ archived: Bool) throws
+    /// The mail stays; only the grouping goes.
+    func deleteBundle(id: String) throws
+    /// The user's choice, sticky. Threads sharing a booking, order or
+    /// tracking number with it come along; returns how many.
+    @discardableResult
+    func addToBundle(threadId: String, bundleId: String) throws -> Int
+    /// The thread leaves its bundle and is never put back automatically.
+    func removeFromBundle(threadId: String) throws
+    /// The bundle to offer first in the picker, by a shared identifier.
+    func suggestedBundle(threadId: String) throws -> String?
+}
+
+extension MailEngine {
+    /// The mock answers in memory, so the plain call is enough.
+    func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow] {
+        (try? search(query, limit: limit)) ?? []
+    }
 }

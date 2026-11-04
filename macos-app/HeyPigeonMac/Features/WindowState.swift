@@ -5,6 +5,7 @@
 // Pure parts (the key map, the palette filter) are static so the tests can
 // run them without a window.
 
+import AppKit
 import SwiftUI
 
 /// Everything a key, a menu item, a hover button or the palette can do.
@@ -310,6 +311,11 @@ final class WindowState: Equatable {
     // MARK: Keys
 
     func handle(_ press: KeyPress, model: AppModel) -> KeyPress.Result {
+        // Typing belongs to the field being typed in. The handler sits on
+        // the window as well as the list, and the window's saw every letter
+        // of a search before the field did: "e" marked a row done. A text
+        // field's editor (an NSText) as the first responder means typing.
+        if Self.isTyping(NSApp.keyWindow?.firstResponder) { return .ignored }
         let key: MailKey
         switch press.key {
         case .upArrow: key = .up
@@ -331,6 +337,13 @@ final class WindowState: Equatable {
             run(command, in: model)
             return .handled
         }
+    }
+
+    /// The first responder is a text editor: a field or the composer. A
+    /// message body's selectable, read-only text is not typing.
+    static func isTyping(_ responder: NSResponder?) -> Bool {
+        guard let text = responder as? NSTextView else { return responder is NSTextField }
+        return text.isEditable
     }
 
     // MARK: Actions
@@ -410,7 +423,10 @@ final class WindowState: Equatable {
         case .shortcuts:
             showShortcuts.toggle()
         case .escape:
-            if showSettings {
+            // The search panel floats over everything: it goes first.
+            if searching {
+                endSearch(in: model)
+            } else if showSettings {
                 showSettings = false
                 listFocusRequest += 1
             } else if isThreadOpen {

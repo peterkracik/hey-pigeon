@@ -157,6 +157,24 @@ extension View {
     }
 }
 
+extension View {
+    /// The sheet's close button in the bar. On the Mac Settings is a page
+    /// of the window, not a sheet, and its toolbar is the window's: it
+    /// leaves through the window's Back and Esc instead.
+    @ViewBuilder
+    func sheetCloseButton(_ close: @escaping () -> Void) -> some View {
+        #if os(iOS)
+        toolbar {
+            ToolbarItem(placement: .barTrailing) {
+                Button(role: .close) { close() }
+            }
+        }
+        #else
+        self
+        #endif
+    }
+}
+
 /// Settings' container: the phone's menu list; on the Mac a grouped form,
 /// the boxed sections of System Settings, with no scroll bar.
 struct SettingsList<Content: View>: View {

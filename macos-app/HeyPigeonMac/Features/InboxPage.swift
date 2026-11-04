@@ -1,12 +1,13 @@
-// The window's root page, under the top bar (TopBar in MainWindow): the
+// The window's root page, under the window's toolbar (MainToolbar): the
 // list, full width up to a readable maximum, in the first desktop
 // client's shape — single-line rows with a done circle, like a to-do list
 // (MailRow), the day groups between them, a click opening the row's
 // latest message in place as a card with "Open full thread ›". ⌘-click
 // and ⇧-click gather rows for the batch bar. Search results, the From /
 // To / Unread / account filters and the recent searches are the phone's
-// Search tab's pieces (Features/Search/SearchScreen.swift); the field
-// itself is in the top bar.
+// Search tab's pieces (Features/Search/SearchScreen.swift); the field is
+// the Spotlight panel (SearchSpotlight). The triage labels are the phone's
+// glass pill at the bottom (TriageSplitBar).
 
 import AppKit
 import SwiftUI
@@ -19,7 +20,7 @@ struct InboxPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if state.searching || model.isSearching {
+            if model.isSearching {
                 SearchFilterBar(picking: $picking).padding(.top, 8)
                 if model.isSearching { ResultCount(count: model.searchResults.count) }
             }
@@ -29,16 +30,24 @@ struct InboxPage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MacTheme.content)
         .safeAreaInset(edge: .bottom) {
-            if state.selection.count > 1 { BatchBar(state: state) }
+            if state.selection.count > 1 {
+                BatchBar(state: state)
+            } else if model.tab == .inbox && !model.isSearching && !model.triageLabels.isEmpty {
+                // The triage labels as the phone's Liquid Glass pill: as
+                // wide as its tabs, at most the list's readable width.
+                ViewThatFits(in: .horizontal) {
+                    TriageSplitBar().fixedSize(horizontal: true, vertical: false)
+                    TriageSplitBar().frame(maxWidth: 720)
+                }
+                .padding(.bottom, 8)
+            }
         }
         .sheet(item: $picking) { field in PersonPicker(field: field) }
         .onChange(of: state.listFocusRequest) { _, _ in listFocused = true }
     }
 
     @ViewBuilder private var content: some View {
-        if state.searching && !model.isSearching {
-            RecentSearches()
-        } else if !model.hasLoadedOnce {
+        if !model.hasLoadedOnce {
             SkeletonList()
         } else if model.groupedRows.isEmpty && model.isSearching && model.isSearchPending {
             Color.clear
@@ -89,15 +98,6 @@ struct InboxPage: View {
             .animation(.easeOut(duration: 0.18), value: model.rows.map(\.id))
             .animation(.snappy(duration: 0.22), value: state.expanded)
         }
-    }
-}
-
-/// With the sidebar away, the traffic lights sit at the top bar's left
-/// end: keep it clear of them. (They are always in the top bar now; the
-/// gap is always kept.)
-struct TrafficLightsGap: View {
-    var body: some View {
-        Color.clear.frame(width: MacLayout.trafficLights, height: 1)
     }
 }
 

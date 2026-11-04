@@ -32,13 +32,19 @@ struct MailRow: View {
                     .transition(.opacity)
             }
         }
-        .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        // The shadow is the card's shape's only: on the whole card it fell on
+        // every opaque piece inside too (the message's web view got its own),
+        // and a large one was cut off by the list's row.
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(background)
+                .shadow(color: .black.opacity(expanded ? 0.07 : 0), radius: 5, y: 1.5)
+        }
         .overlay {
             if expanded {
                 RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(MacTheme.hairline, lineWidth: 1)
             }
         }
-        .shadow(color: .black.opacity(expanded ? 0.12 : 0), radius: 16, y: 6)
         .padding(.horizontal, 10)
         .padding(.vertical, expanded ? 8 : 0)
         .listRowInsets(EdgeInsets())
@@ -335,7 +341,8 @@ struct MailPreview: View {
                 .help("Open the full thread (↩)")
             }
         }
-        .padding(.leading, 56).padding(.trailing, 18).padding(.vertical, 14)
+        // The same margin on both sides of the message and its buttons.
+        .padding(.horizontal, 20).padding(.vertical, 14)
         .task(id: row.id) {
             do {
                 detail = try await model.engine.thread(id: row.id)

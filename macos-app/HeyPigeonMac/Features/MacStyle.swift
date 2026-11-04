@@ -1,11 +1,10 @@
 // The Mac window's look, after the first desktop client (desktop-app, the
-// Svelte one) and the Claude desktop app: quiet and flat. One top bar
-// across the window with the traffic lights in it (WindowChrome), the
-// folder tabs and borderless icon buttons; a grey sidebar under it;
-// single-line rows with a done circle, like a to-do list, that only tint
-// on hover; the open row as a card; floating pieces (the batch bar, the
-// toast, the search field) on a bordered panel with a soft shadow instead
-// of Liquid Glass. The phone's tokens (Theme) stay the source for text
+// Svelte one): quiet and flat under the standard Mac toolbar. A grey
+// sidebar; single-line rows with a done circle, like a to-do list, that
+// only tint on hover; the open row as a card; the batch bar and the toast
+// on a bordered panel with a soft shadow. Liquid Glass is kept for what
+// floats over the content like the phone's: the triage label pill and the
+// Spotlight search panel. The phone's tokens (Theme) stay the source for text
 // and accent colours.
 
 import SwiftUI
@@ -31,10 +30,6 @@ enum MacTheme {
 enum MacLayout {
     /// The readable column the list and the thread share.
     static let maxWidth: CGFloat = 1120
-    /// The top bar's height; WindowChrome centres the traffic lights in it.
-    static let topBar: CGFloat = 52
-    /// The room the traffic lights take at the top bar's left end.
-    static let trafficLights: CGFloat = 82
     /// The sidebar's width.
     static let sidebarWidth: CGFloat = 232
     /// The sender column of a row.
@@ -72,53 +67,6 @@ struct IconButton: View {
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityLabel(help)
-    }
-}
-
-/// The title row's menu: a title with a small chevron that opens the
-/// view's actions, like a conversation's title in the Claude app.
-struct TitleMenu<Title: View, Items: View>: View {
-    let items: () -> Items
-    let label: () -> Title
-    @State private var hovering = false
-
-    init(@ViewBuilder items: @escaping () -> Items, @ViewBuilder label: @escaping () -> Title) {
-        self.items = items
-        self.label = label
-    }
-
-    var body: some View {
-        Menu {
-            items()
-        } label: {
-            HStack(spacing: 6) {
-                label()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { hovering = $0 }
-    }
-}
-
-/// The title text itself.
-struct TitleText: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 17, weight: .medium))
-            .foregroundStyle(Theme.textPrimary)
-            .lineLimit(1)
     }
 }
 

@@ -11,6 +11,8 @@ struct SidebarSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// ••• in the labels card: the unpinned labels too. Per device.
     @AppStorage("sidebarAllLabels") private var allLabels = false
+    /// "N more" in the bundles card: every active bundle, hidden ones too.
+    @AppStorage("sidebarAllBundles") private var allBundles = false
 
     var body: some View {
         NavigationStack {
@@ -36,6 +38,7 @@ struct SidebarSheet: View {
                 }
             }
             .menuCard()
+            bundlesSection
             // The desktop sidebar's folders, in its order (Archive is "done"
             // in this app's vocabulary; Scheduled and Need reply are tabs).
             Section {
@@ -43,7 +46,6 @@ struct SidebarSheet: View {
                 folderRow(.sent)
                 folderRow(.drafts, count: model.draftsCount)
                 folderRow(.archive)
-                bundlesRow
                 tabRow(.scheduled, count: model.scheduledCount)
                 tabRow(.needReply, count: model.needReplyCount)
                 folderRow(.all)
@@ -136,15 +138,64 @@ struct SidebarSheet: View {
         }
     }
 
-    /// Bundles open their own sheet; this one closes first.
-    private var bundlesRow: some View {
-        Button { model.openBundles() } label: {
-            HStack {
-                Label("Bundles", systemImage: "square.stack")
-                Spacer()
-                if !model.activeBundles.isEmpty {
-                    Text("\(model.activeBundles.count)").font(.subheadline).foregroundStyle(Theme.textTertiary)
+    /// The Bundles card, right under the inboxes: the most recent ones,
+    /// "N more" for the rest (hidden ones included, to show them again),
+    /// then the whole list. A bundle opens its own sheet; this one closes.
+    private var bundlesSection: some View {
+        let rows = AppModel.sidebarBundles(model.activeBundles, hidden: model.hiddenBundleIds, expanded: allBundles)
+        return Section {
+            ForEach(rows.shown) { b in bundleRow(b) }
+            if rows.more > 0 || allBundles && !model.hiddenBundleIds.isEmpty {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { allBundles.toggle() }
+                } label: {
+                    Label(allBundles ? "Show less" : "\(rows.more) more",
+                          systemImage: allBundles ? "chevron.up" : "ellipsis")
+                        .foregroundStyle(Theme.textSecondary)
                 }
+                .accessibilityLabel(allBundles ? "Show fewer bundles" : "Show all bundles, \(rows.more) more")
+            }
+            Button { model.openBundles() } label: {
+                Label(model.activeBundles.isEmpty ? "Bundles" : "All bundles", systemImage: "square.stack")
+            }
+        } header: {
+            Text("Bundles").textCase(nil)
+        }
+        .menuCard()
+    }
+
+    /// A bundle, its open count, and (in the full list) the eye that hides
+    /// it from the short one; the long-press menu hides it too.
+    private func bundleRow(_ b: BundleItem) -> some View {
+        let hidden = model.hiddenBundleIds.contains(b.id)
+        return HStack {
+            Button { model.openBundles(at: b.id) } label: {
+                HStack {
+                    Label(b.name, systemImage: b.category.systemImage)
+                        .opacity(hidden ? 0.5 : 1)
+                    Spacer()
+                    if b.openCount > 0 {
+                        Text("\(b.openCount)").font(.subheadline).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if allBundles {
+                Button { model.toggleHidden(b) } label: {
+                    Image(systemName: hidden ? "eye.slash" : "eye")
+                        .font(.footnote)
+                        .foregroundStyle(hidden ? Theme.textTertiary : Theme.textSecondary)
+                        .frame(width: 32, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(hidden ? "Show \(b.name) in the sidebar" : "Hide \(b.name) from the sidebar")
+            }
+        }
+        .contextMenu {
+            Button { model.toggleHidden(b) } label: {
+                Label(hidden ? "Show in sidebar" : "Hide from sidebar", systemImage: hidden ? "eye" : "eye.slash")
             }
         }
     }

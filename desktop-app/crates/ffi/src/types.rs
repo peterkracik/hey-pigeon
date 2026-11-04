@@ -546,6 +546,18 @@ pub struct TriageStatus {
     pub available_classifier_ids: Vec<String>,
 }
 
+/// The background analysis pass (auto-triage) as the shell shows it: of
+/// the emails this pass found stale, how many are classified, and whether
+/// a round is working right now. A pass starts when a round finds stale
+/// mail and ends when none is left; mail arriving meanwhile joins it.
+/// `total == 0` means there is nothing to analyze.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Record)]
+pub struct AnalysisPass {
+    pub done: u32,
+    pub total: u32,
+    pub running: bool,
+}
+
 /// What the on-device classifier decided for one email.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct TriageVerdict {

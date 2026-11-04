@@ -544,6 +544,22 @@ impl Engine {
         Ok(())
     }
 
+    /// Where the analysis pass is; idle when nothing is stale (or triage
+    /// is off). Cheap: no counting, the last state a round left.
+    pub fn analysis_progress(&self) -> AnalysisPass {
+        *self.analysis.lock().unwrap()
+    }
+
+    /// One analysis round outside the sync cadence, then where the pass
+    /// stands. The shell calls it in a loop while the app is in front and
+    /// mail is left (`total > done`), so "Reanalyze all emails" finishes in
+    /// minutes instead of ten emails per sync. Same batch, same guard
+    /// against overlapping rounds as the sync's own round.
+    pub async fn analyze_pending(&self) -> AnalysisPass {
+        self.classify_pending().await;
+        self.analysis_progress()
+    }
+
     /// Manual label edit from the thread view. Sticky until "Reanalyze";
     /// the pin travels to the user's other devices (`thread_triage:<id>`
     /// on the thread's account file). Jev's own results stay local.
@@ -772,6 +788,7 @@ impl Engine {
         }
         let result = self.classify_pending_inner().await;
         *self.classifying.lock().unwrap() = false;
+        self.settle_analysis(result.is_ok());
         match result {
             Ok(0) => {}
             Ok(n) => {
@@ -796,6 +813,19 @@ impl Engine {
         // Only mail inside the sync window: the archive walk brings in years
         // of old threads, and classifying those would cost an AI call each.
         let cutoff = now_ms() - i64::from(BACKFILL_DAYS) * 86_400_000;
+        let remaining = self.store.count_threads_needing_triage(cutoff)?;
+        if remaining == 0 {
+            return Ok(0);
+        }
+        // A new pass starts from zero; a pass under way keeps its count and
+        // grows by whatever mail arrived since.
+        let mut progress = self.analysis_progress();
+        if progress.total == 0 {
+            progress.done = 0;
+        }
+        progress.total = progress.done + remaining;
+        progress.running = true;
+        self.set_analysis(progress);
         let pending: Vec<_> = self
             .store
             .list_threads_needing_triage(TRIAGE_BATCH)?
@@ -851,8 +881,34 @@ impl Engine {
             self.store
                 .set_thread_triage(&thread.id, &label_ids, priority, thread.msg_count)?;
             n += 1;
+            progress.done = (progress.done + 1).min(progress.total);
+            self.set_analysis(progress);
         }
         Ok(n)
+    }
+}
+
+impl Engine {
+    /// After a round: the pass pauses until the next one with what is left,
+    /// or ends (idle) when nothing is — or when the round failed or triage
+    /// is off, so a stuck pass never sits on screen.
+    fn settle_analysis(&self, ok: bool) {
+        let cutoff = now_ms() - i64::from(BACKFILL_DAYS) * 86_400_000;
+        let remaining = if ok && self.triage_enabled().unwrap_or(false) {
+            self.store.count_threads_needing_triage(cutoff).unwrap_or(0)
+        } else {
+            0
+        };
+        let current = self.analysis_progress();
+        if remaining == 0 || current.total == 0 {
+            self.set_analysis(AnalysisPass::default());
+        } else {
+            self.set_analysis(AnalysisPass {
+                done: current.done,
+                total: current.done + remaining,
+                running: false,
+            });
+        }
     }
 }
 
@@ -1257,6 +1313,109 @@ mod tests {
         assert_eq!(s.classifier_id, "jev");
         assert!(s.configured);
         assert!(e.set_triage_classifier("other".into()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Records every analysis progress the engine reports.
+    #[derive(Default)]
+    struct ProgressLog(std::sync::Mutex<Vec<AnalysisPass>>);
+
+    impl crate::engine::EngineListener for ProgressLog {
+        fn on_threads_updated(&self) {}
+        fn on_account_disconnected(&self, _account_id: String) {}
+        fn on_prefs_updated(&self) {}
+        fn on_analysis_progress(&self, progress: AnalysisPass) {
+            self.0.lock().unwrap().push(progress);
+        }
+    }
+
+    /// A pass larger than one batch: the first round counts it, reports
+    /// each email, pauses with what is left; `analyze_pending` finishes it
+    /// and the pass goes idle.
+    #[tokio::test]
+    async fn analysis_progress_spans_rounds_and_ends_idle() {
+        let (e, dir) = open("triage-progress");
+        e.store
+            .upsert_account(&heypigeon_core::domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        let total = TRIAGE_BATCH + 2;
+        for i in 0..total {
+            let id = format!("t{i}");
+            let mut thread = crate::engine::tests_support::sample_thread(&id, "me@x.com");
+            thread.last_msg_at = now_ms() - i64::from(i);
+            e.store.upsert_thread(&thread).unwrap();
+            e.store
+                .upsert_message(&heypigeon_core::domain::Message {
+                    id: format!("m{i}"),
+                    thread_id: id,
+                    account_id: "me@x.com".into(),
+                    from_addr: "a@b.test".into(),
+                    to_addrs: vec!["me@x.com".into()],
+                    date: now_ms(),
+                    snippet: "hi".into(),
+                    body_html: None,
+                    body_text: None,
+                    label_ids: vec!["INBOX".into()],
+                    is_read: false,
+                })
+                .unwrap();
+        }
+        let log = Arc::new(ProgressLog::default());
+        e.set_listener(Some(log.clone()));
+        e.set_ai_backend(Some(crate::ai::fakes::ScriptedBackend::new(
+            "",
+            verdict(Priority::Low, &[]),
+        )));
+        assert_eq!(e.analysis_progress(), AnalysisPass::default());
+
+        // Triage off: nothing runs, nothing is reported.
+        e.classify_pending().await;
+        assert!(log.0.lock().unwrap().is_empty());
+
+        e.set_autolabel_enabled(true).unwrap();
+        e.classify_pending().await;
+        let paused = AnalysisPass {
+            done: TRIAGE_BATCH,
+            total,
+            running: false,
+        };
+        assert_eq!(e.analysis_progress(), paused);
+        {
+            let seen = log.0.lock().unwrap();
+            assert_eq!(
+                seen[0],
+                AnalysisPass {
+                    done: 0,
+                    total,
+                    running: true
+                }
+            );
+            assert_eq!(
+                seen.len(),
+                TRIAGE_BATCH as usize + 2,
+                "start, each email, pause"
+            );
+            assert_eq!(*seen.last().unwrap(), paused);
+        }
+
+        let end = e.analyze_pending().await;
+        assert_eq!(end, AnalysisPass::default());
+        let seen = log.0.lock().unwrap();
+        assert!(seen.contains(&AnalysisPass {
+            done: total,
+            total,
+            running: true
+        }));
+        assert_eq!(*seen.last().unwrap(), AnalysisPass::default());
+        drop(seen);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

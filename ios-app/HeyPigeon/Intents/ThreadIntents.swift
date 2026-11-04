@@ -223,3 +223,30 @@ struct OpenThreadIntent: AppIntent {
         return .result()
     }
 }
+
+// MARK: - Donations of these intents
+
+/// The thread intents' donations (IntentDonations.swift says why they sit
+/// here): built in the file that declares the intents, so their
+/// @Parameter wrappers are only ever type-checked next to their own
+/// declarations.
+extension IntentDonations {
+    static func labeled(_ row: ThreadRow, _ label: MailLabelItem, on: Bool, in model: AppModel) {
+        guard enabled, model.account(for: row) != nil else { return }
+        var intent = AddLabelIntent()
+        intent.thread = MailThreadEntity(row, account: model.account(for: row))
+        intent.label = MailLabelEntity(label)
+        intent.add = on
+        donate(intent, result: .result(dialog: IntentDialog(stringLiteral: on ? "Label added · \(label.name)." : "Label removed · \(label.name).")))
+    }
+
+    static func reminded(_ row: ThreadRow, at: Date, onlyIfNoReply: Bool, in model: AppModel) {
+        guard enabled else { return }
+        let intent = RemindMeIntent()
+        intent.thread = MailThreadEntity(row, account: model.account(for: row))
+        intent.when = .pickDate
+        intent.date = at
+        intent.onlyIfNoReply = onlyIfNoReply
+        donate(intent, result: .result(dialog: "Reminder set for \(Formatters.reminder(at))."))
+    }
+}

@@ -22,7 +22,7 @@ ios-app/
     Shared/             Platform (the UIKit/AppKit door), Theme (tokens), Formatters, ReminderScheduler, ReminderPresets,
                         widget snapshot, Live Activities, deep links
       WidgetShared/     Compiled into the app and both extensions: App Group, snapshot, widget intents, activity attributes, pending share
-  HeyPigeonWidgets/     Widget extension: Unread · Next reminder · Need reply, the reminder and triage Live Activities, Controls
+  HeyPigeonWidgets/     Widget extension: Unread · Next reminder · Need reply, the reminder, triage and analysis Live Activities, Controls
   HeyPigeonShare/       Share extension: text, links and files → a pending share the app opens as a draft
   HeyPigeonTests/       Swift Testing over the mock engine (AppModel, models and helpers, intents, entities, presets,
                         snapshot, deep links, triage plan, attachment chips) and Evaluations/ (the prompt harnesses)

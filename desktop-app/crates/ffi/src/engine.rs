@@ -50,6 +50,10 @@ pub trait EngineListener: Send + Sync {
     /// model or the triage switch. Re-read them. Never fires for this
     /// device's own edits, so it cannot race the optimistic UI.
     fn on_prefs_updated(&self);
+    /// The analysis pass moved: a round started, an email was classified,
+    /// or the pass paused between rounds or finished (`AnalysisPass`).
+    /// Fires per email, so keep the handler cheap — it is not a reload.
+    fn on_analysis_progress(&self, progress: AnalysisPass);
 }
 
 #[derive(Default)]
@@ -90,6 +94,8 @@ pub struct Engine {
     pub(crate) bundling: Mutex<bool>,
     /// Last Jev failure; None after a clean run (settings.rs).
     pub(crate) triage_last_error: Mutex<Option<String>>,
+    /// Where the current analysis pass is (settings.rs, `classify_pending`).
+    pub(crate) analysis: Mutex<AnalysisPass>,
     /// The shell's AI backends, one per provider it can offer on this device
     /// ("apple" on-device, "apple-cloud" Private Cloud Compute, …), in
     /// registration order (ai.rs).
@@ -158,6 +164,7 @@ impl Engine {
             suggesting: Mutex::new(false),
             bundling: Mutex::new(false),
             triage_last_error: Mutex::new(None),
+            analysis: Mutex::new(AnalysisPass::default()),
             ai_backends: Mutex::new(Vec::new()),
         }))
     }
@@ -897,6 +904,21 @@ impl Engine {
     pub(crate) fn notify_threads_updated(&self) {
         if let Some(l) = self.listener.lock().unwrap().clone() {
             l.on_threads_updated();
+        }
+    }
+
+    /// Store the analysis pass's new state and tell the shell, only when
+    /// it changed.
+    pub(crate) fn set_analysis(&self, progress: AnalysisPass) {
+        {
+            let mut current = self.analysis.lock().unwrap();
+            if *current == progress {
+                return;
+            }
+            *current = progress;
+        }
+        if let Some(l) = self.listener.lock().unwrap().clone() {
+            l.on_analysis_progress(progress);
         }
     }
 

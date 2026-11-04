@@ -396,6 +396,17 @@ Widgets run out of process, so they get a **snapshot, not the engine**
   activation and on the 30 s tick that notices a reminder coming due; it
   updates as the set changes and ends when it empties. The local
   notification still fires for the asleep case.
+- **Analysis Live Activity** (`AnalysisLiveActivity`): a pass of
+  auto-triage worth following (20+ emails — "Reanalyze all emails", a first
+  pass over the mailbox) shows "Analyzing emails · 40 of 120" with a bar on
+  the Lock Screen and a filling ring in the Dynamic Island, then "Done".
+  The core reports every classified email (`EngineListener.
+  on_analysis_progress`, an `AnalysisPass`); `AnalysisLiveActivityController`
+  coalesces those to one update per percent. The app keeps the pass going
+  while in front and for iOS's short grace after leaving
+  (`AppModel.analyzePending`, `BackgroundGrace`); after that the activity
+  reads "Paused · continues when you open Hey Pigeon". The inbox shows the
+  same progress as a glass bar above the label pill (5+ emails).
 - **Controls** (`Controls.swift`): Compose, Scheduled, Inbox — each an
   `OpenHeyPigeonIntent` (an `OpenIntent`, as Apple requires for a control
   that opens the app) with a `ControlTarget` enum, routed through the same

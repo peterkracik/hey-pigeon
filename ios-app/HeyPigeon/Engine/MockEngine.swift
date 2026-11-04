@@ -9,6 +9,7 @@ final class MockEngine: MailEngine {
     var onThreadsUpdated: (() -> Void)?
     var onAccountDisconnected: ((String) -> Void)?
     var onPrefsUpdated: (() -> Void)?
+    var onAnalysisProgress: ((AnalysisProgress) -> Void)?
 
     private var accountList: [MailAccount]
     private var prefStore: [String: Any] = [:]
@@ -436,7 +437,30 @@ final class MockEngine: MailEngine {
         }
         onThreadsUpdated?()
     }
-    func reanalyzeTriage() throws {}
+    /// The sample inbox is never classified; "Reanalyze" starts a pass over
+    /// every row so the progress bar and the Live Activity can be seen. Like
+    /// the core: a batch per round, each email reported, idle at the end.
+    private var analysis = AnalysisProgress.idle
+    /// Smaller than the core's ten so the eight sample rows take a few rounds.
+    static let analysisBatch = 3
+
+    func reanalyzeTriage() throws {
+        guard autoTriage else { return }
+        analysis = AnalysisProgress(done: 0, total: rows.count, isRunning: false)
+        onAnalysisProgress?(analysis)
+    }
+    func analysisProgress() -> AnalysisProgress { analysis }
+    func analyzePending() async -> AnalysisProgress {
+        guard analysis.remaining > 0 else { return analysis }
+        analysis.isRunning = true
+        for _ in 0..<min(Self.analysisBatch, analysis.remaining) {
+            analysis.done += 1
+            onAnalysisProgress?(analysis)
+        }
+        analysis = analysis.remaining == 0 ? .idle : AnalysisProgress(done: analysis.done, total: analysis.total)
+        onAnalysisProgress?(analysis)
+        return analysis
+    }
 
     // Bundles. The core's identifier links (crates/core/src/bundles.rs) are
     // tested in Rust; the mock keeps only the user's own choices.

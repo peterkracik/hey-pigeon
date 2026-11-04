@@ -476,6 +476,18 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// How many threads with mail since `since` (ms) need triage — the size
+    /// of the analysis pass the shell shows as progress. The default walks
+    /// `list_threads_needing_triage`; SQLite counts instead.
+    fn count_threads_needing_triage(&self, since: i64) -> Result<u32, StoreError> {
+        let n = self
+            .list_threads_needing_triage(u32::MAX)?
+            .into_iter()
+            .filter(|t| t.last_msg_at >= since)
+            .count();
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     /// Persist one thread's Jev result: sets `priority` and records
     /// `at_msg_count` as the version this classification covers so
     /// `list_threads_needing_triage` stops returning it until the thread

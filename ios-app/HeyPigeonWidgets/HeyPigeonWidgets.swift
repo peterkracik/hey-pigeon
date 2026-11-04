@@ -1,7 +1,7 @@
 // The widget extension: Unread (small), Next reminder (medium), Need reply
-// (medium), the reminder Live Activity and the Controls. Everything reads
-// WidgetSnapshot from the App Group — the app writes it after every reload;
-// buttons run WidgetMarkDoneIntent in the app's process and taps deep-link
+// (medium), the reminder, triage and analysis Live Activities and the
+// Controls. Everything reads WidgetSnapshot from the App Group — the app
+// writes it after every reload; buttons run WidgetMarkDoneIntent in the app's process and taps deep-link
 // through heypigeon://.
 //
 // The same file is the Mac's widget extension (macos-app/project.yml): no
@@ -23,6 +23,7 @@ struct HeyPigeonWidgetBundle: WidgetBundle {
         #if os(iOS)
         ReminderLiveActivity()
         TriageLiveActivity()
+        AnalysisLiveActivity()
         ComposeControl()
         ScheduledControl()
         InboxControl()

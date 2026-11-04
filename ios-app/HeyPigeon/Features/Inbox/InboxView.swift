@@ -64,7 +64,13 @@ struct MailListScreen: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if tab == .inbox && !model.triageLabels.isEmpty { TriageSplitBar() }
+                if tab == .inbox {
+                    VStack(spacing: 0) {
+                        AnalysisProgressBar()
+                        if !model.triageLabels.isEmpty { TriageSplitBar() }
+                    }
+                    .animation(.snappy, value: model.analysis.isVisible)
+                }
             }
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }

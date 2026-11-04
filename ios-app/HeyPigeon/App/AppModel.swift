@@ -144,6 +144,10 @@ final class AppModel {
     private(set) var hasMore = true
     private(set) var isSyncing = false
     private var isBackfillingOlder = false
+    /// The background analysis pass (auto-triage): the inbox's progress bar,
+    /// Settings › Triage and the Live Activity read it.
+    private(set) var analysis = AnalysisProgress.idle
+    private var isAnalyzing = false
     private(set) var lastSyncAt: Date?
     private(set) var hasLoadedOnce = false
 
@@ -544,6 +548,8 @@ final class AppModel {
             self?.reloadAccounts()
         }
         engine.onPrefsUpdated = { [weak self] in self?.adoptRemoteSettings() }
+        engine.onAnalysisProgress = { [weak self] p in self?.adoptAnalysis(p) }
+        analysis = engine.analysisProgress()
         loadPrefs()
         reloadAccounts()
         reload()
@@ -896,7 +902,51 @@ final class AppModel {
         await NewMailNotifier.refreshBadge(self)
         if AppLifecycle.isActive {
             Task { await backfillOlder() }
+            // The sync's own round classified a batch; the rest of a large
+            // pass goes on now instead of ten emails per sync. Read, not
+            // `analysis`: the listener's hop may not have landed yet.
+            if engine.analysisProgress().remaining > 0 { Task { await analyzePending() } }
         }
+    }
+
+    // MARK: Analysis
+
+    /// Settings › Triage "Reanalyze all emails": every thread is classified
+    /// again, starting now, with the progress on screen.
+    func reanalyzeAllEmails() throws {
+        try engine.reanalyzeTriage()
+        Task { await analyzePending() }
+    }
+
+    /// Analysis rounds back to back while the app is in front, and for the
+    /// short while iOS allows after the user leaves (`BackgroundGrace`) — so
+    /// the Live Activity keeps moving in the Dynamic Island. Stops when the
+    /// pass is done or a round makes no progress (it failed, triage is off,
+    /// or the sync's own round holds the guard); the next sync resumes it.
+    func analyzePending() async {
+        guard !isAnalyzing else { return }
+        isAnalyzing = true
+        let grace = BackgroundGrace("Analyze emails")
+        defer {
+            grace.end()
+            isAnalyzing = false
+        }
+        var done = analysis.isActive ? analysis.done : -1
+        while !grace.isExpired {
+            let p = await engine.analyzePending()
+            adoptAnalysis(p)
+            if p.remaining == 0 || p.done == done { break }
+            done = p.done
+            // Breathing room for the UI and the sync between rounds.
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+        // Left in the background mid-pass: the Live Activity says it paused.
+        if !AppLifecycle.isActive { AnalysisLiveActivityController.submit(engine.analysisProgress()) }
+    }
+
+    private func adoptAnalysis(_ p: AnalysisProgress) {
+        if analysis != p { analysis = p }
+        AnalysisLiveActivityController.submit(p)
     }
 
     /// Pulls mail older than the sync window into the local store, a page

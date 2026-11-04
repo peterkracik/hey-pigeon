@@ -321,7 +321,9 @@ The desktop's sections, same order, same wording:
 - **Triage** — *Classifier*: On this iPhone · Apple's cloud · Jev (key,
   verified); Auto-triage; Reanalyze all emails; the labels (add; swipe to
   remove). Classification runs at the end of every sync round, bounded per
-  round, never on its own timer. The labels are the bottom pill and the
+  round, never on its own timer — except that a pass with mail left keeps
+  going round after round while the app is in front, with its progress in
+  the inbox, in Settings and (20+ emails) as a Live Activity. The labels are the bottom pill and the
   chips on rows; a thread's labels can be edited by hand (sticky until
   Reanalyze). *Siri triage*: a dry-run switch, your own triage rules in your
   words (both synced), and the run-and-journal screen for "Hey Siri, triage

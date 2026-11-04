@@ -1348,6 +1348,19 @@ impl Store for SqliteStore {
         })
     }
 
+    fn count_threads_needing_triage(&self, since: i64) -> Result<u32, StoreError> {
+        // Same filter as `list_threads_needing_triage`, plus the window.
+        self.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM threads
+                 WHERE (triage_msg_count IS NULL OR triage_msg_count != msg_count)
+                   AND last_msg_at >= ?1",
+                params![since],
+                |r| r.get(0),
+            )
+        })
+    }
+
     fn list_threads_needing_suggestion(
         &self,
         since: i64,
@@ -2735,6 +2748,9 @@ mod tests {
 
         // Never classified — both threads need it.
         assert_eq!(s.list_threads_needing_triage(10).unwrap().len(), 2);
+        // The count agrees, and the window leaves out older mail.
+        assert_eq!(s.count_threads_needing_triage(0).unwrap(), 2);
+        assert_eq!(s.count_threads_needing_triage(950).unwrap(), 1);
 
         let label = s.create_triage_label("Bills").unwrap();
         s.set_thread_triage(
@@ -2753,6 +2769,7 @@ mod tests {
             .map(|t| t.id)
             .collect();
         assert_eq!(pending, ["t2"]);
+        assert_eq!(s.count_threads_needing_triage(0).unwrap(), 1);
         let t1 = s.get_thread(&"t1".to_string()).unwrap().unwrap();
         assert_eq!(t1.priority, Some(Priority::High));
         assert_eq!(t1.triage_label_ids, vec![label.id.clone()]);

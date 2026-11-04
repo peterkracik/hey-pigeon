@@ -17,6 +17,37 @@ struct AppModelTests {
         model = AppModel(engine: engine)
     }
 
+    // MARK: Analysis
+
+    @Test func analysisProgressMath() {
+        let p = AnalysisProgress(done: 30, total: 120, isRunning: true)
+        #expect(p.isActive && p.isVisible && p.remaining == 90 && p.fraction == 0.25)
+        #expect(!AnalysisProgress.idle.isActive && AnalysisProgress.idle.fraction == 0)
+        // A couple of new emails is not worth a bar.
+        #expect(!AnalysisProgress(done: 0, total: AnalysisProgress.visibleFrom - 1).isVisible)
+        #expect(AnalysisProgress(done: 9, total: 3).remaining == 0)
+    }
+
+    /// "Reanalyze all emails" runs the pass to the end while in front: the
+    /// progress climbs email by email, then the model goes idle.
+    @Test func reanalyzeRunsThePassToTheEnd() async throws {
+        try engine.setAutoTriage(true)
+        var seen: [AnalysisProgress] = []
+        let forward = engine.onAnalysisProgress
+        engine.onAnalysisProgress = { p in
+            seen.append(p)
+            forward?(p)
+        }
+        try model.reanalyzeAllEmails()
+        await model.analyzePending()
+        #expect(model.analysis == .idle)
+        let total = try #require(seen.first?.total)
+        #expect(total > MockEngine.analysisBatch, "the sample inbox spans more than one round")
+        #expect(seen.contains(AnalysisProgress(done: total, total: total, isRunning: true)))
+        // Between rounds the pass pauses with the rest still to do.
+        #expect(seen.contains(AnalysisProgress(done: MockEngine.analysisBatch, total: total)))
+    }
+
     // MARK: Grouping
 
     @Test func inboxGroupsPinnedFirstThenByDay() {

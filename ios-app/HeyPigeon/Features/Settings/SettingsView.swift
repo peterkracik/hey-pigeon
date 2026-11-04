@@ -718,12 +718,16 @@ private struct TriageSection: View {
                 Toggle("Auto-triage", isOn: Binding(get: { status?.enabled ?? false }, set: { setEnabled($0) }))
                 HStack {
                     Button("Reanalyze all emails") {
-                        do { try model.engine.reanalyzeTriage(); reanalyzeQueued = true } catch { self.error = error.localizedDescription }
+                        do { try model.reanalyzeAllEmails(); reanalyzeQueued = true } catch { self.error = error.localizedDescription }
                     }
                     .font(.footnote.weight(.semibold))
-                    if reanalyzeQueued {
-                        Text("Queued — processes gradually in the background.").font(.caption).foregroundStyle(Theme.textTertiary)
+                    .disabled(model.analysis.isActive)
+                    if reanalyzeQueued && !model.analysis.isActive && status?.enabled != true {
+                        Text("Queued — runs once Auto-triage is on.").font(.caption).foregroundStyle(Theme.textTertiary)
                     }
+                }
+                if model.analysis.isActive {
+                    AnalysisProgressRow(progress: model.analysis)
                 }
                 if let last = status?.lastError {
                     Text("Last run failed: \(last)").font(.footnote).foregroundStyle(.red)

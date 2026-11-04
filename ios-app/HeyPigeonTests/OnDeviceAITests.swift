@@ -69,7 +69,7 @@ struct OnDeviceAITests {
         var s = try engine.aiStatus()
         #expect(s.configured && s.answersInAppleCloud && s.preferredProviderId == "apple-cloud")
         #expect(s.availableProviderIds == ["apple-cloud"])
-        #expect(s.fallbackOrder == ["apple", "apple-cloud", "openai"])
+        #expect(s.fallbackOrder == ["apple", "apple-cloud", "openai", "anthropic", "gemini"])
         engine.onDeviceAI = true
         s = try engine.aiStatus()
         #expect(s.preferredProviderId == "apple" && s.answersOnDevice)
@@ -92,13 +92,39 @@ struct OnDeviceAITests {
         #expect(t.isAvailable(.appleCloud) && !t.isAvailable(.apple) && t.classifierId == "apple-cloud")
     }
 
+    /// ChatGPT, Claude and Gemini each keep their own key and model, only
+    /// keyed providers take a key, and a keyed classifier counts only when
+    /// it is the one picked.
+    @MainActor
+    @Test func mockKeepsAKeyAndAModelPerKeyedProvider() async throws {
+        let engine = MockEngine()
+        try await engine.setAIKey("sk-ant", for: .anthropic)
+        var s = try engine.aiStatus()
+        #expect(s.keyedProviderIds == ["anthropic"] && s.hasKey(.anthropic) && !s.hasKey(.openai))
+        #expect(s.providerId == "anthropic") // preferred ChatGPT has no key: the order reaches Claude
+        try engine.setAIProvider(.gemini)
+        try engine.setAIModel("gemini-2.5-pro", for: .gemini)
+        s = try engine.aiStatus()
+        #expect(s.model == "gemini-2.5-pro")
+        #expect(try engine.aiSelectedModel(for: .anthropic) == nil)
+        #expect(throws: (any Error).self) { try engine.removeAIKey(for: .apple) }
+        try engine.setTriageClassifier(.anthropic)
+        var t = try engine.triageStatus()
+        #expect(t.configured && t.isAvailable(.anthropic))
+        try engine.setTriageClassifier(.jev)
+        t = try engine.triageStatus()
+        #expect(!t.configured) // Claude is never a classifier the user did not pick
+    }
+
     @Test func fallbackPresetsRoundTripThroughTheSyncedOrder() {
         #expect(AIFallbackPreset(order: []) == .privateFirst)
         #expect(AIFallbackPreset(order: ["apple", "apple-cloud", "openai"]) == .privateFirst)
-        #expect(AIFallbackPreset(order: ["apple-cloud", "apple", "openai"]) == .cloudFirst)
+        #expect(AIFallbackPreset(order: ["apple-cloud", "apple", "openai"]) == .cloudFirst) // an older build's order
+        #expect(AIFallbackPreset(order: AIFallbackPreset.cloudFirst.order.map(\.rawValue)) == .cloudFirst)
         #expect(AIFallbackPreset(order: ["apple"]) == .onDeviceOnly)
         #expect(AIFallbackPreset(order: ["openai"]) == .privateFirst) // unknown shape → default
-        #expect(AIProvider(rawValue: "anthropic") == .other("anthropic"))
+        #expect(AIProvider(rawValue: "anthropic") == .anthropic)
+        #expect(AIProvider(rawValue: "mlx") == .other("mlx"))
         #expect(AIProvider.appleCloud.rawValue == "apple-cloud")
     }
 

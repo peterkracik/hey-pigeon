@@ -37,6 +37,8 @@ jobs:
           -p heypigeon-adapter-sqlite
           -p heypigeon-adapter-openai
           -p heypigeon-adapter-jev
+          -p heypigeon-adapter-anthropic
+          -p heypigeon-adapter-gemini
           -p heypigeon-ffi
       - name: Generate Swift bindings
         run: |

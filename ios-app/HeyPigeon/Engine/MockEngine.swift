@@ -20,8 +20,9 @@ final class MockEngine: MailEngine {
         TriageLabelItem(id: "tl2", name: "Travel"),
         TriageLabelItem(id: "tl3", name: "Newsletters"),
     ]
-    private var aiKey: String?
-    private var aiModel = "gpt-4o-mini"
+    /// Keys and picked models of the keyed providers, by provider id.
+    private var aiKeys: [String: String] = [:]
+    private var aiModelChoice: [String: String] = [:]
     private var jevKey: String?
     private var autoTriage = false
     /// A bundle as the core stores it; the counts are derived on read.
@@ -339,7 +340,7 @@ final class MockEngine: MailEngine {
         switch p {
         case .apple: onDeviceAI
         case .appleCloud: cloudAI
-        case .openai: aiKey != nil
+        case .openai, .anthropic, .gemini: aiKeys[p.rawValue] != nil
         case .other: false
         }
     }
@@ -350,10 +351,12 @@ final class MockEngine: MailEngine {
 
     func aiStatus() throws -> AIStatus {
         let fallback = aiFallback.isEmpty ? AIProvider.defaultFallback : aiFallback
-        let preferred = aiProvider ?? AIProvider.defaultFallback.first { $0 != .openai && canAnswer($0) } ?? .openai
+        let preferred = aiProvider ?? AIProvider.defaultFallback.first { !$0.takesKey && canAnswer($0) } ?? .openai
         let active = ([preferred] + fallback).first(where: canAnswer)
-        return AIStatus(configured: active != nil, providerId: active?.rawValue, model: aiKey == nil ? nil : aiModel,
-                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKey != nil,
+        let modelOf = preferred.takesKey ? preferred : .openai
+        return AIStatus(configured: active != nil, providerId: active?.rawValue, model: aiModelChoice[modelOf.rawValue],
+                        preferredProviderId: preferred.rawValue, onDeviceAvailable: onDeviceAI, openaiConfigured: aiKeys["openai"] != nil,
+                        keyedProviderIds: keyedIds,
                         availableProviderIds: availableProviderIds, fallbackOrder: fallback.map(\.rawValue))
     }
     func setAIProvider(_ provider: AIProvider) throws { aiProvider = provider }
@@ -365,15 +368,38 @@ final class MockEngine: MailEngine {
                         available: cloudAI, unavailableReason: cloudAI ? nil : "Private Cloud Compute isn't reachable in the sample inbox.")]
     }
     func refreshAIProviders() {}
-    func aiModels() throws -> [AIModel] {
-        [AIModel(id: "gpt-4o-mini", label: "GPT-4o mini"), AIModel(id: "gpt-4o", label: "GPT-4o")]
+    /// The keyed providers with a key, in the engine's order.
+    private var keyedIds: [String] { AIProvider.keyed.map(\.rawValue).filter { aiKeys[$0] != nil } }
+
+    /// The engine's rule: only keyed providers take a key or a model.
+    private func requireKeyed(_ p: AIProvider) throws {
+        guard p.takesKey else { throw MockError.invalid("\(p.rawValue) does not take an API key") }
     }
-    func setAIKey(_ key: String) async throws {
+    func aiModels(for provider: AIProvider) throws -> [AIModel] {
+        switch provider {
+        case .openai: [AIModel(id: "gpt-4o-mini", label: "GPT-4o mini"), AIModel(id: "gpt-4o", label: "GPT-4o")]
+        case .anthropic: [AIModel(id: "claude-opus-5-5", label: "Claude Opus 5.5"), AIModel(id: "claude-haiku-5-5", label: "Claude Haiku 5.5")]
+        case .gemini: [AIModel(id: "gemini-2.5-flash", label: "Gemini 2.5 Flash"), AIModel(id: "gemini-2.5-pro", label: "Gemini 2.5 Pro")]
+        default: []
+        }
+    }
+    func aiSelectedModel(for provider: AIProvider) throws -> String? {
+        try requireKeyed(provider)
+        return aiModelChoice[provider.rawValue]
+    }
+    func setAIKey(_ key: String, for provider: AIProvider) async throws {
+        try requireKeyed(provider)
         try? await Task.sleep(for: .milliseconds(400))
-        aiKey = key
+        aiKeys[provider.rawValue] = key
     }
-    func removeAIKey() throws { aiKey = nil }
-    func setAIModel(_ model: String) throws { aiModel = model }
+    func removeAIKey(for provider: AIProvider) throws {
+        try requireKeyed(provider)
+        aiKeys[provider.rawValue] = nil
+    }
+    func setAIModel(_ model: String, for provider: AIProvider) throws {
+        try requireKeyed(provider)
+        aiModelChoice[provider.rawValue] = model
+    }
     func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
         try? await Task.sleep(for: .milliseconds(500))
         if instruction.hasPrefix(AIEditSheet.writePrefix) {
@@ -410,8 +436,12 @@ final class MockEngine: MailEngine {
 
     func triageStatus() throws -> TriageStatus {
         let preferred = triageClassifier ?? (onDeviceAI ? .apple : cloudAI ? .appleCloud : .jev)
-        let available = availableProviderIds + (jevKey != nil ? ["jev"] : [])
-        return TriageStatus(configured: !available.isEmpty, enabled: autoTriage, lastError: nil,
+        let available = availableProviderIds + keyedIds + (jevKey != nil ? ["jev"] : [])
+        // The engine's rule (settings.rs active_classifier): the preferred
+        // one, then the Apple models and Jev — never a keyed provider the
+        // user did not pick.
+        let candidates = [preferred.rawValue, "apple", "apple-cloud", "jev"]
+        return TriageStatus(configured: candidates.contains(where: available.contains), enabled: autoTriage, lastError: nil,
                             classifierId: preferred.rawValue, onDeviceAvailable: onDeviceAI, jevConfigured: jevKey != nil,
                             availableClassifierIds: available)
     }

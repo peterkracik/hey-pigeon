@@ -186,10 +186,12 @@ struct EnumTests {
     }
 
     @Test func providersAndPrioritiesRoundTrip() {
-        for p in AIProvider.allCases + [.other("anthropic")] {
+        for p in AIProvider.allCases + [.other("mlx")] {
             #expect(AIProvider(rawValue: p.rawValue) == p)
         }
-        #expect(AIProvider.apple.title.hasPrefix("On this "))
+        #expect(AIProvider.apple.title.hasSuffix("on this \(Device.name)"))
+        #expect(AIProvider.keyed.allSatisfy(\.takesKey) && !AIProvider.apple.takesKey)
+        #expect(TriageClassifier.anthropic.aiProvider == .anthropic && TriageClassifier.jev.aiProvider == nil)
         #expect([TriageLevel.high, .spam, .medium, .low].sorted() == [.spam, .low, .medium, .high])
         #expect(RowAction(rawValue: "unread") == .read && RowAction(rawValue: "needreply") == .needReply)
     }

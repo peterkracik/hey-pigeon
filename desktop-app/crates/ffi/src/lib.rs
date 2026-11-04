@@ -20,6 +20,7 @@ uniffi::setup_scaffolding!();
 mod ai;
 mod bundles;
 mod engine;
+mod keyed;
 mod push;
 mod secrets;
 mod settings;

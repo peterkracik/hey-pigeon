@@ -308,8 +308,9 @@ final class RustEngine: MailEngine {
         try await engine.finishOauth(callbackUrl: callbackURL.absoluteString)
     }
 
-    // MARK: AI — the key paths name "openai"; the core picks who answers
-    // (Engine::active_provider), so the on-device model needs no call here.
+    // MARK: AI — the key paths name the keyed provider; the core picks who
+    // answers (Engine::active_provider), so the AI actions only pass an id
+    // it accepts.
 
     private let provider = "openai"
 
@@ -317,19 +318,24 @@ final class RustEngine: MailEngine {
         let s = try engine.aiStatus()
         return AIStatus(configured: s.configured, providerId: s.providerId, model: s.model,
                         preferredProviderId: s.preferredProviderId, onDeviceAvailable: s.onDeviceAvailable,
-                        openaiConfigured: s.openaiConfigured, availableProviderIds: s.availableProviderIds,
-                        fallbackOrder: s.fallbackOrder)
+                        openaiConfigured: s.openaiConfigured, keyedProviderIds: s.keyedProviderIds,
+                        availableProviderIds: s.availableProviderIds, fallbackOrder: s.fallbackOrder)
     }
     func setAIProvider(_ provider: AIProvider) throws { try engine.setAiProvider(providerId: provider.rawValue) }
     func setAIFallback(_ order: [AIProvider]) throws { try engine.setAiFallback(order: order.map(\.rawValue)) }
-    func aiModels() throws -> [AIModel] {
-        try engine.aiModels(providerId: provider).map { AIModel(id: $0.id, label: $0.label) }
+    func aiModels(for provider: AIProvider) throws -> [AIModel] {
+        try engine.aiModels(providerId: provider.rawValue).map { AIModel(id: $0.id, label: $0.label) }
     }
-    func setAIKey(_ key: String) async throws {
-        try await engine.setAiKey(providerId: provider, apiKey: key)
+    func aiSelectedModel(for provider: AIProvider) throws -> String? {
+        try engine.aiSelectedModel(providerId: provider.rawValue)
     }
-    func removeAIKey() throws { try engine.removeAiKey(providerId: provider) }
-    func setAIModel(_ model: String) throws { try engine.setAiModel(providerId: provider, model: model) }
+    func setAIKey(_ key: String, for provider: AIProvider) async throws {
+        try await engine.setAiKey(providerId: provider.rawValue, apiKey: key)
+    }
+    func removeAIKey(for provider: AIProvider) throws { try engine.removeAiKey(providerId: provider.rawValue) }
+    func setAIModel(_ model: String, for provider: AIProvider) throws {
+        try engine.setAiModel(providerId: provider.rawValue, model: model)
+    }
     func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
         try await engine.aiEditText(providerId: provider, instruction: instruction, text: text, history: history)
     }

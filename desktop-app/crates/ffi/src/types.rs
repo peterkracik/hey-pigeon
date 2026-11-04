@@ -505,7 +505,8 @@ pub struct PushAccountStatus {
 pub struct AiStatus {
     pub configured: bool,
     pub provider_id: Option<String>,
-    /// The selected OpenAI model (synced preference).
+    /// The selected model of the preferred provider when it takes a key,
+    /// else ChatGPT's (synced preference). `ai_selected_model` reads any.
     pub model: Option<String>,
     /// The preferred provider (`pref:ai.provider`), whether or not it can answer.
     pub preferred_provider_id: String,
@@ -513,12 +514,16 @@ pub struct AiStatus {
     pub on_device_available: bool,
     /// An OpenAI key is stored on this device.
     pub openai_configured: bool,
+    /// The keyed providers ("openai", "anthropic", "gemini") with a key on
+    /// this device.
+    pub keyed_provider_ids: Vec<String>,
     /// Ids of the shell backends registered on this device, in registration
     /// order ("apple", "apple-cloud", …). `provider_id` is one of these or
-    /// "openai".
+    /// a keyed provider.
     pub available_provider_ids: Vec<String>,
     /// Who answers when the preferred provider cannot, in order
-    /// (`pref:ai.fallback`; default on device → Apple's cloud → OpenAI).
+    /// (`pref:ai.fallback`; default on device → Apple's cloud → the keyed
+    /// providers).
     pub fallback_order: Vec<String>,
 }
 
@@ -542,7 +547,8 @@ pub struct TriageStatus {
     pub on_device_available: bool,
     pub jev_configured: bool,
     /// The shell backends that can classify on this device ("apple",
-    /// "apple-cloud", …); "jev" is added when its key is stored.
+    /// "apple-cloud", …), then the keyed providers with a key; "jev" is
+    /// added when its key is stored.
     pub available_classifier_ids: Vec<String>,
 }
 

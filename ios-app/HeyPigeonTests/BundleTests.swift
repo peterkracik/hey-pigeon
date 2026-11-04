@@ -158,8 +158,8 @@ struct BundlePromptTests {
     @Test func thePromptListsTheBundlesAndTheEmail() {
         let p = BundlePrompt.prompt(subject: "Seat for AT 1326", from: "news@atlantic.test", snippet: "Choose your seat",
                                     bundles: [(name: "Lisbon trip", category: .trip, description: "",
-                                               examples: ["Booking confirmed"])])
-        #expect(p.contains("- Lisbon trip (trip) — has: \"Booking confirmed\""))
+                                               examples: ["Booking confirmed"], notExamples: ["Team lunch"])])
+        #expect(p.contains("- Lisbon trip (trip) — has: \"Booking confirmed\" — not: \"Team lunch\""))
         #expect(p.contains("Subject: Seat for AT 1326"))
         #expect(p.contains("Preview: Choose your seat"))
         #expect(BundlePrompt.prompt(subject: "", from: "a@b.test", snippet: "", bundles: []).contains("Existing bundles: none yet."))
@@ -192,5 +192,35 @@ struct SidebarBundleTests {
         #expect(model.hiddenBundleIds == ["b1"])
         model.toggleHidden(b)
         #expect(model.hiddenBundleIds.isEmpty)
+    }
+}
+
+/// The shared sheets go to whichever surface is up (AppModel.modal), and
+/// the bundle brief is cached against the bundle's mail.
+@MainActor
+struct BundleSheetTests {
+    @Test func theOpenBundlesSheetPresentsTheSharedSheets() throws {
+        let model = AppModel(engine: MockEngine())
+        let row = try #require(model.row(forThreadId: "t4"))
+        model.pendingRemind = row
+        #expect(model.modal(\.pendingRemind, inBundles: false).wrappedValue?.id == "t4")
+        #expect(model.modal(\.pendingRemind, inBundles: true).wrappedValue == nil)
+        model.showBundles = true
+        #expect(model.modal(\.pendingRemind, inBundles: false).wrappedValue == nil)
+        #expect(model.modal(\.pendingRemind, inBundles: true).wrappedValue?.id == "t4")
+        // Dismissing from either side clears the one state.
+        model.modal(\.pendingRemind, inBundles: true).wrappedValue = nil
+        #expect(model.pendingRemind == nil)
+    }
+
+    @Test func theBriefKeyFollowsTheMail() throws {
+        let model = AppModel(engine: MockEngine())
+        model.reload()
+        let before = try #require(model.bundleContents(id: "b1"))
+        let row = try #require(model.row(forThreadId: "t5"))
+        model.addToBundle(row, bundleId: "b1")
+        let after = try #require(model.bundleContents(id: "b1"))
+        #expect(AppModel.briefKey(before) != AppModel.briefKey(after))
+        #expect(model.brief(for: after) == nil)
     }
 }

@@ -284,6 +284,15 @@ struct ThreadList: View {
     }
 
     private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {
+        RowSwipes.action(action, row, model: model)
+    }
+}
+
+/// The swipe tiers from Settings as actions on one row: the inbox list and
+/// the bundle view use the same ones.
+enum RowSwipes {
+    @MainActor
+    static func action(_ action: RowAction, _ row: ThreadRow, model: AppModel) -> SwipeAction {
         switch action {
         case .done:
             SwipeAction(title: row.isDone ? "Not done" : "Done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark",
@@ -354,6 +363,13 @@ struct RowMenu: View {
         }
         Button { model.pendingBundlePick = row } label: {
             Label(row.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
+        }
+        if let b = model.bundle(id: row.bundleId) {
+            // Teaches the model too: it never puts this email back, and sees
+            // it as a "not this" example for the bundle.
+            Button(role: .destructive) { model.removeFromBundle(row) } label: {
+                Label("Not part of \(b.name)", systemImage: "minus.circle")
+            }
         }
         Button { model.togglePin(row) } label: {
             Label(row.isPinned ? "Unpin" : "Pin", systemImage: row.isPinned ? "pin.slash" : "pin")

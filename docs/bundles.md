@@ -16,6 +16,28 @@ narrative and attention line, auto-archive, folding on the Mac. Code:
 `ios-app/HeyPigeon/Features/Bundles/BundleViews.swift` (the screens),
 `AppModel.fold` (folding).
 
+## The bundle view (as built)
+
+Top to bottom:
+- **Summary** — the model's brief (`ai_summarize_bundle`): a STATUS line
+  (where things stand, the latest decision or change) and up to three TO DO
+  lines for the user ("Send the invoice to Acme", "Write the project
+  brief"). It reads the newest eight emails, their text when stored (fetched
+  for the summary otherwise). It runs on open when the model is on this
+  device or auto-summarize is on, otherwise on a tap, like every summary.
+- **Tracking** — links found in the bundle's mail whose address or link text
+  says "track", or that carry a tracking number; a tracking number's fact
+  gets a Track button with its link.
+- **Key facts**, then the emails, open first, done dimmed and folded past
+  three.
+- Every email row works like an inbox row: the same swipes, the same
+  long-press menu, and the thread opens inside the sheet. The shared sheets
+  (Remind me, Add to bundle, the composer, a summary) are presented by the
+  Bundles sheet while it is open (`AppModel.modal`).
+- **⊖ on each email** (and "Not part of …" in the row menu): the email
+  leaves the bundle, never comes back to it, and its subject becomes a "not
+  this" example the model sees for that bundle.
+
 ## Automatic bundles (as built)
 
 The user does not make bundles; they fix them. After each sync round the

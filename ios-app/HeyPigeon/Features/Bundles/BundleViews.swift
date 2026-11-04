@@ -1,13 +1,14 @@
 // Bundles (docs/bundles.md): the mail about one specific thing — a trip,
-// an order, a project — grouped, with its key facts first. Shared by the
-// phone, the iPad and the Mac. Three touchpoints and nothing else: the
-// chip on a row, the Bundles list (a sheet, from the sidebar), and "Add to
-// bundle…" on a thread. On the phone and iPad a bundle's quiet mail also
-// folds into one inbox row (`BundleFoldRow`, `AppModel.fold`).
+// an order, a project — grouped, with the model's brief (status, what is
+// left to do) and the key facts first. Shared by the phone, the iPad and
+// the Mac: the chip on a row, the sidebar section, the Bundles sheet, and
+// "Add to bundle…" on a thread. On the phone and iPad a bundle's quiet mail
+// also folds into one inbox row (`BundleFoldRow`, `AppModel.fold`).
 //
-// Opening an email from a bundle closes the sheet and opens it in the
-// inbox (`AppModel.openThread`): a thread view inside the sheet could not
-// present the remind and bundle sheets, which hang off the root.
+// An email opens inside the sheet and keeps every action (swipes, the
+// long-press menu, the thread view). The shared sheets those actions open
+// (Remind me, Add to bundle, the composer, a summary) are presented by the
+// Bundles sheet while it is open (`BundleSheetPresenters`, `AppModel.modal`).
 
 import SwiftUI
 
@@ -71,14 +72,20 @@ struct BundleFoldRow: View {
 
 // MARK: - The Bundles list
 
+/// Where the Bundles sheet's stack goes: a bundle, or an email in one.
+enum BundleRoute: Hashable {
+    case bundle(String)
+    case thread(ThreadRow)
+}
+
 /// The Bundles sheet: active bundles, then archived ones; a bundle opens
-/// its view in the same stack.
+/// its view in the same stack, and an email opens there too.
 struct BundlesSheet: View {
-    /// A bundle to open at once (a folded row was tapped).
+    /// A bundle to open at once (a folded row or the sidebar was tapped).
     var initialBundleId: String? = nil
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var path: [String] = []
+    @State private var path: [BundleRoute] = []
     @State private var creating = false
 
     var body: some View {
@@ -95,19 +102,27 @@ struct BundlesSheet: View {
                         Button(role: .close) { dismiss() }
                     }
                 }
-                .navigationDestination(for: String.self) { id in BundleScreen(bundleId: id) }
+                .navigationDestination(for: BundleRoute.self) { route in
+                    switch route {
+                    case .bundle(let id):
+                        BundleScreen(bundleId: id) { path.append(.thread($0)) }
+                    case .thread(let row):
+                        ThreadView(row: row) { if !path.isEmpty { path.removeLast() } }
+                    }
+                }
                 .navigationDestination(isPresented: $creating) {
                     BundleEditor(title: "New bundle") { name, category, description in
                         if let b = model.createBundle(name: name, category: category, description: description) {
                             creating = false
-                            path = [b.id]
+                            path = [.bundle(b.id)]
                         }
                     }
                 }
         }
         .menuSheet()
+        .modifier(BundleSheetPresenters())
         .onAppear {
-            if let initialBundleId, path.isEmpty { path = [initialBundleId] }
+            if let initialBundleId, path.isEmpty { path = [.bundle(initialBundleId)] }
         }
     }
 
@@ -124,7 +139,7 @@ struct BundlesSheet: View {
                 if !model.activeBundles.isEmpty {
                     Section {
                         ForEach(model.activeBundles) { b in
-                            NavigationLink(value: b.id) { BundleListRow(bundle: b) }
+                            NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
                         }
                     }
                     .menuCard()
@@ -132,7 +147,7 @@ struct BundlesSheet: View {
                 if !model.archivedBundles.isEmpty {
                     Section("Archived") {
                         ForEach(model.archivedBundles) { b in
-                            NavigationLink(value: b.id) { BundleListRow(bundle: b) }
+                            NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
                         }
                     }
                     .menuCard()
@@ -141,6 +156,20 @@ struct BundlesSheet: View {
             .menuList()
             .foregroundStyle(Theme.textPrimary)
         }
+    }
+}
+
+/// The shared sheets an email's actions open, presented from the Bundles
+/// sheet while it is up (the root presents them otherwise).
+struct BundleSheetPresenters: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: model.modal(\.pendingRemind, inBundles: true)) { row in RemindSheet(row: row) }
+            .sheet(item: model.modal(\.pendingBundlePick, inBundles: true)) { row in AddToBundleSheet(row: row) }
+            .sheet(item: model.modal(\.composeDraft, inBundles: true)) { draft in ComposeView(draft: draft) }
+            .sheet(item: model.modal(\.summarySheet, inBundles: true)) { p in SummarySheet(presentation: p) }
     }
 }
 
@@ -175,10 +204,14 @@ struct BundleListRow: View {
 
 // MARK: - One bundle
 
-/// The bundle view: key facts first, then the open emails, then the done
-/// ones — dimmed, and folded behind one row when there are more than three.
+/// The bundle view: the model's brief (where things stand, what is left to
+/// do), tracking links, key facts, then the open emails and the done ones —
+/// dimmed, and folded behind one row when there are more than three. Every
+/// email row has the inbox's swipes and menu, and "Not part of this".
 struct BundleScreen: View {
     let bundleId: String
+    /// Opens an email in the sheet's stack.
+    var openThread: (ThreadRow) -> Void = { _ in }
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var contents: BundleContents?
@@ -235,10 +268,14 @@ struct BundleScreen: View {
         } message: {
             Text("The emails stay where they are; only the grouping goes.")
         }
-        .onAppear(perform: load)
-        // Every change to the mail re-reads the bundles (their counts), so
-        // this follows marks, removals and new links.
-        .onChange(of: model.bundles) { _, _ in load() }
+        .onAppear {
+            load()
+            if let c = contents, model.briefsOnOpen, model.brief(for: c) == nil { model.summarizeBundle(c) }
+        }
+        // Every reload re-reads the bundle: marks, removals, new links.
+        .onChange(of: model.reloadCount) { _, _ in load() }
+        // The brief fetched the emails' text: tracking links may be there now.
+        .onChange(of: contents.flatMap { model.brief(for: $0)?.brief }) { _, _ in load() }
     }
 
     private func load() {
@@ -247,11 +284,32 @@ struct BundleScreen: View {
 
     private func list(_ c: BundleContents) -> some View {
         List {
+            if model.aiConfigured && !c.threads.isEmpty {
+                Section {
+                    BriefCard(state: model.brief(for: c)) { model.summarizeBundle(c) }
+                }
+                .menuCard()
+            }
+            if !c.links.isEmpty {
+                Section("Tracking") {
+                    ForEach(c.links) { l in
+                        Link(destination: l.url) {
+                            Label(l.host, systemImage: "shippingbox")
+                        }
+                    }
+                }
+                .menuCard()
+            }
             if !c.facts.isEmpty {
                 Section("Key facts") {
                     ForEach(c.facts) { f in
-                        Button { open(f.threadId) } label: { FactRow(fact: f) }
-                            .foregroundStyle(Theme.textPrimary)
+                        HStack(spacing: 8) {
+                            Button { open(f.threadId) } label: { FactRow(fact: f) }
+                                .buttonStyle(.plain)
+                            if let url = f.url {
+                                Link("Track", destination: url).font(.subheadline.weight(.semibold))
+                            }
+                        }
                     }
                 }
                 .menuCard()
@@ -264,7 +322,7 @@ struct BundleScreen: View {
             }
             if c.bundle.isAutomatic {
                 Section {
-                    Label("Made automatically. Remove an email that doesn't belong, or rename the bundle, and it's yours.",
+                    Label("Made automatically. Tap ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.",
                           systemImage: "sparkles")
                         .font(.footnote).foregroundStyle(Theme.textTertiary)
                 }
@@ -301,21 +359,100 @@ struct BundleScreen: View {
         .foregroundStyle(Theme.textPrimary)
     }
 
+    /// An email as the inbox shows it — the same swipes, the same menu —
+    /// plus ⊖: not part of this bundle (the model learns from it).
     private func threadRow(_ row: ThreadRow, dimmed: Bool) -> some View {
-        Button { open(row.id) } label: {
-            ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil, showsBundle: false)
-                .opacity(dimmed ? 0.6 : 1)
+        SwipeableRow(
+            leading: [RowSwipes.action(model.swipeActions[0], row, model: model),
+                      RowSwipes.action(model.swipeActions[1], row, model: model)],
+            trailing: [RowSwipes.action(model.swipeActions[2], row, model: model),
+                       RowSwipes.action(model.swipeActions[3], row, model: model)],
+            background: Theme.card
+        ) {
+            HStack(spacing: 8) {
+                ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil, showsBundle: false)
+                    .opacity(dimmed ? 0.6 : 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.markRead(row)
+                        openThread(row)
+                    }
+                Button { model.removeFromBundle(row) } label: {
+                    Image(systemName: "minus.circle")
+                        .font(.body)
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Not part of this bundle")
+            }
+            .padding(.horizontal, 16).padding(.vertical, 7)
+            .overlay(alignment: .leading) {
+                if !row.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
+            }
         }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button { model.removeFromBundle(row) } label: { Label("Remove from bundle", systemImage: "minus.circle") }
-        }
+        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+        .contextMenu { RowMenu(row: row) }
     }
 
-    /// The email opens in the inbox; the sheet goes away.
+    /// A fact opens the email it came from, in the sheet.
     private func open(_ threadId: String) {
-        model.showBundles = false
-        model.openThread(id: threadId)
+        if let row = model.row(forThreadId: threadId) { openThread(row) }
+    }
+}
+
+/// The model's brief on a bundle: where things stand, then what is left
+/// for the user, with a refresh. Asks on a tap unless `briefsOnOpen`.
+struct BriefCard: View {
+    let state: BundleBriefState?
+    let refresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Summary", systemImage: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer()
+                if state?.generating == true {
+                    ProgressView().controlSize(.small)
+                } else if state != nil {
+                    Button(action: refresh) { Image(systemName: "arrow.clockwise").font(.footnote) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.textTertiary)
+                        .accessibilityLabel("Summarize again")
+                }
+            }
+            if let brief = state?.brief {
+                if !brief.status.isEmpty {
+                    Text(SummaryMarkup.inline(brief.status)).font(.subheadline)
+                }
+                if !brief.actions.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("To do").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                        ForEach(brief.actions, id: \.self) { action in
+                            Label {
+                                Text(SummaryMarkup.inline(action)).font(.subheadline)
+                            } icon: {
+                                Image(systemName: "circle").font(.caption).foregroundStyle(Theme.accent)
+                            }
+                        }
+                    }
+                }
+            } else if let error = state?.error {
+                Text(error).font(.footnote).foregroundStyle(Theme.textTertiary)
+                Button("Try again", action: refresh).font(.subheadline)
+            } else if state?.generating == true {
+                Text("Reading the bundle…").font(.subheadline).foregroundStyle(Theme.textTertiary)
+            } else {
+                Button(action: refresh) {
+                    Label("Summarize status and to-dos", systemImage: "text.badge.checkmark")
+                }
+                .font(.subheadline)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -337,6 +474,7 @@ struct FactRow: View {
             Spacer(minLength: 8)
             Text(Formatters.rowTime(fact.at)).font(.footnote).foregroundStyle(Theme.textTertiary)
         }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the email it came from")
     }

@@ -82,7 +82,8 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
     func bundle(subject: String, from: String, snippet: String, bundles: [BundleCandidate]) async throws -> BundleChoice {
         let session = provider.session(instructions: BundlePrompt.instructions, task: .classification)
         let shown = bundles.map { b in
-            (name: b.name, category: BundleCategory(b.kind), description: b.description, examples: b.examples)
+            (name: b.name, category: BundleCategory(b.kind), description: b.description, examples: b.examples,
+             notExamples: b.notExamples)
         }
         let prompt = BundlePrompt.prompt(subject: subject, from: from, snippet: snippet, bundles: shown)
         let call: BundleCall

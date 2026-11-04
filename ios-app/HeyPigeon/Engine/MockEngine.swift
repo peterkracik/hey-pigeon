@@ -533,6 +533,13 @@ final class MockEngine: MailEngine {
 
     func suggestedBundle(threadId: String) throws -> String? { nil }
 
+    /// What the core's bundle summary would say about the sample trip.
+    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
+        try? await Task.sleep(for: .milliseconds(300))
+        return BundleBrief(status: "Check-in for **LH1172** is open; the flight leaves **Saturday**.",
+                           actions: ["Check in for LH1172"])
+    }
+
     private func item(_ b: MockBundle) -> BundleItem {
         let threads = rows.values.filter { $0.bundleId == b.id }
         return BundleItem(id: b.id, name: b.name, category: b.category, description: b.description,

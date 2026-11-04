@@ -28,6 +28,14 @@ struct GroupSummary: Equatable {
     var generating = false
 }
 
+/// The model's brief on one bundle, cached against the bundle's mail.
+struct BundleBriefState: Equatable {
+    var cacheKey: String
+    var brief: BundleBrief?
+    var error: String?
+    var generating = false
+}
+
 /// What the summary sheet shows: the cache key and a title.
 struct SummaryPresentation: Identifiable, Equatable {
     let id: String
@@ -634,6 +642,7 @@ final class AppModel {
     }
 
     func reload() {
+        reloadCount &+= 1
         // Before the rows: their regroup folds by bundle.
         bundles = (try? engine.bundles()) ?? []
         let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? []
@@ -1419,6 +1428,58 @@ final class AppModel {
     }
 
     // MARK: Bundles (docs/bundles.md)
+
+    /// Bumped by every reload: the bundle view re-reads its mail on it (a
+    /// read flag or a star changes no bundle count).
+    private(set) var reloadCount = 0
+
+    /// The root presents the shared sheets (Remind me, Add to bundle, the
+    /// composer, a summary) while the Bundles sheet is closed; the Bundles
+    /// sheet presents them while it is open, so an action on an email in a
+    /// bundle has somewhere to show. One SwiftUI view cannot present a sheet
+    /// over another view's sheet.
+    func modal<T>(_ keyPath: ReferenceWritableKeyPath<AppModel, T?>, inBundles: Bool) -> Binding<T?> {
+        Binding(
+            get: { self.showBundles == inBundles ? self[keyPath: keyPath] : nil },
+            set: { self[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private(set) var bundleBriefs: [String: BundleBriefState] = [:]
+
+    /// What the brief was made from: the bundle's threads, their message
+    /// counts and whether each is done.
+    static func briefKey(_ c: BundleContents) -> String {
+        c.threads.map { "\($0.id):\($0.messageCount):\($0.isDone ? 1 : 0)" }.joined(separator: ",")
+    }
+
+    func brief(for c: BundleContents) -> BundleBriefState? {
+        guard let s = bundleBriefs[c.bundle.id], s.cacheKey == Self.briefKey(c) else { return nil }
+        return s
+    }
+
+    /// Whether opening a bundle asks for its brief by itself: only when the
+    /// model is on this device, or the user turned on auto-summarize —
+    /// the rule Settings › AI states for every summary.
+    var briefsOnOpen: Bool {
+        autoSummarize || ((try? engine.aiStatus())?.answersOnDevice ?? false)
+    }
+
+    func summarizeBundle(_ c: BundleContents) {
+        guard aiConfigured, !c.threads.isEmpty else { return }
+        let key = Self.briefKey(c)
+        let id = c.bundle.id
+        if bundleBriefs[id]?.generating == true { return }
+        bundleBriefs[id] = BundleBriefState(cacheKey: key, generating: true)
+        Task {
+            do {
+                let brief = try await engine.aiSummarizeBundle(id: id)
+                bundleBriefs[id] = BundleBriefState(cacheKey: key, brief: brief)
+            } catch {
+                bundleBriefs[id] = BundleBriefState(cacheKey: key, error: error.localizedDescription)
+            }
+        }
+    }
 
     /// The Bundles sheet, on the list or on one bundle.
     func openBundles(at id: String? = nil) {

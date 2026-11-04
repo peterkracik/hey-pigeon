@@ -39,7 +39,7 @@ enum BundlePrompt {
 
     /// One email with the bundles it may join, as the model sees it.
     static func prompt(subject: String, from: String, snippet: String,
-                       bundles: [(name: String, category: BundleCategory, description: String, examples: [String])]) -> String {
+                       bundles: [(name: String, category: BundleCategory, description: String, examples: [String], notExamples: [String])]) -> String {
         var lines: [String] = []
         if bundles.isEmpty {
             lines.append("Existing bundles: none yet.")
@@ -50,6 +50,10 @@ enum BundlePrompt {
                 if !b.description.isEmpty { line += ": \(b.description)" }
                 if !b.examples.isEmpty {
                     line += " — has: " + b.examples.prefix(3).map { "\"\($0)\"" }.joined(separator: ", ")
+                }
+                // What the user took out: mail like this does not belong.
+                if !b.notExamples.isEmpty {
+                    line += " — not: " + b.notExamples.prefix(3).map { "\"\($0)\"" }.joined(separator: ", ")
                 }
                 lines.append(line)
             }

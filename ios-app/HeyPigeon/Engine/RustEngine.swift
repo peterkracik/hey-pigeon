@@ -384,6 +384,9 @@ final class RustEngine: MailEngine {
             BundleContents(
                 bundle: BundleItem($0.bundle),
                 facts: $0.facts.map(BundleFactItem.init),
+                links: $0.links.compactMap { l in
+                    URL(string: l.url).map { BundleLinkItem(url: $0, host: l.host, threadId: l.threadId) }
+                },
                 threads: $0.threads.map { ThreadRow($0) }
             )
         }
@@ -404,6 +407,10 @@ final class RustEngine: MailEngine {
     }
     func removeFromBundle(threadId: String) throws { try engine.removeFromBundle(threadId: threadId) }
     func suggestedBundle(threadId: String) throws -> String? { try engine.suggestBundle(threadId: threadId) }
+    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
+        let s = try await engine.aiSummarizeBundle(providerId: provider, bundleId: id)
+        return BundleBrief(status: s.status, actions: s.actions)
+    }
 }
 
 // MARK: - Mapping
@@ -481,7 +488,8 @@ private extension BundleFactItem {
         case .invoice: .invoice
         case .tracking: .tracking
         }
-        self.init(category: category, value: f.value, threadId: f.threadId, at: Date(epochMs: f.at))
+        self.init(category: category, value: f.value, threadId: f.threadId, at: Date(epochMs: f.at),
+                  url: f.url.flatMap(URL.init(string:)))
     }
 }
 

@@ -1,5 +1,6 @@
 // One inbox row, three lines: sender · time, subject, one-line snippet —
-// plus chips only when there is something to say. No avatar, no indent:
+// plus a fourth line of chips (triage labels, the bundle) only when there
+// is something to say. No avatar, no indent:
 // the unread mark is the bar on the row's left edge (InboxView) and the
 // bold sender; in the unified view the account shows as a small dot
 // before the time.
@@ -24,7 +25,9 @@ struct ThreadRowView: View {
         guard showAccountDot, let a = account, let first = name.first else {
             return Text(name).foregroundStyle(tone)
         }
-        return Text(String(first)).foregroundStyle(Theme.tagForeground(a.color))
+        // Bold as well as coloured: the account reads at a glance even for
+        // an unread row, whose whole name is already semibold.
+        return Text(String(first)).foregroundStyle(Theme.tagForeground(a.color)).fontWeight(.heavy)
             + Text(name.dropFirst()).foregroundStyle(tone)
     }
 
@@ -47,8 +50,8 @@ struct ThreadRowView: View {
                     .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
                     .monospacedDigit()
             }
-            // Subject line carries the chips at its end: three compact lines
-            // per row, so seven rows fit above the bars.
+            // Subject line carries the state chips at its end (suggestion,
+            // draft, paperclip); labels and the bundle get their own line.
             HStack(spacing: 8) {
                 highlighted(row.subject.isEmpty ? "(no subject)" : row.subject)
                     .font(.footnote.weight(row.isRead ? .regular : .semibold))
@@ -63,12 +66,6 @@ struct ThreadRowView: View {
                          background: Theme.accentSoft, foreground: Theme.textPrimary, capsule: true)
                         .accessibilityLabel("Suggested: \(s.title)")
                 }
-                if showsBundle, let b = model.bundle(id: row.bundleId) {
-                    BundleChip(bundle: b)
-                }
-                ForEach(triageNames, id: \.self) { name in
-                    Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
-                }
                 // An unsent reply waits in the thread (the Drafts folder needs no mark).
                 if row.labels.contains("DRAFT"), model.view != .drafts {
                     Chip(text: "Draft", background: Theme.tagBackground(.coral), foreground: Theme.tagForeground(.coral))
@@ -82,6 +79,17 @@ struct ThreadRowView: View {
                     .font(.footnote)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
+            }
+            // What the mail is (triage labels) and what it belongs to (the
+            // bundle), under the preview so the subject keeps its width.
+            if !triageNames.isEmpty || bundle != nil {
+                HStack(spacing: 6) {
+                    if let bundle { BundleChip(bundle: bundle) }
+                    ForEach(triageNames, id: \.self) { name in
+                        Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(.vertical, 2)
@@ -102,6 +110,11 @@ struct ThreadRowView: View {
             }
         }
         return Text(marked)
+    }
+
+    /// The row's bundle, unless the row is shown inside that bundle.
+    private var bundle: BundleItem? {
+        showsBundle ? model.bundle(id: row.bundleId) : nil
     }
 
     /// Jev labels on the row, by name (at most two; the rest is in the thread).

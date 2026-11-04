@@ -40,24 +40,13 @@ enum IntentDonations {
         donate(intent, result: .result())
     }
 
-    static func labeled(_ row: ThreadRow, _ label: MailLabelItem, on: Bool, in model: AppModel) {
-        guard enabled, model.account(for: row) != nil else { return }
-        var intent = AddLabelIntent()
-        intent.thread = MailThreadEntity(row, account: model.account(for: row))
-        intent.label = MailLabelEntity(label)
-        intent.add = on
-        donate(intent, result: .result(dialog: IntentDialog(stringLiteral: on ? "Label added · \(label.name)." : "Label removed · \(label.name).")))
-    }
-
-    static func reminded(_ row: ThreadRow, at: Date, onlyIfNoReply: Bool, in model: AppModel) {
-        guard enabled else { return }
-        let intent = RemindMeIntent()
-        intent.thread = MailThreadEntity(row, account: model.account(for: row))
-        intent.when = .pickDate
-        intent.date = at
-        intent.onlyIfNoReply = onlyIfNoReply
-        donate(intent, result: .result(dialog: "Reminder set for \(Formatters.reminder(at))."))
-    }
+    // labeled(_:_:on:in:) and reminded(_:at:onlyIfNoReply:in:) live in
+    // ThreadIntents.swift, next to their intents: the Mac's Debug build
+    // compiles files in batches, and setting an intent's @Parameter from a
+    // batch without Entities.swift lost MailThreadEntity's macro-made
+    // AppEntity conformance ("requires that 'MailThreadEntity' conform to
+    // '_IntentValue'", macos-ci on #102). A new file was enough to move
+    // the batch boundary.
 
     // MARK: Plumbing
 
@@ -67,7 +56,7 @@ enum IntentDonations {
 
     /// `IntentDonationManager.shared.donate(intent:result:)` (iOS 27). A
     /// failed donation is nothing to tell the user about.
-    private static func donate<I: AppIntent>(_ intent: I, result: some IntentResult) {
+    static func donate<I: AppIntent>(_ intent: I, result: some IntentResult) {
         Task {
             try? await IntentDonationManager.shared.donate(intent: intent, result: result)
         }

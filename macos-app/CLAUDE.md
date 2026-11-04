@@ -17,7 +17,8 @@ too. There is no second model, engine or intent layer.
 HeyPigeonMac/
   App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
-  Features/   MainWindow (sidebar + NavigationStack or Settings), MainToolbar, SearchSpotlight,
+  Features/   MainWindow (sidebar + NavigationStack or Settings), MainToolbar (+ ViewTabs), SearchSpotlight
+              (+ SpotlightPanel),
               MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
               (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
@@ -52,24 +53,35 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   `.toolbar(removing: .title)`), so the traffic lights are where macOS
   puts them and behave as they do. (Two earlier rounds hid the toolbar
   and drew a top bar of our own; the traffic lights vanished, then had to
-  be moved by hand and still felt wrong.) `MainToolbar` holds the
-  sidebar button and the view's title at the leading end, summarize /
-  ask / new message / search at the trailing end — no Settings gear:
-  Settings is in the app menu (⌘,) and the palette, and opens as a page
-  of the window (`WindowState.showSettings`, a grouped form through
-  `SettingsList`). A full thread adds the shared ThreadView's own toolbar
-  items and the navigation stack's Back; a shared view's sheet-only item
-  goes behind a helper (`sheetCloseButton`). The triage labels are the
-  phone's glass pill (`TriageSplitBar`) at the bottom of the list. Search
-  is a Spotlight panel (`SearchSpotlight`, Liquid Glass) over the
-  blurred window. Rows (`MailRow`) are single lines with a done circle,
-  like the Svelte client's to-do rows; a click opens the row **in place**
+  be moved by hand and still felt wrong.) `MainToolbar` holds the phone's
+  three tabs (`ViewTabs`: Inbox · Remind me · Need reply, with counts)
+  and, for any other folder, its name at the leading end; summarize /
+  ask / new message / search at the trailing end, after a flexible
+  `ToolbarSpacer` (`.primaryAction` puts items at the *leading* end on
+  the Mac). No Settings gear and no sidebar button there: Settings is in
+  the app menu (⌘,) and the palette and opens as a page of the window
+  (`WindowState.showSettings`, a grouped form through `SettingsList`);
+  the sidebar starts hidden and its button is a glass circle in the
+  window's bottom-left corner. A full thread adds the shared ThreadView's
+  own toolbar items and the navigation stack's Back; a shared view's
+  sheet-only item goes behind a helper (`sheetCloseButton`,
+  `composeChrome`). The triage labels are the phone's glass pill
+  (`TriageSplitBar`) at the bottom of the list. Search and the command
+  palette are one shape (`SpotlightPanel`: Liquid Glass over the blurred,
+  dimmed window, one at a time); while one is up the toolbar is empty
+  and clear. The list has no section headers (a Mac list's header floats
+  on a grey band): each day group's title is a plain row and its rows
+  share one white card (`MailRow.Position`). Rows are single lines; Done
+  is the first hover action (a done circle at the start read as a
+  selection checkbox). A click opens the row **in place**
   (`WindowState.expanded`, the latest message and "Open full thread ›"),
-  Return or the row's arrow opens the full thread (`path`). A card's
-  shadow goes on its background shape only — on the card it shadows the
-  message's web view too. Scroll bars are hidden
-  (`.scrollIndicators(.never)`). The list and the thread keep to
-  `MacLayout.maxWidth`.
+  Return or the row's arrow opens the full thread (`path`). Never put a
+  shadow on a view that holds a message: it falls on the web view too.
+  Scroll bars are hidden (`.scrollIndicators(.never)`). The composer on
+  the Mac (shared `ComposeView`) takes the window's look through
+  Platform helpers: `composeChrome` (title, close and full-screen at the
+  top), `borderlessFields`, `pillButton`, `labelOnlyMenu`. The list and
+  the thread keep to `MacLayout.maxWidth`.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the

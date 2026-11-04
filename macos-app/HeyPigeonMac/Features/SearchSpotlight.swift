@@ -20,15 +20,8 @@ struct SearchSpotlight: View {
     private var results: [ThreadRow] { Array(model.searchResults.prefix(60)) }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            // A click outside: the panel goes, what was typed stays in the list.
-            Color.black.opacity(0.1)
-                .contentShape(Rectangle())
-                .onTapGesture { leave() }
-            panel
-                .padding(.top, 64)
-                .padding(.horizontal, 24)
-        }
+        // A click outside: the panel goes, what was typed stays in the list.
+        SpotlightPanel(onClose: { leave() }) { panel }
         .sheet(item: $picking) { field in PersonPicker(field: field) }
         .onAppear { focused = true }
         .onChange(of: state.searchFocusRequest) { _, _ in focused = true }
@@ -42,9 +35,6 @@ struct SearchSpotlight: View {
             Hairline().opacity(0.6)
             content
         }
-        .frame(maxWidth: 680)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: .black.opacity(0.16), radius: 24, y: 10)
     }
 
     // MARK: The field
@@ -184,5 +174,30 @@ private struct ResultRow: View {
         .frame(height: 36)
         .background(highlighted ? MacTheme.selected : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
+    }
+}
+
+/// The floating shape the search and the command palette share, like
+/// Spotlight's: a Liquid Glass panel near the top of the window over a
+/// dimmed, blurred window (MainWindow blurs it); a click outside closes.
+/// The dim reaches under the toolbar, which is transparent and empty
+/// while a panel is up.
+struct SpotlightPanel<Content: View>: View {
+    let onClose: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black.opacity(0.1)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { onClose() }
+            content()
+                .frame(maxWidth: 680)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .shadow(color: .black.opacity(0.16), radius: 24, y: 10)
+                .padding(.top, 40)
+                .padding(.horizontal, 24)
+        }
     }
 }

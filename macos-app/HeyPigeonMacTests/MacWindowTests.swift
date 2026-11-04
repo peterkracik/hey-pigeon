@@ -200,6 +200,17 @@ struct WindowStateTests {
         #expect(state.expanded == "t1")
     }
 
+    @Test func thePaletteAndTheSearchAreOnePanelAtATime() {
+        state.run(.search, in: model)
+        state.run(.palette, in: model)
+        #expect(state.showPalette && !state.searching)
+        state.run(.search, in: model)
+        #expect(state.searching && !state.showPalette)
+        state.run(.palette, in: model)
+        state.run(.escape, in: model)
+        #expect(!state.showPalette && !state.searching)
+    }
+
     @Test func escapeClearsTheSearchThenTheSelection() {
         model.searchText = "roadmap"
         state.select("t1", in: model)

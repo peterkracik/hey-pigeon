@@ -317,7 +317,8 @@ private struct AccountFooter: View {
             .accessibilityLabel("\(name). Switch account")
 
         }
-        .padding(.horizontal, 8).padding(.vertical, 8)
+        // The window's corner is the sidebar button's (MainWindow).
+        .padding(.leading, 50).padding(.trailing, 8).padding(.vertical, 8)
     }
 
     /// The account's initial on its colour; for All accounts, the first

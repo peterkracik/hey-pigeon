@@ -750,6 +750,29 @@ struct OAuthStart: Hashable {
     let callbackScheme: String
 }
 
+/// The background analysis pass (auto-triage): of the emails this pass
+/// found to classify, how many are done, and whether a round is working
+/// now. A pass spans sync rounds; `total == 0` means nothing to analyze.
+struct AnalysisProgress: Hashable, Sendable {
+    var done = 0
+    var total = 0
+    var isRunning = false
+
+    static let idle = AnalysisProgress()
+
+    /// Below this a pass is new mail trickling in, finished before a bar
+    /// could be read; the inbox only shows passes at least this big.
+    static let visibleFrom = 5
+    /// A pass worth following from other apps (the Live Activity): what
+    /// "Reanalyze all emails" or a first triage of the mailbox starts.
+    static let liveActivityFrom = 20
+
+    var isActive: Bool { total > 0 }
+    var remaining: Int { max(total - done, 0) }
+    var fraction: Double { total > 0 ? min(Double(done) / Double(total), 1) : 0 }
+    var isVisible: Bool { total >= Self.visibleFrom }
+}
+
 /// The engine the app talks to. Reads are synchronous and local; anything
 /// that can touch the network is async.
 @MainActor
@@ -761,6 +784,9 @@ protocol MailEngine: AnyObject {
     /// triage switch. Re-read them. Never fires for this device's own
     /// edits, so it cannot race the optimistic UI.
     var onPrefsUpdated: (() -> Void)? { get set }
+    /// The analysis pass moved (a round started, an email was classified,
+    /// the pass paused or ended). Fires per email: not a reload.
+    var onAnalysisProgress: ((AnalysisProgress) -> Void)? { get set }
 
     func accounts() throws -> [MailAccount]
     func accountStates() throws -> [AccountState]
@@ -865,6 +891,11 @@ protocol MailEngine: AnyObject {
     func renameTriageLabel(id: String, name: String) throws
     func deleteTriageLabel(id: String) throws
     func reanalyzeTriage() throws
+    /// Where the analysis pass stands (the last state a round left).
+    func analysisProgress() -> AnalysisProgress
+    /// One analysis round outside the sync cadence, then where the pass
+    /// stands. AppModel loops it while the app is in front.
+    func analyzePending() async -> AnalysisProgress
 
     // Bundles (docs/bundles.md). App-local, synced between devices.
     /// Active first, then archived, each by name.

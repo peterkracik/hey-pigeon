@@ -151,6 +151,39 @@ enum AppLifecycle {
     }
 }
 
+/// A little more time when the user leaves the app mid-way through
+/// long work (the analysis pass): iOS grants a short while after the app
+/// goes to the background, then `isExpired` turns true and the work stops
+/// at its next check. Held while in front too — iOS only starts counting
+/// once the app leaves. The Mac keeps apps running, so it never expires.
+@MainActor
+final class BackgroundGrace {
+    private(set) var isExpired = false
+    #if canImport(UIKit)
+    private var id: UIBackgroundTaskIdentifier = .invalid
+    #endif
+
+    init(_ name: String) {
+        #if canImport(UIKit)
+        // The expiration handler runs on the main thread, and the task must
+        // end before it returns or iOS ends the process.
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            MainActor.assumeIsolated { self?.end() }
+        }
+        #endif
+    }
+
+    func end() {
+        isExpired = true
+        #if canImport(UIKit)
+        if id != .invalid {
+            UIApplication.shared.endBackgroundTask(id)
+            id = .invalid
+        }
+        #endif
+    }
+}
+
 /// APNs registration (the optional push relay, PushController). The token
 /// comes back through the app delegate.
 @MainActor

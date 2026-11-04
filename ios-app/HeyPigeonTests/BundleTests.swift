@@ -165,3 +165,32 @@ struct BundlePromptTests {
         #expect(BundlePrompt.prompt(subject: "", from: "a@b.test", snippet: "", bundles: []).contains("Existing bundles: none yet."))
     }
 }
+
+/// The sidebar's Bundles section (AppModel.sidebarBundles).
+@MainActor
+struct SidebarBundleTests {
+    private func item(_ id: String, daysAgo: Double) -> BundleItem {
+        BundleItem(id: id, name: id, category: .trip, description: "", isArchived: false,
+                   createdAt: Date().addingTimeInterval(-30 * 86_400), threadCount: 2, openCount: 1,
+                   lastActivityAt: Date().addingTimeInterval(-daysAgo * 86_400))
+    }
+
+    @Test func foldedShowsTheMostRecentNotHiddenUpToTheLimit() {
+        let all = (0..<8).map { item("b\($0)", daysAgo: Double($0)) }
+        let folded = AppModel.sidebarBundles(all.shuffled(), hidden: ["b1"], expanded: false, limit: 3)
+        #expect(folded.shown.map(\.id) == ["b0", "b2", "b3"])
+        #expect(folded.more == 5)
+        // Expanded: every bundle, the hidden one too, newest first.
+        let open = AppModel.sidebarBundles(all, hidden: ["b1"], expanded: true, limit: 3)
+        #expect(open.shown.count == 8 && open.shown[1].id == "b1" && open.more == 0)
+    }
+
+    @Test func hidingIsATogglePref() {
+        let model = AppModel(engine: MockEngine())
+        let b = item("b1", daysAgo: 0)
+        model.toggleHidden(b)
+        #expect(model.hiddenBundleIds == ["b1"])
+        model.toggleHidden(b)
+        #expect(model.hiddenBundleIds.isEmpty)
+    }
+}

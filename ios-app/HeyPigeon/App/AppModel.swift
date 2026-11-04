@@ -144,6 +144,10 @@ final class AppModel {
     private(set) var hasMore = true
     private(set) var isSyncing = false
     private var isBackfillingOlder = false
+    /// The background analysis pass (auto-triage): the inbox's progress bar,
+    /// Settings › Triage and the Live Activity read it.
+    private(set) var analysis = AnalysisProgress.idle
+    private var isAnalyzing = false
     private(set) var lastSyncAt: Date?
     private(set) var hasLoadedOnce = false
 
@@ -274,6 +278,8 @@ final class AppModel {
         static let suggest = "ai.suggest"
         /// The labels pinned in the sidebar (both apps), by label id.
         static let pinnedLabels = "sidebar.pinned_labels"
+        /// The bundles hidden from the sidebar (both apps), by bundle id.
+        static let hiddenBundles = "sidebar.hidden_bundles"
         /// Settings › Inbox › "Load remote images" (off: ask per sender).
         static let remoteImages = "mail.remote_images"
         /// "Always load from this sender": lowercased addresses.
@@ -355,6 +361,31 @@ final class AppModel {
     /// Synced, like the other prefs: the Mac and the phone pin the same.
     var pinnedLabelIds: Set<String> = [] {
         didSet { savePref(PrefName.pinnedLabels, pinnedLabelIds.sorted()) }
+    }
+
+    /// Bundles the user hid from the sidebar's Bundles section. Synced, so
+    /// the sidebar is the same on every device.
+    var hiddenBundleIds: Set<String> = [] {
+        didSet { savePref(PrefName.hiddenBundles, hiddenBundleIds.sorted()) }
+    }
+
+    func toggleHidden(_ bundle: BundleItem) {
+        if hiddenBundleIds.contains(bundle.id) { hiddenBundleIds.remove(bundle.id) } else { hiddenBundleIds.insert(bundle.id) }
+    }
+
+    /// How many bundles the sidebar section shows before "N more".
+    static let sidebarBundleLimit = 5
+
+    /// The sidebar's Bundles section: active bundles, most recently active
+    /// first. Folded, it leaves out the hidden ones and stops at `limit`;
+    /// `more` is how many "N more" opens. Expanded, it lists every active
+    /// bundle, hidden ones too, so they can be shown again.
+    static func sidebarBundles(_ active: [BundleItem], hidden: Set<String>, expanded: Bool,
+                               limit: Int = sidebarBundleLimit) -> (shown: [BundleItem], more: Int) {
+        let recent = active.sorted { ($0.lastActivityAt ?? $0.createdAt) > ($1.lastActivityAt ?? $1.createdAt) }
+        if expanded { return (recent, 0) }
+        let shown = Array(recent.filter { !hidden.contains($0.id) }.prefix(limit))
+        return (shown, recent.count - shown.count)
     }
 
     func togglePinned(_ label: MailLabelItem) {
@@ -515,6 +546,7 @@ final class AppModel {
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
         if let v = prefs[PrefName.autoBundles] as? Bool { autoBundlesEnabled = v }
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
+        if let v = prefs[PrefName.hiddenBundles] as? [String] { hiddenBundleIds = Set(v) }
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
         if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
@@ -544,6 +576,8 @@ final class AppModel {
             self?.reloadAccounts()
         }
         engine.onPrefsUpdated = { [weak self] in self?.adoptRemoteSettings() }
+        engine.onAnalysisProgress = { [weak self] p in self?.adoptAnalysis(p) }
+        analysis = engine.analysisProgress()
         loadPrefs()
         reloadAccounts()
         reload()
@@ -896,7 +930,51 @@ final class AppModel {
         await NewMailNotifier.refreshBadge(self)
         if AppLifecycle.isActive {
             Task { await backfillOlder() }
+            // The sync's own round classified a batch; the rest of a large
+            // pass goes on now instead of ten emails per sync. Read, not
+            // `analysis`: the listener's hop may not have landed yet.
+            if engine.analysisProgress().remaining > 0 { Task { await analyzePending() } }
         }
+    }
+
+    // MARK: Analysis
+
+    /// Settings › Triage "Reanalyze all emails": every thread is classified
+    /// again, starting now, with the progress on screen.
+    func reanalyzeAllEmails() throws {
+        try engine.reanalyzeTriage()
+        Task { await analyzePending() }
+    }
+
+    /// Analysis rounds back to back while the app is in front, and for the
+    /// short while iOS allows after the user leaves (`BackgroundGrace`) — so
+    /// the Live Activity keeps moving in the Dynamic Island. Stops when the
+    /// pass is done or a round makes no progress (it failed, triage is off,
+    /// or the sync's own round holds the guard); the next sync resumes it.
+    func analyzePending() async {
+        guard !isAnalyzing else { return }
+        isAnalyzing = true
+        let grace = BackgroundGrace("Analyze emails")
+        defer {
+            grace.end()
+            isAnalyzing = false
+        }
+        var done = analysis.isActive ? analysis.done : -1
+        while !grace.isExpired {
+            let p = await engine.analyzePending()
+            adoptAnalysis(p)
+            if p.remaining == 0 || p.done == done { break }
+            done = p.done
+            // Breathing room for the UI and the sync between rounds.
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+        // Left in the background mid-pass: the Live Activity says it paused.
+        if !AppLifecycle.isActive { AnalysisLiveActivityController.submit(engine.analysisProgress()) }
+    }
+
+    private func adoptAnalysis(_ p: AnalysisProgress) {
+        if analysis != p { analysis = p }
+        AnalysisLiveActivityController.submit(p)
     }
 
     /// Pulls mail older than the sync window into the local store, a page

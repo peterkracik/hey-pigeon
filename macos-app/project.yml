@@ -194,6 +194,7 @@ targets:
           - "Controls.swift"
           - "ReminderLiveActivity.swift"
           - "TriageLiveActivity.swift"
+          - "AnalysisLiveActivity.swift"
       - path: ../ios-app/HeyPigeon/Shared/WidgetShared
         name: WidgetShared
     entitlements:

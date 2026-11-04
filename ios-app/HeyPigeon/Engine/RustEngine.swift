@@ -15,6 +15,7 @@ final class RustEngine: MailEngine {
     var onThreadsUpdated: (() -> Void)?
     var onAccountDisconnected: ((String) -> Void)?
     var onPrefsUpdated: (() -> Void)?
+    var onAnalysisProgress: ((AnalysisProgress) -> Void)?
 
     private let engine: Engine
     private var listener: Listener?
@@ -70,6 +71,10 @@ final class RustEngine: MailEngine {
         }
         func onPrefsUpdated() {
             Task { @MainActor [weak owner] in owner?.onPrefsUpdated?() }
+        }
+        func onAnalysisProgress(progress: AnalysisPass) {
+            let p = AnalysisProgress(progress)
+            Task { @MainActor [weak owner] in owner?.onAnalysisProgress?(p) }
         }
     }
 
@@ -370,6 +375,8 @@ final class RustEngine: MailEngine {
     func renameTriageLabel(id: String, name: String) throws { try engine.renameTriageLabel(id: id, newName: name) }
     func deleteTriageLabel(id: String) throws { try engine.deleteTriageLabel(id: id) }
     func reanalyzeTriage() throws { try engine.reanalyzeAllTriage() }
+    func analysisProgress() -> AnalysisProgress { AnalysisProgress(engine.analysisProgress()) }
+    func analyzePending() async -> AnalysisProgress { AnalysisProgress(await engine.analyzePending()) }
 
     func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
     func bundleContents(id: String) throws -> BundleContents? {
@@ -534,5 +541,11 @@ private extension MailAction {
                        replyToThread: d.replyToThreadId)
         case .deleteDraft(let key): .deleteDraft(key: key)
         }
+    }
+}
+
+extension AnalysisProgress {
+    init(_ p: AnalysisPass) {
+        self.init(done: Int(p.done), total: Int(p.total), isRunning: p.running)
     }
 }

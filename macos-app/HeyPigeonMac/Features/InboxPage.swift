@@ -28,7 +28,7 @@ struct InboxPage: View {
         }
         .frame(maxWidth: MacLayout.maxWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MacTheme.content)
+        .background(MacTheme.listBackground)
         .safeAreaInset(edge: .bottom) {
             if state.selection.count > 1 {
                 BatchBar(state: state)
@@ -61,14 +61,18 @@ struct InboxPage: View {
     private var list: some View {
         ScrollViewReader { proxy in
             List {
+                // No section headers: on the Mac a list's header floats on
+                // its own grey band. The group's title is a plain row, and
+                // its rows share one white card (MailRow draws its piece).
                 ForEach(model.groupedRows) { group in
-                    Section {
-                        ForEach(group.rows) { row in
-                            MailRow(row: row, state: state)
-                        }
-                    } header: {
-                        GroupHeader(group: group)
-                            .padding(.horizontal, 26).padding(.top, 14).padding(.bottom, 2)
+                    GroupHeader(group: group)
+                        .padding(.horizontal, 30).padding(.top, 16).padding(.bottom, 6)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
+                        MailRow(row: row, state: state,
+                                position: .init(first: index == 0, last: index == group.rows.count - 1))
                     }
                 }
             }

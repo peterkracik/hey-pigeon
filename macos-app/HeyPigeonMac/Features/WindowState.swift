@@ -110,8 +110,10 @@ final class WindowState: Equatable {
     var selection: Set<String> = []
     /// The folders drawer; away, the list has the whole window. Remembered
     /// across launches.
-    var sidebarVisible: Bool = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarVisible") }
+    /// Hidden until asked for (a new key: the old one remembered the
+    /// drawer open from when it was the default).
+    var sidebarVisible: Bool = UserDefaults.standard.object(forKey: "sidebarShown") as? Bool ?? false {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarShown") }
     }
     /// The row opened in place: a click shows its latest message under the
     /// row, the desktop's preview card, without leaving the list; its arrow
@@ -414,17 +416,22 @@ final class WindowState: Equatable {
             // The field is in the top bar, where an open thread shows its
             // title: the search takes the list back.
             showSettings = false
+            showPalette = false
             if isThreadOpen { path = [] }
             searching = true
             searchFocusRequest += 1
         case .palette:
+            if searching { endSearch(in: model) }
             paletteStage = .all
             showPalette = true
         case .shortcuts:
             showShortcuts.toggle()
         case .escape:
-            // The search panel floats over everything: it goes first.
-            if searching {
+            // The floating panels are over everything: they go first.
+            if showPalette {
+                showPalette = false
+                listFocusRequest += 1
+            } else if searching {
                 endSearch(in: model)
             } else if showSettings {
                 showSettings = false

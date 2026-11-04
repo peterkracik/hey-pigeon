@@ -4,8 +4,10 @@
 // right): the grey sidebar (SidebarColumn, ⌃⌘S puts it away) beside the
 // content — the list full width up to a readable maximum with rows that
 // open in place, a full thread in its place (NavigationStack, as in
-// MailListScreen), or Settings. Search floats over the blurred window as
-// a Spotlight panel (SearchSpotlight). The look is in MacStyle. The sheets the phone presents from its root (Remind
+// MailListScreen), or Settings. The search and the command palette float
+// over the blurred window as Spotlight panels (SearchSpotlight,
+// CommandPalette); the sidebar button is a glass circle in the bottom
+// corner. The look is in MacStyle. The sheets the phone presents from its root (Remind
 // me, compose, the summary, Ask my inbox) are presented here, the toast floats
 // over the bottom edge, and the keyboard map works wherever the focus is as
 // long as it is not a text field.
@@ -18,6 +20,9 @@ struct MainWindow: View {
     @State private var state = WindowState()
     /// The window's size, for the composer's full-screen sheet.
     @State private var windowSize = CGSize(width: 1000, height: 760)
+
+    /// A Spotlight panel (the search, the palette) floats over the window.
+    private var overlaid: Bool { state.searching || state.showPalette }
 
     var body: some View {
         @Bindable var model = model
@@ -45,16 +50,38 @@ struct MainWindow: View {
                 }
             }
         }
-        .blur(radius: state.searching ? 12 : 0)
+        // The sidebar button, in the window's bottom corner: the drawer
+        // starts hidden and comes out from there.
+        .overlay(alignment: .bottomLeading) {
+            Button { state.run(.toggleSidebar, in: model) } label: {
+                Image(systemName: "sidebar.leading")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .help(state.sidebarVisible ? "Hide the sidebar (⌃⌘S)" : "Show the sidebar (⌃⌘S)")
+            .accessibilityLabel(state.sidebarVisible ? "Hide the sidebar" : "Show the sidebar")
+            .padding(12)
+        }
+        .blur(radius: overlaid ? 12 : 0)
         .overlay {
             if state.searching {
                 SearchSpotlight(state: state)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            } else if state.showPalette {
+                // A new stage (the label or move picker) starts afresh.
+                CommandPalette(state: state, stage: state.paletteStage)
+                    .id(state.paletteStage)
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
         .animation(.easeOut(duration: 0.15), value: state.showSettings)
         .animation(.easeOut(duration: 0.16), value: state.searching)
+        .animation(.easeOut(duration: 0.16), value: state.showPalette)
         .background(MacTheme.content)
         .frame(minWidth: 760, minHeight: 480)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
@@ -63,6 +90,9 @@ struct MainWindow: View {
         // title is the toolbar's own item.
         .toolbar { MainToolbar(state: state, model: model) }
         .toolbar(removing: .title)
+        // Under a floating panel the bar is clear (and empty), so the dim
+        // reaches the top of the window.
+        .toolbarBackgroundVisibility(overlaid ? .hidden : .automatic, for: .windowToolbar)
         .focusedSceneValue(\.windowState, state)
         // Keys that reach the window itself (nothing else has focus): the
         // same map the list and the thread handle.
@@ -79,9 +109,6 @@ struct MainWindow: View {
         }
         .sheet(item: $model.summarySheet) { p in SummarySheet(presentation: p) }
         .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
-        .sheet(isPresented: $state.showPalette, onDismiss: { state.listFocusRequest += 1 }) {
-            CommandPalette(state: state, stage: state.paletteStage)
-        }
         .sheet(isPresented: $state.showShortcuts) { ShortcutsSheet() }
         .sheet(isPresented: $state.showTriage) {
             NavigationStack { TriageJournalView() }

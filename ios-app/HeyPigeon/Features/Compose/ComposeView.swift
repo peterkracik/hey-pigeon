@@ -122,22 +122,10 @@ struct ComposeView: View {
                 footer
             }
             .background(Theme.canvas)
-            .navigationTitle(draft.replyToThreadId == nil ? "New message" : "Reply")
-            .inlineNavigationTitle()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { close() } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel("Close and save draft")
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { toggleFullScreen() } label: {
-                        Image(systemName: model.composeFullScreen
-                              ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                    }
-                    .help(model.composeFullScreen ? "Show as a window" : "Full screen")
-                    .accessibilityLabel(model.composeFullScreen ? "Show as a window" : "Full screen")
-                }
-            }
+            .borderlessFields()
+            .composeChrome(title: draft.replyToThreadId == nil ? "New message" : "Reply",
+                           fullScreen: model.composeFullScreen,
+                           close: { close() }, toggleFullScreen: { toggleFullScreen() })
             .task { people = model.searchPeople() }
             .onAppear {
                 if fromId.isEmpty {
@@ -215,6 +203,7 @@ struct ComposeView: View {
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Theme.sunken, in: Capsule())
             }
+            .labelOnlyMenu()
         }
     }
 
@@ -275,28 +264,29 @@ struct ComposeView: View {
                         .frame(height: 22) // the icon buttons' content height, so the pill matches the circles
                         .padding(.horizontal, 6)
                 }
-                .buttonStyle(.glassProminent)
+                .pillButton(prominent: true)
                 .tint(Theme.textPrimary)
                 .disabled(!canSend)
                 Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
-                    .buttonStyle(.glass)
+                    .pillButton()
                     .accessibilityLabel("Discard")
                 Spacer()
                 if model.aiConfigured {
                     Button { showAI = true } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
-                        .buttonStyle(.glass)
+                        .pillButton()
                         .accessibilityLabel("Write or edit with AI")
                 }
                 Menu {
                     Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
                     Button { showPhotos = true } label: { Label("Photo library", systemImage: "photo") }
                 } label: { Image(systemName: "paperclip").frame(width: 22, height: 22) }
-                    .buttonStyle(.glass)
+                    .pillButton()
+                    .labelOnlyMenu()
                     .accessibilityLabel("Attach file")
                 Button { withAnimation { showFormat.toggle() } } label: {
                     Text("Aa").font(.subheadline.weight(.bold)).frame(width: 22, height: 22)
                 }
-                .buttonStyle(.glass)
+                .pillButton()
                 .foregroundStyle(showFormat ? Theme.accent : Theme.textPrimary)
                 .accessibilityLabel("Formatting")
             }

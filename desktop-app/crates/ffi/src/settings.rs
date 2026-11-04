@@ -124,7 +124,7 @@ fn ai_err(e: impl std::fmt::Display) -> EngineError {
 /// The provider ids the settings accept: OpenAI, the known shell
 /// providers (whether or not this device registered them — the choice is
 /// synced) and anything the shell did register.
-fn check_provider(provider_id: &str, registered: &[String]) -> Result<(), EngineError> {
+pub(crate) fn check_provider(provider_id: &str, registered: &[String]) -> Result<(), EngineError> {
     if provider_id == AI_PROVIDER
         || FOREIGN_PROVIDERS.contains(&provider_id)
         || registered.iter().any(|r| r == provider_id)
@@ -741,7 +741,7 @@ impl Engine {
     }
 
     /// One completion through whichever provider answers now.
-    async fn complete(&self, system: &str, user: String) -> Result<String, EngineError> {
+    pub(crate) async fn complete(&self, system: &str, user: String) -> Result<String, EngineError> {
         let active = self.active_provider()?.ok_or_else(|| {
             EngineError::Invalid("connect an AI provider in Settings first".into())
         })?;

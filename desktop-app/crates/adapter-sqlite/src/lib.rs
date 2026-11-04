@@ -1171,6 +1171,16 @@ impl Store for SqliteStore {
         })
     }
 
+    fn list_bundle_exclusions(&self, bundle_id: &str) -> Result<Vec<ThreadId>, StoreError> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT thread_id FROM bundle_exclusions WHERE bundle_id = ?1 ORDER BY thread_id",
+            )?;
+            let rows = stmt.query_map(params![bundle_id], |r| r.get(0))?;
+            rows.collect()
+        })
+    }
+
     fn list_bundle_threads(&self, bundle_id: &str) -> Result<Vec<Thread>, StoreError> {
         let junk = format!(
             "({} OR {})",
@@ -2731,6 +2741,10 @@ mod tests {
 
         s.exclude_from_bundle("b1", &"t2".to_string()).unwrap();
         assert!(s.is_excluded_from_bundle("b1", &"t2".to_string()).unwrap());
+        assert_eq!(
+            s.list_bundle_exclusions("b1").unwrap(),
+            vec!["t2".to_string()]
+        );
         s.clear_bundle_exclusion("b1", &"t2".to_string()).unwrap();
         assert!(!s.is_excluded_from_bundle("b1", &"t2".to_string()).unwrap());
 

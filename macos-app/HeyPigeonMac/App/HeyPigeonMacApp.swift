@@ -98,10 +98,9 @@ struct HeyPigeonMacApp: App {
                 }
         }
         .defaultSize(width: 1100, height: 760)
-        // No title bar: the window's top bar is drawn where it would be
-        // (MainWindow hides the toolbar too; WindowChrome keeps the traffic
-        // lights, centred in that bar).
-        .windowStyle(.hiddenTitleBar)
+        // The standard unified toolbar, no title: MainToolbar's items sit
+        // beside the traffic lights, as in every Mac app.
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands { MacCommands(model: model, updater: updater) }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

@@ -14,7 +14,7 @@ Models and widget work — reached the Mac.
 | --- | --- | --- |
 | Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on every push to `main` (the `mac-latest` release, with the Sparkle appcast installed apps update from) and on `mac-v*` tags |
 | Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
-| Layout | The phone's `TabView` + `NavigationStack`, full screen | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; one top bar (traffic lights, the folder's triage tabs, plain icon buttons) in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
+| Layout | The phone's `TabView` + `NavigationStack`, full screen | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
 | Keyboard | `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
 | Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` from the same `build-rust.sh` when `PLATFORM_NAME=macosx` (macOS 27 is Apple Silicon only; `ARCHS` can still add `x86_64`) |
@@ -86,7 +86,7 @@ What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
 
 - `MainWindow` — the split view, the sheets, the toast, the disconnected alert.
 - `SidebarColumn` — accounts, folders (Scheduled and Need reply among them), labels, Add account · Settings.
-- `InboxPage` — the list (single-line `MailRow`s that open in place, the search field in `TopBar` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
+- `InboxPage` — the list (single-line `MailRow`s that open in place, the search in `SearchSpotlight` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
 - `ThreadPage` — a header row (back, the people, the sparkle, the actions menu) over the shared `ThreadView`; `ThreadWindow` for a thread in its own window.
 - `WindowState` — the selection, auto-advance, `KeyboardMap` (the desktop's keys and `g`-chords) and every action.
 - `CommandPalette` (⌘K, with the `l` / `v` stages), `ShortcutsSheet` (`?`), `MenuBarExtraView`.

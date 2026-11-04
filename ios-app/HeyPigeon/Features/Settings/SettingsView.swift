@@ -94,11 +94,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .toolbarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .barTrailing) {
-                    Button(role: .close) { Keyboard.dismiss(); dismiss() }
-                }
-            }
+            .sheetCloseButton { Keyboard.dismiss(); dismiss() }
             .dismissKeyboardOnScroll(.interactively)
             .confirmationDialog("Remove \(removing?.email ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove account", role: .destructive) {

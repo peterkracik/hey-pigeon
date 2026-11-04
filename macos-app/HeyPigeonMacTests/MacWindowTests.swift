@@ -2,6 +2,7 @@
 // desktop's keys and the g-chords), the selection's moves and auto-advance,
 // the palette filter and the Mac widgets' deep links.
 
+import AppKit
 import Foundation
 import SwiftUI
 import Testing
@@ -179,6 +180,24 @@ struct WindowStateTests {
         state.showSettings = true
         state.run(.go(.starred), in: model)
         #expect(!state.showSettings && model.view == .starred)
+    }
+
+    @Test func typingInAFieldIsNotAShortcut() {
+        #expect(WindowState.isTyping(NSTextField()))
+        #expect(WindowState.isTyping(NSTextView()))
+        let body = NSTextView()
+        body.isEditable = false
+        #expect(!WindowState.isTyping(body)) // a message's selectable text
+        #expect(!WindowState.isTyping(nil))
+    }
+
+    @Test func escapeClosesTheSearchPanelBeforeTheOpenCard() throws {
+        state.expand(try #require(model.row(forThreadId: "t1")), in: model)
+        state.run(.search, in: model)
+        model.searchText = "roadmap"
+        state.run(.escape, in: model)
+        #expect(!state.searching && model.searchText.isEmpty)
+        #expect(state.expanded == "t1")
     }
 
     @Test func escapeClearsTheSearchThenTheSelection() {

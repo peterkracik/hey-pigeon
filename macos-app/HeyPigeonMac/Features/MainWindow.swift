@@ -1,12 +1,11 @@
-// The main window, in the first desktop client's shape: one top bar across
-// the window (TopBar: the traffic lights, the sidebar button, the folder
-// and its triage tabs or the open thread's title, the icon buttons and
-// Settings), a hairline, then the grey sidebar (SidebarColumn, ⌃⌘S puts
-// it away) beside the content — the list full width up to a readable
-// maximum with rows that open in place, a full thread in its place
-// (NavigationStack, as in MailListScreen), or Settings. No title bar and
-// no toolbar (WindowChrome keeps the traffic lights in the top bar); the
-// look is in MacStyle. The sheets the phone presents from its root (Remind
+// The main window, in the first desktop client's shape under a standard
+// Mac toolbar (MainToolbar: the traffic lights where they always are, the
+// sidebar button and the view's title beside them, the actions at the
+// right): the grey sidebar (SidebarColumn, ⌃⌘S puts it away) beside the
+// content — the list full width up to a readable maximum with rows that
+// open in place, a full thread in its place (NavigationStack, as in
+// MailListScreen), or Settings. Search floats over the blurred window as
+// a Spotlight panel (SearchSpotlight). The look is in MacStyle. The sheets the phone presents from its root (Remind
 // me, compose, the summary, Ask my inbox) are presented here, the toast floats
 // over the bottom edge, and the keyboard map works wherever the focus is as
 // long as it is not a text field.
@@ -24,8 +23,6 @@ struct MainWindow: View {
         @Bindable var model = model
         @Bindable var state = state
         VStack(spacing: 0) {
-            TopBar(state: state)
-            Hairline()
             HStack(spacing: 0) {
                 if state.sidebarVisible {
                     SidebarColumn(state: state)
@@ -48,18 +45,24 @@ struct MainWindow: View {
                 }
             }
         }
+        .blur(radius: state.searching ? 12 : 0)
+        .overlay {
+            if state.searching {
+                SearchSpotlight(state: state)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
         .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
         .animation(.easeOut(duration: 0.15), value: state.showSettings)
+        .animation(.easeOut(duration: 0.16), value: state.searching)
         .background(MacTheme.content)
-        // The top bar starts at the window's top edge: no room is kept for
-        // a title bar the window does not have.
-        .ignoresSafeArea(.container, edges: .top)
-        .background(WindowChrome())
         .frame(minWidth: 760, minHeight: 480)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
-        // The window has no toolbar: the shared views' toolbar items never
-        // draw over the top bar. WindowChrome keeps the traffic lights.
-        .toolbarVisibility(.hidden, for: .windowToolbar)
+        // A standard toolbar: the traffic lights and the sidebar button
+        // where a Mac user looks for them. No window title: the view's
+        // title is the toolbar's own item.
+        .toolbar { MainToolbar(state: state, model: model) }
+        .toolbar(removing: .title)
         .focusedSceneValue(\.windowState, state)
         // Keys that reach the window itself (nothing else has focus): the
         // same map the list and the thread handle.
@@ -99,7 +102,7 @@ struct MainWindow: View {
             Text("\(model.disconnectedAccountId ?? "") needs to sign in again. Mail for it is stale until then.")
         }
         // The model's sheet flags are the phone's; here Settings is a page
-        // of the window (the top bar's gear, ⌘,) and the sidebar the drawer.
+        // of the window (⌘,, the palette) and the sidebar the drawer.
         .onChange(of: model.showSettings, initial: true) { _, show in
             guard show else { return }
             model.showSettings = false

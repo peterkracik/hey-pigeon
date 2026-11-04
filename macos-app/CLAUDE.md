@@ -17,8 +17,8 @@ too. There is no second model, engine or intent layer.
 HeyPigeonMac/
   App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
-  Features/   MainWindow (top bar + sidebar + NavigationStack or Settings), TopBar, WindowChrome (traffic
-              lights), MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
+  Features/   MainWindow (sidebar + NavigationStack or Settings), MainToolbar, SearchSpotlight,
+              MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
               (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
@@ -46,32 +46,37 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   on the open thread else the highlighted rows (`focusRow`) and calls
   AppModel like the swipes do. Pure logic is static (`KeyboardMap.resolve`,
   `PaletteFilter`), tested in `HeyPigeonMacTests`.
-- **The first desktop client's shape, no chrome.** The window has no
-  title bar (`.windowStyle(.hiddenTitleBar)`) and no toolbar
-  (`.toolbarVisibility(.hidden, for: .windowToolbar)`, so the shared
-  views' toolbar items never draw). With the toolbar hidden macOS drops
-  the traffic lights, so `WindowChrome` (in the window's background)
-  unhides them and centres them in the `MacLayout.topBar` row, again on
-  every resize. One `TopBar` spans the window: the traffic lights' room
-  (`TrafficLightsGap`), the sidebar button, the folder and its triage
-  tabs (or the search field, or back + the open thread's title menu, or
-  back + "Settings"), and borderless `IconButton`s ending in the
-  Settings gear. Under it, the grey sidebar and the content. Rows
-  (`MailRow`) are single lines with a done circle, like the Svelte
-  client's to-do rows; a click opens the row **in place**
+- **The first desktop client's shape under a standard toolbar.** The
+  window has the unified toolbar with no title
+  (`.windowToolbarStyle(.unified(showsTitle: false))`,
+  `.toolbar(removing: .title)`), so the traffic lights are where macOS
+  puts them and behave as they do. (Two earlier rounds hid the toolbar
+  and drew a top bar of our own; the traffic lights vanished, then had to
+  be moved by hand and still felt wrong.) `MainToolbar` holds the
+  sidebar button and the view's title at the leading end, summarize /
+  ask / new message / search at the trailing end — no Settings gear:
+  Settings is in the app menu (⌘,) and the palette, and opens as a page
+  of the window (`WindowState.showSettings`, a grouped form through
+  `SettingsList`). A full thread adds the shared ThreadView's own toolbar
+  items and the navigation stack's Back; a shared view's sheet-only item
+  goes behind a helper (`sheetCloseButton`). The triage labels are the
+  phone's glass pill (`TriageSplitBar`) at the bottom of the list. Search
+  is a Spotlight panel (`SearchSpotlight`, Liquid Glass) over the
+  blurred window. Rows (`MailRow`) are single lines with a done circle,
+  like the Svelte client's to-do rows; a click opens the row **in place**
   (`WindowState.expanded`, the latest message and "Open full thread ›"),
-  Return or the row's arrow opens the full thread (`path`). Settings is a
-  page of the window (`WindowState.showSettings`; ⌘, and the gear), not a
-  Settings scene; on the Mac `SettingsList` makes it a grouped form.
-  Scroll bars are hidden (`.scrollIndicators(.never)`). Floating pieces
-  are `macPanel()`s, not glass; tokens live in `Features/MacStyle.swift`.
-  Nothing in the Mac folder uses `.toolbar` or `.navigationTitle`; a Mac
-  page restates what matters in the top bar (the thread's menu). The list
-  and the thread keep to `MacLayout.maxWidth`.
+  Return or the row's arrow opens the full thread (`path`). A card's
+  shadow goes on its background shape only — on the card it shadows the
+  message's web view too. Scroll bars are hidden
+  (`.scrollIndicators(.never)`). The list and the thread keep to
+  `MacLayout.maxWidth`.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the
-  detail and the window) and menu items carry ⌘-based equivalents. After a
+  detail and the window) and menu items carry ⌘-based equivalents. The
+  window's handler sees keys before a text field inside it does, so
+  `handle` ignores every key while the first responder is typing
+  (`WindowState.isTyping`: an NSTextField or an editable NSTextView). After a
   chord changes the folder, ask the list for focus back
   (`listFocusRequest`): `AppModel.tab`'s didSet drops the first responder.
 - **Auto-advance is opt-in in the list, always on in a thread.** In the

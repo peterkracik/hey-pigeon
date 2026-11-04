@@ -1,5 +1,6 @@
 // ⌘K: the desktop's command palette. One field, every command and folder
-// filtered as you type, arrows to pick, Return to run. `l` and `v` open
+// filtered as you type, arrows to pick, Return to run — in the search's
+// Spotlight panel (SpotlightPanel) over the blurred window, not a sheet. `l` and `v` open
 // it pre-staged on the label and move pickers for the selected thread.
 // The filter is a pure function (PaletteFilter) so it can be tested.
 
@@ -35,7 +36,6 @@ struct CommandPalette: View {
     @Bindable var state: WindowState
     let stage: PaletteStage
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var cursor = 0
     @FocusState private var focused: Bool
@@ -51,20 +51,29 @@ struct CommandPalette: View {
     }
 
     var body: some View {
+        SpotlightPanel(onClose: { close() }) { panel }
+            .onAppear { focused = true }
+            .onChange(of: query) { _, _ in cursor = 0 }
+    }
+
+    private var panel: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: stage == .all ? "command" : (stage == .label ? "tag" : "folder"))
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(Theme.textTertiary)
                 TextField(placeholder, text: $query)
                     .textFieldStyle(.plain)
-                    .font(.title3)
+                    .font(.system(size: 20))
                     .focused($focused)
                     .onSubmit { runCursor() }
+                    .onExitCommand { close() }
                     .onKeyPress(.upArrow) { cursor = max(0, cursor - 1); return .handled }
                     .onKeyPress(.downArrow) { cursor = min(max(0, items.count - 1), cursor + 1); return .handled }
             }
-            .padding(.horizontal, 18).padding(.vertical, 14)
-            Divider()
+            .padding(.horizontal, 20)
+            .frame(height: 60)
+            Hairline().opacity(0.6)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 1) {
@@ -88,9 +97,9 @@ struct CommandPalette: View {
                                             .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                                     }
                                 }
-                                .padding(.horizontal, 14).padding(.vertical, 8)
-                                .background(index == cursor ? Theme.sunken : Color.clear,
-                                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(index == cursor ? MacTheme.selected : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -103,16 +112,20 @@ struct CommandPalette: View {
                     }
                     .padding(8)
                 }
+                .scrollIndicators(.never)
+                .frame(maxHeight: 400)
+                .fixedSize(horizontal: false, vertical: true)
                 .onChange(of: cursor) { _, i in
                     if items.indices.contains(i) { proxy.scrollTo(items[i].id) }
                 }
             }
         }
-        .frame(width: 560, height: 440)
-        .background(Theme.canvas)
-        .onAppear { focused = true }
-        .onChange(of: query) { _, _ in cursor = 0 }
-        .onExitCommand { dismiss() }
+    }
+
+    /// The panel goes and the list takes the keys back.
+    private func close() {
+        state.showPalette = false
+        state.listFocusRequest += 1
     }
 
     private func runCursor() {
@@ -121,7 +134,7 @@ struct CommandPalette: View {
     }
 
     private func run(_ item: PaletteItem) {
-        dismiss()
+        close()
         item.run()
     }
 

@@ -14,8 +14,12 @@ enum MacTheme {
     static let sidebar = Color(light: Color(hex: 0xEFEFED), dark: Color(hex: 0x161518))
     /// The content column behind the list and the thread.
     static let content = Theme.canvas
-    /// A floating panel (the batch bar, the toast, the search field).
+    /// A floating panel (the batch bar, the toast).
     static let panel = Theme.card
+    /// Behind the list: a step below the white group cards.
+    static let listBackground = Color(light: Color(hex: 0xF3F3F1), dark: Color(hex: 0x19181B))
+    /// A day group's card (Pinned, Today, Last 7 days…) holding its rows.
+    static let groupCard = Color(light: .white, dark: Color(hex: 0x252428))
     /// The hairlines: under the title row, beside the sidebar, around a panel.
     static let hairline = Theme.separator
     /// A row under the pointer.

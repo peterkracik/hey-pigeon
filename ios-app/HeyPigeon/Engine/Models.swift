@@ -390,34 +390,43 @@ struct PushAccountState: Identifiable, Hashable {
 }
 
 /// Which AI provider answers (`providerId`: "apple" on device,
-/// "apple-cloud" for Apple's Private Cloud Compute, "openai" with a key),
+/// "apple-cloud" for Apple's Private Cloud Compute, "openai", "anthropic"
+/// or "gemini" with a key),
 /// which one is preferred, what this device has, and who is next when the
 /// preferred one cannot answer.
 struct AIStatus: Hashable {
     let configured: Bool
     let providerId: String?
-    /// The selected OpenAI model (synced).
+    /// The selected model of the preferred keyed provider (synced).
     let model: String?
     var preferredProviderId = "openai"
     var onDeviceAvailable = false
     var openaiConfigured = false
+    /// Keyed providers with a key on this device ("openai", "anthropic", "gemini").
+    var keyedProviderIds: [String] = []
     /// Shell backends registered on this device, in registration order.
     var availableProviderIds: [String] = []
-    /// `pref:ai.fallback`: on device → Apple's cloud → OpenAI unless changed.
+    /// `pref:ai.fallback`: on device → Apple's cloud → the keyed providers unless changed.
     var fallbackOrder: [String] = AIProvider.defaultFallback.map(\.rawValue)
 
     var answersOnDevice: Bool { providerId == AIProvider.apple.rawValue }
     var answersInAppleCloud: Bool { providerId == AIProvider.appleCloud.rawValue }
     func isAvailable(_ p: AIProvider) -> Bool {
-        p == .openai ? openaiConfigured : availableProviderIds.contains(p.rawValue)
+        p.takesKey ? hasKey(p) : availableProviderIds.contains(p.rawValue)
+    }
+    /// A key for this provider is stored on this device.
+    func hasKey(_ p: AIProvider) -> Bool {
+        keyedProviderIds.contains(p.rawValue) || (p == .openai && openaiConfigured)
     }
 }
 
 /// The AI providers by their synced ids: Apple on device, Apple's Private
-/// Cloud Compute, OpenAI. Third-party packages registered in
-/// `ModelProviderRegistry` arrive as `.other(id)`.
+/// Cloud Compute, and the three the user brings an API key for — ChatGPT
+/// (OpenAI), Claude (Anthropic), Gemini (Google), which the Rust core
+/// calls. Third-party packages registered in `ModelProviderRegistry`
+/// arrive as `.other(id)`.
 enum AIProvider: Hashable, Identifiable {
-    case apple, appleCloud, openai
+    case apple, appleCloud, openai, anthropic, gemini
     case other(String)
 
     init(rawValue: String) {
@@ -425,6 +434,8 @@ enum AIProvider: Hashable, Identifiable {
         case "apple": self = .apple
         case "apple-cloud": self = .appleCloud
         case "openai": self = .openai
+        case "anthropic": self = .anthropic
+        case "gemini": self = .gemini
         default: self = .other(rawValue)
         }
     }
@@ -434,6 +445,8 @@ enum AIProvider: Hashable, Identifiable {
         case .apple: "apple"
         case .appleCloud: "apple-cloud"
         case .openai: "openai"
+        case .anthropic: "anthropic"
+        case .gemini: "gemini"
         case .other(let id): id
         }
     }
@@ -441,39 +454,70 @@ enum AIProvider: Hashable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .apple: "On this \(Device.name)"
-        case .appleCloud: "Apple's cloud"
+        case .apple: "Apple Intelligence · on this \(Device.name)"
+        case .appleCloud: "Apple Intelligence · Apple's cloud"
         case .openai: "ChatGPT (OpenAI)"
+        case .anthropic: "Claude (Anthropic)"
+        case .gemini: "Gemini (Google)"
         case .other(let id): id.capitalized
         }
     }
 
+    /// The short name in sentences ("Paste your Claude key").
+    var shortName: String {
+        switch self {
+        case .apple, .appleCloud: "Apple Intelligence"
+        case .openai: "ChatGPT"
+        case .anthropic: "Claude"
+        case .gemini: "Gemini"
+        case .other(let id): id.capitalized
+        }
+    }
+
+    /// Answers with an API key the user pastes (tokens only, no sign-in).
+    var takesKey: Bool { Self.keyed.contains(self) }
+
+    /// What the key looks like, for the empty field.
+    var keyPlaceholder: String {
+        switch self {
+        case .openai: "sk-…"
+        case .anthropic: "sk-ant-…"
+        case .gemini: "AIza…"
+        default: "API key"
+        }
+    }
+
+    /// The providers that take a key, in the engine's fallback order.
+    static let keyed: [AIProvider] = [.openai, .anthropic, .gemini]
     /// Who answers when the preferred provider cannot, least data leaving
     /// the device first.
-    static let defaultFallback: [AIProvider] = [.apple, .appleCloud, .openai]
+    static let defaultFallback: [AIProvider] = [.apple, .appleCloud] + keyed
     static let allCases: [AIProvider] = defaultFallback
 }
 
-/// The triage classifiers by their synced ids: the two Apple models and Jev.
+/// The triage classifiers by their synced ids: the two Apple models, the
+/// keyed AI providers (with the same key as Settings › AI), and Jev.
 enum TriageClassifier: String, CaseIterable, Identifiable {
-    case apple, appleCloud = "apple-cloud", jev
+    case apple, appleCloud = "apple-cloud", openai, anthropic, gemini, jev
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .apple: "On this \(Device.name)"
-        case .appleCloud: "Apple's cloud"
         case .jev: "Jev"
+        default: AIProvider(rawValue: rawValue).title
         }
     }
+
+    /// The AI provider this classifier is, when it is one (all but Jev).
+    var aiProvider: AIProvider? { self == .jev ? nil : AIProvider(rawValue: rawValue) }
 }
 
-/// An OpenAI model the Settings picker offers.
+/// A model of a keyed provider, as the Settings picker offers it.
 struct AIModel: Identifiable, Hashable {
     let id: String
     let label: String
 }
 
-/// Who classifies new mail (the Apple models or Jev), whether auto-triage
+/// Who classifies new mail (an Apple model, a keyed provider or Jev), whether auto-triage
 /// is on, and what this device can run.
 struct TriageStatus: Hashable {
     let configured: Bool
@@ -482,7 +526,8 @@ struct TriageStatus: Hashable {
     var classifierId = TriageClassifier.jev.rawValue
     var onDeviceAvailable = false
     var jevConfigured = false
-    /// Classifiers this device can run ("apple", "apple-cloud", "jev").
+    /// Classifiers this device can run ("apple", "apple-cloud", the keyed
+    /// providers with a key, "jev").
     var availableClassifierIds: [String] = []
 
     func isAvailable(_ c: TriageClassifier) -> Bool { availableClassifierIds.contains(c.rawValue) }
@@ -869,17 +914,22 @@ protocol MailEngine: AnyObject {
     /// Resolves with the email that signed in.
     func finishOAuth(callbackURL: URL) async throws -> String
 
-    // AI provider (BYO OpenAI key). The key never comes back out.
+    // AI providers: Apple's models, and ChatGPT, Claude and Gemini with a
+    // key (token) the user pastes. A key never comes back out.
     func aiStatus() throws -> AIStatus
-    func aiModels() throws -> [AIModel]
-    func setAIKey(_ key: String) async throws
-    func removeAIKey() throws
-    func setAIModel(_ model: String) throws
-    /// Prefer the on-device model or the key (synced; a device that cannot
-    /// run the preferred one falls back on its own).
+    /// The models a keyed provider offers (static, no key needed).
+    func aiModels(for provider: AIProvider) throws -> [AIModel]
+    /// The model picked for a keyed provider (synced), if any.
+    func aiSelectedModel(for provider: AIProvider) throws -> String?
+    /// Verify the key with the provider, then keep it on this device.
+    func setAIKey(_ key: String, for provider: AIProvider) async throws
+    func removeAIKey(for provider: AIProvider) throws
+    func setAIModel(_ model: String, for provider: AIProvider) throws
+    /// Prefer an Apple model or a keyed provider (synced; a device that
+    /// cannot run the preferred one falls back on its own).
     func setAIProvider(_ provider: AIProvider) throws
     /// Who answers when the preferred provider cannot, in order (synced).
-    /// Empty restores the default: on device → Apple's cloud → OpenAI.
+    /// Empty restores the default: on device → Apple's cloud → the keyed providers.
     func setAIFallback(_ order: [AIProvider]) throws
     /// The model providers the shell knows (Apple on device, Apple's cloud,
     /// registered packages), available or not, for Settings › AI.
@@ -901,7 +951,7 @@ protocol MailEngine: AnyObject {
     func disablePush() async throws
     func pushStatus() throws -> PushState
 
-    // Jev triage.
+    // Triage (an Apple model, a keyed provider, or Jev).
     func triageStatus() throws -> TriageStatus
     func setJevKey(_ key: String) async throws
     func removeJevKey() throws
@@ -945,4 +995,6 @@ extension MailEngine {
     func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow] {
         (try? search(query, limit: limit)) ?? []
     }
+    /// ChatGPT's key, the one the app took before Claude and Gemini.
+    func setAIKey(_ key: String) async throws { try await setAIKey(key, for: .openai) }
 }

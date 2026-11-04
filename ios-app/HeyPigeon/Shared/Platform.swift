@@ -461,3 +461,107 @@ enum PlainInputKind {
     }
     #endif
 }
+
+// MARK: - The composer's chrome
+
+extension View {
+    /// Text fields without the Mac's bezel and focus ring, as the phone's
+    /// fields are.
+    @ViewBuilder
+    func borderlessFields() -> some View {
+        #if os(macOS)
+        textFieldStyle(.plain).focusEffectDisabled()
+        #else
+        self
+        #endif
+    }
+
+    /// A menu that shows its label only: no Mac pop-up bezel or second
+    /// chevron (the label draws its own).
+    @ViewBuilder
+    func labelOnlyMenu() -> some View {
+        #if os(macOS)
+        // .plain unless a style closer to the menu says otherwise
+        // (`.pillButton().labelOnlyMenu()` keeps the pill).
+        menuStyle(.button).menuIndicator(.hidden).buttonStyle(.plain)
+        #else
+        self
+        #endif
+    }
+
+    /// The phone's glass button; on the Mac the window's flat pill (a glass
+    /// button there is a bordered white box).
+    @ViewBuilder
+    func pillButton(prominent: Bool = false) -> some View {
+        #if os(iOS)
+        if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
+        #else
+        buttonStyle(MacPillButtonStyle(prominent: prominent))
+        #endif
+    }
+
+    /// The composer's title, close and size buttons: the phone's navigation
+    /// bar; on the Mac a header row at the top — a Mac sheet puts toolbar
+    /// items in a bar along its bottom.
+    @ViewBuilder
+    func composeChrome(title: String, fullScreen: Bool, close: @escaping () -> Void,
+                       toggleFullScreen: @escaping () -> Void) -> some View {
+        let sizeIcon = fullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+        let sizeLabel = fullScreen ? "Show as a window" : "Full screen"
+        #if os(iOS)
+        navigationTitle(title)
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { close() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close and save draft")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { toggleFullScreen() } label: { Image(systemName: sizeIcon) }
+                        .help(sizeLabel)
+                        .accessibilityLabel(sizeLabel)
+                }
+            }
+        #else
+        safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Button { close() } label: { Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)) }
+                        .pillButton()
+                        .keyboardShortcut(.cancelAction)
+                        .help("Close and save the draft (Esc)")
+                        .accessibilityLabel("Close and save draft")
+                    Spacer()
+                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Button { toggleFullScreen() } label: { Image(systemName: sizeIcon).font(.system(size: 12, weight: .semibold)) }
+                        .pillButton()
+                        .help(sizeLabel)
+                        .accessibilityLabel(sizeLabel)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                Divider()
+            }
+            .background(Theme.canvas)
+        }
+        #endif
+    }
+}
+
+#if os(macOS)
+/// The Mac's pill: the sunken fill (or the primary colour for the main
+/// action), no border, dimmed when disabled.
+struct MacPillButtonStyle: ButtonStyle {
+    let prominent: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .foregroundStyle(prominent ? Theme.onPrimary : Theme.textPrimary)
+            .background(prominent ? Theme.textPrimary : Theme.sunken, in: Capsule())
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
+            .contentShape(Capsule())
+    }
+}
+#endif

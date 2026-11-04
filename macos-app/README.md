@@ -8,13 +8,14 @@ platform door in `ios-app/HeyPigeon/Shared/Platform.swift` — plus what only
 a Mac has: a menu bar, the desktop's keyboard map, a command palette, hover
 actions, a Settings window, a menu bar extra, and a thread in its own
 window. The window follows the first desktop client (the Svelte one)
-under a standard Mac toolbar: the traffic lights, the sidebar button and
-the view's title at the left, the actions at the right; a grey sidebar
-(folders, labels, the account menu) that slides away; single-line rows
-with a done circle, like a to-do list, that open in place with "Open
-full thread ›"; the triage labels as the phone's glass pill at the
-bottom; search as a Spotlight panel over the blurred window; Settings
-(⌘,) as a page of the window; no scroll bars. Design notes in
+under a standard Mac toolbar: the traffic lights, then Inbox · Remind me ·
+Need reply at the left, the actions at the right; a grey sidebar (folders,
+labels, the account menu) that starts hidden, behind a glass button in
+the bottom corner; single-line rows on white day-group cards that open in
+place with "Open full thread ›"; the triage labels as the phone's glass
+pill at the bottom; search and the command palette as Spotlight panels
+over the blurred window; Settings (⌘,) as a page of the window; no
+scroll bars. Design notes in
 [docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
 
 ```text

@@ -1,23 +1,33 @@
 // One row of the list, in the first desktop client's shape
-// (desktop-app/src/lib/InboxList.svelte): a single line — the done circle,
-// the sender in a fixed column, the subject and the snippet, the badges,
-// the time — that reads like a to-do item. The circle marks it done with
-// the desktop's strike-through before the row leaves. Under the pointer
-// the time gives way to the Settings swipe actions and the arrow that
-// opens the full thread. A click opens the row in place: a card with the
-// latest message, Reply · Reply all · Forward and "Open full thread ›"
-// (MailPreview). ⌘ and ⇧ gather rows for the batch bar; the context menu
-// and two-finger trackpad swipes act on the row too.
+// (desktop-app/src/lib/InboxList.svelte): a single line — the sender in a
+// fixed column, the subject and the snippet, the badges, the time — on
+// its day group's white card (the rows of a group share one card; each
+// row draws its piece, `Position`). Under the pointer the time gives way
+// to Done (the desktop's strike-through, then the row leaves), the other
+// swipe actions from Settings and the arrow that opens the full thread.
+// (A done circle at the row's start read as a selection checkbox.) A
+// click opens the row in place: the latest message, Reply · Reply all ·
+// Forward and "Open full thread ›" (MailPreview). ⌘ and ⇧ gather rows for
+// the batch bar; the context menu and two-finger trackpad swipes act on
+// the row too.
 
 import AppKit
 import SwiftUI
 
 struct MailRow: View {
+    /// Where the row sits in its day group: the group's card rounds its
+    /// first row's top corners and its last row's bottom ones.
+    struct Position {
+        var first = true
+        var last = true
+    }
+
     let row: ThreadRow
     @Bindable var state: WindowState
+    var position = Position()
     @Environment(AppModel.self) private var model
     @State private var hovering = false
-    /// Between a click on the circle and the row leaving: the strike runs.
+    /// Between a click on Done and the row leaving: the strike runs.
     @State private var completing = false
 
     private var expanded: Bool { state.expanded == row.id }
@@ -32,21 +42,22 @@ struct MailRow: View {
                     .transition(.opacity)
             }
         }
-        // The shadow is the card's shape's only: on the whole card it fell on
-        // every opaque piece inside too (the message's web view got its own),
-        // and a large one was cut off by the list's row.
+        // The hover / cursor tint, inset in the card.
+        .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 6)
+        .padding(.top, position.first ? 6 : 1)
+        .padding(.bottom, position.last ? 6 : 1)
+        // This row's piece of its group's white card; no shadow (on a card
+        // holding a message it fell on the message's web view too).
         .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(background)
-                .shadow(color: .black.opacity(expanded ? 0.07 : 0), radius: 5, y: 1.5)
+            UnevenRoundedRectangle(topLeadingRadius: position.first ? 14 : 0,
+                                   bottomLeadingRadius: position.last ? 14 : 0,
+                                   bottomTrailingRadius: position.last ? 14 : 0,
+                                   topTrailingRadius: position.first ? 14 : 0,
+                                   style: .continuous)
+                .fill(MacTheme.groupCard)
         }
-        .overlay {
-            if expanded {
-                RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(MacTheme.hairline, lineWidth: 1)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, expanded ? 8 : 0)
+        .padding(.horizontal, 16)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
@@ -68,7 +79,7 @@ struct MailRow: View {
     }
 
     private var background: Color {
-        if expanded { return MacTheme.panel }
+        if expanded { return .clear }
         if selected { return MacTheme.selected }
         return hovering ? MacTheme.hover : .clear
     }
@@ -78,7 +89,6 @@ struct MailRow: View {
     private var line: some View {
         HStack(spacing: 12) {
             marker
-            DoneCircle(done: row.isDone || completing, completing: completing) { complete() }
             HStack(spacing: 5) {
                 Text(row.fromSummary)
                     .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
@@ -170,13 +180,13 @@ struct MailRow: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .opacity(hovering ? 0 : 1)
-            if hovering { RowActions(row: row, state: state) }
+            if hovering { RowActions(row: row, state: state) { complete() } }
         }
         .frame(minWidth: 64, alignment: .trailing)
     }
 
-    /// The circle: the strike runs, then the row is marked done and leaves
-    /// (auto-advance hands the highlight on). A done row's circle undoes.
+    /// Done: the strike runs, then the row is marked done and leaves
+    /// (auto-advance hands the highlight on). On a done row it undoes.
     private func complete() {
         guard !row.isDone else { state.run(.markDone, in: model, rows: [row]); return }
         withAnimation(.easeOut(duration: 0.25)) { completing = true }
@@ -192,38 +202,6 @@ struct MailRow: View {
             Label(action.label(for: row), systemImage: action.glyph(for: row))
         }
         .tint(action.tint)
-    }
-}
-
-/// The to-do circle: an outline, a faint check under the pointer, filled
-/// when done.
-private struct DoneCircle: View {
-    let done: Bool
-    let completing: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .strokeBorder(done ? Theme.textPrimary : Theme.textTertiary.opacity(hovering ? 1 : 0.6), lineWidth: 1.3)
-                    .background(Circle().fill(done ? Theme.textPrimary : .clear))
-                if done || hovering {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(done ? Theme.onPrimary : Theme.textTertiary)
-                }
-            }
-            .frame(width: 17, height: 17)
-            .scaleEffect(completing ? 1.12 : 1)
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(done ? "Mark not done (E)" : "Mark done (E)")
-        .accessibilityLabel(done ? "Mark not done" : "Mark done")
     }
 }
 
@@ -244,11 +222,13 @@ private struct RowChip: View {
     }
 }
 
-/// Under the pointer: the swipe actions from Settings (Done is the
-/// circle), then the arrow to the full thread.
+/// Under the pointer: Done first, the other swipe actions from Settings,
+/// then the arrow to the full thread.
 private struct RowActions: View {
     let row: ThreadRow
     @Bindable var state: WindowState
+    /// Done, through the row, so its strike-through runs first.
+    let onDone: () -> Void
     @Environment(AppModel.self) private var model
 
     private var actions: [RowAction] {
@@ -259,6 +239,8 @@ private struct RowActions: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            SmallIcon(systemImage: RowAction.done.glyph(for: row),
+                      help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))") { onDone() }
             ForEach(actions) { action in
                 SmallIcon(systemImage: action.glyph(for: row), help: "\(action.label(for: row)) (\(action.key))") {
                     state.run(action.command, in: model, rows: [row])

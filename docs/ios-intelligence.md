@@ -467,7 +467,10 @@ A new section, between **AI** and **Triage**:
   iOS 27) · *ChatGPT (OpenAI)*; *Prefer* and *If it can't answer* (the
   synced fallback order); the existing key and model rows apply to the
   OpenAI provider only; a token line per provider.
-- **Triage** gains *Classifier*: *On this iPhone* · *Apple's cloud* · *Jev*,
+- **Triage** gains a *Classifier* select box: the two Apple models ·
+  ChatGPT · Claude · Gemini (same key as AI; subject, sender and preview
+  only, a JSON verdict — `crates/ffi/src/keyed.rs`) · *Jev*; a keyed
+  provider classifies only when picked, never as a fallback,
   and the Siri-triage rows (dry run, your rules, the run and journal screen).
 
 ## Milestones
@@ -550,6 +553,8 @@ picked per request by the core:
 | `apple` | `SystemModelProvider` — Apple Intelligence on device | ~4K tokens (9,000 chars budgeted, chunked) | no |
 | `apple-cloud` | `PrivateCloudComputeProvider` — `PrivateCloudComputeLanguageModel` at its default reasoning level (per-request light / deep is a follow-up) | 32K tokens (100,000 chars) | Apple's servers, never stored, no key |
 | `openai` | the Rust `adapter-openai` client, as before (the desktop needs it) | per model | OpenAI, BYO key |
+| `anthropic` | the Rust `adapter-anthropic` client (Messages API) | per model | Anthropic, BYO key |
+| `gemini` | the Rust `adapter-gemini` client (`generateContent`) | per model | Google, BYO key |
 | any | `PackageModelProvider` — a Swift package's `LanguageModel` (Anthropic's or Google's once published, a local MLX model for a small fine-tuned classifier), its token in the Keychain (`ProviderTokenStore`), never an API-key string in the binary | per model | per provider |
 
 - The engine holds **one backend per provider id** (`add_ai_backend` /
@@ -557,7 +562,10 @@ picked per request by the core:
   not this device registered them (the choice is synced), and resolves the
   active provider as the **preferred one, then the first of
   `pref:ai.fallback` that can answer** (default on device → Apple's cloud →
-  OpenAI, the order of how much leaves the device). Classifiers follow the
+  ChatGPT → Claude → Gemini, the order of how much leaves the device; a
+  keyed provider counts only with a key on the device). Keys sit under
+  `ai.<id>.api_key`; models are `pref:ai.model` (ChatGPT, as before),
+  `pref:ai.model.anthropic`, `pref:ai.model.gemini`. Classifiers follow the
   same rule with Jev last. `RustEngine.refreshAIProviders` re-registers
   before every sync, so an offline cloud model drops out and the device
   model answers.

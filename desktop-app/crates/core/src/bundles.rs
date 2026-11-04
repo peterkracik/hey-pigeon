@@ -483,6 +483,47 @@ pub fn spread_from<S: Store>(
     Ok(joined)
 }
 
+/// Links in an email that track a parcel or an order: an `href` (HTML) or
+/// a bare URL (plain text) whose address or link text says "track", plus
+/// any link that carries one of `numbers` (the tracking numbers found).
+/// Deduplicated, in order of appearance, at most five.
+pub fn tracking_links(text: &str, numbers: &[String]) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let mut out: Vec<String> = Vec::new();
+    let mut start = 0;
+    while let Some(pos) = lower[start..].find("http") {
+        let at = start + pos;
+        let rest = &text[at..];
+        let end = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']'))
+            .unwrap_or(rest.len());
+        let url = rest[..end]
+            .trim_end_matches(['.', ',', ';'])
+            .replace("&amp;", "&");
+        start = at + end.max(4);
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            continue;
+        }
+        // The link text right after an HTML anchor ("Track your parcel").
+        let after = &lower[(at + end).min(lower.len())..];
+        let label = after
+            .split_once('>')
+            .map(|(_, t)| t.split('<').next().unwrap_or(""))
+            .unwrap_or("");
+        let upper = url.to_uppercase();
+        let tracks = url.to_lowercase().contains("track")
+            || (after.starts_with('"') && label.contains("track"))
+            || numbers.iter().any(|n| upper.contains(n.as_str()));
+        if tracks && !out.contains(&url) {
+            out.push(url);
+        }
+        if out.len() == 5 {
+            break;
+        }
+    }
+    out
+}
+
 /// One key fact in the bundle view: an identifier and the email it came
 /// from (docs/bundles.md "Summary"). Every fact links back to its source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -752,6 +793,24 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, new_bundle_id());
+    }
+
+    #[test]
+    fn tracking_links_come_from_hrefs_and_plain_text() {
+        let html = r#"<p>Shipped!</p><a href="https://shop.example/orders/112?x=1&amp;y=2">Track your parcel</a>
+            <a href="https://shop.example/help">Help</a> https://carrier.example/t?n=1Z999AA10123456784."#;
+        assert_eq!(
+            tracking_links(html, &["1Z999AA10123456784".to_string()]),
+            vec![
+                "https://shop.example/orders/112?x=1&y=2".to_string(),
+                "https://carrier.example/t?n=1Z999AA10123456784".to_string()
+            ]
+        );
+        assert_eq!(
+            tracking_links("Follow it: https://track.dpd.example/abc", &[]),
+            vec!["https://track.dpd.example/abc".to_string()]
+        );
+        assert!(tracking_links("See https://shop.example/help for help", &[]).is_empty());
     }
 
     #[test]

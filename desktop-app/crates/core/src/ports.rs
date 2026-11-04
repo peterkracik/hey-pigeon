@@ -603,6 +603,13 @@ pub trait Store {
         Ok(false)
     }
 
+    /// The threads the user took out of this bundle (the model's "not
+    /// this" examples).
+    fn list_bundle_exclusions(&self, bundle_id: &str) -> Result<Vec<ThreadId>, StoreError> {
+        let _ = bundle_id;
+        Ok(Vec::new())
+    }
+
     /// The bundle's threads, done ones included (a bundle is a reference,
     /// not a to-do list), newest first. Trash and spam never show.
     fn list_bundle_threads(&self, bundle_id: &str) -> Result<Vec<Thread>, StoreError> {

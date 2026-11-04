@@ -147,6 +147,29 @@ pub struct BundleFact {
     pub thread_id: String,
     /// That thread's newest message, epoch ms.
     pub at: i64,
+    /// For a tracking number: the tracking link its email carries, if the
+    /// email's text is stored.
+    pub url: Option<String>,
+}
+
+/// A tracking link found in the bundle's mail ("Track your parcel").
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BundleLink {
+    pub url: String,
+    /// The link's host, for the row: `track.dpd.example`.
+    pub host: String,
+    pub thread_id: String,
+}
+
+/// What the model says about a bundle as a whole.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BundleSummary {
+    /// Where things stand and the latest decision or change, with the
+    /// key facts in **bold**.
+    pub status: String,
+    /// What the user still has to do, at most three ("Send the invoice to
+    /// Acme"); empty when nothing.
+    pub actions: Vec<String>,
 }
 
 /// Everything the bundle view shows.
@@ -154,6 +177,8 @@ pub struct BundleFact {
 pub struct BundleDetail {
     pub bundle: MailBundle,
     pub facts: Vec<BundleFact>,
+    /// Tracking links from the bundle's mail, newest first.
+    pub links: Vec<BundleLink>,
     /// Newest first, done ones included.
     pub threads: Vec<MailThread>,
 }
@@ -168,6 +193,9 @@ pub struct BundleCandidate {
     pub description: String,
     /// Subjects of emails already in it, newest first (at most three).
     pub examples: Vec<String>,
+    /// Subjects of emails the user took out of it (at most three): the
+    /// model should not put mail like these in.
+    pub not_examples: Vec<String>,
 }
 
 /// The model's answer for one email.
@@ -185,6 +213,55 @@ pub enum BundleChoice {
 /// Open = still waiting in the inbox (not done).
 fn is_open(t: &domain::Thread) -> bool {
     t.is_inbox && !t.is_archived
+}
+
+/// Threads whose stored text is scanned for tracking links.
+const LINK_SCAN_THREADS: usize = 15;
+/// Threads the bundle summary reads, newest first.
+const SUMMARY_THREADS: usize = 8;
+/// Characters of each email the bundle summary reads.
+const SUMMARY_CHARS: usize = 800;
+
+const BUNDLE_SUMMARY_PROMPT: &str = "You brief a busy person on one bundle of their emails: everything about one trip, purchase or project, oldest email first, each marked open or done. Answer in exactly this shape and nothing else:\nSTATUS: one or two short sentences: where things stand now and the latest decision or change. Wrap the key facts in **double asterisks**: dates, amounts, names, order or booking numbers.\nACTION: one thing the person still has to do themselves, starting with a verb (Send the invoice to Acme, Write the project brief, Pay by 12 Dec, Check in for AT 1323). One ACTION line per task, at most three. Leave out what other people still have to do and what is already done. If nothing is left to do, write exactly: ACTION: none\nNever invent facts the emails do not state.";
+
+/// `STATUS:` and `ACTION:` lines; anything else counts as status text, so
+/// a model that ignores the shape still yields a summary.
+fn parse_bundle_summary(answer: &str) -> BundleSummary {
+    let mut status: Vec<String> = Vec::new();
+    let mut actions: Vec<String> = Vec::new();
+    for line in answer.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', ' ']);
+        if line.is_empty() {
+            continue;
+        }
+        let upper = line.to_uppercase();
+        if upper.starts_with("ACTION") {
+            let task = line.splitn(2, ':').nth(1).unwrap_or("").trim().trim();
+            let none = task.is_empty()
+                || task.eq_ignore_ascii_case("none")
+                || task.eq_ignore_ascii_case("none.");
+            if !none && actions.len() < 3 {
+                actions.push(task.to_string());
+            }
+        } else if upper.starts_with("STATUS") {
+            status.push(line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string());
+        } else {
+            status.push(line.to_string());
+        }
+    }
+    BundleSummary {
+        status: status.join(" ").trim().to_string(),
+        actions,
+    }
+}
+
+/// `https://track.dpd.example/abc` → `track.dpd.example`.
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    rest.split(['/', '?', '#'])
+        .next()
+        .unwrap_or(rest)
+        .to_string()
 }
 
 /// A model bundle with fewer than two emails is still forming: hidden.
@@ -221,24 +298,69 @@ impl Engine {
         let Some(b) = self.bundle(&bundle_id)? else {
             return Ok(None);
         };
+        let domain_threads = self.store.list_bundle_threads(&bundle_id)?;
+        // Tracking links per thread, from whatever text the store holds.
+        let mut links: Vec<BundleLink> = Vec::new();
+        let mut thread_links: std::collections::HashMap<String, Vec<String>> = Default::default();
+        for t in domain_threads.iter().take(LINK_SCAN_THREADS) {
+            let numbers: Vec<String> = self
+                .store
+                .thread_anchors(&t.id)?
+                .iter()
+                .filter_map(|a| core_bundles::Anchor::parse(a))
+                .filter(|a| a.kind == AnchorKind::Tracking)
+                .map(|a| a.value)
+                .collect();
+            let text: String = self
+                .store
+                .list_messages(&t.id)?
+                .iter()
+                .map(|m| {
+                    m.body_html
+                        .clone()
+                        .or_else(|| m.body_text.clone())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let found = core_bundles::tracking_links(&text, &numbers);
+            for url in &found {
+                if !links.iter().any(|l| &l.url == url) {
+                    links.push(BundleLink {
+                        url: url.clone(),
+                        host: host_of(url),
+                        thread_id: t.id.clone(),
+                    });
+                }
+            }
+            thread_links.insert(t.id.clone(), found);
+        }
         let facts = core_bundles::bundle_facts(&self.store, &bundle_id)?
             .into_iter()
-            .map(|f| BundleFact {
-                kind: f.anchor.kind.into(),
-                value: f.anchor.value,
-                thread_id: f.thread_id,
-                at: f.at,
+            .map(|f| {
+                let url = (f.anchor.kind == AnchorKind::Tracking)
+                    .then(|| thread_links.get(&f.thread_id))
+                    .flatten()
+                    .and_then(|urls| {
+                        urls.iter()
+                            .find(|u| u.to_uppercase().contains(&f.anchor.value))
+                            .or_else(|| urls.first())
+                            .cloned()
+                    });
+                BundleFact {
+                    kind: f.anchor.kind.into(),
+                    value: f.anchor.value,
+                    thread_id: f.thread_id,
+                    at: f.at,
+                    url,
+                }
             })
             .collect();
-        let threads = self
-            .store
-            .list_bundle_threads(&bundle_id)?
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let threads = domain_threads.into_iter().map(Into::into).collect();
         Ok(Some(BundleDetail {
             bundle: self.mail_bundle(&b)?,
             facts,
+            links,
             threads,
         }))
     }
@@ -352,6 +474,57 @@ impl Engine {
         self.push_devsync_later(thread.account_id);
         self.notify_threads_updated();
         Ok(())
+    }
+
+    /// The bundle's status and what is left to do, from its newest emails
+    /// (the text of each, fetched when the store has only its preview).
+    /// Like the other summaries it runs on the preferred provider when the
+    /// user asks (the bundle view asks on open only when that provider is
+    /// on this device or Apple's cloud, or auto-summarize is on).
+    pub async fn ai_summarize_bundle(
+        &self,
+        provider_id: String,
+        bundle_id: String,
+    ) -> Result<BundleSummary, EngineError> {
+        crate::settings::check_provider(&provider_id, &self.backend_ids())?;
+        let b = self.require_bundle(&bundle_id)?;
+        let threads = self.store.list_bundle_threads(&bundle_id)?;
+        if threads.is_empty() {
+            return Err(EngineError::Invalid("nothing to summarize".into()));
+        }
+        let mut items: Vec<String> = Vec::new();
+        for t in threads.iter().take(SUMMARY_THREADS) {
+            let messages = self.messages_with_bodies(t).await?;
+            let last = messages
+                .iter()
+                .rev()
+                .find(|m| !m.label_ids.iter().any(|l| l == "DRAFT"));
+            let text = last
+                .and_then(|m| m.body_text.clone())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| t.snippet.clone());
+            let text: String = text.trim().chars().take(SUMMARY_CHARS).collect();
+            let state = if t.is_inbox && !t.is_archived {
+                "open"
+            } else {
+                "done"
+            };
+            items.push(format!(
+                "Email ({state}) from {} — {}\n{}",
+                t.from_summary, t.subject, text
+            ));
+        }
+        // Oldest first: the summary reads as a story that ends now.
+        items.reverse();
+        let user = format!(
+            "Bundle: {} ({})\n{}\n\n{}",
+            b.name,
+            b.kind.as_str(),
+            b.description,
+            items.join("\n\n")
+        );
+        let answer = self.complete(BUNDLE_SUMMARY_PROMPT, user).await?;
+        Ok(parse_bundle_summary(&answer))
     }
 
     /// The bundle to offer first in the "Add to bundle" picker: the one
@@ -581,6 +754,7 @@ impl Engine {
                         kind,
                         description: String::new(),
                         examples: Vec::new(),
+                        not_examples: Vec::new(),
                     },
                 );
                 Ok(Some(b.id))
@@ -601,6 +775,12 @@ impl Engine {
                 .first()
                 .map(|t| t.last_msg_at)
                 .unwrap_or(b.created_at);
+            let mut not_examples = Vec::new();
+            for id in self.store.list_bundle_exclusions(&b.id)?.iter().take(3) {
+                if let Some(t) = self.store.get_thread(id)? {
+                    not_examples.push(t.subject);
+                }
+            }
             out.push((
                 last,
                 BundleCandidate {
@@ -609,6 +789,7 @@ impl Engine {
                     kind: b.kind.into(),
                     description: b.description.clone(),
                     examples: threads.iter().take(3).map(|t| t.subject.clone()).collect(),
+                    not_examples,
                 },
             ));
         }
@@ -925,6 +1106,63 @@ mod tests {
             e.get_thread_row("old".into()).unwrap().unwrap().bundle_id,
             None
         );
+    }
+
+    #[test]
+    fn the_summary_answer_is_read_line_by_line() {
+        let s = parse_bundle_summary(
+            "STATUS: Flights are **booked**; the hotel moved check-in to **15:00**.\nACTION: Book a hotel for **15 Dec**\n- ACTION: Check in for AT 1323\nACTION: none",
+        );
+        assert_eq!(
+            s.status,
+            "Flights are **booked**; the hotel moved check-in to **15:00**."
+        );
+        assert_eq!(
+            s.actions,
+            vec!["Book a hotel for **15 Dec**", "Check in for AT 1323"]
+        );
+        let loose = parse_bundle_summary("All settled.\nACTION: none");
+        assert_eq!(loose.status, "All settled.");
+        assert!(loose.actions.is_empty());
+        assert_eq!(
+            host_of("https://track.dpd.example/abc?x"),
+            "track.dpd.example"
+        );
+    }
+
+    #[test]
+    fn tracking_links_land_in_the_detail() {
+        let e = open("links");
+        add(&e, "ship", "Your order #112-334 has shipped", 1_000, false);
+        e.store
+            .upsert_message(&heypigeon_core::domain::Message {
+                id: "ship-m1".into(),
+                thread_id: "ship".into(),
+                account_id: "me@x.com".into(),
+                from_addr: "shop@example.com".into(),
+                to_addrs: vec!["me@x.com".into()],
+                date: 1_000,
+                snippet: "Shipped".into(),
+                body_html: Some(
+                    r#"<a href="https://track.dpd.example/abc">Track your parcel</a>"#.into(),
+                ),
+                body_text: None,
+                label_ids: vec!["INBOX".into()],
+                is_read: true,
+            })
+            .unwrap();
+        let b = e
+            .create_bundle(
+                "Gifts".into(),
+                BundleKind::Shopping,
+                "".into(),
+                vec!["ship".into()],
+            )
+            .unwrap();
+        let d = e.bundle_detail(b.id).unwrap().unwrap();
+        assert_eq!(d.links.len(), 1);
+        assert_eq!(d.links[0].host, "track.dpd.example");
+        assert_eq!(d.links[0].thread_id, "ship");
     }
 
     #[test]

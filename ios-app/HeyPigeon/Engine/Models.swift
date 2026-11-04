@@ -328,13 +328,33 @@ struct BundleFactItem: Identifiable, Hashable {
     let value: String
     let threadId: String
     let at: Date
+    /// For a tracking number: the tracking link its email carries.
+    var url: URL? = nil
     var id: String { "\(category.rawValue):\(value)" }
+}
+
+/// A tracking link found in a bundle's mail ("Track your parcel").
+struct BundleLinkItem: Identifiable, Hashable {
+    let url: URL
+    /// `track.dpd.example`, for the row.
+    let host: String
+    let threadId: String
+    var id: URL { url }
+}
+
+/// The model's brief on a bundle: where things stand and what is left for
+/// the user to do. `status` carries **bold** key facts (SummaryMarkup).
+struct BundleBrief: Hashable {
+    let status: String
+    let actions: [String]
 }
 
 /// Everything the bundle view shows.
 struct BundleContents: Hashable {
     let bundle: BundleItem
     let facts: [BundleFactItem]
+    /// Tracking links from the bundle's mail, newest first.
+    var links: [BundleLinkItem] = []
     /// Newest first, done ones included — a bundle is a reference, not a
     /// to-do list.
     let threads: [ThreadRow]
@@ -966,6 +986,8 @@ protocol MailEngine: AnyObject {
     func removeFromBundle(threadId: String) throws
     /// The bundle to offer first in the picker, by a shared identifier.
     func suggestedBundle(threadId: String) throws -> String?
+    /// The model's status and to-dos for a bundle, from its newest emails.
+    func aiSummarizeBundle(id: String) async throws -> BundleBrief
 }
 
 extension MailEngine {

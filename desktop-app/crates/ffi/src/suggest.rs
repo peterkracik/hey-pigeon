@@ -140,7 +140,10 @@ impl Engine {
     /// The thread's messages, with bodies fetched first when the store has
     /// only Gmail's metadata tier (new mail always is). A failed fetch is
     /// not fatal — the model reads the snippet instead.
-    async fn messages_with_bodies(&self, thread: &Thread) -> Result<Vec<Message>, EngineError> {
+    pub(crate) async fn messages_with_bodies(
+        &self,
+        thread: &Thread,
+    ) -> Result<Vec<Message>, EngineError> {
         let messages = self.store.list_messages(&thread.id)?;
         if !heypigeon_core::sync::needs_bodies(&messages) {
             return Ok(messages);

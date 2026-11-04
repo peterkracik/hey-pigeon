@@ -451,6 +451,18 @@ impl Store for MemStore {
             .contains(&(bundle_id.to_string(), thread_id.clone())))
     }
 
+    fn list_bundle_exclusions(&self, bundle_id: &str) -> Result<Vec<ThreadId>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<ThreadId> = g
+            .bundle_exclusions
+            .iter()
+            .filter(|(b, _)| b == bundle_id)
+            .map(|(_, t)| t.clone())
+            .collect();
+        v.sort();
+        Ok(v)
+    }
+
     fn list_bundle_threads(&self, bundle_id: &str) -> Result<Vec<Thread>, StoreError> {
         let g = self.inner.lock().unwrap();
         let mut v: Vec<Thread> = g

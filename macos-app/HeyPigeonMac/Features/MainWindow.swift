@@ -98,16 +98,18 @@ struct MainWindow: View {
         // same map the list and the thread handle.
         .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
         .overlay(alignment: .bottom) { MacToast() }
-        .sheet(item: $model.pendingRemind) { row in RemindSheet(row: row) }
-        .sheet(item: $model.pendingBundlePick) { row in AddToBundleSheet(row: row) }
+        // While the Bundles sheet is open it presents these itself
+        // (AppModel.modal, BundleSheetPresenters).
+        .sheet(item: model.modal(\.pendingRemind, inBundles: false)) { row in RemindSheet(row: row) }
+        .sheet(item: model.modal(\.pendingBundlePick, inBundles: false)) { row in AddToBundleSheet(row: row) }
         .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
             BundlesSheet(initialBundleId: model.bundlesStartId)
         }
-        .sheet(item: $model.composeDraft) { draft in
+        .sheet(item: model.modal(\.composeDraft, inBundles: false)) { draft in
             ComposeView(draft: draft)
                 .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)
         }
-        .sheet(item: $model.summarySheet) { p in SummarySheet(presentation: p) }
+        .sheet(item: model.modal(\.summarySheet, inBundles: false)) { p in SummarySheet(presentation: p) }
         .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
         .sheet(isPresented: $state.showShortcuts) { ShortcutsSheet() }
         .sheet(isPresented: $state.showTriage) {

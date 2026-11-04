@@ -147,21 +147,23 @@ struct RootView: View {
             .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
             .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
-            .sheet(item: $model.pendingRemind, onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
-            .sheet(item: $model.pendingBundlePick, onDismiss: { Keyboard.dismiss() }) { row in AddToBundleSheet(row: row) }
+            // While the Bundles sheet is open it presents these itself
+            // (AppModel.modal, BundleSheetPresenters).
+            .sheet(item: model.modal(\.pendingRemind, inBundles: false), onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
+            .sheet(item: model.modal(\.pendingBundlePick, inBundles: false), onDismiss: { Keyboard.dismiss() }) { row in AddToBundleSheet(row: row) }
             .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
                 BundlesSheet(initialBundleId: model.bundlesStartId)
             }
             // The composer as a dialog or full screen (its button switches).
             // Each presentation only clears the draft when it is the one in
             // use, so switching does not close the composer.
-            .sheet(item: Binding(get: { model.composeFullScreen ? nil : model.composeDraft },
+            .sheet(item: Binding(get: { model.composeFullScreen || model.showBundles ? nil : model.composeDraft },
                                  set: { if $0 == nil && !model.composeFullScreen { model.composeDraft = nil } }),
                    onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
-            .fullScreenCover(item: Binding(get: { model.composeFullScreen ? model.composeDraft : nil },
+            .fullScreenCover(item: Binding(get: { model.composeFullScreen && !model.showBundles ? model.composeDraft : nil },
                                            set: { if $0 == nil && model.composeFullScreen { model.composeDraft = nil } }),
                              onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
-            .sheet(item: $model.summarySheet) { p in SummarySheet(presentation: p) }
+            .sheet(item: model.modal(\.summarySheet, inBundles: false)) { p in SummarySheet(presentation: p) }
             .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
             .overlay(alignment: .bottom) { ToastView() }
             .alert(

@@ -297,12 +297,14 @@ The desktop's sections, same order, same wording:
 - **Accounts** — avatar, name, email, connection state; Name, Color (the
   five tags), Sync (reminder sync over the account's Drive app folder),
   Signature; Reconnect, Remove (asks once); Add account.
-- **AI** — the providers in fallback order: *On this iPhone* (Apple
-  Intelligence, no key), *Apple's cloud* (Private Cloud Compute, no key,
-  Apple-private, never stored) and ChatGPT (OpenAI: paste a key, verified
-  before it is stored; Model; Remove). *Prefer* picks the first choice, *If
-  it can't answer* the order after it (private first · cloud first · stay
-  on this iPhone), both synced; Auto-summarize; a token line per provider.
+- **AI** — one *Provider* select box: *Apple Intelligence · on this
+  iPhone* (no key), *Apple Intelligence · Apple's cloud* (Private Cloud
+  Compute, no key, Apple-private, never stored), *ChatGPT (OpenAI)*,
+  *Claude (Anthropic)* or *Gemini (Google)* — the last three by API key
+  only (paste a token, verified before it is stored; Model; Remove), each
+  with its own key and model. Under it the picked provider's state; *If it
+  can't answer* the order after it (private first · cloud first · stay on
+  this iPhone), both synced; Auto-summarize; a token line per provider.
   Powers "Summarize N active" on the day groups, "Summarize thread", the ✨
   draft reply, Edit with AI in compose (tone and edit presets or a freeform
   instruction), and the triage, Ask and attachment features of

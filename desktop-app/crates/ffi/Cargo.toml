@@ -24,6 +24,8 @@ heypigeon-adapter-gmail = { path = "../adapter-gmail" }
 heypigeon-adapter-sqlite = { path = "../adapter-sqlite" }
 heypigeon-adapter-openai = { path = "../adapter-openai" }
 heypigeon-adapter-jev = { path = "../adapter-jev" }
+heypigeon-adapter-anthropic = { path = "../adapter-anthropic" }
+heypigeon-adapter-gemini = { path = "../adapter-gemini" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

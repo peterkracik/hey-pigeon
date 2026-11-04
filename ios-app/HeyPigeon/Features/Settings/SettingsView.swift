@@ -1,8 +1,9 @@
 // Settings: the desktop's sections, same order, same wording — Accounts
-// (name, colour, sync, signature, reconnect, remove), AI (OpenAI key,
+// (name, colour, sync, signature, reconnect, remove), AI (the provider
+// select box — Apple Intelligence, ChatGPT, Claude, Gemini — its key and
 // model, auto-summarize), Siri & Search, Default email app (the iOS-only
-// doors to the system's Default Apps and Siri & Search pages), Triage (Jev
-// key, auto-triage, reanalyze, the labels), Inbox (pinned list, swipe
+// doors to the system's Default Apps and Siri & Search pages), Triage (the
+// classifier select box, with Jev too, auto-triage, reanalyze, the labels), Inbox (pinned list, swipe
 // actions — the desktop's hover actions), About. Account removal and
 // anything that deletes asks once. Same sheet look as the sidebar (Theme's
 // menuList / menuCard / menuSheet).
@@ -285,83 +286,69 @@ struct Avatar: View {
 
 // MARK: - AI
 
-/// The providers, in the engine's fallback order: Apple on this iPhone,
-/// Apple's Private Cloud Compute, then ChatGPT with a key. Each Apple row
-/// says whether it answers, is available, or why not; "Prefer" picks the
-/// first choice and "If it can't answer" the order after it. Under the
+/// One "Provider" select box: Apple Intelligence on this device, Apple's
+/// cloud, ChatGPT, Claude or Gemini (the last three with an API key the
+/// user pastes — tokens only, no account sign-in). Under it, the picked
+/// provider's state: availability for Apple's models, the key and the
+/// model for a keyed one. "If it can't answer" orders the rest. Under the
 /// card, what each provider has cost in tokens since the last reset.
 private struct AISection: View {
     @Environment(AppModel.self) private var model
     @State private var status: AIStatus?
     @State private var providers: [AIProviderInfo] = []
-    @State private var models: [AIModel] = []
-    @State private var key = ""
-    @State private var saving = false
     @State private var error: String?
-    @State private var confirmRemove = false
     private let usage = AiUsageLedger.shared
 
-    private var openaiConfigured: Bool { status?.openaiConfigured == true }
+    private var preferred: AIProvider { AIProvider(rawValue: status?.preferredProviderId ?? "openai") }
     private var anyApple: Bool { providers.contains { $0.available } }
-    /// What the Prefer picker offers: every Apple provider this device has,
-    /// the one preferred from another device even if it is missing here
-    /// (so the picker never shows a blank), and ChatGPT.
+    /// Everything the select box offers: the shell's providers (both Apple
+    /// models, available or not, and registered packages), the keyed three,
+    /// and the one preferred on another device even if this one lacks it
+    /// (so the picker never shows a blank).
     private var choices: [AIProvider] {
-        var ids = providers.filter(\.available).map(\.id)
-        if let p = status?.preferredProviderId, !ids.contains(p), p != "openai" { ids.append(p) }
-        return ids.map(AIProvider.init(rawValue:)) + [.openai]
+        var out = providers.map { AIProvider(rawValue: $0.id) }
+        for p in AIProvider.keyed where !out.contains(p) { out.append(p) }
+        if !out.contains(preferred) { out.append(preferred) }
+        return out
     }
 
     var body: some View {
         @Bindable var model = model
         Section {
-            ForEach(providers) { p in
+            Picker("Provider", selection: Binding(get: { preferred }, set: { setProvider($0) })) {
+                ForEach(choices) { p in Text(p.title).tag(p) }
+            }
+            .pickerStyle(.menu)
+            if preferred.takesKey {
+                KeyedProviderControls(provider: preferred, hasKey: status?.hasKey(preferred) == true,
+                                      answering: status?.providerId == preferred.rawValue) {
+                    load()
+                    model.reloadAccounts()
+                }
+            } else {
                 HStack(spacing: 12) {
-                    mark(p.id == "apple-cloud" ? "PCC" : "AI")
+                    mark(preferred == .appleCloud ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(p.title).font(.body.weight(.medium))
-                        Text(providerLine(p)).font(.caption).foregroundStyle(p.available ? Theme.textTertiary : Theme.textTertiary.opacity(0.8))
+                        Text(preferred.title).font(.body.weight(.medium))
+                        Text(shellLine(preferred)).font(.caption).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
                 }
             }
-            if anyApple {
-                Picker("Prefer", selection: Binding(
-                    get: { AIProvider(rawValue: status?.preferredProviderId ?? "openai") },
-                    set: { setProvider($0) }
-                )) {
-                    ForEach(choices) { p in Text(p.title).tag(p) }
-                }
-                Picker("If it can't answer", selection: Binding(
-                    get: { AIFallbackPreset(order: status?.fallbackOrder ?? []) },
-                    set: { setFallback($0) }
-                )) {
-                    ForEach(AIFallbackPreset.allCases) { f in Text(f.title).tag(f) }
-                }
+            if let active = status?.providerId, active != preferred.rawValue {
+                Text("Answering now: \(AIProvider(rawValue: active).title)")
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
+            } else if status?.configured == false {
+                Text("Nothing can answer yet: pick a provider this \(Device.name) can run, or paste a key.")
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
             }
-            HStack(spacing: 12) {
-                mark(anyApple ? "GPT" : "AI")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ChatGPT (OpenAI)").font(.body.weight(.medium))
-                    Text(openaiConfigured ? (status?.providerId == "openai" ? "Connected · \(modelLabel) · answering" : "Connected · \(modelLabel)") : "Not connected")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
-                }
-                Spacer()
-                if openaiConfigured {
-                    Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
-                        if confirmRemove { remove() } else { confirmRemove = true }
-                    }
-                    .font(.footnote.weight(.semibold))
-                }
+            Picker("If it can't answer", selection: Binding(
+                get: { AIFallbackPreset(order: status?.fallbackOrder ?? []) },
+                set: { setFallback($0) }
+            )) {
+                ForEach(AIFallbackPreset.allCases) { f in Text(f.title).tag(f) }
             }
-            if openaiConfigured {
-                Picker("Model", selection: Binding(
-                    get: { status?.model ?? models.first?.id ?? "" },
-                    set: { select($0) }
-                )) {
-                    ForEach(models) { m in Text(m.label).tag(m.id) }
-                }
-            }
+            .pickerStyle(.menu)
             if status?.configured == true {
                 Toggle("Auto-summarize", isOn: $model.autoSummarize)
             }
@@ -381,33 +368,21 @@ private struct AISection: View {
                     }
                 }
             }
-            if !openaiConfigured {
-                HStack {
-                    SecureField("sk-…", text: $key)
-                        .plainInput()
-                        .onSubmit { connect() }
-                    Button(saving ? "Verifying…" : "Connect") { connect() }
-                        .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                        .font(.footnote.weight(.semibold))
-                }
-            }
             if let error { Text(error).font(.footnote).foregroundStyle(.red) }
         } header: {
             Text("AI")
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
-                Text(anyApple
-                    ? "On this \(Device.name), Apple Intelligence summarizes, drafts and edits with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own model with a much larger window and deeper reasoning: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT is the optional upgrade for careful drafting: bring your own key, and email content goes to OpenAI only on an explicit AI action. What you prefer and the fallback order follow you to your other devices."
-                    : "Bring your own API key. Email content is sent to the provider only on an explicit AI action — drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. The key stays on this device (paste it on each one); the model you pick follows you to your other devices.")
+                Text("Pick who summarizes, drafts and edits. Apple Intelligence on this \(Device.name) runs with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own larger model: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT, Claude and Gemini each take an API key you paste — no account sign-in — and email content goes to that provider only on an explicit AI action: drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. Keys stay on this device (paste them on each one); the provider, the models and the fallback order follow you to your other devices.")
                 if anyApple && model.suggestEnabled {
                     // Privacy copy must be true (CLAUDE.md): this is the one
                     // AI path that reads a body without a tap.
-                    Text("Suggest for new mail: each new unread email (up to \(Self.suggestChars.formatted()) characters of its text) is read by the model you prefer above — never ChatGPT — to propose Need reply or a reminder. Nothing changes until you accept.")
+                    Text("Suggest for new mail: each new unread email (up to \(Self.suggestChars.formatted()) characters of its text) is read by Apple Intelligence — on this \(Device.name) or in Apple's cloud, never ChatGPT, Claude or Gemini — to propose Need reply or a reminder. Nothing changes until you accept.")
                 }
                 if anyApple && model.autoBundlesEnabled {
                     // Privacy copy must be true (CLAUDE.md): what the
                     // bundling pass sends (crates/ffi/src/bundles.rs).
-                    Text("Make bundles: the sender, subject and preview line of each new email, with the names of your bundles, go to the model you prefer above — never ChatGPT. Bundles it makes stay on this \(Device.name) until you edit one.")
+                    Text("Make bundles: the sender, subject and preview line of each new email, with the names of your bundles, go to Apple Intelligence — never ChatGPT, Claude or Gemini. Bundles it makes stay on this \(Device.name) until you edit one.")
                 }
                 usageLines
             }
@@ -421,11 +396,14 @@ private struct AISection: View {
     /// crates/ffi/src/suggest.rs).
     static let suggestChars = 4_000
 
-    /// One line under each Apple row: answering · available · why not.
-    private func providerLine(_ p: AIProviderInfo) -> String {
-        if status?.providerId == p.id { return "\(p.modelLabel) · answering" }
-        if p.available { return p.leavesDevice ? "\(p.modelLabel) · available · Apple-private, never stored" : "\(p.modelLabel) · available" }
-        return p.unavailableReason ?? "Not available"
+    /// The line under a shell provider: answering · available · why not.
+    private func shellLine(_ p: AIProvider) -> String {
+        guard let info = providers.first(where: { $0.id == p.rawValue }) else {
+            return "Not available on this \(Device.name)"
+        }
+        if status?.providerId == info.id { return "\(info.modelLabel) · answering" }
+        if info.available { return info.leavesDevice ? "\(info.modelLabel) · available · Apple-private, never stored" : "\(info.modelLabel) · available" }
+        return info.unavailableReason ?? "Not available"
     }
 
     /// Tokens per provider since the last reset (iOS 27 `response.usage`),
@@ -441,41 +419,10 @@ private struct AISection: View {
         }
     }
 
-    private var modelLabel: String {
-        models.first { $0.id == status?.model }?.label ?? status?.model ?? models.first?.label ?? ""
-    }
-
     private func load() {
         model.engine.refreshAIProviders()
         status = try? model.engine.aiStatus()
         providers = model.engine.aiProviders()
-        models = (try? model.engine.aiModels()) ?? []
-    }
-
-    private func connect() {
-        saving = true
-        error = nil
-        Task {
-            do {
-                try await model.engine.setAIKey(key)
-                key = ""
-                load()
-                model.reloadAccounts()
-            } catch { self.error = error.localizedDescription }
-            saving = false
-        }
-    }
-
-    private func remove() {
-        confirmRemove = false
-        do { try model.engine.removeAIKey() } catch { self.error = error.localizedDescription }
-        load()
-        model.reloadAccounts()
-    }
-
-    private func select(_ id: String) {
-        do { try model.engine.setAIModel(id) } catch { self.error = error.localizedDescription }
-        load()
     }
 
     private func setProvider(_ p: AIProvider) {
@@ -491,12 +438,134 @@ private struct AISection: View {
     }
 }
 
+/// One keyed provider (ChatGPT, Claude, Gemini): connected or a field to
+/// paste its API key, Remove, and the model picker. Settings › AI and
+/// Settings › Triage both show it — a provider has one key on this device,
+/// whichever section it was pasted in.
+private struct KeyedProviderControls: View {
+    @Environment(AppModel.self) private var model
+    let provider: AIProvider
+    let hasKey: Bool
+    var answering = false
+    /// Called after a key or model change, so the section re-reads.
+    let onChange: () -> Void
+    @State private var key = ""
+    @State private var saving = false
+    @State private var error: String?
+    @State private var confirmRemove = false
+    @State private var models: [AIModel] = []
+    @State private var selected: String?
+
+    /// Spelled out: the private state would make the memberwise one private.
+    init(provider: AIProvider, hasKey: Bool, answering: Bool = false, onChange: @escaping () -> Void) {
+        self.provider = provider
+        self.hasKey = hasKey
+        self.answering = answering
+        self.onChange = onChange
+    }
+
+    var body: some View {
+        Group {
+            HStack(spacing: 12) {
+                mark(provider.mark)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.title).font(.body.weight(.medium))
+                    Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer()
+                if hasKey {
+                    Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
+                        if confirmRemove { remove() } else { confirmRemove = true }
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+            }
+            if hasKey {
+                Picker("Model", selection: Binding(
+                    get: { selected ?? models.first?.id ?? "" },
+                    set: { select($0) }
+                )) {
+                    ForEach(models) { m in Text(m.label).tag(m.id) }
+                }
+                .pickerStyle(.menu)
+            } else {
+                HStack {
+                    SecureField(provider.keyPlaceholder, text: $key)
+                        .plainInput()
+                        .onSubmit { connect() }
+                    Button(saving ? "Verifying…" : "Connect") { connect() }
+                        .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+                        .font(.footnote.weight(.semibold))
+                }
+            }
+            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+        }
+        .task(id: provider) { load() }
+        .onChange(of: model.prefsVersion) { _, _ in load() }
+    }
+
+    private var modelLabel: String {
+        models.first { $0.id == selected }?.label ?? selected ?? models.first?.label ?? ""
+    }
+
+    private var statusLine: String {
+        guard hasKey else { return "Not connected · paste your \(provider.shortName) API key" }
+        return answering ? "Connected · \(modelLabel) · answering" : "Connected · \(modelLabel)"
+    }
+
+    private func load() {
+        models = (try? model.engine.aiModels(for: provider)) ?? []
+        selected = (try? model.engine.aiSelectedModel(for: provider)) ?? nil
+        confirmRemove = false
+    }
+
+    private func connect() {
+        saving = true
+        error = nil
+        Task {
+            do {
+                try await model.engine.setAIKey(key, for: provider)
+                key = ""
+                load()
+                onChange()
+            } catch { self.error = error.localizedDescription }
+            saving = false
+        }
+    }
+
+    private func remove() {
+        confirmRemove = false
+        do { try model.engine.removeAIKey(for: provider) } catch { self.error = error.localizedDescription }
+        onChange()
+    }
+
+    private func select(_ id: String) {
+        do { try model.engine.setAIModel(id, for: provider) } catch { self.error = error.localizedDescription }
+        load()
+        onChange()
+    }
+}
+
+private extension AIProvider {
+    /// The two or three letters on the provider's row.
+    var mark: String {
+        switch self {
+        case .apple: "AI"
+        case .appleCloud: "PCC"
+        case .openai: "GPT"
+        case .anthropic: "C"
+        case .gemini: "G"
+        case .other(let id): String(id.prefix(2)).uppercased()
+        }
+    }
+}
+
 /// The fallback orders Settings offers (`pref:ai.fallback`), by how much
 /// may leave the device when the preferred provider cannot answer.
 enum AIFallbackPreset: CaseIterable, Identifiable, Hashable {
-    /// On this iPhone → Apple's cloud → ChatGPT (the engine's default).
+    /// On this iPhone → Apple's cloud → a keyed provider (the engine's default).
     case privateFirst
-    /// Apple's cloud → on this iPhone → ChatGPT: the big window first.
+    /// Apple's cloud → on this iPhone → a keyed provider: the big window first.
     case cloudFirst
     /// On this iPhone only: never a network hop the user did not pick.
     case onDeviceOnly
@@ -506,24 +575,29 @@ enum AIFallbackPreset: CaseIterable, Identifiable, Hashable {
     var order: [AIProvider] {
         switch self {
         case .privateFirst: []  // empty = the engine's default
-        case .cloudFirst: [.appleCloud, .apple, .openai]
+        case .cloudFirst: [.appleCloud, .apple] + AIProvider.keyed
         case .onDeviceOnly: [.apple]
         }
     }
 
     var title: String {
         switch self {
-        case .privateFirst: "On this \(Device.name), then Apple's cloud, then ChatGPT"
-        case .cloudFirst: "Apple's cloud, then on this \(Device.name), then ChatGPT"
+        case .privateFirst: "On this \(Device.name), then Apple's cloud, then a provider with a key"
+        case .cloudFirst: "Apple's cloud, then on this \(Device.name), then a provider with a key"
         case .onDeviceOnly: "Stay on this \(Device.name)"
         }
     }
 
+    /// An order that starts in Apple's cloud reads as cloud-first, the
+    /// three-entry one an older build synced included.
     init(order: [String]) {
-        let providers = order.map(AIProvider.init(rawValue:))
-        self = Self.allCases.first { preset in
-            preset != .privateFirst && preset.order == providers
-        } ?? .privateFirst
+        if order == ["apple"] {
+            self = .onDeviceOnly
+        } else if order.count > 1, order.first == AIProvider.appleCloud.rawValue {
+            self = .cloudFirst
+        } else {
+            self = .privateFirst
+        }
     }
 }
 
@@ -641,8 +715,12 @@ private struct DefaultAppSection: View {
     }()
 }
 
-// MARK: - Triage (Jev)
+// MARK: - Triage
 
+/// A "Classifier" select box — Apple Intelligence on this device or in
+/// Apple's cloud, ChatGPT, Claude, Gemini (the same key as Settings › AI),
+/// or Jev — and under it the picked one's state, then auto-triage, Siri
+/// triage and the labels.
 private struct TriageSection: View {
     @Environment(AppModel.self) private var model
     @State private var status: TriageStatus?
@@ -655,60 +733,58 @@ private struct TriageSection: View {
 
     private var jevConfigured: Bool { status?.jevConfigured == true }
     private var onDevice: Bool { status?.onDeviceAvailable == true }
-    /// The classifiers this device can run, plus the one chosen elsewhere,
-    /// plus Jev (a key can always be pasted).
-    private var classifierChoices: [TriageClassifier] {
-        var out = TriageClassifier.allCases.filter { $0 == .jev || status?.isAvailable($0) == true }
-        if let c = TriageClassifier(rawValue: status?.classifierId ?? ""), !out.contains(c) { out.insert(c, at: 0) }
-        return out
-    }
+    private var current: TriageClassifier { TriageClassifier(rawValue: status?.classifierId ?? "") ?? .apple }
 
     var body: some View {
         Section {
-            if onDevice {
+            Picker("Classifier", selection: Binding(get: { current }, set: { setClassifier($0) })) {
+                ForEach(TriageClassifier.allCases) { c in Text(c.title).tag(c) }
+            }
+            .pickerStyle(.menu)
+            switch current {
+            case .apple, .appleCloud:
                 HStack(spacing: 12) {
-                    mark("AI")
+                    mark(current == .appleCloud ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("On this \(Device.name)").font(.body.weight(.medium))
-                        Text("Apple Intelligence · sorts and prioritizes with nothing leaving the device")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(current.title).font(.body.weight(.medium))
+                        Text(appleLine).font(.caption).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
                 }
-            }
-            if status?.isAvailable(.appleCloud) == true {
+            case .openai, .anthropic, .gemini:
+                if let provider = current.aiProvider {
+                    KeyedProviderControls(provider: provider, hasKey: status?.isAvailable(current) == true) { load() }
+                }
+            case .jev:
                 HStack(spacing: 12) {
-                    mark("PCC")
+                    mark("TS")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Apple's cloud").font(.body.weight(.medium))
-                        Text("Private Cloud Compute · deeper reasoning on the same subject, sender and preview; Apple-private, never stored")
+                        Text("Jev").font(.body.weight(.medium))
+                        Text(jevConfigured ? "Connected" : "Not connected")
                             .font(.caption).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
-                }
-            }
-            if onDevice || status?.isAvailable(.appleCloud) == true {
-                Picker("Classifier", selection: Binding(
-                    get: { TriageClassifier(rawValue: status?.classifierId ?? "") ?? .apple },
-                    set: { setClassifier($0) }
-                )) {
-                    ForEach(classifierChoices) { c in Text(c.title).tag(c) }
-                }
-            }
-            HStack(spacing: 12) {
-                mark("TS")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Jev").font(.body.weight(.medium))
-                    Text(jevConfigured ? "Connected" : "Not connected")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
-                }
-                Spacer()
-                if jevConfigured {
-                    Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
-                        if confirmRemove { remove() } else { confirmRemove = true }
+                    if jevConfigured {
+                        Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
+                            if confirmRemove { remove() } else { confirmRemove = true }
+                        }
+                        .font(.footnote.weight(.semibold))
                     }
-                    .font(.footnote.weight(.semibold))
                 }
+                if !jevConfigured {
+                    HStack {
+                        SecureField("API key", text: $key)
+                            .plainInput()
+                            .onSubmit { connect() }
+                        Button(saving ? "Verifying…" : "Connect") { connect() }
+                            .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+                            .font(.footnote.weight(.semibold))
+                    }
+                }
+            }
+            if status?.configured == true && status?.isAvailable(current) != true {
+                Text("\(current.title) can't run here yet, so Apple Intelligence or Jev classifies instead.")
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
             }
             if status?.configured == true {
                 Toggle("Auto-triage", isOn: Binding(get: { status?.enabled ?? false }, set: { setEnabled($0) }))
@@ -727,16 +803,6 @@ private struct TriageSection: View {
                 }
                 if let last = status?.lastError {
                     Text("Last run failed: \(last)").font(.footnote).foregroundStyle(.red)
-                }
-            }
-            if !jevConfigured {
-                HStack {
-                    SecureField("API key", text: $key)
-                        .plainInput()
-                        .onSubmit { connect() }
-                    Button(saving ? "Verifying…" : "Connect") { connect() }
-                        .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                        .font(.footnote.weight(.semibold))
                 }
             }
             // "Hey Siri, triage my inbox": the agentic run over the engine
@@ -762,7 +828,7 @@ private struct TriageSection: View {
                     Label(model.triageAgent == nil ? "Siri triage and journal" : "Siri triage · \(model.triageAgent!.phase.title)", systemImage: "list.bullet.rectangle")
                 }
             }
-            // The labels: the categories Jev sorts mail into, and the
+            // The labels: the categories the classifier sorts mail into, and the
             // segments of the bottom pill, in this order (drag to change it).
             ForEach(model.triageLabels) { l in
                 Text(l.name)
@@ -784,9 +850,9 @@ private struct TriageSection: View {
         } header: {
             Text("Triage")
         } footer: {
-            Text(onDevice
-                ? "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). On this \(Device.name) that runs with Apple Intelligence and nothing leaves the device; Jev is a third-party classification service you can prefer instead — see jevtypesafeai.com. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. \(Self.labelHint)"
-                : "Jev sorts new mail into your own labels and flags a priority automatically, in the background — subject and snippet (never the full message) are sent to Jev to do this. Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. The key stays on this device (paste it on each one); your labels and the switch sync to your other devices. \(Self.labelHint)")
+            // Privacy copy must be true (CLAUDE.md): what each classifier
+            // is sent (settings.rs classify_pending_inner, keyed.rs).
+            Text("New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). Apple Intelligence on this \(Device.name) does it with nothing leaving the device; Apple's cloud sends those three fields to Apple, never stored. Pick ChatGPT, Claude or Gemini and they go to that provider with your API key (the same key as AI above). Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. When the classifier you pick can't run, Apple Intelligence or Jev takes over — never a provider you didn't pick. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. \(Self.labelHint)")
         }
         .menuCard()
         .task { load() }
@@ -794,6 +860,17 @@ private struct TriageSection: View {
     }
 
     private func load() { status = try? model.engine.triageStatus() }
+
+    /// The line under an Apple classifier: available, or why not.
+    private var appleLine: String {
+        if status?.isAvailable(current) == true {
+            return current == .appleCloud
+                ? "Private Cloud Compute · deeper reasoning on the same subject, sender and preview; Apple-private, never stored"
+                : "Sorts and prioritizes with nothing leaving the device"
+        }
+        let info = model.engine.aiProviders().first { $0.id == current.rawValue }
+        return info?.unavailableReason ?? "Not available on this \(Device.name)"
+    }
 
     /// How to reorder and remove a label, in this platform's gestures.
     #if os(macOS)

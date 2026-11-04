@@ -324,11 +324,13 @@ Three touchpoints. Nothing else is added.
 1. **Row chip.** One small chip (icon + short name) on rows in a bundle, next to
    the triage chips. At most one, because a thread is in at most one bundle.
    Tapping it opens the bundle.
-2. **Bundles.** One sidebar entry (Mac and iPad) or one row in the folder list
-   (iPhone), plus `go to bundle` in cmd+k. It lists active bundles, each with
-   icon, name, the attention line and a count of open threads, plus the
-   suggestion card when there is one. Archived bundles sit behind an "Archived"
-   row at the bottom. Individual bundles never get sidebar entries.
+2. **Bundles.** A section of the sidebar right under the inboxes (as built,
+   both apps): the five most recently active bundles with their open
+   counts, "N more" for the rest, then "All bundles", which opens the full
+   list (archived ones at the bottom). A bundle can be hidden from the
+   section (context menu, or the eye in the full list;
+   `pref:sidebar.hidden_bundles`, synced); "N more" shows hidden ones too,
+   so they can be shown again. A bundle opens its view as a sheet.
 3. **Add to bundle…** One thread action (swipe menu, context menu, keyboard
    `b`). It opens a picker with the model's best guess first, then the other
    active bundles, then **New bundle…** (name, kind, an optional one-line

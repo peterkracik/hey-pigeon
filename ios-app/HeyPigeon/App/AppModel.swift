@@ -274,6 +274,8 @@ final class AppModel {
         static let suggest = "ai.suggest"
         /// The labels pinned in the sidebar (both apps), by label id.
         static let pinnedLabels = "sidebar.pinned_labels"
+        /// The bundles hidden from the sidebar (both apps), by bundle id.
+        static let hiddenBundles = "sidebar.hidden_bundles"
         /// Settings › Inbox › "Load remote images" (off: ask per sender).
         static let remoteImages = "mail.remote_images"
         /// "Always load from this sender": lowercased addresses.
@@ -355,6 +357,31 @@ final class AppModel {
     /// Synced, like the other prefs: the Mac and the phone pin the same.
     var pinnedLabelIds: Set<String> = [] {
         didSet { savePref(PrefName.pinnedLabels, pinnedLabelIds.sorted()) }
+    }
+
+    /// Bundles the user hid from the sidebar's Bundles section. Synced, so
+    /// the sidebar is the same on every device.
+    var hiddenBundleIds: Set<String> = [] {
+        didSet { savePref(PrefName.hiddenBundles, hiddenBundleIds.sorted()) }
+    }
+
+    func toggleHidden(_ bundle: BundleItem) {
+        if hiddenBundleIds.contains(bundle.id) { hiddenBundleIds.remove(bundle.id) } else { hiddenBundleIds.insert(bundle.id) }
+    }
+
+    /// How many bundles the sidebar section shows before "N more".
+    static let sidebarBundleLimit = 5
+
+    /// The sidebar's Bundles section: active bundles, most recently active
+    /// first. Folded, it leaves out the hidden ones and stops at `limit`;
+    /// `more` is how many "N more" opens. Expanded, it lists every active
+    /// bundle, hidden ones too, so they can be shown again.
+    static func sidebarBundles(_ active: [BundleItem], hidden: Set<String>, expanded: Bool,
+                               limit: Int = sidebarBundleLimit) -> (shown: [BundleItem], more: Int) {
+        let recent = active.sorted { ($0.lastActivityAt ?? $0.createdAt) > ($1.lastActivityAt ?? $1.createdAt) }
+        if expanded { return (recent, 0) }
+        let shown = Array(recent.filter { !hidden.contains($0.id) }.prefix(limit))
+        return (shown, recent.count - shown.count)
     }
 
     func togglePinned(_ label: MailLabelItem) {
@@ -515,6 +542,7 @@ final class AppModel {
         if let v = prefs[PrefName.suggest] as? Bool { suggestEnabled = v }
         if let v = prefs[PrefName.autoBundles] as? Bool { autoBundlesEnabled = v }
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
+        if let v = prefs[PrefName.hiddenBundles] as? [String] { hiddenBundleIds = Set(v) }
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
         if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }

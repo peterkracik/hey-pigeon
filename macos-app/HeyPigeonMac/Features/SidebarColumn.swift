@@ -18,6 +18,9 @@ struct SidebarColumn: View {
     @AppStorage("sidebarLabelsOpen") private var labelsOpen = true
     /// ••• under the labels: the unpinned ones too. Per Mac.
     @AppStorage("sidebarAllLabels") private var allLabels = false
+    @AppStorage("sidebarBundlesOpen") private var bundlesOpen = true
+    /// "N more" under the bundles: every active one, hidden ones too.
+    @AppStorage("sidebarAllBundles") private var allBundles = false
 
     private var labels: [MailLabelItem] {
         model.labels.filter { l in
@@ -34,10 +37,20 @@ struct SidebarColumn: View {
                     folder(.needReply, count: model.needReplyCount)
                     folder(.starred)
                     folder(.drafts, count: model.draftsCount)
+
                     // Bundles open as a sheet (BundlesSheet), not a list view.
-                    SidebarRow(title: "Bundles", systemImage: "square.stack", help: "Bundles",
-                               trailing: model.activeBundles.isEmpty ? nil : Text("\(model.activeBundles.count)")) {
-                        model.openBundles()
+                    SectionHeader(title: "Bundles", open: $bundlesOpen)
+                    if bundlesOpen {
+                        let rows = AppModel.sidebarBundles(model.activeBundles, hidden: model.hiddenBundleIds,
+                                                           expanded: allBundles)
+                        ForEach(rows.shown) { b in bundleRow(b) }
+                        if rows.more > 0 || allBundles && !model.hiddenBundleIds.isEmpty {
+                            MoreLabelsRow(expanded: $allBundles, hidden: rows.more, noun: "bundles")
+                        }
+                        SidebarRow(title: model.activeBundles.isEmpty ? "Bundles" : "All bundles",
+                                   systemImage: "square.stack", help: "Every bundle, archived ones too") {
+                            model.openBundles()
+                        }
                     }
 
                     SectionHeader(title: "Folders", open: $foldersOpen)
@@ -87,6 +100,24 @@ struct SidebarColumn: View {
         }
     }
 
+    /// A bundle with its open count; on hover the eye hides it from the
+    /// short list (or shows it again), and so does the context menu.
+    private func bundleRow(_ b: BundleItem) -> some View {
+        let hidden = model.hiddenBundleIds.contains(b.id)
+        return SidebarRow(title: b.name, systemImage: b.category.systemImage, help: b.name,
+                          trailing: b.openCount > 0 ? Text("\(b.openCount)") : nil,
+                          pin: .init(isOn: hidden, onSymbol: "eye.slash", offSymbol: "eye",
+                                     onHelp: "Show in the sidebar", offHelp: "Hide from the sidebar") {
+                              model.toggleHidden(b)
+                          }) {
+            model.openBundles(at: b.id)
+        }
+        .opacity(hidden ? 0.55 : 1)
+        .contextMenu {
+            Button(hidden ? "Show in Sidebar" : "Hide from Sidebar") { model.toggleHidden(b) }
+        }
+    }
+
     /// The due count in the accent when there is one, else the plain count.
     static func badgeText(count: Int, due: Int) -> Text? {
         if due > 0 { return Text("\(due)").foregroundStyle(Theme.accent) }
@@ -110,6 +141,11 @@ private struct SidebarRow: View {
     /// when the label is in the short list.
     struct Pin {
         let isOn: Bool
+        /// The bundles reuse the slot with an eye (hide from the sidebar).
+        var onSymbol = "pin.fill"
+        var offSymbol = "pin"
+        var onHelp = "Unpin"
+        var offHelp = "Pin to the short list"
         let toggle: () -> Void
     }
 
@@ -146,7 +182,7 @@ private struct SidebarRow: View {
         .overlay(alignment: .trailing) {
             if let pin, showsPin {
                 Button(action: pin.toggle) {
-                    Image(systemName: pin.isOn ? "pin.fill" : "pin")
+                    Image(systemName: pin.isOn ? pin.onSymbol : pin.offSymbol)
                         .font(.system(size: 11))
                         .foregroundStyle(pin.isOn ? Theme.textSecondary : Theme.textTertiary)
                         .frame(width: 22, height: 22)
@@ -154,8 +190,8 @@ private struct SidebarRow: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 6)
-                .help(pin.isOn ? "Unpin" : "Pin to the short list")
-                .accessibilityLabel(pin.isOn ? "Unpin \(title)" : "Pin \(title)")
+                .help(pin.isOn ? pin.onHelp : pin.offHelp)
+                .accessibilityLabel("\(pin.isOn ? pin.onHelp : pin.offHelp): \(title)")
             }
         }
         .onHover { hovering = $0 }
@@ -174,6 +210,8 @@ private struct SidebarRow: View {
 private struct MoreLabelsRow: View {
     @Binding var expanded: Bool
     let hidden: Int
+    /// What the row folds, for VoiceOver.
+    var noun = "labels"
     @State private var hovering = false
 
     var body: some View {
@@ -197,7 +235,7 @@ private struct MoreLabelsRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .accessibilityLabel(expanded ? "Show pinned labels only" : "Show all labels, \(hidden) more")
+        .accessibilityLabel(expanded ? "Show fewer \(noun)" : "Show all \(noun), \(hidden) more")
     }
 }
 

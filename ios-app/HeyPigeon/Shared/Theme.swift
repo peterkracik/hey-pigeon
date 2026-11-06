@@ -41,7 +41,18 @@ enum Theme {
     /// Pin colour (Gmail star): the amber tag.
     static let pin = Color(hex: 0xE3B341)
 
+    /// The tag surfaces, made once: `Color(light:dark:)` builds a dynamic
+    /// platform colour each call, and every row's chips asked for theirs on
+    /// each render.
+    private static let tagBackgrounds: [AccountColor: Color] = Dictionary(
+        uniqueKeysWithValues: AccountColor.allCases.map { ($0, makeTagBackground($0)) }
+    )
+
     static func tagBackground(_ c: AccountColor) -> Color {
+        tagBackgrounds[c] ?? makeTagBackground(c)
+    }
+
+    private static func makeTagBackground(_ c: AccountColor) -> Color {
         switch c {
         case .coral: Color(light: Color(hex: 0xFBE2DA), dark: Color(hex: 0x4A2A22))
         case .mint: Color(light: Color(hex: 0xD9EFE6), dark: Color(hex: 0x1F3A30))
@@ -72,12 +83,20 @@ enum Theme {
 
     // Typography: Manrope for display (brand), system for body (legibility,
     // Dynamic Type). Every size is relative to a text style so it scales.
+    // The brand files are dropped into the bundle by hand (README); without
+    // them SwiftUI fell back to the regular system font and asked CoreText
+    // for the missing face on every row. Checked once here instead, and the
+    // fallback keeps the weight at the text style's own size.
+    private static let hasManrope = PlatformFont(name: "Manrope-Bold", size: 12) != nil
+
     static func display(_ size: CGFloat, relativeTo style: Font.TextStyle = .title2) -> Font {
-        .custom("Manrope-ExtraBold", size: size, relativeTo: style)
+        hasManrope ? .custom("Manrope-ExtraBold", size: size, relativeTo: style) : .system(style, weight: .heavy)
     }
 
     static func sender(_ unread: Bool) -> Font {
-        .custom(unread ? "Manrope-Bold" : "Manrope-SemiBold", size: 14, relativeTo: .subheadline)
+        hasManrope
+            ? .custom(unread ? "Manrope-Bold" : "Manrope-SemiBold", size: 14, relativeTo: .subheadline)
+            : .system(.subheadline, weight: unread ? .bold : .semibold)
     }
 }
 

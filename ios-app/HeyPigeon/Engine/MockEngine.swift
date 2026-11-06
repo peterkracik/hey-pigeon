@@ -197,6 +197,13 @@ final class MockEngine: MailEngine {
 
     func threadRow(id: String) throws -> ThreadRow? { rows[id] }
 
+    /// More rows, as given (the paging tests need more than a page of
+    /// inbox); a change notice follows, as after a sync.
+    func insert(_ more: [ThreadRow]) {
+        for r in more { rows[r.id] = r }
+        onThreadsUpdated?()
+    }
+
     /// The rows with a paperclip get a PDF and, for the contract, an image.
     func attachments(threadId: String) async throws -> [AttachmentItem] {
         guard let row = rows[threadId], row.hasAttachment else { return [] }

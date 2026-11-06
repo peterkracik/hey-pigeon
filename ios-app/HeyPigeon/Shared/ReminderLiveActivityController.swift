@@ -11,7 +11,7 @@ import Foundation
 @MainActor
 enum ReminderLiveActivityController {
     static func sync(_ model: AppModel, now: Date = Date()) async {
-        let due = AppModel.due(model.scheduledThreads(accountId: nil), now: now)
+        let due = AppModel.due(model.scheduledAcrossAccounts, now: now)
             .sorted { ($0.scheduledAt ?? now) < ($1.scheduledAt ?? now) }
         let existing = Activity<ReminderActivityAttributes>.activities
         guard let first = due.first, let at = first.scheduledAt else {

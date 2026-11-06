@@ -315,6 +315,21 @@ struct SpotlightFingerprintTests {
         let renamed = MailAccount(id: "a", email: "a@x.test", displayName: "Job", color: .sky, avatarURL: nil, signature: "")
         #expect(base != SpotlightIndexer.fingerprint(row, labelNames: ["Travel"], account: renamed))
     }
+
+    /// The fingerprints outlive the process (they are kept on disk so a
+    /// launch does not index everything again), so the hash must not be
+    /// `Hasher`, which is seeded per process.
+    @Test func fingerprintsAreStableAndRoundTripThroughDisk() {
+        #expect(SpotlightIndexer.fnv1a("") == 0xcbf2_9ce4_8422_2325)
+        #expect(SpotlightIndexer.fnv1a("hey pigeon") == 0xd4dc_a193_4a70_0c2d)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fingerprints-\(UUID().uuidString)", isDirectory: true)
+        let url = dir.appendingPathComponent("spotlight-fingerprints.json")
+        let map = ["t": SpotlightIndexer.fingerprint(makeRow(read: false), labelNames: ["Travel"], account: account), "u": -7]
+        SpotlightIndexer.Fingerprints.save(map, to: url)
+        #expect(SpotlightIndexer.Fingerprints.load(from: url) == map)
+        #expect(SpotlightIndexer.Fingerprints.load(from: dir.appendingPathComponent("missing.json")).isEmpty)
+        try? FileManager.default.removeItem(at: dir)
+    }
 }
 
 struct PrivateCloudComputeGateTests {

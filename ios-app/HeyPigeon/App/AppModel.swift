@@ -79,11 +79,51 @@ struct BundleFold: Identifiable, Hashable {
     }
 }
 
+/// What one reload asks the store for: the view, the account, every
+/// account (the widgets' per-account counts) and how many rows: the pages
+/// already on screen, one at least, so a reload keeps a scrolled list where
+/// it is instead of cutting it back to the first page.
+struct ListRequest: Equatable, Sendable {
+    let view: MailView
+    let accountId: String?
+    let accountIds: [String]
+    let limit: Int
+
+    /// Whether `other` asks for the same list, however many rows.
+    func sameList(as other: ListRequest) -> Bool {
+        view == other.view && accountId == other.accountId
+    }
+}
+
+/// Everything one reload reads from the store, read together off the main
+/// actor (`MailEngine.readInBackground`) and landed as one change
+/// (`AppModel.apply`): the rows, the folder counts, the bounded lists behind
+/// the tab badges, and the counts the app badge and the widgets show.
+struct ListSnapshot: Sendable {
+    let request: ListRequest
+    let bundles: [BundleItem]
+    let rows: [ThreadRow]
+    /// Unread per folder for the account shown (nil = unified).
+    let counts: [String: Int]
+    /// Unread per folder across accounts, and per account: the app badge
+    /// and the widgets' per-account rows.
+    let unifiedCounts: [String: Int]
+    let countsByAccount: [String: [String: Int]]
+    let scheduledAcrossAccounts: [ThreadRow]
+    let needReplyAcrossAccounts: [ThreadRow]
+    let draftsCount: Int
+}
+
 @MainActor
 @Observable
 final class AppModel {
     static let refreshTaskId = "app.heypigeon.refresh"
     static let pageSize = 50
+    /// How long a change notice from the engine waits for the next one
+    /// before the reload (`reloadSoon`).
+    static let reloadPause: Duration = .milliseconds(50)
+    /// How often the archive walk refreshes the counts while it runs.
+    static let backfillRefreshInterval: TimeInterval = 3
 
     /// The one model of the process, for the UIKit delegate (AppDelegate)
     /// that has no SwiftUI environment to read it from.
@@ -94,12 +134,29 @@ final class AppModel {
     /// "New mail (push)" — the optional relay (relay/README.md).
     let push: PushController
 
-    private(set) var accounts: [MailAccount] = []
+    private(set) var accounts: [MailAccount] = [] {
+        didSet {
+            let byId = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            if byId != accountsById { accountsById = byId }
+        }
+    }
     private(set) var accountStates: [String: AccountState] = [:]
     private(set) var labels: [MailLabelItem] = []
-    private(set) var triageLabels: [TriageLabelItem] = []
+    private(set) var triageLabels: [TriageLabelItem] = [] {
+        didSet {
+            let names = Dictionary(triageLabels.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+            if names != triageLabelNames { triageLabelNames = names }
+        }
+    }
     private(set) var counts: [String: Int] = [:]
     private(set) var aiConfigured = false
+    /// Accounts, bundles and triage label names by id. Every row looks
+    /// these up on each render, and each changes only when its source does
+    /// (a fresh but equal array still fires its observers), so a reload that
+    /// moved nothing redraws no row.
+    private(set) var accountsById: [String: MailAccount] = [:]
+    private(set) var bundlesById: [String: BundleItem] = [:]
+    private(set) var triageLabelNames: [String: String] = [:]
 
     /// nil = unified across accounts (desktop's `0`).
     var selectedAccountId: String? { didSet { reloadUnlessHeld() } }
@@ -148,8 +205,23 @@ final class AppModel {
 
     /// The loaded page(s) of the current view. Never holds a thread twice:
     /// SwiftUI's List aborts the process on duplicate row ids.
-    private(set) var rows: [ThreadRow] = [] { didSet { regroup() } }
+    private(set) var rows: [ThreadRow] = [] {
+        didSet {
+            listGeneration &+= 1
+            regroup()
+        }
+    }
     private(set) var hasMore = true
+    /// Bumped by every change to `rows`. A snapshot read off the main actor
+    /// before the change (a row slid out, a page was appended, another view
+    /// was loaded) is dropped instead of applied over it, and read again.
+    @ObservationIgnored private(set) var listGeneration = 0
+    /// The list the rows were read for (`listRequest` keeps its page count
+    /// only while the view stays the same).
+    @ObservationIgnored private var loadedRequest: ListRequest?
+    @ObservationIgnored private var reloadRequested = false
+    @ObservationIgnored private var reloadLoop: Task<Void, Never>?
+    @ObservationIgnored private var lastBackfillRefresh = Date.distantPast
     private(set) var isSyncing = false
     private var isBackfillingOlder = false
     /// The background analysis pass (auto-triage): the inbox's progress bar,
@@ -217,7 +289,12 @@ final class AppModel {
     var pendingBundlePick: ThreadRow?
     /// Every bundle, active first; re-read on each reload (counts move with
     /// the mail).
-    private(set) var bundles: [BundleItem] = []
+    private(set) var bundles: [BundleItem] = [] {
+        didSet {
+            let byId = Dictionary(bundles.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            if byId != bundlesById { bundlesById = byId }
+        }
+    }
     /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
     var askSheet: AskPresentation?
 
@@ -237,6 +314,19 @@ final class AppModel {
     /// instead of asking the store again: reminders come due with time,
     /// and every change to the list itself goes through `reload`.
     @ObservationIgnored private(set) var scheduledAcrossAccounts: [ThreadRow] = []
+    /// Every Need reply thread across accounts as of the last reload: the
+    /// widgets' list; `needReplyCount` narrows it to the account shown.
+    @ObservationIgnored private(set) var needReplyAcrossAccounts: [ThreadRow] = []
+    /// Unread per folder across accounts and per account, as of the last
+    /// reload: the app badge, the reminder notifications and the widgets
+    /// read these instead of asking the store again (they used to, on the
+    /// main thread, after every reload).
+    @ObservationIgnored private(set) var unifiedCounts: [String: Int] = [:]
+    @ObservationIgnored private(set) var countsByAccount: [String: [String: Int]] = [:]
+    /// Unread in the unified inbox: the app badge's first half.
+    var inboxUnreadAllAccounts: Int { unifiedCounts["inbox"] ?? 0 }
+    /// Unread in one account's inbox, for the widgets' account rows.
+    func inboxUnread(accountId: String) -> Int { countsByAccount[accountId]?["inbox"] ?? 0 }
     /// Ticks every 30 s while the app runs, so a reminder coming due raises
     /// `dueCount` and the icon badge without waiting for a reload (the
     /// desktop's `now` in App.svelte).
@@ -249,12 +339,12 @@ final class AppModel {
     }
 
     /// Reminders that have come due (their time is now or past).
-    static func due(_ threads: [ThreadRow], now: Date = Date()) -> [ThreadRow] {
+    nonisolated static func due(_ threads: [ThreadRow], now: Date = Date()) -> [ThreadRow] {
         threads.filter { t in t.scheduledAt.map { $0 <= now } ?? false }
     }
 
     /// The rows of one account, or all of them for the unified view.
-    static func scoped(_ rows: [ThreadRow], to accountId: String?) -> [ThreadRow] {
+    nonisolated static func scoped(_ rows: [ThreadRow], to accountId: String?) -> [ThreadRow] {
         guard let accountId else { return rows }
         return rows.filter { $0.accountId == accountId }
     }
@@ -578,7 +668,7 @@ final class AppModel {
     init(engine: MailEngine) {
         self.engine = engine
         push = PushController(engine: engine)
-        engine.onThreadsUpdated = { [weak self] in self?.reload() }
+        engine.onThreadsUpdated = { [weak self] in self?.reloadSoon() }
         engine.onAccountDisconnected = { [weak self] id in
             self?.disconnectedAccountId = id
             self?.reloadAccounts()
@@ -627,12 +717,20 @@ final class AppModel {
 
     // MARK: Loading
 
+    /// The accounts, labels, triage labels and AI status: small reads, on
+    /// the main actor, each assigned only when it moved (every row reads
+    /// the accounts and the triage labels through `accountsById` and
+    /// `triageLabelNames`).
     func reloadAccounts() {
-        accounts = (try? engine.accounts()) ?? []
+        let fresh = (try? engine.accounts()) ?? []
+        if fresh != accounts { accounts = fresh }
         accountStates = Dictionary(uniqueKeysWithValues: ((try? engine.accountStates()) ?? []).map { ($0.id, $0) })
-        labels = (try? engine.labels()) ?? []
-        triageLabels = Self.orderedTriageLabels((try? engine.triageLabels()) ?? [], by: triageLabelOrder)
-        aiConfigured = (try? engine.aiStatus())?.configured ?? false
+        let labels = (try? engine.labels()) ?? []
+        if labels != self.labels { self.labels = labels }
+        let triage = Self.orderedTriageLabels((try? engine.triageLabels()) ?? [], by: triageLabelOrder)
+        if triage != triageLabels { triageLabels = triage }
+        let configured = (try? engine.aiStatus())?.configured ?? false
+        if configured != aiConfigured { aiConfigured = configured }
         if let selected = selectedAccountId, !accounts.contains(where: { $0.id == selected }) {
             selectedAccountId = nil
         }
@@ -641,16 +739,120 @@ final class AppModel {
         }
     }
 
+    /// Re-read the current view, the counts and the bounded lists from the
+    /// store now, on the main actor: for navigation and the user's own
+    /// actions, whose result should be on screen when the call returns.
+    /// The engine's change notices go through `reloadSoon` instead.
     func reload() {
+        apply(Self.readList(MainActorStoreReader(engine: engine), listRequest))
+    }
+
+    /// A change notice from the engine: one reload a moment later, read off
+    /// the main actor. A sync round notifies several times in a row (the
+    /// delta, the bundle links, the triage, the proposals, the cross-device
+    /// push), and each reload used to run a dozen store queries on the main
+    /// thread, under the user's finger. Notices inside the pause share one
+    /// reload, and at most one read is in flight.
+    func reloadSoon() {
+        reloadRequested = true
+        guard reloadLoop == nil else { return }
+        reloadLoop = Task { [weak self] in
+            while let model = self, model.reloadRequested {
+                try? await Task.sleep(for: Self.reloadPause)
+                guard let live = self else { return }
+                live.reloadRequested = false
+                await live.reloadInBackground()
+            }
+            self?.reloadLoop = nil
+        }
+    }
+
+    /// Wait until no reload is pending: the end of a sync (the list is
+    /// current when the spinner goes), and the tests.
+    func settleReloads() async {
+        while let loop = reloadLoop { await loop.value }
+    }
+
+    private func reloadInBackground() async {
+        let request = listRequest
+        let generation = listGeneration
+        guard let snapshot = try? await engine.readInBackground({ Self.readList($0, request) }) else { return }
+        // The rows moved under the read (a swipe, a page, another view):
+        // the snapshot predates them, so read again rather than apply it.
+        guard generation == listGeneration else {
+            reloadRequested = true
+            return
+        }
+        apply(snapshot)
+    }
+
+    /// What a reload asks the store for now. The pages on screen, whole:
+    /// 120 rows loaded asks for 150, and a full answer means there may be
+    /// more, as with a page. Another view (or account) starts over at one.
+    private var listRequest: ListRequest {
+        let one = ListRequest(view: view, accountId: selectedAccountId, accountIds: accounts.map(\.id), limit: Self.pageSize)
+        guard let loaded = loadedRequest, loaded.sameList(as: one) else { return one }
+        let pages = max(1, (rows.count + Self.pageSize - 1) / Self.pageSize)
+        return ListRequest(view: one.view, accountId: one.accountId, accountIds: one.accountIds, limit: pages * Self.pageSize)
+    }
+
+    /// The store's side of a reload, in one pass, from any thread. A read
+    /// that fails leaves its part empty, as the separate reads used to.
+    nonisolated static func readList(_ store: any StoreReader, _ request: ListRequest) -> ListSnapshot {
+        let rows = unique((try? store.threads(in: request.view, accountId: request.accountId, before: nil, limit: request.limit)) ?? [])
+        let unified = (try? store.unreadCounts(accountId: nil)) ?? [:]
+        var byAccount: [String: [String: Int]] = [:]
+        for id in request.accountIds { byAccount[id] = (try? store.unreadCounts(accountId: id)) ?? [:] }
+        let counts: [String: Int]
+        if let id = request.accountId {
+            counts = byAccount[id] ?? ((try? store.unreadCounts(accountId: id)) ?? [:])
+        } else {
+            counts = unified
+        }
+        // Reminders and Need reply are bounded lists; drafts are capped like
+        // the sidebar's other folders.
+        return ListSnapshot(
+            request: request,
+            bundles: (try? store.bundles()) ?? [],
+            rows: rows,
+            counts: counts,
+            unifiedCounts: unified,
+            countsByAccount: byAccount,
+            scheduledAcrossAccounts: (try? store.threads(in: .scheduled, accountId: nil, before: nil, limit: 500)) ?? [],
+            needReplyAcrossAccounts: (try? store.threads(in: .needReply, accountId: nil, before: nil, limit: 500)) ?? [],
+            draftsCount: (try? store.threads(in: .drafts, accountId: request.accountId, before: nil, limit: 500))?.count ?? 0
+        )
+    }
+
+    /// Land one snapshot. Each property is assigned only when it moved: a
+    /// fresh but equal array fires its observers all the same, and every
+    /// row reads the bundles, so a reload that changed nothing used to
+    /// redraw the whole list.
+    private func apply(_ snapshot: ListSnapshot) {
         reloadCount &+= 1
+        // The list moved on while this was read (a tab or folder switch
+        // reloaded the new one on the main actor): nothing of this applies.
+        guard snapshot.request.view == view, snapshot.request.accountId == selectedAccountId else { return }
+        loadedRequest = snapshot.request
         // Before the rows: their regroup folds by bundle.
-        bundles = (try? engine.bundles()) ?? []
-        let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? []
-        rows = Self.unique(page)
-        hasMore = view.isPaged && page.count == Self.pageSize
-        counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? [:]
-        refreshCounts()
-        hasLoadedOnce = true
+        let bundlesMoved = snapshot.bundles != bundles
+        if bundlesMoved { bundles = snapshot.bundles }
+        let more = snapshot.request.view.isPaged && snapshot.rows.count >= snapshot.request.limit
+        if more != hasMore { hasMore = more }
+        if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved { regroup() }
+        if snapshot.counts != counts { counts = snapshot.counts }
+        unifiedCounts = snapshot.unifiedCounts
+        countsByAccount = snapshot.countsByAccount
+        scheduledAcrossAccounts = snapshot.scheduledAcrossAccounts
+        needReplyAcrossAccounts = snapshot.needReplyAcrossAccounts
+        let scheduled = Self.scoped(snapshot.scheduledAcrossAccounts, to: selectedAccountId)
+        if scheduled.count != scheduledCount { scheduledCount = scheduled.count }
+        let due = Self.due(scheduled).count
+        if due != dueCount { dueCount = due }
+        let needReply = Self.scoped(snapshot.needReplyAcrossAccounts, to: selectedAccountId).count
+        if needReply != needReplyCount { needReplyCount = needReply }
+        if snapshot.draftsCount != draftsCount { draftsCount = snapshot.draftsCount }
+        if !hasLoadedOnce { hasLoadedOnce = true }
         refreshOpenThread()
         if isSearching { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }
@@ -661,9 +863,8 @@ final class AppModel {
 
     /// Anything that changes the list can change the icon badge (a read, a
     /// reminder set for later today, another device's edit) and what the
-    /// widgets show. Done once per main-actor turn: a burst of reloads (a
-    /// sync applying several changes, a tab and a folder switch) used to
-    /// rebuild the badge and the widget snapshot from the store each time.
+    /// widgets show. Done once per main-actor turn, from the counts and
+    /// lists the reload just read: nothing is asked of the store again.
     private func refreshStoreSurfaces() {
         guard !storeSurfacesPending else { return }
         storeSurfacesPending = true
@@ -674,17 +875,6 @@ final class AppModel {
             // A no-op when nothing the widgets show moved.
             WidgetSnapshotWriter.publish(self)
         }
-    }
-
-    /// The sidebar / badge totals, from the store. Reminders and Need reply
-    /// are bounded lists; drafts are capped like the sidebar's other folders.
-    private func refreshCounts() {
-        scheduledAcrossAccounts = scheduledThreads(accountId: nil)
-        let scheduled = Self.scoped(scheduledAcrossAccounts, to: selectedAccountId)
-        scheduledCount = scheduled.count
-        dueCount = Self.due(scheduled).count
-        needReplyCount = (try? engine.threads(in: .needReply, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0
-        draftsCount = (try? engine.threads(in: .drafts, accountId: selectedAccountId, before: nil, limit: 500))?.count ?? 0
     }
 
     func loadMoreIfNeeded(current row: ThreadRow) {
@@ -705,7 +895,7 @@ final class AppModel {
     }
 
     /// The first occurrence of each thread id, order kept.
-    static func unique(_ rows: [ThreadRow]) -> [ThreadRow] {
+    nonisolated static func unique(_ rows: [ThreadRow]) -> [ThreadRow] {
         var seen = Set<String>()
         return rows.filter { seen.insert($0.id).inserted }
     }
@@ -925,7 +1115,12 @@ final class AppModel {
             _ = try await engine.syncAll()
             lastSyncAt = Date()
             reloadAccounts()
-            reload()
+            // The round's change notices are already waiting (reloadSoon);
+            // this joins them, so the list is current when the pull-to-
+            // refresh spinner goes, and before the reminders and the index
+            // read the counts.
+            reloadSoon()
+            await settleReloads()
             await rescheduleReminders()
             // What Siri and Spotlight know follows the store, same cadence
             // as the reminder notifications.
@@ -1001,27 +1196,26 @@ final class AppModel {
             // Breathing room for the delta sync and the UI between pages.
             try? await Task.sleep(for: .milliseconds(300))
         }
+        // Whatever the walk brought (old unread mail moves the counts), once
+        // it is over or paused.
+        reloadSoon()
     }
 
     /// Old mail lands below everything loaded, so a list that has not hit
     /// its end picks it up by scrolling; one that has gets the next page
-    /// appended here instead of a reload that would jump the scroll.
+    /// appended here instead of a reload that would jump the scroll. The
+    /// counts and the bounded lists follow through a coalesced reload, a
+    /// few seconds apart while the walk runs: each step used to recount
+    /// every folder and hydrate three lists on the main thread. Scheduled
+    /// and Need reply come back whole, so for them that reload is also
+    /// what replaces the list (only when it changed, so the scroll stays
+    /// put): a thread whose reminder synced in before its mail joins there.
     private func appendOlderRows() {
-        guard !rows.isEmpty else { reload(); return }
-        counts = (try? engine.unreadCounts(accountId: selectedAccountId)) ?? counts
-        refreshCounts()
-        if !view.isPaged {
-            // Scheduled and Need reply come back whole, so there is no page
-            // to append — appending re-listed every thread on each backfill
-            // step, and the duplicate ids took the List down. A thread whose
-            // reminder synced in before its mail joins here; the list is
-            // replaced, and only when it changed, so the scroll stays put.
-            let whole = Self.unique((try? engine.threads(in: view, accountId: selectedAccountId, before: nil, limit: Self.pageSize)) ?? rows)
-            if whole != rows { rows = whole }
-            return
-        }
-        guard !hasMore else { return }
-        appendNextPage()
+        if view.isPaged, !rows.isEmpty, !hasMore { appendNextPage() }
+        let now = Date()
+        guard now.timeIntervalSince(lastBackfillRefresh) >= Self.backfillRefreshInterval else { return }
+        lastBackfillRefresh = now
+        reloadSoon()
     }
 
     /// Deep link from a notification (reminder or new mail): the inbox tab
@@ -1116,9 +1310,14 @@ final class AppModel {
         return await gmailDrafts(limit: 50).first { $0.draft.draftKey == key }
     }
 
-    /// The account a row belongs to, for entities and the index.
+    /// The account a row belongs to, for the rows, the entities and the index.
     func account(for row: ThreadRow) -> MailAccount? {
-        accounts.first { $0.id == row.accountId }
+        accountsById[row.accountId]
+    }
+
+    /// A Jev label's name, for the row chips; nil once the label is gone.
+    func triageLabelName(_ id: String) -> String? {
+        triageLabelNames[id]
     }
 
     /// Resolve a pending deep link to a row, searching the loaded inbox
@@ -1199,7 +1398,9 @@ final class AppModel {
         Haptics.light()
         do {
             try engine.setNeedsReply(threadId: row.id, !row.needsReply)
-            refreshOpenThread()
+            // Now, not on the engine's notice: the row leaves (or joins)
+            // the list as the finger lifts.
+            reload()
             show(row.needsReply ? "Removed from Need reply" : "Marked Need reply")
         } catch { show(error.localizedDescription) }
     }
@@ -1224,8 +1425,7 @@ final class AppModel {
     /// The next 7 days of reminders, across accounts, as local notifications
     /// — after a reminder set here and after every sync (another device's).
     func rescheduleReminders() async {
-        let unread = (try? engine.unreadCounts(accountId: nil))?["inbox"] ?? 0
-        await ReminderScheduler.reschedule(scheduledThreads(accountId: nil), unread: unread)
+        await ReminderScheduler.reschedule(scheduledAcrossAccounts, unread: inboxUnreadAllAccounts)
     }
 
     /// Take the AI's proposal: the same flag or reminder the swipe sets,
@@ -1249,7 +1449,7 @@ final class AppModel {
         Haptics.light()
         do {
             try engine.dismissSuggestion(threadId: row.id)
-            refreshOpenThread()
+            reload()
         } catch { show(error.localizedDescription) }
     }
 
@@ -1274,7 +1474,7 @@ final class AppModel {
     func setTriageLabels(_ row: ThreadRow, _ ids: [String]) {
         do {
             try engine.setManualTriageLabels(threadId: row.id, ids: ids)
-            refreshOpenThread()
+            reload()
         } catch { show(error.localizedDescription) }
     }
 
@@ -1410,8 +1610,15 @@ final class AppModel {
 
     private func perform(_ action: MailAction, on row: ThreadRow, toast text: String? = nil, undo: (() -> Void)? = nil) {
         // Slide the row out immediately in views where the action removes it.
-        if view.archivesOut, case .archive = action { rows.removeAll { $0.id == row.id } }
-        if case .trash = action { rows.removeAll { $0.id == row.id } }
+        // Animated here, where the rows change: the list used to carry an
+        // animation keyed on every row id, which re-laid every row out on
+        // each reload.
+        var leaves = false
+        if view.archivesOut, case .archive = action { leaves = true }
+        if case .trash = action { leaves = true }
+        if leaves {
+            withAnimation(.easeOut(duration: 0.15)) { rows.removeAll { $0.id == row.id } }
+        }
         Task {
             do {
                 try await engine.perform(action, accountId: row.accountId)
@@ -1429,8 +1636,8 @@ final class AppModel {
 
     // MARK: Bundles (docs/bundles.md)
 
-    /// Bumped by every reload: the bundle view re-reads its mail on it (a
-    /// read flag or a star changes no bundle count).
+    /// Bumped by every reload that landed (`apply`): the bundle view re-reads
+    /// its mail on it (a read flag or a star changes no bundle count).
     private(set) var reloadCount = 0
 
     /// The root presents the shared sheets (Remind me, Add to bundle, the
@@ -1490,7 +1697,7 @@ final class AppModel {
 
     func bundle(id: String?) -> BundleItem? {
         guard let id else { return nil }
-        return bundles.first { $0.id == id }
+        return bundlesById[id]
     }
 
     var activeBundles: [BundleItem] { bundles.filter { !$0.isArchived } }

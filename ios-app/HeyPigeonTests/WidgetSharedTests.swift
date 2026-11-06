@@ -17,11 +17,13 @@ struct WidgetSharedTests {
         model = AppModel(engine: engine)
     }
 
-    @Test func snapshotCarriesCountsDueUpcomingAndNeedReply() throws {
+    @Test func snapshotCarriesCountsDueUpcomingAndNeedReply() async throws {
         let now = Date()
         try engine.setReminder(threadId: "t3", at: now.addingTimeInterval(-60), onlyIfNoReply: true)
         try engine.setReminder(threadId: "t4", at: now.addingTimeInterval(3_600), onlyIfNoReply: false)
         try engine.setNeedsReply(threadId: "t5", true)
+        // The snapshot is built from the model's last reload, not the store.
+        await model.settleReloads()
         let s = WidgetSnapshotWriter.build(model, now: now)
         #expect(s.unreadTotal == 2) // t1 and t2 are unread in the sample inbox
         #expect(s.accounts.map(\.name).sorted() == ["Personal", "Work"])

@@ -10,7 +10,7 @@ enum AccountColor: String, CaseIterable, Hashable {
 }
 
 /// A connected Google account. `id` is the engine's account id (today the address).
-struct MailAccount: Identifiable, Hashable {
+struct MailAccount: Identifiable, Hashable, Sendable {
     let id: String
     let email: String
     let displayName: String
@@ -35,7 +35,7 @@ enum TriageLevel: String, Hashable, Comparable {
 
 /// What the AI proposes for a new unread email (crates/ffi/src/suggest.rs):
 /// one tap accepts it, nothing happens until then.
-enum MailSuggestion: Hashable {
+enum MailSuggestion: Hashable, Sendable {
     case needsReply
     case remind(at: Date)
 
@@ -57,7 +57,7 @@ enum MailSuggestion: Hashable {
 
 /// One thread as the lists show it: the store's row, no bodies. Immutable;
 /// a change is a fresh row from the engine.
-struct ThreadRow: Identifiable, Hashable {
+struct ThreadRow: Identifiable, Hashable, Sendable {
     let id: String
     let accountId: String
     let subject: String
@@ -112,7 +112,7 @@ struct ThreadRow: Identifiable, Hashable {
 
 /// One message of an open thread, with its body when the store has it.
 /// `to` holds addresses, the account's own as "me".
-struct MessageItem: Identifiable, Hashable {
+struct MessageItem: Identifiable, Hashable, Sendable {
     let id: String
     let fromName: String
     let fromAddress: String
@@ -131,7 +131,7 @@ struct MessageItem: Identifiable, Hashable {
 }
 
 /// An open thread: its row and every stored message, drafts included.
-struct ThreadDetail: Hashable {
+struct ThreadDetail: Hashable, Sendable {
     let thread: ThreadRow
     let messages: [MessageItem]
 
@@ -265,7 +265,7 @@ struct AttachmentItem: Identifiable, Hashable {
 }
 
 /// A user-created Gmail label (system labels map to folders).
-struct MailLabelItem: Identifiable, Hashable {
+struct MailLabelItem: Identifiable, Hashable, Sendable {
     let id: String
     let accountId: String
     let name: String
@@ -273,7 +273,7 @@ struct MailLabelItem: Identifiable, Hashable {
 
 /// One app-local Jev triage category (Settings "Triage" list) — the labels
 /// in the bottom pill.
-struct TriageLabelItem: Identifiable, Hashable {
+struct TriageLabelItem: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
 }
@@ -303,7 +303,7 @@ enum BundleCategory: String, CaseIterable, Identifiable, Hashable {
 
 /// One bundle as the Bundles list shows it: the mail about one specific
 /// thing (a trip, an order, a project), app-local and synced.
-struct BundleItem: Identifiable, Hashable {
+struct BundleItem: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let category: BundleCategory
@@ -592,7 +592,7 @@ struct AIProviderInfo: Identifiable, Hashable {
 }
 
 /// What the root list shows. The folder set mirrors the desktop sidebar.
-enum MailView: Hashable {
+enum MailView: Hashable, Sendable {
     case inbox, scheduled, needReply, starred, drafts, sent, archive, all, spam, trash
     case label(id: String, name: String)
 
@@ -877,6 +877,40 @@ struct AnalysisProgress: Hashable, Sendable {
     var isVisible: Bool { total >= Self.visibleFrom }
 }
 
+/// The store's synchronous, local reads that may run off the main actor
+/// (`MailEngine.readInBackground`): what a list reload, the badge, the
+/// widgets and the Spotlight refresh read together. The main-actor engine
+/// offers the same reads, one call at a time.
+protocol StoreReader: Sendable {
+    func accounts() throws -> [MailAccount]
+    func labels() throws -> [MailLabelItem]
+    func bundles() throws -> [BundleItem]
+    func unreadCounts(accountId: String?) throws -> [String: Int]
+    func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
+    func threadRow(id: String) throws -> ThreadRow?
+    func threadLocal(id: String) throws -> ThreadDetail?
+}
+
+/// `StoreReader` over the main-actor engine itself: the reads a synchronous
+/// reload makes on the main actor, and the mock's `readInBackground`, which
+/// runs in place. Only ever used on the main actor, which `assumeIsolated`
+/// checks.
+struct MainActorStoreReader: StoreReader, @unchecked Sendable {
+    let engine: any MailEngine
+
+    func accounts() throws -> [MailAccount] { try MainActor.assumeIsolated { try engine.accounts() } }
+    func labels() throws -> [MailLabelItem] { try MainActor.assumeIsolated { try engine.labels() } }
+    func bundles() throws -> [BundleItem] { try MainActor.assumeIsolated { try engine.bundles() } }
+    func unreadCounts(accountId: String?) throws -> [String: Int] {
+        try MainActor.assumeIsolated { try engine.unreadCounts(accountId: accountId) }
+    }
+    func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow] {
+        try MainActor.assumeIsolated { try engine.threads(in: view, accountId: accountId, before: before, limit: limit) }
+    }
+    func threadRow(id: String) throws -> ThreadRow? { try MainActor.assumeIsolated { try engine.threadRow(id: id) } }
+    func threadLocal(id: String) throws -> ThreadDetail? { try MainActor.assumeIsolated { try engine.threadLocal(id: id) } }
+}
+
 /// The engine the app talks to. Reads are synchronous and local; anything
 /// that can touch the network is async.
 @MainActor
@@ -906,6 +940,13 @@ protocol MailEngine: AnyObject {
     /// short word ranks nearly every message and froze the keyboard when
     /// it ran on the main actor. No results on an error.
     func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow]
+    /// Run `read` off the main actor against the same store: one pass of
+    /// synchronous reads (`StoreReader`) that lands as one value. The list's
+    /// reload, the counts behind the badge and the widgets, and the Spotlight
+    /// refresh go through here, so the main thread only draws (each used to
+    /// run a dozen queries on it). The mock answers in memory and runs
+    /// `read` in place.
+    func readInBackground<T: Sendable>(_ read: @escaping @Sendable (any StoreReader) throws -> T) async throws -> T
     func thread(id: String) async throws -> ThreadDetail?
     /// The thread with whatever messages the store already holds — bodies
     /// only when it was opened before. No network: what the Spotlight index
@@ -1036,6 +1077,10 @@ extension MailEngine {
     /// The mock answers in memory, so the plain call is enough.
     func searchInBackground(_ query: String, limit: Int) async -> [ThreadRow] {
         (try? search(query, limit: limit)) ?? []
+    }
+    /// The mock answers in memory: the reads run here, in place.
+    func readInBackground<T: Sendable>(_ read: @escaping @Sendable (any StoreReader) throws -> T) async throws -> T {
+        try read(MainActorStoreReader(engine: self))
     }
     /// The writing calls without a context: the phone's composer, the
     /// Reply intent and the triage agent send the text alone.

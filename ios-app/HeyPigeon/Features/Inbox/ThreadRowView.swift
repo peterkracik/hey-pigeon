@@ -16,7 +16,7 @@ struct ThreadRowView: View {
     var showsBundle = true
     @Environment(AppModel.self) private var model
 
-    private var account: MailAccount? { model.accounts.first { $0.id == row.accountId } }
+    private var account: MailAccount? { model.account(for: row) }
 
     private var tone: Color { Theme.textPrimary }
 
@@ -119,7 +119,7 @@ struct ThreadRowView: View {
 
     /// Jev labels on the row, by name (at most two; the rest is in the thread).
     private var triageNames: [String] {
-        row.triageLabelIds.prefix(2).compactMap { id in model.triageLabels.first { $0.id == id }?.name }
+        row.triageLabelIds.prefix(2).compactMap { model.triageLabelName($0) }
     }
 
     private var timeText: String {

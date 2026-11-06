@@ -314,6 +314,48 @@ pub enum ThreadFilter {
 }
 
 impl ThreadFilter {
+    /// The folders the sidebar counts unread mail for, with the keys the
+    /// shells read them under (`Store::unread_counts`): the folder names in
+    /// lowercase. Labels join as `label:<id>`.
+    pub const COUNTED_FOLDERS: [(&'static str, ThreadFilter); 8] = [
+        ("inbox", ThreadFilter::Inbox),
+        ("all", ThreadFilter::All),
+        ("starred", ThreadFilter::Starred),
+        ("sent", ThreadFilter::Sent),
+        ("drafts", ThreadFilter::Drafts),
+        ("archive", ThreadFilter::Archive),
+        ("spam", ThreadFilter::Spam),
+        ("trash", ThreadFilter::Trash),
+    ];
+
+    /// Whether `t` belongs to this folder or label: the folder rules in
+    /// Rust. The in-memory store lists with it, and the SQLite store
+    /// classifies the unread rows with it (`unread_counts`) instead of
+    /// scanning the table once per folder. Keep in lockstep with the SQLite
+    /// adapter's `thread_filter_sql`.
+    pub fn matches(&self, t: &Thread) -> bool {
+        let has = |l: &str| t.labels.iter().any(|x| x == l);
+        // Junk only when trashed/spam AND out of the inbox — a partially-
+        // trashed thread keeps INBOX and stays in All/Starred/Sent/label views.
+        let junk = (has("TRASH") || has("SPAM")) && !has("INBOX");
+        match self {
+            // A reminder or "needs reply" moves a thread out of the inbox into
+            // Scheduled / Need reply (it stays in All).
+            ThreadFilter::Inbox => {
+                t.is_inbox && !t.is_archived && t.scheduled_at.is_none() && !t.needs_reply
+            }
+            ThreadFilter::All => !junk,
+            ThreadFilter::Starred => has("STARRED") && !junk,
+            ThreadFilter::Sent => has("SENT") && !junk,
+            // A trashed draft belongs to Trash only (Gmail hides it from Drafts).
+            ThreadFilter::Drafts => has("DRAFT") && !has("TRASH"),
+            ThreadFilter::Archive => t.is_archived,
+            ThreadFilter::Spam => has("SPAM"),
+            ThreadFilter::Trash => has("TRASH"),
+            ThreadFilter::Label(id) => has(id) && !junk,
+        }
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "inbox" => Self::Inbox,

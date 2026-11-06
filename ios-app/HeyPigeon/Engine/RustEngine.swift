@@ -18,6 +18,10 @@ final class RustEngine: MailEngine {
     var onAnalysisProgress: ((AnalysisProgress) -> Void)?
 
     private let engine: Engine
+    /// The same reads as the ones below, usable off the main actor
+    /// (`readInBackground`); the main-actor methods answer through it too,
+    /// so there is one mapping.
+    private let reader: RustStoreReader
     private var listener: Listener?
 
     /// `dataDir` is the app's Application Support directory; the database,
@@ -28,6 +32,7 @@ final class RustEngine: MailEngine {
             dataDir: dataDir.path,
             oauth: OauthClient(clientId: clientId, clientSecret: nil)
         )
+        reader = RustStoreReader(engine: engine)
         let l = Listener(owner: self)
         listener = l
         engine.setListener(listener: l)
@@ -78,9 +83,7 @@ final class RustEngine: MailEngine {
         }
     }
 
-    func accounts() throws -> [MailAccount] {
-        try engine.listAccounts().map(MailAccount.init)
-    }
+    func accounts() throws -> [MailAccount] { try reader.accounts() }
 
     func accountStates() throws -> [AccountState] {
         try engine.accountStatus().map { s in
@@ -102,34 +105,21 @@ final class RustEngine: MailEngine {
         }
     }
 
-    func labels() throws -> [MailLabelItem] {
-        try engine.listLabels().map { MailLabelItem(id: $0.id, accountId: $0.accountId, name: $0.name) }
-    }
+    func labels() throws -> [MailLabelItem] { try reader.labels() }
 
     func triageLabels() throws -> [TriageLabelItem] {
         try engine.listTriageLabels().map { TriageLabelItem(id: $0.id, name: $0.name) }
     }
 
-    func unreadCounts(accountId: String?) throws -> [String: Int] {
-        try engine.unreadCounts(accountId: accountId).mapValues(Int.init)
-    }
+    func unreadCounts(accountId: String?) throws -> [String: Int] { try reader.unreadCounts(accountId: accountId) }
 
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow] {
-        let rows: [MailThread]
-        switch view {
-        // Bounded lists, whole: MailView.isPaged is false for both, so the
-        // model never asks for a page after them.
-        case .scheduled:
-            rows = try engine.listScheduled().filter { accountId == nil || $0.accountId == accountId }
-        case .needReply:
-            rows = try engine.listNeedsReply().filter { accountId == nil || $0.accountId == accountId }
-        default:
-            rows = try engine.listThreads(
-                filter: view.filter, accountId: accountId,
-                before: before.map(\.epochMs), limit: UInt32(limit)
-            )
-        }
-        return rows.map { ThreadRow($0) }
+        try reader.threads(in: view, accountId: accountId, before: before, limit: limit)
+    }
+
+    func readInBackground<T: Sendable>(_ read: @escaping @Sendable (any StoreReader) throws -> T) async throws -> T {
+        let reader = reader
+        return try await Task.detached(priority: .userInitiated) { try read(reader) }.value
     }
 
     func search(_ query: String, limit: Int) throws -> [ThreadRow] {
@@ -156,11 +146,7 @@ final class RustEngine: MailEngine {
         return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
     }
 
-    func threadLocal(id: String) throws -> ThreadDetail? {
-        guard let t = try engine.getThreadLocal(threadId: id) else { return nil }
-        let me = t.thread.accountId
-        return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
-    }
+    func threadLocal(id: String) throws -> ThreadDetail? { try reader.threadLocal(id: id) }
 
     func draft(threadId: String) async throws -> SendDraft? {
         guard let d = try await engine.loadDraft(threadId: threadId) else { return nil }
@@ -193,9 +179,7 @@ final class RustEngine: MailEngine {
         return s.string
     }
 
-    func threadRow(id: String) throws -> ThreadRow? {
-        try engine.getThreadRow(threadId: id).map { ThreadRow($0) }
-    }
+    func threadRow(id: String) throws -> ThreadRow? { try reader.threadRow(id: id) }
 
     func attachments(threadId: String) async throws -> [AttachmentItem] {
         try await engine.listAttachments(threadId: threadId).map {
@@ -389,7 +373,7 @@ final class RustEngine: MailEngine {
     func analysisProgress() -> AnalysisProgress { AnalysisProgress(engine.analysisProgress()) }
     func analyzePending() async -> AnalysisProgress { AnalysisProgress(await engine.analyzePending()) }
 
-    func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
+    func bundles() throws -> [BundleItem] { try reader.bundles() }
     func bundleContents(id: String) throws -> BundleContents? {
         try engine.bundleDetail(bundleId: id).map {
             BundleContents(
@@ -425,6 +409,55 @@ final class RustEngine: MailEngine {
 }
 
 // MARK: - Mapping
+
+/// The store's reads over the UniFFI engine, from any thread: the Rust side
+/// serializes access to the database itself, and the records are mapped
+/// here with the same initializers the main-actor methods use.
+struct RustStoreReader: StoreReader, Sendable {
+    let engine: Engine
+
+    func accounts() throws -> [MailAccount] {
+        try engine.listAccounts().map(MailAccount.init)
+    }
+
+    func labels() throws -> [MailLabelItem] {
+        try engine.listLabels().map { MailLabelItem(id: $0.id, accountId: $0.accountId, name: $0.name) }
+    }
+
+    func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
+
+    func unreadCounts(accountId: String?) throws -> [String: Int] {
+        try engine.unreadCounts(accountId: accountId).mapValues(Int.init)
+    }
+
+    func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow] {
+        let rows: [MailThread]
+        switch view {
+        // Bounded lists, whole: MailView.isPaged is false for both, so the
+        // model never asks for a page after them.
+        case .scheduled:
+            rows = try engine.listScheduled().filter { accountId == nil || $0.accountId == accountId }
+        case .needReply:
+            rows = try engine.listNeedsReply().filter { accountId == nil || $0.accountId == accountId }
+        default:
+            rows = try engine.listThreads(
+                filter: view.filter, accountId: accountId,
+                before: before.map(\.epochMs), limit: UInt32(limit)
+            )
+        }
+        return rows.map { ThreadRow($0) }
+    }
+
+    func threadRow(id: String) throws -> ThreadRow? {
+        try engine.getThreadRow(threadId: id).map { ThreadRow($0) }
+    }
+
+    func threadLocal(id: String) throws -> ThreadDetail? {
+        guard let t = try engine.getThreadLocal(threadId: id) else { return nil }
+        let me = t.thread.accountId
+        return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
+    }
+}
 
 private extension Date {
     init(epochMs: Int64) { self.init(timeIntervalSince1970: Double(epochMs) / 1000) }

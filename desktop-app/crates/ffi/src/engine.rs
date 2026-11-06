@@ -254,35 +254,13 @@ impl Engine {
     }
 
     /// Unread thread count per view key: the folder names of `ThreadFilter`
-    /// in lowercase (`inbox`, `starred`, …) plus `label:<id>`.
+    /// in lowercase (`inbox`, `starred`, …) plus `label:<id>`. One pass over
+    /// the unread rows in the store (`Store::unread_counts`).
     pub fn unread_counts(
         &self,
         account_id: Option<String>,
     ) -> Result<HashMap<String, i64>, EngineError> {
-        use domain::ThreadFilter as F;
-        let mut out = HashMap::new();
-        for (key, filter) in [
-            ("inbox", F::Inbox),
-            ("all", F::All),
-            ("starred", F::Starred),
-            ("sent", F::Sent),
-            ("drafts", F::Drafts),
-            ("archive", F::Archive),
-            ("spam", F::Spam),
-            ("trash", F::Trash),
-        ] {
-            out.insert(
-                key.to_string(),
-                self.store.count_unread(account_id.as_ref(), &filter)?,
-            );
-        }
-        for label in self.store.list_labels()? {
-            let n = self
-                .store
-                .count_unread(account_id.as_ref(), &F::Label(label.id.clone()))?;
-            out.insert(format!("label:{}", label.id), n);
-        }
-        Ok(out)
+        Ok(self.store.unread_counts(account_id.as_ref())?)
     }
 
     /// Every scheduled ("remind me") thread still in the inbox, past the

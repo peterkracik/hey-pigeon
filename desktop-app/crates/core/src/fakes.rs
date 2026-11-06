@@ -85,28 +85,10 @@ impl MemStore {
     }
 }
 
+/// The folder rules live on the filter (`ThreadFilter::matches`), shared
+/// with the SQLite store's unread counts.
 fn matches_filter(t: &Thread, filter: &ThreadFilter) -> bool {
-    let has = |l: &str| t.labels.iter().any(|x| x == l);
-    // Junk only when trashed/spam AND out of the inbox — a partially-trashed
-    // thread keeps INBOX and stays in All/Starred/Sent/label views.
-    let junk = (has("TRASH") || has("SPAM")) && !has("INBOX");
-    match filter {
-        // A reminder or "needs reply" moves a thread out of the inbox into
-        // Scheduled / Need reply (it stays in All). Keep in lockstep with
-        // the SQLite adapter's thread_filter_sql.
-        ThreadFilter::Inbox => {
-            t.is_inbox && !t.is_archived && t.scheduled_at.is_none() && !t.needs_reply
-        }
-        ThreadFilter::All => !junk,
-        ThreadFilter::Starred => has("STARRED") && !junk,
-        ThreadFilter::Sent => has("SENT") && !junk,
-        // A trashed draft belongs to Trash only (Gmail hides it from Drafts).
-        ThreadFilter::Drafts => has("DRAFT") && !has("TRASH"),
-        ThreadFilter::Archive => t.is_archived,
-        ThreadFilter::Spam => has("SPAM"),
-        ThreadFilter::Trash => has("TRASH"),
-        ThreadFilter::Label(id) => has(id) && !junk,
-    }
+    filter.matches(t)
 }
 
 impl Store for MemStore {

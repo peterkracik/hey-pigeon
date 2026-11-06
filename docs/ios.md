@@ -143,7 +143,10 @@ Three lines, flat, hairline separators, no cards and no avatar — about
 - Pagination is keyset (`before = last row's last_msg_at`), 50 rows a page.
   Scheduled and Need reply are bounded lists and come back whole (never
   paged). The loaded rows never hold a thread twice, whatever the engine
-  returns: SwiftUI's `List` aborts the process on duplicate row ids.
+  returns: SwiftUI's `List` aborts the process on duplicate row ids. A
+  reload re-reads the pages already on screen, off the main thread, and
+  replaces the rows only when they changed, so a sync landing mid-scroll
+  neither cuts the list back to one page nor redraws it.
 
 ### Platform floor: iOS 27
 

@@ -336,6 +336,29 @@ pub trait Store {
 
     fn upsert_thread(&self, thread: &Thread) -> Result<(), StoreError>;
     fn upsert_message(&self, message: &Message) -> Result<(), StoreError>;
+    /// A thread and its messages as one write. The default is the two calls
+    /// above; a store with transactions makes it one commit.
+    fn upsert_thread_with_messages(
+        &self,
+        thread: &Thread,
+        messages: &[Message],
+    ) -> Result<(), StoreError> {
+        self.upsert_thread(thread)?;
+        for m in messages {
+            self.upsert_message(m)?;
+        }
+        Ok(())
+    }
+    /// A provider page of threads with their messages as one write. A sync
+    /// page used to be hundreds of commits (one per thread and per message),
+    /// each waiting on the disk and each taking the store's lock while the
+    /// UI waited to read.
+    fn upsert_page(&self, page: &[(Thread, Vec<Message>)]) -> Result<(), StoreError> {
+        for (thread, messages) in page {
+            self.upsert_thread_with_messages(thread, messages)?;
+        }
+        Ok(())
+    }
     /// Remove one message (history `messageDeleted`). Missing id is a no-op.
     fn delete_message(&self, message_id: &MessageId) -> Result<(), StoreError>;
     /// Remove a thread and its messages (last message deleted/trashed).
@@ -367,6 +390,26 @@ pub trait Store {
             .iter()
             .filter(|t| !t.is_read)
             .count() as i64)
+    }
+
+    /// Unread threads per counted folder (`ThreadFilter::COUNTED_FOLDERS`,
+    /// by their keys) and per stored label (`label:<id>`): the sidebar
+    /// badges, the app badge and the widgets, after every reload. The
+    /// default asks `count_unread` once per folder and label; the SQLite
+    /// adapter does it in one pass over the unread rows.
+    fn unread_counts(
+        &self,
+        account_id: Option<&AccountId>,
+    ) -> Result<std::collections::HashMap<String, i64>, StoreError> {
+        let mut out = std::collections::HashMap::new();
+        for (key, filter) in ThreadFilter::COUNTED_FOLDERS {
+            out.insert(key.to_string(), self.count_unread(account_id, &filter)?);
+        }
+        for label in self.list_labels()? {
+            let n = self.count_unread(account_id, &ThreadFilter::Label(label.id.clone()))?;
+            out.insert(format!("label:{}", label.id), n);
+        }
+        Ok(out)
     }
 
     /// Local full-text search: ranked threads + snippet preview (FTS5 in the

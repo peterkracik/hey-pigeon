@@ -48,6 +48,55 @@ struct AppModelTests {
         #expect(seen.contains(AnalysisProgress(done: MockEngine.analysisBatch, total: total)))
     }
 
+    // MARK: Reloading
+
+    /// The engine's change notices share one reload a moment later, read off
+    /// the main actor: a sync round notifies several times in a row.
+    @Test func changeNoticesShareOneReload() async {
+        let before = model.reloadCount
+        for _ in 0..<5 { engine.onThreadsUpdated?() }
+        #expect(model.reloadCount == before) // not on this turn
+        await model.settleReloads()
+        #expect(model.reloadCount == before + 1)
+    }
+
+    /// A reload that finds the store unchanged leaves the rows alone (no
+    /// redraw, no animation); one that finds a change moves them.
+    @Test func aReloadThatMovesNothingLeavesTheRowsAlone() async throws {
+        let generation = model.listGeneration
+        model.reload()
+        engine.onThreadsUpdated?()
+        await model.settleReloads()
+        #expect(model.listGeneration == generation)
+        try engine.setNeedsReply(threadId: "t1", true)
+        await model.settleReloads()
+        #expect(model.listGeneration > generation)
+        #expect(!model.rows.contains { $0.id == "t1" })
+    }
+
+    /// A reload keeps the pages the user scrolled through (it used to cut
+    /// the list back to the first page under the finger); another view
+    /// starts over at one page.
+    @Test func reloadKeepsTheLoadedPages() async throws {
+        let base = Date().addingTimeInterval(-30 * 86_400)
+        engine.insert((0..<120).map { i in makeRow("old\(i)", at: base.addingTimeInterval(-Double(i) * 60)) })
+        await model.settleReloads()
+        let total = 128 // the sample inbox's 8 and these
+        #expect(model.rows.count == AppModel.pageSize && model.hasMore)
+        model.loadMoreIfNeeded(current: try #require(model.rows.last))
+        #expect(model.rows.count == 2 * AppModel.pageSize && model.hasMore)
+        model.loadMoreIfNeeded(current: try #require(model.rows.last))
+        #expect(model.rows.count == total && !model.hasMore)
+        model.reload()
+        #expect(model.rows.count == total && !model.hasMore)
+        try engine.setNeedsReply(threadId: "t1", true)
+        await model.settleReloads()
+        #expect(model.rows.count == total - 1 && !model.hasMore)
+        model.navigate(to: .scheduled)
+        model.navigate(to: .inbox)
+        #expect(model.rows.count == AppModel.pageSize && model.hasMore)
+    }
+
     // MARK: Grouping
 
     @Test func inboxGroupsPinnedFirstThenByDay() {
@@ -129,6 +178,7 @@ struct AppModelTests {
         model.toast?.undo?()
         try await Task.sleep(for: .milliseconds(50))
         #expect(try engine.threadRow(id: "t3")?.isDone == false)
+        await model.settleReloads() // the engine's notice brings the row back
         #expect(model.rows.contains { $0.id == "t3" })
     }
 
@@ -148,11 +198,13 @@ struct AppModelTests {
         #expect(model.composeDraft == nil)
     }
 
-    @Test func reminderListIsCachedForTheBadgeAndTheWidgets() throws {
+    @Test func reminderListIsCachedForTheBadgeAndTheWidgets() async throws {
         #expect(model.scheduledAcrossAccounts.isEmpty && model.dueCount == 0)
         try engine.setReminder(threadId: "t2", at: Date().addingTimeInterval(-60), onlyIfNoReply: false)
         try engine.setReminder(threadId: "t3", at: Date().addingTimeInterval(3_600), onlyIfNoReply: false)
+        await model.settleReloads()
         #expect(Set(model.scheduledAcrossAccounts.map(\.id)) == ["t2", "t3"])
+        #expect(model.inboxUnreadAllAccounts == 1) // t1 stays unread; t2 left the inbox for Remind me
         #expect(model.scheduledCount == 2 && model.dueCount == 1)
         // One account: the counts narrow, the cross-account cache does not.
         model.selectedAccountId = "me@work.test"

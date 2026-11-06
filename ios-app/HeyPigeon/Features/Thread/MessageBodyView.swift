@@ -11,6 +11,12 @@
 // wrapped for SwiftUI by the platform's representable. The rules — CSP, the
 // link policy, the injected scripts — are the same on both and live in the
 // platform-neutral parts of `HTMLView`.
+//
+// Both report the user's text selection (the native view through its
+// delegate, the web view through an app user script, which runs with the
+// mail's own scripts off): for a received message with an AI provider
+// configured, a translate circle follows the selection and opens the
+// translation beside it (TranslationPanel.swift).
 
 import SwiftUI
 import WebKit
@@ -28,8 +34,15 @@ struct MessageBodyView: View {
     /// as `cid:` (a signature logo). Fetched from Gmail and inlined as
     /// `data:` URIs, which the CSP allows; a web view cannot load `cid:`.
     var inlineImages: [AttachmentItem] = []
+    /// Whether a selection offers the translate circle (received mail; the
+    /// circle also needs an AI provider that can answer).
+    var translatable = false
     /// The HTML with its `cid:` pictures inlined, once they are here.
     @State private var inlinedHTML: String?
+    /// The selection in one of the body's views, while there is one.
+    @State private var selection: PartSelection?
+    /// The translation the panel shows, anchored where the selection was.
+    @State private var translation: TranslationRequest?
     /// "Load": this message's web pictures, this time only.
     @State private var loadOnce = false
     @State private var height: CGFloat = 80
@@ -62,14 +75,20 @@ struct MessageBodyView: View {
                     }
                 }
                 HTMLView(html: inlinedHTML ?? html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, showQuoted: showQuoted,
-                         height: $height, hasQuote: $hasQuote) { url in open(url) }
+                         height: $height, hasQuote: $hasQuote, onLink: { url in open(url) },
+                         onSelection: { select($0, in: .html) })
                     .frame(height: height)
+                    .translatable(.html, selection: selection, translation: $translation, enabled: offersTranslation)
                     .task(id: InlineImages.taskKey(html: html, images: inlineImages)) { await inlinePictures(html) }
                 if hasQuote && !showQuoted { quoteButton }
             } else if let split = Self.splitQuoted(text) {
-                SelectableText(text: Self.linkified(split.main)) { url in open(url) }
+                SelectableText(text: Self.linkified(split.main), onLink: { url in open(url) },
+                               onSelection: { select($0, in: .main) })
+                    .translatable(.main, selection: selection, translation: $translation, enabled: offersTranslation)
                 if showQuoted {
-                    SelectableText(text: Self.linkified(split.quoted, style: .subheadline, color: Theme.textSecondary)) { url in open(url) }
+                    SelectableText(text: Self.linkified(split.quoted, style: .subheadline, color: Theme.textSecondary),
+                                   onLink: { url in open(url) }, onSelection: { select($0, in: .quoted) })
+                        .translatable(.quoted, selection: selection, translation: $translation, enabled: offersTranslation)
                         .padding(.leading, 10)
                         .overlay(alignment: .leading) { Rectangle().fill(Theme.separator).frame(width: 2) }
                 } else {
@@ -79,9 +98,28 @@ struct MessageBodyView: View {
                 // A UITextView, not Text + .textSelection: on iOS that only
                 // copies the whole body, with no range selection or the
                 // system edit menu (Look Up, Translate, Share…).
-                SelectableText(text: Self.linkified(text)) { url in open(url) }
+                SelectableText(text: Self.linkified(text), onLink: { url in open(url) },
+                               onSelection: { select($0, in: .main) })
+                    .translatable(.main, selection: selection, translation: $translation, enabled: offersTranslation)
             }
         }
+    }
+
+    /// The translate circle needs received mail and a provider that answers
+    /// (Settings › AI); without one the selection stays the system's alone.
+    private var offersTranslation: Bool { translatable && model.aiConfigured }
+
+    /// A view's selection changed. Only the view that holds the selection
+    /// may clear it: the views report in no fixed order when the selection
+    /// moves from one to another, and a late "nothing selected" from the
+    /// old view must not take the new selection's circle away.
+    private func select(_ s: BodySelection?, in part: BodyPart) {
+        let next: PartSelection?
+        if let s, s.isUsable { next = PartSelection(part: part, selection: s) }
+        else if selection?.part == part { next = nil }
+        else { return }
+        guard next != selection else { return }
+        withAnimation(.snappy(duration: 0.2)) { selection = next }
     }
 
     /// Fetch the pictures the HTML refers to by `cid:` (cached after the
@@ -160,15 +198,87 @@ struct MessageBodyView: View {
     }
 }
 
+// MARK: - Selection → translate
+
+/// Which of the body's views a selection, or the translation it opened, is in.
+private enum BodyPart: Hashable {
+    case html, main, quoted
+}
+
+/// The selection and the view it is in.
+private struct PartSelection: Equatable {
+    let part: BodyPart
+    let selection: BodySelection
+}
+
+/// What the translation panel shows and where it points.
+private struct TranslationRequest: Identifiable {
+    let id = UUID()
+    let part: BodyPart
+    let text: String
+    /// The selection's rect in `part`'s coordinates: the popover's anchor.
+    let anchor: CGRect
+}
+
+private extension View {
+    /// The translate circle beside this view's selection, and the panel it
+    /// opens, anchored to the selection. Every body view gets one; only the
+    /// one whose part holds the selection (or the open request) shows
+    /// anything, so a second view never presents the same panel again.
+    func translatable(_ part: BodyPart, selection: PartSelection?, translation: Binding<TranslationRequest?>,
+                      enabled: Bool) -> some View {
+        modifier(SelectionTranslation(part: part, selection: selection?.part == part ? selection?.selection : nil,
+                                      translation: translation, enabled: enabled))
+    }
+}
+
+private struct SelectionTranslation: ViewModifier {
+    let part: BodyPart
+    let selection: BodySelection?
+    @Binding var translation: TranslationRequest?
+    let enabled: Bool
+
+    /// This part's request, or nil: the popover of another part stays shut.
+    private var shown: Binding<TranslationRequest?> {
+        Binding(
+            get: { translation?.part == part ? translation : nil },
+            set: { if $0 == nil, translation?.part == part { translation = nil } }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .topLeading) {
+                if enabled, let selection {
+                    // The reader gives the view's width for the placement; it
+                    // has no body of its own, so taps outside the circle still
+                    // reach the text under it.
+                    GeometryReader { geo in
+                        TranslateBadge {
+                            translation = TranslationRequest(part: part, text: selection.text, anchor: selection.rect)
+                        }
+                        .position(SelectionBadgeGeometry.center(for: selection, width: geo.size.width))
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .popover(item: shown, attachmentAnchor: .rect(.rect(translation?.anchor ?? .zero))) { request in
+                TranslationPanel(text: request.text)
+            }
+    }
+}
+
 // MARK: - Selectable plain text
 
 #if canImport(UIKit)
 /// Read-only, selectable plain-text body: long-press or double-tap selects a
 /// range and brings up the native edit menu. Link taps go to `onLink` (the
-/// default browser, same as HTML mail).
+/// default browser, same as HTML mail); the selection, with where it ends,
+/// to `onSelection` (nil once nothing is selected).
 private struct SelectableText: UIViewRepresentable {
     let text: NSAttributedString
     let onLink: (URL) -> Void
+    var onSelection: ((BodySelection?) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
 
@@ -193,10 +303,32 @@ private struct SelectableText: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.onLink = onLink
+        context.coordinator.onSelection = onSelection
         // Only on a real change: re-assigning drops the user's selection.
         guard context.coordinator.shown != text else { return }
         context.coordinator.shown = text
+        // The reset's selection callback would write view state from inside
+        // this update; nothing is selected after it anyway.
+        context.coordinator.onSelection = nil
         view.attributedText = text
+        context.coordinator.onSelection = onSelection
+    }
+
+    /// The selected range as `BodySelection`: the union of its line rects
+    /// and the trailing edge of its last line (where the end handle sits),
+    /// in the text view's coordinates — the view does not scroll, so those
+    /// are the representable's. Nil when nothing is selected.
+    static func selection(in view: UITextView) -> BodySelection? {
+        guard let range = view.selectedTextRange, !range.isEmpty, let text = view.text(in: range) else { return nil }
+        // Zero-size rects mark the handles' ends; the lines are the rest.
+        let rects = view.selectionRects(for: range).map(\.rect).filter { $0.width > 0 && $0.height > 0 }
+        guard var union = rects.first else { return nil }
+        var last = union
+        for r in rects.dropFirst() {
+            union = union.union(r)
+            if r.maxY > last.maxY || (r.maxY == last.maxY && r.maxX > last.maxX) { last = r }
+        }
+        return BodySelection(text: text, rect: union, end: CGPoint(x: last.maxX, y: last.midY), lineHeight: last.height)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
@@ -210,6 +342,7 @@ private struct SelectableText: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var onLink: (URL) -> Void
+        var onSelection: ((BodySelection?) -> Void)?
         var shown: NSAttributedString?
         init(onLink: @escaping (URL) -> Void) { self.onLink = onLink }
 
@@ -219,15 +352,21 @@ private struct SelectableText: UIViewRepresentable {
             guard case let .link(url) = textItem.content else { return defaultAction }
             return UIAction { [onLink] _ in onLink(url) }
         }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            onSelection?(SelectableText.selection(in: textView))
+        }
     }
 }
 #else
 /// The Mac twin: an NSTextView that is as tall as its text, selectable,
 /// with the system's Look Up / Translate / Share on the selection. Link
-/// clicks go to `onLink`, like the HTML view's.
+/// clicks go to `onLink`, like the HTML view's; the selection to
+/// `onSelection`, as on iOS.
 private struct SelectableText: NSViewRepresentable {
     let text: NSAttributedString
     let onLink: (URL) -> Void
+    var onSelection: ((BodySelection?) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
 
@@ -255,10 +394,31 @@ private struct SelectableText: NSViewRepresentable {
 
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.onLink = onLink
+        context.coordinator.onSelection = onSelection
         // Only on a real change: re-assigning drops the user's selection.
         guard context.coordinator.shown != text else { return }
         context.coordinator.shown = text
+        // As on iOS: no selection callback from inside this update.
+        context.coordinator.onSelection = nil
         view.textStorage?.setAttributedString(text)
+        context.coordinator.onSelection = onSelection
+    }
+
+    /// The selected range as `BodySelection`, from the TextKit 1 layout
+    /// manager the view was made with: the glyphs' bounding rect and the
+    /// last glyph's trailing edge, moved by the container origin into the
+    /// view's (flipped, top-left) coordinates. Nil when nothing is selected.
+    static func selection(in view: NSTextView) -> BodySelection? {
+        let range = view.selectedRange()
+        guard range.length > 0, let manager = view.layoutManager, let container = view.textContainer else { return nil }
+        let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        let origin = view.textContainerOrigin
+        let rect = manager.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: origin.x, dy: origin.y)
+        let last = manager.boundingRect(forGlyphRange: NSRange(location: glyphs.upperBound - 1, length: 1), in: container)
+            .offsetBy(dx: origin.x, dy: origin.y)
+        let text = (view.string as NSString).substring(with: range)
+        return BodySelection(text: text, rect: rect, end: CGPoint(x: last.maxX, y: last.midY), lineHeight: max(last.height, 1))
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
@@ -272,6 +432,7 @@ private struct SelectableText: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onLink: (URL) -> Void
+        var onSelection: ((BodySelection?) -> Void)?
         var shown: NSAttributedString?
         init(onLink: @escaping (URL) -> Void) { self.onLink = onLink }
 
@@ -280,6 +441,11 @@ private struct SelectableText: NSViewRepresentable {
             guard let url else { return false }
             onLink(url)
             return true
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView else { return }
+            onSelection?(SelectableText.selection(in: view))
         }
     }
 }
@@ -360,12 +526,20 @@ private struct HTMLView {
     @Binding var height: CGFloat
     @Binding var hasQuote: Bool
     let onLink: (URL) -> Void
+    /// The selection in the page, with where it ends, as the user script
+    /// reports it; nil once nothing is selected.
+    var onSelection: ((BodySelection?) -> Void)? = nil
+
+    /// The message handler the selection script posts to.
+    fileprivate static let selectionHandler = "pigeonSelection"
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     /// JavaScript off for the mail's own scripts (the app's measuring
-    /// script still runs: `didFinish` injects it).
-    fileprivate func configuration() -> WKWebViewConfiguration {
+    /// script still runs: `didFinish` injects it, and the selection user
+    /// script below is the app's too — `allowsContentJavaScript` only turns
+    /// off what the page brought).
+    fileprivate func configuration(coordinator: Coordinator) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         #if canImport(UIKit)
@@ -374,7 +548,16 @@ private struct HTMLView {
         // which the navigation policy below cancels, so they never opened.
         config.dataDetectorTypes = [.phoneNumber]
         #endif
+        config.userContentController.add(coordinator, name: Self.selectionHandler)
+        config.userContentController.addUserScript(
+            WKUserScript(source: Coordinator.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         return config
+    }
+
+    /// The content controller keeps a strong reference to its handlers;
+    /// let it go with the view.
+    fileprivate static func tearDown(_ web: WKWebView) {
+        web.configuration.userContentController.removeScriptMessageHandler(forName: selectionHandler)
     }
 
     /// Load the wrapped document when something it depends on changed.
@@ -382,8 +565,15 @@ private struct HTMLView {
         coordinator.parent = self
         let key = "\(allowRemoteImages)-\(dark)-\(showQuoted)-\(html.hashValue)"
         guard coordinator.loadedKey != key else { return }
+        let reload = coordinator.loadedKey != nil
         coordinator.loadedKey = key
         web.loadHTMLString(wrapped, baseURL: nil)
+        // A reloaded document has no selection, and its script only reports
+        // changes, so say so here. Deferred: the callback writes view state,
+        // and this runs inside an update.
+        if reload, onSelection != nil {
+            DispatchQueue.main.async { coordinator.parent.onSelection?(nil) }
+        }
     }
 
     /// CSP: no scripts, no frames, no forms; images only from data:/cid:
@@ -409,10 +599,55 @@ private struct HTMLView {
         """
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: HTMLView
         var loadedKey: String?
         init(_ parent: HTMLView) { self.parent = parent }
+
+        /// The selection script's report: a dictionary while something is
+        /// selected, null once nothing is.
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == HTMLView.selectionHandler else { return }
+            parent.onSelection?(BodySelection(message: message.body as? [String: Any]))
+        }
+
+        /// Posts the selection (its text, rect and the end of its last line,
+        /// in page coordinates — the page is as tall as its content and never
+        /// scrolls, so those are the view's) a moment after it settles, and
+        /// null when it is gone. Only a change is posted: the event fires
+        /// for every handle move.
+        static let selectionScript = #"""
+        (function () {
+          var w = window.webkit, h = w && w.messageHandlers && w.messageHandlers.pigeonSelection;
+          if (!h) return;
+          var timer = null, last = "";
+          function report() {
+            timer = null;
+            var sel = window.getSelection(), msg = null;
+            if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+              var text = sel.toString();
+              if (text.trim()) {
+                var range = sel.getRangeAt(sel.rangeCount - 1), rect = range.getBoundingClientRect();
+                var rects = range.getClientRects(), end = null;
+                for (var i = rects.length - 1; i >= 0; i--) {
+                  if (rects[i].width > 0 && rects[i].height > 0) { end = rects[i]; break; }
+                }
+                if (!end) end = rect;
+                msg = { text: text, x: rect.left + window.scrollX, y: rect.top + window.scrollY, width: rect.width, height: rect.height,
+                        endX: end.right + window.scrollX, endY: end.top + end.height / 2 + window.scrollY, lineHeight: end.height };
+              }
+            }
+            var key = JSON.stringify(msg);
+            if (key === last) return;
+            last = key;
+            h.postMessage(msg);
+          }
+          document.addEventListener("selectionchange", function () {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(report, 120);
+          });
+        })();
+        """#
 
         /// The async form on purpose: the completion-handler one written
         /// without the SDK's `@MainActor @Sendable` on the handler only
@@ -576,7 +811,7 @@ private struct HTMLView {
 #if canImport(UIKit)
 extension HTMLView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
-        let web = WKWebView(frame: .zero, configuration: configuration())
+        let web = WKWebView(frame: .zero, configuration: configuration(coordinator: context.coordinator))
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         // A long press's preview, once tapped, loaded the page in place of
@@ -591,11 +826,15 @@ extension HTMLView: UIViewRepresentable {
     func updateUIView(_ web: WKWebView, context: Context) {
         update(web, coordinator: context.coordinator)
     }
+
+    static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
+        tearDown(web)
+    }
 }
 #else
 extension HTMLView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
-        let web = PassthroughWebView(frame: .zero, configuration: configuration())
+        let web = PassthroughWebView(frame: .zero, configuration: configuration(coordinator: context.coordinator))
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         // Transparent, so the message card's colour shows through as on iOS.
@@ -605,6 +844,10 @@ extension HTMLView: NSViewRepresentable {
 
     func updateNSView(_ web: WKWebView, context: Context) {
         update(web, coordinator: context.coordinator)
+    }
+
+    static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
+        tearDown(web)
     }
 }
 

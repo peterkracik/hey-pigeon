@@ -406,6 +406,12 @@ final class MockEngine: MailEngine {
             // Compose from a brief (AIEditSheet's Write mode).
             return "Hi,\n\n\(text)\n\nLet me know if [detail] works for you.\n\nThanks"
         }
+        if instruction.hasPrefix(Translation.instructionPrefix) {
+            // A selection translated (TranslationPanel): the sample inbox
+            // echoes it with the language in front.
+            let language = instruction.dropFirst(Translation.instructionPrefix.count).prefix { $0 != "." }
+            return "[\(language.trimmingCharacters(in: .whitespaces))] \(text)"
+        }
         return "\(text)\n\n(\(instruction.lowercased()))"
     }
     func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String {

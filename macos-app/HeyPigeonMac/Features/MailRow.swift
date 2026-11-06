@@ -292,7 +292,8 @@ struct MailPreview: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
-                MessageBodyView(html: last.bodyHTML, text: last.bodyText ?? last.snippet, senderAddress: last.fromAddress)
+                MessageBodyView(html: last.bodyHTML, text: last.bodyText ?? last.snippet, senderAddress: last.fromAddress,
+                                translatable: !last.isMine)
                     .frame(maxHeight: 440, alignment: .top)
                     .clipped()
             } else if let failed {

@@ -336,11 +336,16 @@ final class RustEngine: MailEngine {
     func setAIModel(_ model: String, for provider: AIProvider) throws {
         try engine.setAiModel(providerId: provider.rawValue, model: model)
     }
-    func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
-        try await engine.aiEditText(providerId: provider, instruction: instruction, text: text, history: history)
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String {
+        try await engine.aiEditText(providerId: provider, instruction: instruction, text: text, history: history,
+                                    context: context.map(Self.ffi))
     }
-    func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String {
-        try await engine.aiDraftReply(providerId: provider, subject: subject, history: history, notes: notes)
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String {
+        try await engine.aiDraftReply(providerId: provider, subject: subject, history: history, notes: notes,
+                                      context: context.map(Self.ffi))
+    }
+    private static func ffi(_ c: AIWriteContext) -> AiWriteContext {
+        AiWriteContext(senderName: c.senderName, senderEmail: c.senderEmail, recipients: c.recipients, subject: c.subject)
     }
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String {
         try await engine.aiSummarizeThread(

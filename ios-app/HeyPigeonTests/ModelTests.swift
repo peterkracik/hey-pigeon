@@ -127,6 +127,28 @@ struct ThreadModelTests {
         #expect(mineOnly.participantNames == nil)
     }
 
+    @Test func transcriptKeepsWhatEachAuthorWroteAndFits() {
+        let quoted = "Sounds good.\n\nOn Mon, Ana wrote:\n> Lunch?\n>\n> A"
+        let detail = ThreadDetail(thread: makeRow(), messages: [
+            makeMessage("1", from: "Ana", text: "Lunch?"),
+            makeMessage("2", from: "Peter", address: "me@work.test", text: quoted, mine: true),
+        ])
+        #expect(detail.transcript == "Ana: Lunch?\n\nMe: Sounds good.")
+        // Outlook's header block and an "On … wrote:" line fold without
+        // "> " marks; a "From:" alone, or history with nothing before it, stays.
+        #expect(QuotedText.ownText("Yes.\n\nFrom: Ana\nSent: Monday\nTo: me\n\nLunch?") == "Yes.")
+        #expect(QuotedText.ownText("Yes.\n\nOn Mon, 3 Nov 2026, Ana wrote:\nLunch?") == "Yes.")
+        #expect(QuotedText.ownText("From: the top\nnothing else") == "From: the top\nnothing else")
+        #expect(QuotedText.ownText("> only a quote") == "> only a quote")
+        // Over budget: the newest messages stay, the oldest are counted out.
+        let long = String(repeating: "x", count: 5_000)
+        let many = (1...5).map { makeMessage("\($0)", from: "Ana", text: long) }
+        let t = ThreadDetail.transcript(of: many)
+        #expect(t.hasPrefix("[3 earlier messages omitted]\n\nAna: xxxx"))
+        #expect(t.hasSuffix(" …"))
+        #expect(t.count < ThreadDetail.transcriptBudget + 100)
+    }
+
     @Test func longThreadsFoldTheirMiddle() {
         func messages(_ n: Int, unread: Set<Int> = []) -> [MessageItem] {
             (0..<n).map { makeMessage("\($0)", read: !unread.contains($0)) }

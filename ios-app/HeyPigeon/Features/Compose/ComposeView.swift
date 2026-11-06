@@ -5,6 +5,13 @@
 // to the outbox (text part always, html part when formatting was applied);
 // an undone send reopens this view prefilled. Closing (the X, a swipe down)
 // or leaving the app saves it as a Gmail draft; Discard deletes that draft.
+//
+// The body editor and the AI are per platform, in the two extensions at
+// the end: the phone's rich TextEditor over an AttributedString and the
+// AIEditSheet, as they ship; the Mac's HTML editor, the thread above a
+// reply, the floating toolbar and the AI panel (ComposeMac.swift). The
+// struct itself holds what both share: the fields, the attachments, the
+// footer and the draft's lifecycle.
 
 import PhotosUI
 import SwiftUI
@@ -44,6 +51,19 @@ struct ComposeView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focus: Field?
+    #if os(macOS)
+    /// The Mac's editor (ComposeMac.swift), in the TextEditor's place.
+    @State private var editor: MacComposeEditor
+    /// The AI as a panel under the text, not a sheet.
+    @State private var showAIPanel = false
+    /// A reply keeps its prefilled recipients and subject behind the
+    /// "Draft to …" line until asked for; a new message shows the fields.
+    @State private var showFields: Bool
+    /// The thread above a reply, once loaded: names for the "Draft to" line.
+    @State private var thread: ThreadDetail?
+    /// The editor's width, to keep the floating toolbar inside it.
+    @State private var editorWidth: CGFloat = 640
+    #endif
 
     private enum Field { case to, cc, bcc, subject, body }
     private static let maxAttachBytes = MailLimits.maxAttachmentBytes
@@ -64,6 +84,10 @@ struct ComposeView: View {
         // owns: switching From must not replace it with a signature.
         _pristine = State(initialValue: draft.bodyText.isEmpty)
         _savedFrom = State(initialValue: draft.draftSaved ? draft.fromAccountId : nil)
+        #if os(macOS)
+        _editor = State(initialValue: MacComposeEditor(draft: draft))
+        _showFields = State(initialValue: draft.replyToThreadId == nil || draft.to.isEmpty)
+        #endif
     }
 
     /// The draft's content, for "did anything change?": what would be
@@ -77,47 +101,24 @@ struct ComposeView: View {
 
     private var snapshot: Snapshot {
         Snapshot(to: to, cc: cc, bcc: bcc, subject: draft.subject, body: plainBody,
-                 html: RichText.html(body_), attachments: attachments.map(\.id))
+                 html: bodyHTML, attachments: attachments.map(\.id))
     }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
     private var canSend: Bool { !(to.isEmpty && cc.isEmpty && bcc.isEmpty) && !sending && !fromId.isEmpty }
-    private var plainBody: String { String(body_.characters) }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        if model.accounts.count > 1 { fromRow }
-                        fieldRow("To") {
-                            RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
-                            if !showCc {
-                                Button("Cc/Bcc") { showCc = true; focus = .cc }
-                                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                            }
-                        }
-                        if showCc {
-                            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
-                            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
-                        }
-                        fieldRow("Subject") {
-                            TextField("", text: $draft.subject).focused($focus, equals: .subject)
-                        }
-                        TextEditor(text: $body_, selection: $selection)
-                            .font(.body)
-                            .foregroundStyle(Theme.textPrimary)
-                            .scrollContentBackground(.hidden)
-                            .scrollDisabled(true)
-                            .frame(minHeight: 280)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 6)
-                            .focused($focus, equals: .body)
-                            .onChange(of: body_) { _, _ in pristine = false }
+                        headerFields
+                        bodyEditor
                         if !attachments.isEmpty { attachmentChips }
                     }
                     .padding(.bottom, 24)
                 }
+                .composeScrollsToEnd(draft.replyToThreadId != nil)
                 .dismissKeyboardOnScroll(.interactively)
                 footer
             }
@@ -132,7 +133,7 @@ struct ComposeView: View {
                     fromId = model.selectedAccountId ?? model.accounts.first?.id ?? ""
                 }
                 if draft.bodyText.isEmpty, let sig = fromAccount?.signature, !sig.isEmpty {
-                    body_ = AttributedString("\n\n\(sig)")
+                    setBody(text: "\n\n\(sig)")
                     pristine = true
                 }
                 focus = to.isEmpty ? .to : .body
@@ -167,12 +168,14 @@ struct ComposeView: View {
                 guard !items.isEmpty else { return }
                 Task { await addPhotos(items); photos = [] }
             }
+            #if os(iOS)
             .sheet(isPresented: $showAI) {
                 AIEditSheet(text: selectedText ?? bodyWithoutSignature, hasSelection: selectedText != nil,
                             subject: draft.subject, history: draft.history,
                             onApply: applyAI, onWrite: replaceBody)
                 .sheetSize(.mediumOrLarge, dragIndicator: false)
             }
+            #endif
             .alert("Link", isPresented: $askLink) {
                 TextField("https://", text: $linkURL)
                     .plainInput(.url)
@@ -243,19 +246,7 @@ struct ComposeView: View {
     /// Desktop footer: Send · Discard · AI · Attach · Aa (+ the format bar).
     private var footer: some View {
         VStack(spacing: 8) {
-            if showFormat {
-                HStack(spacing: 4) {
-                    format("Bold", "bold") { toggleIntent(.stronglyEmphasized) }
-                    format("Italic", "italic") { toggleIntent(.emphasized) }
-                    format("Underline", "underline") { toggleUnderline() }
-                    format("Strikethrough", "strikethrough") { toggleIntent(.strikethrough) }
-                    format("Link", "link") { askLink = true }
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .glassEffect(.regular, in: .capsule)
-                .padding(.horizontal, 16)
-            }
+            if showFormat { formatBar }
             HStack(spacing: 10) {
                 Button { send() } label: {
                     Label("Send", systemImage: "paperplane.fill")
@@ -272,7 +263,7 @@ struct ComposeView: View {
                     .accessibilityLabel("Discard")
                 Spacer()
                 if model.aiConfigured {
-                    Button { showAI = true } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
+                    Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
                         .pillButton()
                         .accessibilityLabel("Write or edit with AI")
                 }
@@ -296,53 +287,6 @@ struct ComposeView: View {
         .background(Theme.canvas)
     }
 
-    private func format(_ label: String, _ systemImage: String, _ run: @escaping () -> Void) -> some View {
-        Button(action: run) { Image(systemName: systemImage).frame(width: 36, height: 36) }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.textPrimary)
-            .accessibilityLabel(label)
-    }
-
-    // MARK: Formatting (iOS 26 rich TextEditor)
-
-    private func toggleIntent(_ flag: InlinePresentationIntent) {
-        body_.transformAttributes(in: &selection) { c in
-            var intent = c.inlinePresentationIntent ?? []
-            if intent.contains(flag) { intent.remove(flag) } else { intent.insert(flag) }
-            c.inlinePresentationIntent = intent.isEmpty ? nil : intent
-            // Mirror bold/italic into the font so the editor shows it.
-            var font: Font = .body
-            if intent.contains(.stronglyEmphasized) { font = font.bold() }
-            if intent.contains(.emphasized) { font = font.italic() }
-            c.font = font
-            c.strikethroughStyle = intent.contains(.strikethrough) ? .single : nil
-        }
-    }
-
-    private func toggleUnderline() {
-        body_.transformAttributes(in: &selection) { c in
-            c.underlineStyle = c.underlineStyle == nil ? .single : nil
-        }
-    }
-
-    private func applyLink() {
-        let raw = linkURL.trimmingCharacters(in: .whitespaces)
-        linkURL = ""
-        guard !raw.isEmpty else { return }
-        let url = URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)")
-        body_.transformAttributes(in: &selection) { c in
-            c.link = url
-            c.underlineStyle = .single
-        }
-    }
-
-    /// Text under the selection, nil when it is just a caret.
-    private var selectedText: String? {
-        guard case .ranges(let set) = selection.indices(in: body_) else { return nil }
-        let text = set.ranges.map { String(body_[$0].characters) }.joined()
-        return text.isEmpty ? nil : text
-    }
-
     /// The From account's signature, when the body still ends with it.
     private var signatureSuffix: String? {
         guard let sig = fromAccount?.signature, !sig.isEmpty, plainBody.hasSuffix(sig) else { return nil }
@@ -356,26 +300,16 @@ struct ComposeView: View {
         return String(plainBody.dropLast(sig.count))
     }
 
-    private func applyAI(_ result: String) {
-        if case .ranges(let set) = selection.indices(in: body_), let first = set.ranges.first {
-            body_.transform(updating: &selection) { text in
-                text.replaceSubrange(first, with: AttributedString(result))
-            }
-        } else {
-            replaceBody(with: result)
-        }
-    }
-
     /// New body text (an AI draft or a whole-body edit), signature kept.
     private func replaceBody(with text: String) {
-        body_ = AttributedString(signatureSuffix.map { "\(text)\n\n\($0)" } ?? text)
+        setBody(text: signatureSuffix.map { "\(text)\n\n\($0)" } ?? text)
         pristine = false
     }
 
     private func switchFrom(_ next: MailAccount) {
         // Switching From only swaps the signature while the body is pristine.
         if pristine {
-            body_ = AttributedString(next.signature.isEmpty ? "" : "\n\n\(next.signature)")
+            setBody(text: next.signature.isEmpty ? "" : "\n\n\(next.signature)")
             pristine = true
         }
         fromId = next.id
@@ -445,8 +379,8 @@ struct ComposeView: View {
         d.cc = cc
         d.bcc = bcc
         d.bodyText = plainBody
-        d.bodyHTML = RichText.html(body_)
-        d.bodyRich = body_
+        d.bodyHTML = bodyHTML
+        d.bodyRich = bodyRich
         d.attachments = attachments
         return d
     }
@@ -474,7 +408,7 @@ struct ComposeView: View {
         cc = d.cc
         bcc = d.bcc
         showCc = showCc || !d.cc.isEmpty || !d.bcc.isEmpty
-        body_ = d.bodyRich ?? AttributedString(d.bodyText)
+        adoptBody(of: d)
         attachments = d.attachments
         if let from = d.fromAccountId, !from.isEmpty { fromId = from }
         pristine = false
@@ -490,8 +424,10 @@ struct ComposeView: View {
         withAnimation(.snappy(duration: 0.25)) { model.composeFullScreen.toggle() }
     }
 
-    /// X: close, keeping the message as a Gmail draft (saved on disappear).
+    /// X (or Esc): close, keeping the message as a Gmail draft (saved on
+    /// disappear) — unless the AI panel is up, which Esc closes first.
     private func close() {
+        if dismissAssistant() { return }
         Keyboard.dismiss()
         dismiss()
     }
@@ -516,6 +452,292 @@ struct ComposeView: View {
         draft.draftSaved = true
     }
 }
+
+#if os(iOS)
+// MARK: - The phone's editor: the rich TextEditor and the AI sheet
+
+extension ComposeView {
+    private var plainBody: String { String(body_.characters) }
+    private var bodyHTML: String? { RichText.html(body_) }
+    private var bodyRich: AttributedString? { body_ }
+
+    private func setBody(text: String) { body_ = AttributedString(text) }
+    private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
+
+    /// The From chip and the To / Cc / Bcc / Subject rows.
+    @ViewBuilder private var headerFields: some View {
+        if model.accounts.count > 1 { fromRow }
+        fieldRow("To") {
+            RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
+            if !showCc {
+                Button("Cc/Bcc") { showCc = true; focus = .cc }
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        if showCc {
+            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
+            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
+        }
+        fieldRow("Subject") {
+            TextField("", text: $draft.subject).focused($focus, equals: .subject)
+        }
+    }
+
+    private var bodyEditor: some View {
+        TextEditor(text: $body_, selection: $selection)
+            .font(.body)
+            .foregroundStyle(Theme.textPrimary)
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
+            .frame(minHeight: 280)
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .focused($focus, equals: .body)
+            .onChange(of: body_) { _, _ in pristine = false }
+    }
+
+    /// The glass format bar the footer's Aa shows.
+    private var formatBar: some View {
+        HStack(spacing: 4) {
+            format("Bold", "bold") { toggleIntent(.stronglyEmphasized) }
+            format("Italic", "italic") { toggleIntent(.emphasized) }
+            format("Underline", "underline") { toggleUnderline() }
+            format("Strikethrough", "strikethrough") { toggleIntent(.strikethrough) }
+            format("Link", "link") { askLink = true }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 16)
+    }
+
+    private func format(_ label: String, _ systemImage: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) { Image(systemName: systemImage).frame(width: 36, height: 36) }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.textPrimary)
+            .accessibilityLabel(label)
+    }
+
+    /// The sparkle: the AI sheet.
+    private func openAI() { showAI = true }
+    /// The phone has nothing over the composer that Esc would close first.
+    private func dismissAssistant() -> Bool { false }
+
+    // MARK: Formatting (iOS 26 rich TextEditor)
+
+    private func toggleIntent(_ flag: InlinePresentationIntent) {
+        body_.transformAttributes(in: &selection) { c in
+            var intent = c.inlinePresentationIntent ?? []
+            if intent.contains(flag) { intent.remove(flag) } else { intent.insert(flag) }
+            c.inlinePresentationIntent = intent.isEmpty ? nil : intent
+            // Mirror bold/italic into the font so the editor shows it.
+            var font: Font = .body
+            if intent.contains(.stronglyEmphasized) { font = font.bold() }
+            if intent.contains(.emphasized) { font = font.italic() }
+            c.font = font
+            c.strikethroughStyle = intent.contains(.strikethrough) ? .single : nil
+        }
+    }
+
+    private func toggleUnderline() {
+        body_.transformAttributes(in: &selection) { c in
+            c.underlineStyle = c.underlineStyle == nil ? .single : nil
+        }
+    }
+
+    private func applyLink() {
+        let raw = linkURL.trimmingCharacters(in: .whitespaces)
+        linkURL = ""
+        guard !raw.isEmpty else { return }
+        let url = URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)")
+        body_.transformAttributes(in: &selection) { c in
+            c.link = url
+            c.underlineStyle = .single
+        }
+    }
+
+    /// Text under the selection, nil when it is just a caret.
+    private var selectedText: String? {
+        guard case .ranges(let set) = selection.indices(in: body_) else { return nil }
+        let text = set.ranges.map { String(body_[$0].characters) }.joined()
+        return text.isEmpty ? nil : text
+    }
+
+    private func applyAI(_ result: String) {
+        if case .ranges(let set) = selection.indices(in: body_), let first = set.ranges.first {
+            body_.transform(updating: &selection) { text in
+                text.replaceSubrange(first, with: AttributedString(result))
+            }
+        } else {
+            replaceBody(with: result)
+        }
+    }
+}
+#else
+// MARK: - The Mac's editor: the HTML editor, the thread above a reply, the AI panel
+
+extension ComposeView {
+    private var plainBody: String { editor.text }
+    private var bodyHTML: String? { editor.htmlPart }
+    /// Plain here: the html part carries the formatting. Set all the same
+    /// so an undone send counts as unsaved work (`onAppear`'s baseline).
+    private var bodyRich: AttributedString? { AttributedString(editor.text) }
+
+    private func setBody(text: String) { editor.setText(text) }
+    private func adoptBody(of d: SendDraft) { editor.set(draft: d) }
+
+    /// A reply: the thread, then the "Draft to …" line that keeps the
+    /// prefilled fields folded; the fields themselves when shown (always
+    /// for a new message or a forward, which has no recipients yet).
+    @ViewBuilder private var headerFields: some View {
+        if let threadId = draft.replyToThreadId {
+            ComposeThreadHistory(threadId: threadId) { thread = $0 }
+            draftHeader
+        }
+        if showFields {
+            if model.accounts.count > 1 { fromRow }
+            fieldRow("To") {
+                RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
+                if !showCc {
+                    Button("Cc/Bcc") { showCc = true; focus = .cc }
+                        .buttonStyle(.plain)
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            if showCc {
+                fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
+                fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
+            }
+            fieldRow("Subject") {
+                TextField("", text: $draft.subject)
+                    .focused($focus, equals: .subject)
+                    .onSubmit { focus = .body }
+            }
+        }
+    }
+
+    /// "Draft to Ana, Marek" under the thread, with the fields behind a
+    /// disclosure — the reply's recipients are the thread's, and the line
+    /// says so without a form.
+    private var draftHeader: some View {
+        HStack(spacing: 6) {
+            Text("Draft")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Theme.tagForeground(.mint))
+            Text(recipientLine)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            Spacer()
+            Button { withAnimation(.snappy(duration: 0.2)) { showFields.toggle() } } label: {
+                HStack(spacing: 4) {
+                    Text(showFields ? "Hide fields" : "To · Cc · Subject")
+                    Image(systemName: showFields ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.textTertiary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Recipients and subject")
+        }
+        .padding(.horizontal, 16).padding(.top, 18).padding(.bottom, showFields ? 4 : 0)
+    }
+
+    private var recipientLine: String {
+        let names = (to + cc).map(displayName)
+        return names.isEmpty ? "with no recipients yet" : "to \(names.joined(separator: ", "))"
+    }
+
+    /// The name the thread knows an address by, else the address.
+    private func displayName(_ address: String) -> String {
+        thread?.mail.first { EmailAddress.same($0.fromAddress, address) }?.fromName ?? address
+    }
+
+    /// Who writes to whom, for the AI's prompt.
+    private var writeContext: AIWriteContext {
+        AIWriteContext(senderName: fromAccount?.displayName, senderEmail: fromAccount?.email,
+                       recipients: (to + cc).map { address in
+                           let name = displayName(address)
+                           return name == address ? address : "\(name) <\(address)>"
+                       },
+                       subject: draft.subject)
+    }
+
+    /// The HTML editor with the floating toolbar over its selection, and
+    /// the AI panel under it while it is open.
+    @ViewBuilder private var bodyEditor: some View {
+        HTMLEditorView(editor: editor, placeholder: model.aiConfigured ? "Tip: Hit ⌘J for AI" : "Write your message…")
+            .frame(height: editor.height)
+            .overlay(alignment: .topLeading) {
+                if let selection = editor.selection {
+                    SelectionToolbar(editor: editor, selection: selection, width: editorWidth, showsAI: model.aiConfigured,
+                                     onLink: { askLink = true }, onAI: { openAI() })
+                }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { editorWidth = $0 }
+            .padding(.top, 10)
+            .onChange(of: editor.text) { _, _ in pristine = false }
+            .onChange(of: focus) { _, f in if f == .body { editor.focus() } }
+            .onAppear {
+                editor.onCommand = { command in
+                    switch command {
+                    case .ai: openAI()
+                    case .link: askLink = true
+                    case .send: if canSend { send() }
+                    }
+                }
+                if focus == .body { editor.focus() }
+            }
+        if showAIPanel {
+            MacAIPanel(subject: draft.subject, history: draft.history, context: writeContext,
+                       target: { (selectedText ?? bodyWithoutSignature, selectedText != nil) },
+                       onApply: applyAI, onWrite: replaceBody,
+                       onClose: { withAnimation(.snappy(duration: 0.2)) { showAIPanel = false } })
+                .padding(.horizontal, 16).padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// The format bar the footer's Aa shows: the floating toolbar's tools.
+    private var formatBar: some View {
+        MacFormatBar(editor: editor) { askLink = true }
+    }
+
+    /// The sparkle, ⌘J: the AI panel under the text.
+    private func openAI() {
+        withAnimation(.snappy(duration: 0.2)) { showAIPanel.toggle() }
+    }
+
+    /// Esc closes the AI panel before it closes the composer.
+    private func dismissAssistant() -> Bool {
+        guard showAIPanel else { return false }
+        withAnimation(.snappy(duration: 0.2)) { showAIPanel = false }
+        return true
+    }
+
+    private func applyLink() {
+        let raw = linkURL.trimmingCharacters(in: .whitespaces)
+        linkURL = ""
+        guard !raw.isEmpty, let url = URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)") else { return }
+        editor.createLink(url)
+    }
+
+    /// The selection the AI works on, nil when there is none (the last one
+    /// the page reported: the panel's field takes the focus, the page
+    /// keeps the range).
+    private var selectedText: String? { editor.savedSelection?.text }
+
+    private func applyAI(_ result: String) {
+        if selectedText != nil {
+            editor.replaceSelection(with: result)
+        } else {
+            replaceBody(with: result)
+        }
+    }
+}
+#endif
 
 /// Serializes the editor's attributed body to the html part — only when
 /// some formatting was applied, else nil and the text part goes alone.

@@ -94,13 +94,86 @@ const TRIAGE_BATCH: u32 = 10;
 // so both apps get the same voice from the same model. The two summary
 // prompts ask for a tiny markdown subset ("- " bullets + **bold**) that
 // SummaryMarkup.swift renders on iOS, as SummaryText.svelte does on desktop.
-const EDIT_SYSTEM_PROMPT: &str = "You are an email writing assistant. You may be given the prior conversation for context — use it to answer questions or reference details the user asks for. Apply the user's instruction to the given text and return ONLY the revised text — no preamble, no explanation, no markdown formatting, no surrounding quotes.";
+const EDIT_SYSTEM_PROMPT: &str = "You are an email writing assistant helping the sender revise a draft. The text you are given is the sender's own draft to the recipients — never a message addressed to the sender, and never something to reply to. You may also be given who the sender is, who the email goes to, the subject and the conversation so far: use them to understand what the draft refers to, to answer questions raised in the conversation when the instruction asks for it, and to address the right people by name. Apply the instruction to the text and return ONLY the revised text — no preamble, no explanation, no markdown formatting, no surrounding quotes, no subject line, no signature block. Keep the draft's language: write in the language the draft is written in (when the draft is only a few words, the language of the latest message in the conversation), even when the instruction is in another language, unless the instruction explicitly asks for a translation. Keep names, numbers, dates, links and placeholders exactly as they are unless the instruction says otherwise, and keep the sender's voice.";
 const SUMMARY_SYSTEM_PROMPT: &str = "You write a factual digest of the user's active (not yet done) emails. Informational only: state what each email is and what it contains, in a neutral third-person tone. No greetings, no opinions, no advice, no questions, no chit-chat.\n\nFormat rules:\n- Return 1 to 4 bullet points, each on its own line starting with \"- \".\n- One bullet per notable email or theme; merge similar emails into one bullet (e.g. \"3 newsletters\").\n- Keep each bullet to one short sentence or fragment.\n- Wrap the key facts in **double asterisks** for bold: sender or company names, amounts, dates, deadlines, order or invoice numbers.\n- Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.\n- If nothing is notable, return a single bullet: \"- Nothing notable.\"";
 const THREAD_SUMMARY_SYSTEM_PROMPT: &str = "You write a factual recap of one email conversation so the reader does not have to read every message. Informational only: who said what, what was asked, what was agreed, and the current state. Neutral, report-style tone; refer to the user (labelled \"Me\" in the transcript) as \"you\". No greetings, no opinions, no advice, no questions, no chit-chat.\n\nFormat rules:\n- Return 1 to 4 bullet points, each on its own line starting with \"- \".\n- Keep each bullet to one short sentence or fragment.\n- The last bullet states the current status or open item (e.g. **Waiting on** a reply, a **deadline**, a **decision**).\n- Wrap the key facts in **double asterisks** for bold: people's names, amounts, dates, deadlines, decisions.\n- Use only \"- \" bullets and **bold**. No headers, no other markdown, no preamble, no closing line.";
-const DRAFT_REPLY_SYSTEM_PROMPT: &str = "You are drafting an email reply on behalf of the user, who appears as \"Me\" in the conversation transcript. Write the reply to the latest message from the other participant(s): answer their questions, respond to their requests, and keep the user's established tone from any earlier \"Me\" messages. Be concise and natural. Never invent facts, dates, or commitments the conversation does not support — put a short placeholder in square brackets where the user must fill something in. If the user provided notes, build the reply around them. Return ONLY the reply body as plain text: no subject line, no markdown, no explanation, no surrounding quotes, and no signature block.";
+const DRAFT_REPLY_SYSTEM_PROMPT: &str = "You are drafting an email reply on behalf of the user, who appears as \"Me\" in the conversation transcript (their name and address may be given). Write the reply to the latest message from the other participant(s), as the user and addressed to them: answer their questions, respond to their requests, and keep the user's established tone from any earlier \"Me\" messages. Be concise and natural. Write in the language of the latest message from the other participant(s): the user's notes may be in another language, but the reply follows the conversation's language unless the notes ask for another. Never invent facts, dates, or commitments the conversation does not support — put a short placeholder in square brackets where the user must fill something in. If the user provided notes, build the reply around them. Return ONLY the reply body as plain text: no subject line, no markdown, no explanation, no surrounding quotes, and no signature block.";
 
-fn build_draft_reply_prompt(subject: &str, history: &str, notes: Option<&str>) -> String {
-    let mut out = format!("Subject: {subject}\n\nConversation so far (oldest first):\n{history}");
+/// The "who writes to whom" lines at the top of a writing prompt: the
+/// sender (the user), the recipients and, when asked, the subject. Empty
+/// without a context, so a shell that sends none keeps the old prompt shape.
+fn build_write_context(context: Option<&AiWriteContext>, with_subject: bool) -> String {
+    let Some(c) = context else {
+        return String::new();
+    };
+    fn clean(s: Option<&String>) -> Option<&str> {
+        s.map(|s| s.trim()).filter(|s| !s.is_empty())
+    }
+    let mut out = String::new();
+    match (
+        clean(c.sender_name.as_ref()),
+        clean(c.sender_email.as_ref()),
+    ) {
+        (Some(n), Some(e)) => out.push_str(&format!("Sender (the user, \"Me\"): {n} <{e}>\n")),
+        (Some(n), None) => out.push_str(&format!("Sender (the user, \"Me\"): {n}\n")),
+        (None, Some(e)) => out.push_str(&format!("Sender (the user, \"Me\"): {e}\n")),
+        (None, None) => {}
+    }
+    let recipients: Vec<&str> = c
+        .recipients
+        .iter()
+        .map(|r| r.trim())
+        .filter(|r| !r.is_empty())
+        .collect();
+    if !recipients.is_empty() {
+        out.push_str(&format!("To: {}\n", recipients.join(", ")));
+    }
+    if with_subject {
+        if let Some(s) = clean(c.subject.as_ref()) {
+            out.push_str(&format!("Subject: {s}\n"));
+        }
+    }
+    out
+}
+
+/// Prompt body for `ai_edit_text`: who writes to whom, the conversation
+/// the draft answers, the instruction, then the draft — in that order, so
+/// the model reads the draft as the sender's words and not as mail to
+/// answer. Pure, unit-tested like the others.
+fn build_edit_prompt(
+    instruction: &str,
+    text: &str,
+    history: Option<&str>,
+    context: Option<&AiWriteContext>,
+) -> String {
+    let mut user = build_write_context(context, true);
+    if !user.is_empty() {
+        user.push('\n');
+    }
+    if let Some(h) = history.map(str::trim).filter(|h| !h.is_empty()) {
+        user.push_str(
+            "Conversation so far (oldest first; the draft below is the sender's answer to it):\n",
+        );
+        user.push_str(h);
+        user.push_str("\n\n");
+    }
+    user.push_str(&format!(
+        "Instruction: {instruction}\n\nThe sender's draft to revise:\n{text}"
+    ));
+    user
+}
+
+/// Prompt body for `ai_draft_reply` — pure, unit-tested like the others.
+fn build_draft_reply_prompt(
+    subject: &str,
+    history: &str,
+    notes: Option<&str>,
+    context: Option<&AiWriteContext>,
+) -> String {
+    let mut out = build_write_context(context, false);
+    out.push_str(&format!(
+        "Subject: {subject}\n\nConversation so far (oldest first):\n{history}"
+    ));
     if let Some(n) = notes.map(str::trim).filter(|n| !n.is_empty()) {
         out.push_str("\n\nNotes from the user for this reply:\n");
         out.push_str(n);
@@ -382,13 +455,16 @@ impl Engine {
 
     /// Apply one instruction (preset or freeform) to a piece of compose
     /// text and return the revised text. `history` is the plain-text
-    /// transcript when replying inside a thread.
+    /// transcript when replying inside a thread; `context` says who is
+    /// writing to whom (the model otherwise mistook the draft for mail to
+    /// answer, and answered in English whatever the draft's language).
     pub async fn ai_edit_text(
         &self,
         provider_id: String,
         instruction: String,
         text: String,
         history: Option<String>,
+        context: Option<AiWriteContext>,
     ) -> Result<String, EngineError> {
         check_provider(&provider_id, &self.backend_ids())?;
         let instruction = instruction.trim();
@@ -399,14 +475,11 @@ impl Engine {
         if text.is_empty() {
             return Err(EngineError::Invalid("nothing to edit".into()));
         }
-        let mut user = String::new();
-        if let Some(h) = history.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
-            user.push_str("Conversation so far (oldest first):\n");
-            user.push_str(h);
-            user.push_str("\n\n");
-        }
-        user.push_str(&format!("Instruction: {instruction}\n\nText:\n{text}"));
-        self.complete(EDIT_SYSTEM_PROMPT, user).await
+        self.complete(
+            EDIT_SYSTEM_PROMPT,
+            build_edit_prompt(instruction, text, history.as_deref(), context.as_ref()),
+        )
+        .await
     }
 
     /// A few lines about a group of active (not done) emails.
@@ -449,6 +522,7 @@ impl Engine {
         subject: String,
         history: String,
         notes: Option<String>,
+        context: Option<AiWriteContext>,
     ) -> Result<String, EngineError> {
         check_provider(&provider_id, &self.backend_ids())?;
         if history.trim().is_empty() {
@@ -456,7 +530,7 @@ impl Engine {
         }
         self.complete(
             DRAFT_REPLY_SYSTEM_PROMPT,
-            build_draft_reply_prompt(&subject, &history, notes.as_deref()),
+            build_draft_reply_prompt(&subject, &history, notes.as_deref(), context.as_ref()),
         )
         .await
     }
@@ -1222,17 +1296,53 @@ mod tests {
 
     #[test]
     fn prompts() {
-        let p =
-            build_draft_reply_prompt("Invoice #42", "Sarah: Can you send it?", Some("say Friday"));
+        let p = build_draft_reply_prompt(
+            "Invoice #42",
+            "Sarah: Can you send it?",
+            Some("say Friday"),
+            None,
+        );
         assert!(p.starts_with("Subject: Invoice #42"));
         assert!(p.contains("Notes from the user for this reply:\nsay Friday"));
-        assert!(!build_draft_reply_prompt("Hi", "Sam: Hello", Some("   ")).contains("Notes from"));
+        assert!(
+            !build_draft_reply_prompt("Hi", "Sam: Hello", Some("   "), None).contains("Notes from")
+        );
         let s = build_summary_prompt(&[SummaryItem {
             from: "a@b".into(),
             subject: "S".into(),
             snippet: "x".into(),
         }]);
         assert!(s.contains("From: a@b\nSubject: S\nx"));
+    }
+
+    /// The writing prompts say who writes to whom and keep the draft's
+    /// language; without a context they keep the shape the first shells sent.
+    #[test]
+    fn writing_prompts_say_who_writes_to_whom() {
+        let ctx = AiWriteContext {
+            sender_name: Some("Peter".into()),
+            sender_email: Some("me@x.test".into()),
+            recipients: vec!["Ana".into(), " ".into(), "marek@acme.test".into()],
+            subject: Some("Lunch".into()),
+        };
+        let p = build_edit_prompt("Shorten", "Hi Ana, lunch?", Some("Ana: Lunch?"), Some(&ctx));
+        assert!(p.starts_with(
+            "Sender (the user, \"Me\"): Peter <me@x.test>\nTo: Ana, marek@acme.test\nSubject: Lunch\n\nConversation so far"
+        ));
+        assert!(
+            p.ends_with("Instruction: Shorten\n\nThe sender's draft to revise:\nHi Ana, lunch?")
+        );
+        assert!(build_edit_prompt("Shorten", "x", None, None).starts_with("Instruction: Shorten"));
+        let d = build_draft_reply_prompt("Lunch", "Ana: Lunch?", None, Some(&ctx));
+        assert!(d.starts_with(
+            "Sender (the user, \"Me\"): Peter <me@x.test>\nTo: Ana, marek@acme.test\nSubject: Lunch\n\nConversation so far"
+        ));
+        let blank = AiWriteContext::default();
+        assert!(build_edit_prompt("Fix", "x", None, Some(&blank)).starts_with("Instruction: Fix"));
+        for prompt in [EDIT_SYSTEM_PROMPT, DRAFT_REPLY_SYSTEM_PROMPT] {
+            assert!(prompt.contains("language"));
+        }
+        assert!(EDIT_SYSTEM_PROMPT.contains("never something to reply to"));
     }
 
     fn verdict(priority: Priority, ids: &[&str]) -> TriageVerdict {

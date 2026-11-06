@@ -21,6 +21,11 @@ struct ShortcutsSheet: View {
         ("Write", [
             ("C · ⌘N", "New message"), ("R", "Reply"), ("A", "Reply all"), ("F", "Forward"),
         ]),
+        ("In the composer", [
+            ("⌘↩", "Send"), ("⌘J", "Write or edit with AI"), ("Esc", "Close the AI panel; then close and keep the draft"),
+            ("⌘B · ⌘I · ⌘U", "Bold · italic · underline"), ("⇧⌘X", "Strikethrough"), ("⌘K", "Link"),
+            ("⇧⌘8 · ⇧⌘7", "Bulleted · numbered list"), ("⇧↩", "Line break inside a paragraph"),
+        ]),
         ("Go", [
             ("G then I", "Inbox"), ("G then S", "Remind me"), ("G then N", "Need reply"), ("G then P", "Pinned (Starred)"),
             ("G then D", "Drafts"), ("G then T", "Sent"), ("G then A", "Archive"),

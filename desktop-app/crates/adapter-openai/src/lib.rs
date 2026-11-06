@@ -25,7 +25,13 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     pub fn new(api_key: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // A request that never answers used to hang the caller for
+            // good: the shells showed a spinner nothing could cancel. Long
+            // enough for a completion, short enough to come back with an error.
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
             api_key,
         }
     }

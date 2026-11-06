@@ -611,6 +611,19 @@ pub struct ThreadSummaryItem {
     pub snippet: String,
 }
 
+/// Who is writing to whom, for the writing assistant: the model writes as
+/// the sender, addresses the recipients and keeps to the conversation's
+/// language. Every field is optional — the composer sends what it knows.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct AiWriteContext {
+    /// The sender's display name (the user, "Me" in a transcript).
+    pub sender_name: Option<String>,
+    pub sender_email: Option<String>,
+    /// To and Cc, as typed — addresses, or names when the composer knows them.
+    pub recipients: Vec<String>,
+    pub subject: Option<String>,
+}
+
 /// Google OAuth client the shell was built with. iOS clients have no secret.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct OauthClient {

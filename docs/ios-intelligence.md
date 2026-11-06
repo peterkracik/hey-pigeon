@@ -611,6 +611,26 @@ read-back (`searchableItems(forIdentifiers:)`) so the tool sees full items.
 On only while the Spotlight toggle is on; the answer never leaves the
 device.
 
+### Translate a selection
+
+Select text in a received message — the plain-text body is a native text
+view, the HTML body a web view, and both report the selection
+(`MessageBodyView`: the text view through its delegate, the web view
+through an app user script that posts to `pigeonSelection`; the mail's own
+scripts stay off) — and, with an AI provider that can answer
+(`AppModel.aiConfigured`), a glass translate circle follows the end of the
+selection (`TranslateBadge`, placed by `SelectionBadgeGeometry`: right of
+the last line, under it at the margin). Tapping it opens
+`TranslationPanel` beside the selection (a popover on the Mac and the iPad,
+a sheet on the phone): the selection translated into the device's language,
+a menu to pick another (the device's languages, then a common set; the
+last pick is kept on the device under `translation.language`), Copy, and
+the privacy line. The request is the engine's `ai_edit_text` with
+`Translation.instruction(to:)` — the core picks the provider as for every
+other call, the on-device model when it can — and sends the selection
+alone, cut to 6,000 characters. Own messages offer no circle; the system's
+Look Up / Translate stay in the edit menu on both bodies.
+
 ### Agentic triage (#66)
 
 "Hey Siri, triage my inbox in Hey Pigeon". `AI/TriageTools.swift` has the

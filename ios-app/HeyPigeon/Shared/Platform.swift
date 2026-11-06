@@ -378,6 +378,22 @@ extension View {
         #endif
     }
 
+    /// How big a popover's content is (the translation panel). A popover
+    /// sizes to its content's ideal size, so the Mac and the iPad get this
+    /// frame; on the phone the popover opens as a sheet, which takes the
+    /// detents and the width the sheet proposes instead.
+    @ViewBuilder
+    func panelSize(_ size: SheetSize) -> some View {
+        #if os(iOS)
+        presentationCompactAdaptation(.sheet)
+            .presentationDetents(size.detents)
+            .presentationDragIndicator(.visible)
+            .frame(idealWidth: size.panel.width, maxWidth: .infinity, idealHeight: size.panel.height, maxHeight: .infinity)
+        #else
+        frame(width: size.panel.width, height: size.panel.height)
+        #endif
+    }
+
     /// A search field that is always on screen, under the title: the iOS
     /// navigation-bar drawer; the Mac puts it in the toolbar.
     @ViewBuilder
@@ -433,6 +449,15 @@ enum KeyboardScrollDismissal {
 /// `sheetSize`: the three sheet heights the app uses.
 enum SheetSize {
     case medium, mediumOrLarge, large
+
+    /// The same size as a popover (`panelSize`), in points.
+    var panel: CGSize {
+        switch self {
+        case .medium: CGSize(width: 380, height: 340)
+        case .mediumOrLarge: CGSize(width: 440, height: 480)
+        case .large: CGSize(width: 520, height: 620)
+        }
+    }
 
     #if os(iOS)
     var detents: Set<PresentationDetent> {

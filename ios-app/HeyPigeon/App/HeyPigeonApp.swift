@@ -151,7 +151,7 @@ struct RootView: View {
             // (AppModel.modal, BundleSheetPresenters).
             .sheet(item: model.modal(\.pendingRemind, inBundles: false), onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
             .sheet(item: model.modal(\.pendingBundlePick, inBundles: false), onDismiss: { Keyboard.dismiss() }) { row in AddToBundleSheet(row: row) }
-            .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
+            .coverScreen(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
                 BundlesSheet(initialBundleId: model.bundlesStartId)
             }
             // The composer as a dialog or full screen (its button switches).

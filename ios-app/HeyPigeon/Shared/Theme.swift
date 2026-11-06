@@ -142,6 +142,18 @@ extension View {
         #endif
     }
 
+    /// A screen presented with `coverScreen`: the canvas behind it on iOS
+    /// (a cover has no detents); on the Mac the menu sheets' window size.
+    @ViewBuilder
+    func coverContent() -> some View {
+        #if os(iOS)
+        background(Theme.canvas)
+        #else
+        frame(minWidth: 480, idealWidth: 600, minHeight: 420, idealHeight: 760)
+            .background(Theme.canvas)
+        #endif
+    }
+
     /// The menu sheets' presentation: full height on iOS; on the Mac a
     /// sheet is a window, so it gets a size instead.
     @ViewBuilder

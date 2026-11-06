@@ -135,24 +135,37 @@ struct BundleModelTests {
 /// (AI/BundlePrompt.swift). No model needed.
 @MainActor
 struct BundlePromptTests {
-    let shown: [(id: String, name: String)] = [(id: "b1", name: "Lisbon trip"), (id: "b2", name: "Zalando order")]
+    let shown: [(id: String, name: String, category: BundleCategory)] = [
+        (id: "b1", name: "Lisbon trip", category: .trip), (id: "b2", name: "Zalando order", category: .shopping),
+    ]
 
-    @Test func joinNamesAListedBundleWithoutCase() {
-        #expect(BundlePrompt.decision(action: "join", bundle: " lisbon TRIP ", name: "", kind: "other", candidates: shown)
-                == .join(bundleId: "b1"))
-        #expect(BundlePrompt.decision(action: "join", bundle: "Rome trip", name: "", kind: "other", candidates: shown)
-                == .noBundle, "an unlisted name is no bundle")
+    private func decide(_ action: String, bundle: String = "", name: String = "", kind: String = "other",
+                        confidence: String = "high") -> BundleDecision {
+        BundlePrompt.decision(action: action, bundle: bundle, name: name, kind: kind, confidence: confidence, candidates: shown)
+    }
+
+    @Test func joinNamesAListedBundleOfTheSameKind() {
+        #expect(decide("join", bundle: " lisbon TRIP ", kind: "trip") == .join(bundleId: "b1"))
+        #expect(decide("join", bundle: "Rome trip", kind: "trip") == .noBundle, "an unlisted name is no bundle")
+        // A shop appointment the model put in the trip: the kinds differ.
+        #expect(decide("join", bundle: "Lisbon trip", kind: "other") == .noBundle)
+        #expect(decide("join", bundle: "Lisbon trip", kind: "shopping") == .noBundle)
+    }
+
+    @Test func onlyAHighConfidenceAnswerCounts() {
+        #expect(decide("join", bundle: "Lisbon trip", kind: "trip", confidence: "medium") == .noBundle)
+        #expect(decide("new", name: "Rome trip", kind: "trip", confidence: "low") == .noBundle)
+        #expect(decide("new", name: "Rome trip", kind: "trip") == .new(name: "Rome trip", category: .trip))
     }
 
     @Test func newNeedsANameAndARealKind() {
-        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "Acme website", kind: "project", candidates: shown)
-                == .new(name: "Acme website", category: .project))
-        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "", kind: "trip", candidates: shown) == .noBundle)
-        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "Stuff", kind: "other", candidates: shown) == .noBundle)
-        // A "new" bundle with a listed name joins it.
-        #expect(BundlePrompt.decision(action: "new", bundle: "", name: "Zalando Order", kind: "shopping", candidates: shown)
-                == .join(bundleId: "b2"))
-        #expect(BundlePrompt.decision(action: "nothing", bundle: "", name: "", kind: "other", candidates: shown) == .noBundle)
+        #expect(decide("new", name: "Acme website", kind: "project") == .new(name: "Acme website", category: .project))
+        #expect(decide("new", name: "", kind: "trip") == .noBundle)
+        #expect(decide("new", name: "Stuff", kind: "other") == .noBundle)
+        // A "new" bundle with a listed name joins it, when the kinds agree.
+        #expect(decide("new", name: "Zalando Order", kind: "shopping") == .join(bundleId: "b2"))
+        #expect(decide("new", name: "Zalando Order", kind: "trip") == .noBundle)
+        #expect(decide("nothing") == .noBundle)
     }
 
     @Test func thePromptListsTheBundlesAndTheEmail() {

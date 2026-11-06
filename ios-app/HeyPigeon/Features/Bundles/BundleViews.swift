@@ -5,7 +5,9 @@
 // "Add to bundle…" on a thread. On the phone and iPad a bundle's quiet mail
 // also folds into one inbox row (`BundleFoldRow`, `AppModel.fold`).
 //
-// An email opens inside the sheet and keeps every action (swipes, the
+// The Bundles screen covers the window on iPhone and iPad (a sheet looked
+// like a dialog); on the Mac it is a sheet, which is a window of its own.
+// An email opens inside it and keeps every action (swipes, the
 // long-press menu, the thread view). The shared sheets those actions open
 // (Remind me, Add to bundle, the composer, a summary) are presented by the
 // Bundles sheet while it is open (`BundleSheetPresenters`, `AppModel.modal`).
@@ -119,7 +121,7 @@ struct BundlesSheet: View {
                     }
                 }
         }
-        .menuSheet()
+        .coverContent()
         .modifier(BundleSheetPresenters())
         .onAppear {
             if let initialBundleId, path.isEmpty { path = [.bundle(initialBundleId)] }
@@ -204,10 +206,22 @@ struct BundleListRow: View {
 
 // MARK: - One bundle
 
-/// The bundle view: the model's brief (where things stand, what is left to
-/// do), tracking links, key facts, then the open emails and the done ones —
-/// dimmed, and folded behind one row when there are more than three. Every
-/// email row has the inbox's swipes and menu, and "Not part of this".
+/// Which half of the bundle view is up.
+enum BundlePage: Hashable, CaseIterable {
+    case emails, info
+    var title: String {
+        switch self {
+        case .emails: "Emails"
+        case .info: "Info"
+        }
+    }
+}
+
+/// The bundle view, full screen, in two pages the user swipes between:
+/// **Emails** (open first, done dimmed and folded past three; every row has
+/// the inbox's swipes and menu, and ⊖: not part of this bundle) and
+/// **Info** (the model's brief — where things stand, what is left to do —
+/// then tracking links and key facts as plain lists).
 struct BundleScreen: View {
     let bundleId: String
     /// Opens an email in the sheet's stack.
@@ -215,6 +229,7 @@ struct BundleScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var contents: BundleContents?
+    @State private var page: BundlePage = .emails
     @State private var showDone = false
     @State private var editing = false
     @State private var confirmDelete = false
@@ -225,7 +240,19 @@ struct BundleScreen: View {
     var body: some View {
         Group {
             if let c = contents {
-                list(c)
+                VStack(spacing: 0) {
+                    Picker("Page", selection: $page) {
+                        ForEach(BundlePage.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    SwipePages(selection: $page, pages: BundlePage.allCases) { p in
+                        switch p {
+                        case .emails: emails(c)
+                        case .info: info(c)
+                        }
+                    }
+                }
             } else {
                 ContentUnavailableView("Bundle not found", systemImage: "square.stack",
                                        description: Text("It may have been deleted on another device."))
@@ -282,44 +309,10 @@ struct BundleScreen: View {
         contents = model.bundleContents(id: bundleId)
     }
 
-    private func list(_ c: BundleContents) -> some View {
+    // MARK: Emails
+
+    private func emails(_ c: BundleContents) -> some View {
         List {
-            if model.aiConfigured && !c.threads.isEmpty {
-                Section {
-                    BriefCard(state: model.brief(for: c)) { model.summarizeBundle(c) }
-                }
-                .menuCard()
-            }
-            if !c.links.isEmpty {
-                Section("Tracking") {
-                    ForEach(c.links) { l in
-                        Link(destination: l.url) {
-                            Label(l.host, systemImage: "shippingbox")
-                        }
-                    }
-                }
-                .menuCard()
-            }
-            if !c.facts.isEmpty {
-                Section("Key facts") {
-                    ForEach(c.facts) { f in
-                        HStack(spacing: 8) {
-                            Button { open(f.threadId) } label: { FactRow(fact: f) }
-                                .buttonStyle(.plain)
-                            if let url = f.url {
-                                Link("Track", destination: url).font(.subheadline.weight(.semibold))
-                            }
-                        }
-                    }
-                }
-                .menuCard()
-            }
-            if !c.bundle.description.isEmpty {
-                Section {
-                    Text(c.bundle.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
-                }
-                .menuCard()
-            }
             if c.bundle.isAutomatic {
                 Section {
                     Label("Made automatically. Tap ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.",
@@ -396,6 +389,66 @@ struct BundleScreen: View {
         .contextMenu { RowMenu(row: row) }
     }
 
+    // MARK: Info
+
+    private func info(_ c: BundleContents) -> some View {
+        List {
+            if model.aiConfigured && !c.threads.isEmpty {
+                Section {
+                    BriefCard(state: model.brief(for: c)) { model.summarizeBundle(c) }
+                }
+                .menuCard()
+            }
+            if !c.bundle.description.isEmpty {
+                Section {
+                    Text(c.bundle.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                }
+                .menuCard()
+            }
+            if !c.links.isEmpty {
+                Section("Tracking") {
+                    ForEach(c.links) { l in
+                        Link(destination: l.url) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "shippingbox").font(.footnote).foregroundStyle(Theme.tagForeground(.sky))
+                                Text(l.host).font(.subheadline.weight(.medium)).lineLimit(1)
+                                Text(l.subject).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right").font(.caption2).foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    }
+                }
+                .menuCard()
+            }
+            if !c.facts.isEmpty {
+                Section("Key facts") {
+                    ForEach(c.facts) { f in
+                        HStack(spacing: 8) {
+                            Button { open(f.threadId) } label: { FactRow(fact: f) }
+                                .buttonStyle(.plain)
+                            if let url = f.url {
+                                Link("Track", destination: url).font(.footnote.weight(.semibold))
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    }
+                }
+                .menuCard()
+            }
+            if c.links.isEmpty && c.facts.isEmpty && !(model.aiConfigured && !c.threads.isEmpty) {
+                Section {
+                    Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
+                        .font(.footnote).foregroundStyle(Theme.textTertiary)
+                }
+                .menuCard()
+            }
+        }
+        .menuList()
+        .foregroundStyle(Theme.textPrimary)
+    }
+
     /// A fact opens the email it came from, in the sheet.
     private func open(_ threadId: String) {
         if let row = model.row(forThreadId: threadId) { openThread(row) }
@@ -456,21 +509,19 @@ struct BriefCard: View {
     }
 }
 
-/// One key fact: what it is, the identifier, when its email came.
+/// One key fact on one line: its kind, the identifier, when its email came.
 struct FactRow: View {
     let fact: BundleFactItem
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Image(systemName: fact.category.systemImage)
-                .font(.body)
+                .font(.footnote)
                 .foregroundStyle(Theme.tagForeground(.sky))
-                .frame(width: 28)
+                .frame(width: 18)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(fact.category.title).font(.caption).foregroundStyle(Theme.textTertiary)
-                Text(fact.value).font(.body.weight(.semibold).monospaced()).textSelection(.enabled)
-            }
+            Text(fact.category.title).font(.subheadline).foregroundStyle(Theme.textSecondary)
+            Text(fact.value).font(.subheadline.weight(.semibold).monospaced()).lineLimit(1).textSelection(.enabled)
             Spacer(minLength: 8)
             Text(Formatters.rowTime(fact.at)).font(.footnote).foregroundStyle(Theme.textTertiary)
         }

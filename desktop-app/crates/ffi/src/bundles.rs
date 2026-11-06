@@ -152,13 +152,17 @@ pub struct BundleFact {
     pub url: Option<String>,
 }
 
-/// A tracking link found in the bundle's mail ("Track your parcel").
+/// A tracking link found in the bundle's mail ("Track your parcel"): one
+/// per email and host, so an order with three "Track package" buttons is
+/// one row.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct BundleLink {
     pub url: String,
     /// The link's host, for the row: `track.dpd.example`.
     pub host: String,
     pub thread_id: String,
+    /// The email's subject, so the row says which order it tracks.
+    pub subject: String,
 }
 
 /// What the model says about a bundle as a whole.
@@ -325,11 +329,16 @@ impl Engine {
                 .join("\n");
             let found = core_bundles::tracking_links(&text, &numbers);
             for url in &found {
-                if !links.iter().any(|l| &l.url == url) {
+                let host = host_of(url);
+                let seen = links
+                    .iter()
+                    .any(|l| &l.url == url || (l.thread_id == t.id && l.host == host));
+                if !seen {
                     links.push(BundleLink {
                         url: url.clone(),
-                        host: host_of(url),
+                        host,
                         thread_id: t.id.clone(),
+                        subject: t.subject.clone(),
                     });
                 }
             }
@@ -476,6 +485,19 @@ impl Engine {
         Ok(())
     }
 
+    /// The bundle to offer first in the "Add to bundle" picker: the one
+    /// this thread shares a booking, order or tracking number with. `None`
+    /// when there is no such bundle or the thread is already in it.
+    pub fn suggest_bundle(&self, thread_id: String) -> Result<Option<String>, EngineError> {
+        Ok(core_bundles::suggest_for(&self.store, &thread_id)?)
+    }
+}
+
+// The async calls need the engine's Tokio runtime (fetching bodies goes
+// through reqwest); a plain export runs them on a bare executor and the
+// first fetch panics with "no reactor running".
+#[uniffi::export(async_runtime = "tokio")]
+impl Engine {
     /// The bundle's status and what is left to do, from its newest emails
     /// (the text of each, fetched when the store has only its preview).
     /// Like the other summaries it runs on the preferred provider when the
@@ -525,13 +547,6 @@ impl Engine {
         );
         let answer = self.complete(BUNDLE_SUMMARY_PROMPT, user).await?;
         Ok(parse_bundle_summary(&answer))
-    }
-
-    /// The bundle to offer first in the "Add to bundle" picker: the one
-    /// this thread shares a booking, order or tracking number with. `None`
-    /// when there is no such bundle or the thread is already in it.
-    pub fn suggest_bundle(&self, thread_id: String) -> Result<Option<String>, EngineError> {
-        Ok(core_bundles::suggest_for(&self.store, &thread_id)?)
     }
 }
 
@@ -1144,7 +1159,10 @@ mod tests {
                 date: 1_000,
                 snippet: "Shipped".into(),
                 body_html: Some(
-                    r#"<a href="https://track.dpd.example/abc">Track your parcel</a>"#.into(),
+                    r#"<a href="https://track.dpd.example/abc">Track your parcel</a>
+                       <a href="https://track.dpd.example/abc?item=2">Track item 2</a>
+                       <img src="https://m.media-amazon.example/images/G/track-pixel.gif">"#
+                        .into(),
                 ),
                 body_text: None,
                 label_ids: vec!["INBOX".into()],
@@ -1163,6 +1181,7 @@ mod tests {
         assert_eq!(d.links.len(), 1);
         assert_eq!(d.links[0].host, "track.dpd.example");
         assert_eq!(d.links[0].thread_id, "ship");
+        assert_eq!(d.links[0].subject, "Your order #112-334 has shipped");
     }
 
     #[test]

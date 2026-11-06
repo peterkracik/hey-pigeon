@@ -339,6 +339,8 @@ struct BundleLinkItem: Identifiable, Hashable {
     /// `track.dpd.example`, for the row.
     let host: String
     let threadId: String
+    /// The email's subject: which order the link tracks.
+    var subject = ""
     var id: URL { url }
 }
 

@@ -290,3 +290,76 @@ struct MacDeepLinkTests {
         #expect(SidebarColumn.badgeText(count: 0, due: 2) != nil)
     }
 }
+
+// MARK: - The composer's editor
+
+/// The Mac editor's pure parts: text ⇄ html, what a draft opens on, and
+/// how the page's messages land in the model (the page itself is a web
+/// view the tests do not load).
+@MainActor
+struct MacComposeEditorTests {
+    @Test func textBecomesParagraphsWithLineBreaks() {
+        #expect(MacComposeEditor.html(fromText: "Hi <Ana>\nLine 2\n\nBye & co") == "<p>Hi &lt;Ana&gt;<br>Line 2</p><p>Bye &amp; co</p>")
+        // The signature prefill: an empty first paragraph to type into.
+        #expect(MacComposeEditor.html(fromText: "\n\nSig") == "<p><br></p><p>Sig</p>")
+        #expect(MacComposeEditor.html(fromText: "") == "<p><br></p>")
+        #expect(MacComposeEditor.html(fromText: "a\r\n\r\nb") == "<p>a</p><p>b</p>")
+    }
+
+    @Test func aDraftOpensOnItsHTMLElseItsText() {
+        var d = SendDraft()
+        d.bodyText = "Hello"
+        let plain = MacComposeEditor(draft: d)
+        #expect(plain.html == "<p>Hello</p>")
+        #expect(plain.text == "Hello")
+        #expect(plain.htmlPart == "<p>Hello</p>")
+        // An undone send keeps the formatting it was sent with.
+        d.bodyHTML = "<p><b>Hello</b></p>"
+        #expect(MacComposeEditor(draft: d).html == "<p><b>Hello</b></p>")
+        // An empty body sends no html part.
+        #expect(MacComposeEditor(draft: SendDraft()).htmlPart == nil)
+    }
+
+    @Test func thePagesMessagesLandInTheModel() {
+        let e = MacComposeEditor(draft: SendDraft())
+        e.receive(["type": "change", "html": "<p>a</p>", "text": "a"])
+        #expect(e.html == "<p>a</p>" && e.text == "a")
+        e.receive(["type": "height", "value": 40.0])
+        #expect(e.height == MacComposeEditor.minHeight) // never under the minimum
+        e.receive(["type": "height", "value": 400.0])
+        #expect(e.height == 400)
+        e.receive(["type": "selection", "text": "a", "formats": ["bold"],
+                   "rect": ["x": 10.0, "y": 20.0, "w": 30.0, "h": 16.0]])
+        #expect(e.selection == MacComposeEditor.Selection(text: "a", rect: CGRect(x: 10, y: 20, width: 30, height: 16)))
+        #expect(e.activeFormats == ["bold"])
+        // The focus leaves (the AI panel's field): the toolbar's selection
+        // goes, the one the AI works on stays.
+        e.receive(["type": "blur"])
+        #expect(e.selection == nil && e.savedSelection?.text == "a")
+        // A caret placed somewhere ends it.
+        e.receive(["type": "selection", "text": "", "formats": []])
+        #expect(e.savedSelection == nil)
+        var commands: [MacComposeEditor.Command] = []
+        e.onCommand = { commands.append($0) }
+        e.receive(["type": "command", "name": "send"])
+        e.receive(["type": "command", "name": "ai"])
+        e.receive(["type": "command", "name": "nope"])
+        #expect(commands == [.send, .ai])
+    }
+
+    @Test func siriTakesTheTextOverAStaleMirror() {
+        var d = SendDraft()
+        d.bodyText = "Hello"
+        d.bodyHTML = "<p>Hello</p>"
+        let e = MacComposeEditor(draft: d)
+        d.bodyText = "Friday at noon?"
+        e.set(draft: d)
+        #expect(e.text == "Friday at noon?" && e.html == "<p>Friday at noon?</p>")
+    }
+
+    @Test func scriptStringsAreJavaScriptLiterals() {
+        #expect(MacComposeEditor.json("a \"b\"\n") == "\"a \\\"b\\\"\\n\"")
+        #expect(MacComposeEditor.json("x\u{2028}y") == "\"x\\u2028y\"")
+    }
+}
+

@@ -400,7 +400,7 @@ final class MockEngine: MailEngine {
         try requireKeyed(provider)
         aiModelChoice[provider.rawValue] = model
     }
-    func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String {
         try? await Task.sleep(for: .milliseconds(500))
         if instruction.hasPrefix(AIEditSheet.writePrefix) {
             // Compose from a brief (AIEditSheet's Write mode).
@@ -408,7 +408,7 @@ final class MockEngine: MailEngine {
         }
         return "\(text)\n\n(\(instruction.lowercased()))"
     }
-    func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String {
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String {
         try? await Task.sleep(for: .milliseconds(500))
         return "Thanks — I'll take a look and get back to you by [day]."
     }

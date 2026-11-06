@@ -513,6 +513,19 @@ extension View {
         #endif
     }
 
+    /// The composer's scroll view opens at its end when `on`: on the Mac a
+    /// reply sits under the thread's messages, as in Superhuman, and the
+    /// draft is what the sheet opens on; the phone's composer has nothing
+    /// above its fields.
+    @ViewBuilder
+    func composeScrollsToEnd(_ on: Bool) -> some View {
+        #if os(macOS)
+        defaultScrollAnchor(on ? .bottom : nil)
+        #else
+        self
+        #endif
+    }
+
     /// The composer's title, close and size buttons: the phone's navigation
     /// bar; on the Mac a header row at the top — a Mac sheet puts toolbar
     /// items in a bar along its bottom.

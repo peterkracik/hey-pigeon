@@ -138,26 +138,10 @@ struct MessageBodyView: View {
         .accessibilityLabel("Show quoted text")
     }
 
-    /// Splits a plain-text body into what was written and the trailing
-    /// quote: a run of "> " lines (blank lines allowed), optionally after an
-    /// "On … wrote:" line. Nil when there is no trailing quote or nothing
-    /// before it, so non-quoted text is never hidden. Same rules as
-    /// desktop-app/src/lib/EmailBody.svelte.
+    /// The plain-text fold: what was written and the trailing quote
+    /// (QuotedText.split, which the thread transcript shares).
     nonisolated static func splitQuoted(_ text: String) -> (main: String, quoted: String)? {
-        let lines = text.components(separatedBy: "\n")
-        var i = lines.count
-        var hasQuote = false
-        while i > 0 {
-            let l = lines[i - 1]
-            if l.drop(while: { $0 == " " || $0 == "\t" }).hasPrefix(">") { hasQuote = true; i -= 1 }
-            else if l.trimmingCharacters(in: .whitespaces).isEmpty { i -= 1 }
-            else { break }
-        }
-        guard hasQuote, i < lines.count else { return nil }
-        if i > 0, lines[i - 1].range(of: #"^On\s.+wrote:\s*$"#, options: .regularExpression) != nil { i -= 1 }
-        let main = lines[..<i].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !main.isEmpty else { return nil }
-        return (main, lines[i...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+        QuotedText.split(text)
     }
 
     /// Plain-text mail with every URL turned into a tappable, underlined link.

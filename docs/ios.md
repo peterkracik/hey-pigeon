@@ -261,7 +261,8 @@ messages before the last two stays visible.
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
   the thread), and the AI draft is its own circle beside it. There are no action
   links under the bodies: an open message's ••• or a long press on any
-  message replies to or forwards that one.
+  message's header line replies to or forwards that one (the body is left
+  to the long press that starts a text selection).
 - Thread-level swipe between adjacent threads is deliberately **not** in v1
   (it fights the system back-swipe).
 

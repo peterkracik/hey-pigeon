@@ -588,8 +588,11 @@ enum ReplyKind: String, CaseIterable, Identifiable {
 
 /// One message as the inbox row: sender · time, one snippet line; the
 /// unread bar on the left edge. Expanded, it sits on the card surface with
-/// the recipients and the body, and its ••• (or a long press on any row)
-/// replies to or forwards this message.
+/// the recipients and the body, and its ••• (or a long press on the
+/// header line) replies to or forwards this message. The body is outside
+/// that menu on purpose: a context menu on the whole row took the long
+/// press before the web view or the text view saw it, so no selection
+/// could ever start in a message on the phone.
 struct MessageRow: View {
     let message: MessageItem
     let expanded: Bool
@@ -623,6 +626,11 @@ struct MessageRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                ForEach(ReplyKind.allCases) { kind in
+                    Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
+                }
+            }
             if expanded {
                 // Received mail can be translated from a selection; what the
                 // user wrote themselves is theirs to read.
@@ -644,11 +652,6 @@ struct MessageRow: View {
         .background(expanded ? Theme.card : Theme.canvas)
         .overlay(alignment: .leading) {
             if !message.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
-        }
-        .contextMenu {
-            ForEach(ReplyKind.allCases) { kind in
-                Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
-            }
         }
     }
 

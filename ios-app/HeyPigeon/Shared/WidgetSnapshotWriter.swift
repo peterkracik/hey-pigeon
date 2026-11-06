@@ -9,12 +9,14 @@ import WidgetKit
 enum WidgetSnapshotWriter {
     private static var last: WidgetSnapshot?
 
+    /// From the model's last reload, nothing from the store: a snapshot
+    /// follows every reload, and these reads used to run on the main thread
+    /// each time (the unread counts once per account).
     static func build(_ model: AppModel, now: Date = Date()) -> WidgetSnapshot {
-        let counts = (try? model.engine.unreadCounts(accountId: nil)) ?? [:]
         let accounts = model.accounts.map { a in
             WidgetSnapshot.AccountSummary(
                 id: a.id, name: a.displayName, color: a.color.rawValue,
-                unread: (try? model.engine.unreadCounts(accountId: a.id))?["inbox"] ?? 0
+                unread: model.inboxUnread(accountId: a.id)
             )
         }
         let colors = Dictionary(uniqueKeysWithValues: model.accounts.map { ($0.id, $0.color.rawValue) })
@@ -27,11 +29,11 @@ enum WidgetSnapshotWriter {
             .sorted { ($0.scheduledAt ?? now) < ($1.scheduledAt ?? now) }
         let due = scheduled.filter { ($0.scheduledAt ?? now) <= now }
         let upcoming = scheduled.filter { ($0.scheduledAt ?? now) > now }
-        let needReply = (try? model.engine.threads(in: .needReply, accountId: nil, before: nil, limit: 500)) ?? []
+        let needReply = model.needReplyAcrossAccounts
         return WidgetSnapshot(
             updatedAt: now,
             lastSyncAt: model.lastSyncAt,
-            unreadTotal: counts["inbox"] ?? 0,
+            unreadTotal: model.inboxUnreadAllAccounts,
             accounts: accounts,
             due: due.prefix(WidgetSnapshot.maxRows).map { row($0, at: $0.scheduledAt ?? now) },
             upcoming: upcoming.prefix(WidgetSnapshot.maxRows).map { row($0, at: $0.scheduledAt ?? now) },

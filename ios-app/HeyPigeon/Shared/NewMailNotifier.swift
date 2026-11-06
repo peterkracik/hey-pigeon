@@ -70,14 +70,13 @@ enum NewMailNotifier {
 
     /// Badge = unread in the unified inbox + reminders that came due, across
     /// every account. Also called after every sync and reload, so it is
-    /// right with the relay off too. The reminders come from the model's
-    /// last reload (every caller has just reloaded); only the unread count
-    /// is read fresh.
+    /// right with the relay off too. Both halves come from the model's last
+    /// reload (every caller has just reloaded): the unread count used to be
+    /// read fresh, a scan of every folder on the main thread each time.
     @MainActor
     static func refreshBadge(_ model: AppModel) async {
-        let unread = (try? model.engine.unreadCounts(accountId: nil))?["inbox"] ?? 0
         let due = AppModel.due(model.scheduledAcrossAccounts).count
-        try? await UNUserNotificationCenter.current().setBadgeCount(unread + due)
+        try? await UNUserNotificationCenter.current().setBadgeCount(model.inboxUnreadAllAccounts + due)
     }
 
     /// The unread inbox threads right now (one account or all): what a

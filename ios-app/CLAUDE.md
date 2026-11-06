@@ -36,11 +36,24 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   anything that can touch the network is `async`. Map FFI records to app
   models in `RustEngine.swift` only. Keep `MockEngine` behaving like the core
   (its comments say which rule it mirrors) — the tests run on it.
-- **Reload is the funnel.** `AppModel.reload()` re-reads the current view,
-  counts and the cross-account reminder list (`scheduledAcrossAccounts`),
-  then refreshes the badge and widget snapshot once per main-actor turn.
-  Change several navigation properties together with `navigate(to:folder:)`
-  (one reload), not one assignment after another.
+- **Reload is the funnel.** A reload reads the current view, the folder
+  counts and the cross-account lists (reminders, Need reply, the unread
+  counts the badge and widgets show) in one `ListSnapshot` and lands it
+  with `apply`, which assigns each property only when it moved. The
+  engine's change notices go through `reloadSoon()`: one read per burst,
+  off the main actor (`MailEngine.readInBackground`), and the pages on
+  screen are kept. Navigation and the user's own actions call `reload()`
+  so the result is there when they return. The badge, the widgets, the
+  reminder notifications and the Live Activity read the model's last
+  snapshot, never the store. Change several navigation properties
+  together with `navigate(to:folder:)` (one reload), not one assignment
+  after another.
+- **The main thread only draws.** Store reads that are not a single row
+  go through `MailEngine.readInBackground` (`StoreReader`); the Spotlight
+  refresh plans its work there too. Views read ids through the model's
+  maps (`account(for:)`, `bundle(id:)`, `triageLabelName`), which change
+  only when their source does, so a reload that moved nothing redraws no
+  row. No `.animation(value:)` keyed on the rows on a `List`.
 - **SwiftUI `List` aborts on duplicate ids.** Rows go through
   `AppModel.unique`; keep it that way when adding sources of rows.
 - **Platform code goes in `Shared/Platform.swift`.** Haptics, keyboard,

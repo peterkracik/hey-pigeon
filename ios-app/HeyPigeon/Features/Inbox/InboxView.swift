@@ -219,7 +219,10 @@ struct ThreadList: View {
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 0, for: .scrollContent)
         .dismissKeyboardOnScroll()
-        .animation(.easeOut(duration: 0.15), value: model.rows.map(\.id))
+        // No animation keyed on the rows here: the slide-out of a swiped
+        // row is animated where the rows change (AppModel.perform). Keyed
+        // on every row id, the animation re-laid the whole list out on
+        // each reload, mid-scroll.
     }
 
     /// One row with its gestures, annotation and menu. Its own builder so

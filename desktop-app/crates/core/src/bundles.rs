@@ -510,6 +510,10 @@ pub fn tracking_links(text: &str, numbers: &[String]) -> Vec<String> {
             .split_once('>')
             .map(|(_, t)| t.split('<').next().unwrap_or(""))
             .unwrap_or("");
+        // Pictures and tracking pixels are not links to follow.
+        if is_asset_url(&url) {
+            continue;
+        }
         let upper = url.to_uppercase();
         let tracks = url.to_lowercase().contains("track")
             || (after.starts_with('"') && label.contains("track"))
@@ -522,6 +526,28 @@ pub fn tracking_links(text: &str, numbers: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// An image, a style sheet or a script, by its path or its host (a CDN
+/// serving mail assets: `m.media-amazon.com`, `img.`, `static.`).
+fn is_asset_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    let path = lower.split_once("://").map(|(_, r)| r).unwrap_or(&lower);
+    let (host, rest) = path.split_once('/').unwrap_or((path, ""));
+    let file = rest.split(['?', '#']).next().unwrap_or("");
+    const EXT: &[&str] = &[
+        ".gif", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".css", ".js", ".ico",
+    ];
+    EXT.iter().any(|e| file.ends_with(e))
+        || file.contains("/images/")
+        || file.contains("pixel")
+        || host.split('.').next().is_some_and(|h| {
+            matches!(
+                h,
+                "img" | "image" | "images" | "static" | "cdn" | "media" | "assets"
+            ) || h.ends_with("media")
+        })
+        || host.contains("media-amazon")
 }
 
 /// One key fact in the bundle view: an identifier and the email it came
@@ -811,6 +837,12 @@ mod tests {
             vec!["https://track.dpd.example/abc".to_string()]
         );
         assert!(tracking_links("See https://shop.example/help for help", &[]).is_empty());
+        // Pictures and pixels are never tracking links.
+        assert!(tracking_links(
+            r#"<img src="https://m.media-amazon.com/images/G/01/track.gif"> <img src="https://img.shop.example/track-pixel?x=1">"#,
+            &[]
+        )
+        .is_empty());
     }
 
     #[test]

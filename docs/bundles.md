@@ -18,7 +18,11 @@ narrative and attention line, auto-archive, folding on the Mac. Code:
 
 ## The bundle view (as built)
 
-Top to bottom:
+Full screen on iPhone and iPad (a sheet read as a dialog), a sheet on the
+Mac. Two pages, swiped between on iOS (a segmented control switches them
+everywhere): **Emails** — the rows below — and **Info** — the summary,
+tracking links and key facts as one-line lists.
+
 - **Summary** — the model's brief (`ai_summarize_bundle`): a STATUS line
   (where things stand, the latest decision or change) and up to three TO DO
   lines for the user ("Send the invoice to Acme", "Write the project
@@ -26,8 +30,10 @@ Top to bottom:
   for the summary otherwise). It runs on open when the model is on this
   device or auto-summarize is on, otherwise on a tap, like every summary.
 - **Tracking** — links found in the bundle's mail whose address or link text
-  says "track", or that carry a tracking number; a tracking number's fact
-  gets a Track button with its link.
+  says "track", or that carry a tracking number: one per email and host
+  (an order with three "Track package" buttons is one row), never a picture
+  or a tracking pixel. Each row names the email it came from; a tracking
+  number's fact gets a Track button with its link.
 - **Key facts**, then the emails, open first, done dimmed and folded past
   three.
 - Every email row works like an inbox row: the same swipes, the same
@@ -49,6 +55,13 @@ kind, a few subjects each), and answers one of:
 - **new**: a trip ("Lisbon trip"), shopping ("Zalando order", "Christmas
   shopping") or project ("Acme website") bundle no listed one covers,
 - **nothing**: newsletters, promotions, notices, monthly bills, chat.
+
+The model also answers the email's own kind and a confidence
+(`BundlePrompt.decision`). Only a **high-confidence** answer counts, and a
+join only when the email's kind matches the bundle's — a shop appointment
+the model drops into a trip is refused. High means the subject or preview
+itself names the destination, the store or order, or the project; the
+instruction tells the model to answer nothing whenever unsure.
 
 Rules around the answer (`ffi::bundles`):
 - Each email is asked about once per message (`threads.bundle_ai_msg_count`),

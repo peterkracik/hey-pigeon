@@ -391,7 +391,7 @@ final class RustEngine: MailEngine {
                 bundle: BundleItem($0.bundle),
                 facts: $0.facts.map(BundleFactItem.init),
                 links: $0.links.compactMap { l in
-                    URL(string: l.url).map { BundleLinkItem(url: $0, host: l.host, threadId: l.threadId) }
+                    URL(string: l.url).map { BundleLinkItem(url: $0, host: l.host, threadId: l.threadId, subject: l.subject) }
                 },
                 threads: $0.threads.map { ThreadRow($0) }
             )

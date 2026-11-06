@@ -94,8 +94,11 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
         } catch let error as LanguageModelSession.GenerationError {
             throw EngineError.Ai(message: Self.describe(error))
         }
-        let decision = BundlePrompt.decision(action: call.action.rawValue, bundle: call.bundle, name: call.name,
-                                             kind: call.kind.rawValue, candidates: bundles.map { (id: $0.id, name: $0.name) })
+        let decision = BundlePrompt.decision(
+            action: call.action.rawValue, bundle: call.bundle, name: call.name, kind: call.kind.rawValue,
+            confidence: call.confidence.rawValue,
+            candidates: bundles.map { (id: $0.id, name: $0.name, category: BundleCategory($0.kind)) }
+        )
         switch decision {
         case .join(let id): return .existing(bundleId: id)
         case .new(let name, let category): return .new(name: name, kind: category.ffi)
@@ -198,8 +201,15 @@ struct BundleCall {
     var bundle: String
     @Guide(description: "For new: a short name for the bundle, like \"Lisbon trip\" or \"Zalando order\". Empty otherwise.")
     var name: String
-    @Guide(description: "For new: trip, shopping or project. For join and nothing: other.")
+    @Guide(description: "What the email itself is about: trip, shopping or project; other when none.")
     var kind: BundleKindAnswer
+    @Guide(description: "high only when the email names the destination, the store or order, or the project; else medium or low.")
+    var confidence: BundleConfidence
+}
+
+@Generable
+enum BundleConfidence: String {
+    case high, medium, low
 }
 
 @Generable

@@ -341,6 +341,19 @@ extension View {
         #endif
     }
 
+    /// A screen that covers the whole window on iOS (the Bundles screen:
+    /// a sheet left it looking like a dialog); on the Mac a sheet, which
+    /// is a window of its own.
+    @ViewBuilder
+    func coverScreen<Content: View>(isPresented: Binding<Bool>, onDismiss: @escaping () -> Void,
+                                    @ViewBuilder content: @escaping () -> Content) -> some View {
+        #if os(iOS)
+        fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: content)
+        #else
+        sheet(isPresented: isPresented, onDismiss: onDismiss, content: content)
+        #endif
+    }
+
     /// A pushed screen that hides the tab bar (the thread view puts its own
     /// glass bars in its place). The Mac window has no tab bar.
     @ViewBuilder
@@ -565,3 +578,22 @@ struct MacPillButtonStyle: ButtonStyle {
     }
 }
 #endif
+
+/// Pages the user swipes between on iOS (a paged TabView with no dots);
+/// the Mac shows the selected page, switched by the control above it.
+struct SwipePages<Page: Hashable, Content: View>: View {
+    @Binding var selection: Page
+    let pages: [Page]
+    @ViewBuilder let content: (Page) -> Content
+
+    var body: some View {
+        #if os(iOS)
+        TabView(selection: $selection) {
+            ForEach(pages, id: \.self) { page in content(page).tag(page) }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        #else
+        content(selection)
+        #endif
+    }
+}

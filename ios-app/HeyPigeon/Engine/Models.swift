@@ -143,9 +143,34 @@ struct ThreadDetail: Hashable, Sendable {
     /// Plain-text transcript, oldest first, "Me" for the user's own
     /// messages: the AI's context for drafting a reply. One shape for the
     /// thread view, the Reply intent and the triage agent.
-    var transcript: String {
-        mail.map { "\($0.isMine ? "Me" : $0.fromName): \($0.bodyText ?? $0.snippet)" }
-            .joined(separator: "\n\n")
+    var transcript: String { Self.transcript(of: mail) }
+
+    /// Characters a transcript keeps; the newest messages win.
+    static let transcriptBudget = 12_000
+    /// Characters one message may take in it.
+    static let transcriptMessageLimit = 4_000
+
+    /// Each message contributes what its author wrote, not the history
+    /// quoted under it (QuotedText.ownText): a long thread used to repeat
+    /// every earlier message once per reply, which made the models slow
+    /// and pushed the latest message out of their window. When the whole
+    /// thread still does not fit `transcriptBudget`, the oldest messages
+    /// are counted out at the top instead.
+    static func transcript(of messages: [MessageItem]) -> String {
+        var kept: [String] = []
+        var total = 0
+        for m in messages.reversed() {
+            var body = QuotedText.ownText(m.bodyText ?? m.snippet)
+            if body.count > transcriptMessageLimit { body = String(body.prefix(transcriptMessageLimit)) + " …" }
+            let line = "\(m.isMine ? "Me" : m.fromName): \(body)"
+            if !kept.isEmpty, total + line.count > transcriptBudget { break }
+            kept.append(line)
+            total += line.count + 2
+        }
+        let omitted = messages.count - kept.count
+        let out = kept.reversed().joined(separator: "\n\n")
+        guard omitted > 0 else { return out }
+        return "[\(omitted) earlier message\(omitted == 1 ? "" : "s") omitted]\n\n" + out
     }
 
     /// The other people in the conversation, in order of first appearance;
@@ -541,6 +566,18 @@ struct AIPrompts: Hashable {
     let threadSummary: String
     let draftReply: String
     let edit: String
+}
+
+/// Who is writing to whom, for the writing assistant (crates/ffi
+/// `AiWriteContext`): the model writes as the sender, addresses the
+/// recipients and keeps to the conversation's language. Every field is
+/// optional; the composer sends what it knows.
+struct AIWriteContext: Hashable {
+    var senderName: String?
+    var senderEmail: String?
+    /// To and Cc — names when the composer knows them, else addresses.
+    var recipients: [String] = []
+    var subject: String?
 }
 
 /// One model provider as Settings lists it: the engine's id, the row
@@ -980,8 +1017,11 @@ protocol MailEngine: AnyObject {
     /// Re-check which providers this device can run (Apple Intelligence
     /// turned on, the network came back) and register the backends anew.
     func refreshAIProviders()
-    func aiEditText(instruction: String, text: String, history: String?) async throws -> String
-    func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String
+    /// Revise compose text under an instruction. `history` is the thread's
+    /// transcript when replying; `context` who writes to whom (nil keeps
+    /// the plain prompt).
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String
     func aiSummarizeGroup(items: [(from: String, subject: String, snippet: String)]) async throws -> String
     /// The system prompts the engine runs (summary, thread summary, draft
@@ -1041,6 +1081,14 @@ extension MailEngine {
     /// The mock answers in memory: the reads run here, in place.
     func readInBackground<T: Sendable>(_ read: @escaping @Sendable (any StoreReader) throws -> T) async throws -> T {
         try read(MainActorStoreReader(engine: self))
+    }
+    /// The writing calls without a context: the phone's composer, the
+    /// Reply intent and the triage agent send the text alone.
+    func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
+        try await aiEditText(instruction: instruction, text: text, history: history, context: nil)
+    }
+    func aiDraftReply(subject: String, history: String, notes: String?) async throws -> String {
+        try await aiDraftReply(subject: subject, history: history, notes: notes, context: nil)
     }
     /// ChatGPT's key, the one the app took before Claude and Gemini.
     func setAIKey(_ key: String) async throws { try await setAIKey(key, for: .openai) }

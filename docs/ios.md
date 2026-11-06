@@ -310,7 +310,8 @@ The desktop's sections, same order, same wording:
   this iPhone), both synced; Auto-summarize; a token line per provider.
   Powers "Summarize N active" on the day groups, "Summarize thread", the ✨
   draft reply, Edit with AI in compose (tone and edit presets or a freeform
-  instruction), and the triage, Ask and attachment features of
+  instruction), the translate circle beside a selection in a received
+  message, and the triage, Ask and attachment features of
   [ios-intelligence.md](./ios-intelligence.md).
 - **Siri & Search** — *Let Siri see your inbox* (the on-device Spotlight
   index Siri, Spotlight and "Ask my inbox" read), *Ask my inbox*, the Siri

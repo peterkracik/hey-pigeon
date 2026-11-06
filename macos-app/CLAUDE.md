@@ -80,8 +80,25 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   Scroll bars are hidden (`.scrollIndicators(.never)`). The composer on
   the Mac (shared `ComposeView`) takes the window's look through
   Platform helpers: `composeChrome` (title, close and full-screen at the
-  top), `borderlessFields`, `pillButton`, `labelOnlyMenu`. The list and
-  the thread keep to `MacLayout.maxWidth`.
+  top), `borderlessFields`, `pillButton`, `labelOnlyMenu`. Its body is
+  the Mac's own editor (`ComposeMac.swift`, next to the shared view, all
+  of it behind `#if os(macOS)`): an HTML editor in a web view, as the
+  first desktop client's contenteditable was — paragraphs with air
+  between them, bullet and numbered lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and
+  ⇧⌘7 / ⇧⌘8 wired in the page (WebKit binds none of them in a
+  contenteditable), ⌘J for the AI, ⌘↩ to send, plain text on paste. A
+  reply shows the thread's messages above the draft with a "Draft to …"
+  line that keeps the prefilled fields folded (Superhuman's shape; the
+  sheet opens scrolled to the draft, `composeScrollsToEnd`); a selection
+  gets a floating toolbar; the footer's Aa opens a format bar with the
+  same tools; and the AI is a panel under the text — chips, a line for
+  an instruction, the result reviewed before it replaces anything, a
+  Cancel that works and a timeout — not a sheet. `ComposeView` keeps the
+  draft's lifecycle for both platforms and branches only in its two
+  per-platform extensions; the phone's branches are what ship there.
+  The AI's prompt carries who writes to whom (`AIWriteContext`) and the
+  core keeps the draft's language. The list and the thread keep to
+  `MacLayout.maxWidth`.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the

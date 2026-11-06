@@ -18,7 +18,7 @@ HeyPigeon/
   Engine/     Models.swift (app models + the MailEngine protocol), RustEngine (UniFFI adapter), MockEngine, OAuth
   Features/   SwiftUI screens: Inbox, Thread, Compose, Search, Sidebar, Settings, Remind
   Intents/    App Intents, entities, Mail schema, Spotlight indexer, donations
-  AI/         Foundation Models backend + providers, triage prompt/agent/tools, Ask my inbox, attachments, usage
+  AI/         Foundation Models backend + providers, triage prompt/agent/tools, Ask my inbox, attachments, translation, usage
   Shared/     Platform (UIKit/AppKit door), Theme, Formatters, notifications, widgets snapshot, Live Activities, deep links
     WidgetShared/  compiled into the app AND both extensions — Foundation/SwiftUI/AppIntents/ActivityKit only
 HeyPigeonWidgets/  widget extension (reads the App Group snapshot; never links Rust)

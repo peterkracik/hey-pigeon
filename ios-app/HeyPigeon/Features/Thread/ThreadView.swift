@@ -624,9 +624,12 @@ struct MessageRow: View {
             }
             .buttonStyle(.plain)
             if expanded {
+                // Received mail can be translated from a selection; what the
+                // user wrote themselves is theirs to read.
                 MessageBodyView(html: message.bodyHTML, text: message.bodyText ?? message.snippet,
                                 senderAddress: message.fromAddress,
-                                inlineImages: attachments.filter { $0.contentId != nil })
+                                inlineImages: attachments.filter { $0.contentId != nil },
+                                translatable: !message.isMine)
                     .padding(.top, 12)
                 // A picture the body already shows (a signature logo) is
                 // not offered again as a file.

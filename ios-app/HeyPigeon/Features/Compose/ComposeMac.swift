@@ -892,10 +892,13 @@ struct MacAIPanel: View {
         cancel()
         running = true
         error = nil
-        let engine = model.engine
+        // The engine is read inside the task, as the phone's sheet does:
+        // handing a local `any MailEngine` into the task is a send of a
+        // non-Sendable value, which Swift 6 refuses; the model is a
+        // main-actor object and may be captured.
         task = Task {
             do {
-                let out = try await work(engine)
+                let out = try await work(model.engine)
                 guard !Task.isCancelled else { return }
                 done(out)
             } catch is CancellationError {

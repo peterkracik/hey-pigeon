@@ -24,6 +24,23 @@ struct MainWindow: View {
     /// A Spotlight panel (the search, the palette) floats over the window.
     private var overlaid: Bool { state.searching || state.showPalette }
 
+    /// The composer's sheet: a new message, a forward, a reply pulled out
+    /// into a window, or a reply to a thread no window shows. A reply to
+    /// the open thread (or to one in a thread window) is written under it
+    /// instead (ThreadView's inline composer, `ComposePlacement`).
+    private var composeSheet: Binding<SendDraft?> {
+        let modal = model.modal(\.composeDraft, inBundles: false)
+        return Binding(
+            get: {
+                guard let d = modal.wrappedValue else { return nil }
+                let inline = ComposePlacement.isInline(d, openThread: state.path.last?.id,
+                                                       threadWindows: ThreadWindows.open, detached: model.composeDetached)
+                return inline ? nil : d
+            },
+            set: { modal.wrappedValue = $0 }
+        )
+    }
+
     var body: some View {
         @Bindable var model = model
         @Bindable var state = state
@@ -105,7 +122,7 @@ struct MainWindow: View {
         .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
             BundlesSheet(initialBundleId: model.bundlesStartId)
         }
-        .sheet(item: model.modal(\.composeDraft, inBundles: false)) { draft in
+        .sheet(item: composeSheet) { draft in
             ComposeView(draft: draft)
                 .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)
         }
@@ -174,6 +191,19 @@ struct MacToast: View {
                 if model.toast?.id == toast.id { withAnimation { model.toast = nil } }
             }
         }
+    }
+}
+
+/// Where the Mac writes a draft: under the thread it answers when that
+/// thread is on screen (Superhuman's inline reply), else in the sheet.
+/// Pure, so the tests can ask it.
+enum ComposePlacement {
+    /// True for a reply to the window's open thread or to one in a thread
+    /// window of its own, unless the user pulled it out into a window.
+    static func isInline(_ draft: SendDraft, openThread: String?, threadWindows: Set<String> = [],
+                         detached: Bool) -> Bool {
+        guard !detached, let id = draft.replyToThreadId else { return false }
+        return openThread == id || threadWindows.contains(id)
     }
 }
 

@@ -33,6 +33,14 @@ struct ThreadPage: View {
     }
 }
 
+/// The threads open in windows of their own, for the composer's
+/// placement (ComposePlacement): a reply to one is written there, under
+/// its messages, and the main window shows no sheet for it.
+@MainActor
+enum ThreadWindows {
+    static var open: Set<String> = []
+}
+
 /// A thread in its own window (⌘↩, or "Open in New Window").
 struct ThreadWindow: View {
     let threadId: String?
@@ -47,6 +55,8 @@ struct ThreadWindow: View {
             }
             .frame(minWidth: 540, minHeight: 480)
             .overlay(alignment: .bottom) { MacToast() }
+            .onAppear { ThreadWindows.open.insert(threadId) }
+            .onDisappear { ThreadWindows.open.remove(threadId) }
         } else {
             ContentUnavailableView("This thread is no longer here", systemImage: "envelope.open")
                 .frame(minWidth: 540, minHeight: 480)

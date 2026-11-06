@@ -75,6 +75,21 @@ struct WindowStateTests {
         #expect(state.scrollTarget == ids.last)
     }
 
+    @Test func aReplyOpensItsThreadToBeWrittenUnderIt() {
+        let ids = state.flatIds(model)
+        state.select(ids[1], in: model)
+        #expect(state.path.isEmpty)
+        state.run(.reply, in: model)
+        #expect(state.path.last?.id == ids[1])
+        // Pulled out into a window, the draft is the sheet's; a new draft starts under its thread again.
+        var reply = SendDraft()
+        reply.replyToThreadId = ids[1]
+        model.composeDraft = reply
+        model.composeDetached = true
+        model.composeDraft = SendDraft.reply(to: makeMessage("m"), in: makeRow(ids[1]), all: false, history: nil)
+        #expect(!model.composeDetached)
+    }
+
     @Test func markDoneAdvancesToTheRowThatTookItsPlace() async throws {
         let ids = state.flatIds(model)
         state.select(ids[1], in: model)
@@ -288,6 +303,21 @@ struct MacDeepLinkTests {
         #expect(SidebarColumn.badgeText(count: 0, due: 0) == nil)
         #expect(SidebarColumn.badgeText(count: 3, due: 0) != nil)
         #expect(SidebarColumn.badgeText(count: 0, due: 2) != nil)
+    }
+}
+
+// MARK: - Where a draft is written
+
+struct ComposePlacementTests {
+    @Test func aReplyGoesUnderItsThreadUnlessPulledOut() {
+        var reply = SendDraft()
+        reply.replyToThreadId = "t1"
+        #expect(ComposePlacement.isInline(reply, openThread: "t1", detached: false))
+        #expect(!ComposePlacement.isInline(reply, openThread: "t2", detached: false))
+        #expect(ComposePlacement.isInline(reply, openThread: nil, threadWindows: ["t1"], detached: false))
+        #expect(!ComposePlacement.isInline(reply, openThread: "t1", detached: true))
+        // A new message or a forward has no thread to go under.
+        #expect(!ComposePlacement.isInline(SendDraft(), openThread: "t1", detached: false))
     }
 }
 

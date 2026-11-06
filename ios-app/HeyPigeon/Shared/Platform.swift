@@ -436,8 +436,15 @@ extension View {
 enum ComposePresentation {
     #if os(iOS)
     static let switchReopens = true
+    /// A reply opens the phone's composer sheet.
+    static let inlineReplies = false
     #else
     static let switchReopens = false
+    /// The Mac writes a reply under its thread (ThreadView's inline
+    /// composer, ComposeView's `inline`), as Superhuman does; the sheet
+    /// stays for a new message, a forward, and a reply pulled out into a
+    /// window (`AppModel.composeDetached`).
+    static let inlineReplies = true
     #endif
 }
 

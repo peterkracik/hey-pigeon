@@ -52,7 +52,7 @@ macos-app/
 | Widgets | Unread · Next reminder · Need reply, Live Activities, Controls | The three widgets; Done and 1 h are `heypigeon://` links the app acts on |
 | Default mail app | iOS Settings › Default Apps | Settings › Default email app asks macOS to make Hey Pigeon the `mailto:` handler and shows whether it is |
 | Updates | TestFlight | In-app (Sparkle): an hourly check of the `mac-latest` feed, a background download, the install on the next quit; Hey Pigeon › Check for Updates… and a switch in Settings › Updates |
-| Compose | Full-screen sheet | A sheet on the window: the thread above a reply, an HTML editor (paragraphs, lists, ⌘B/⌘I/⌘U, ⌘K, a floating toolbar over a selection), attachments, the AI as a panel under the text (⌘J), ⌘↩ sends |
+| Compose | Full-screen sheet | A reply is written under its thread, scrolled to the middle (a sheet for a new message, a forward, or a reply pulled out into a window): an HTML editor (paragraphs, lists, ⌘B/⌘I/⌘U, ⌘K, a floating toolbar over a selection), attachments, the AI as a panel under the text (⌘J), ⌘↩ sends |
 
 Everything else — the rows, the thread view with its glass bars, the Remind
 sheet, the summaries, Ask my inbox, attachments and "Explain attachment",

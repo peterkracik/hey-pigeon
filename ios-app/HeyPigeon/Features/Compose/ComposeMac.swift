@@ -50,7 +50,7 @@ final class MacComposeEditor {
     /// (`bold`, `insertUnorderedList`, …): the toolbars highlight them.
     var activeFormats: Set<String> = []
     /// The keys the page hands back to the composer: ⌘J (the AI panel),
-    /// ⌘K (a link), ⌘↩ (send).
+    /// ⌘K (a link), ⌘↩ (send), Esc (close, keeping the draft).
     var onCommand: ((Command) -> Void)?
 
     /// The web view's bridge, installed by `HTMLEditorView`.
@@ -68,7 +68,7 @@ final class MacComposeEditor {
     }
 
     enum Command {
-        case ai, link, send
+        case ai, link, send, escape
     }
 
     init(draft: SendDraft) {
@@ -183,6 +183,7 @@ final class MacComposeEditor {
             case "ai": onCommand?(.ai)
             case "link": onCommand?(.link)
             case "send": onCommand?(.send)
+            case "escape": onCommand?(.escape)
             default: break
             }
         default:
@@ -374,6 +375,7 @@ struct HTMLEditorView: NSViewRepresentable {
         if (text) document.execCommand('insertText', false, text);
       });
       editor.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') { ev.preventDefault(); post({ type: 'command', name: 'escape' }); return; }
         if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
         var k = ev.key.toLowerCase(), cmd = null;
         if (!ev.shiftKey) {
@@ -450,8 +452,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
 /// A web view that never scrolls itself: it is as tall as its content and
 /// the wheel belongs to the composer's scroll view (MessageBodyView's
-/// PassthroughWebView, for the same reason).
-private final class EditorWebView: WKWebView {
+/// PassthroughWebView, for the same reason). Not private: the Mac
+/// window's key map asks whether the first responder is this editor
+/// (WindowState.isTyping).
+final class EditorWebView: WKWebView {
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
     }

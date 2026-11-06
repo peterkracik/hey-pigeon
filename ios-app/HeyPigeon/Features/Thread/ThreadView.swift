@@ -36,6 +36,9 @@ struct ThreadView: View {
     @State private var hintActions: [AttachmentAction] = []
     /// The draft the delete confirmation is asking about.
     @State private var deletingDraft: ThreadDraft?
+    /// The scroll view's height: room under an inline reply, so it can
+    /// sit in the middle of the view.
+    @State private var viewportHeight: CGFloat = 0
 
     /// Live from the store (AppModel.openThread), never the copy this view
     /// was opened with: that one goes stale with the first action.
@@ -73,44 +76,86 @@ struct ThreadView: View {
         return out
     }
 
+    /// The reply written under the thread (the Mac; the phone opens its
+    /// sheet, `ComposePresentation.inlineReplies`): the open composer's
+    /// draft when it answers this thread and was not pulled out into a
+    /// window.
+    private var inlineDraft: SendDraft? {
+        guard ComposePresentation.inlineReplies, let d = model.composeDraft,
+              d.replyToThreadId == row.id, !model.composeDetached else { return nil }
+        return d
+    }
+
+    /// The inline reply once it is on screen: the detail comes first, the
+    /// composer under it.
+    private var inlineDraftShown: String? { detail == nil ? nil : inlineDraft?.draftKey }
+
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                    .font(Theme.display(22, relativeTo: .title2))
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 16).padding(.top, 6)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                        .font(Theme.display(22, relativeTo: .title2))
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 16).padding(.top, 6)
 
-                metaLine.padding(.horizontal, 16).padding(.top, 8)
-                if let s = current.openSuggestion {
-                    SuggestionCard(suggestion: s, row: current)
-                        .padding(.horizontal, 16).padding(.top, 10)
-                }
-                if !hintActions.isEmpty {
-                    AttachmentActionChips(actions: hintActions, row: current)
-                        .padding(.horizontal, 16).padding(.top, 8)
-                        .accessibilityLabel("Suggested from the attachment")
-                }
-
-                if let detail {
-                    messageList(detail.mail).padding(.top, 14)
-                    let pending = drafts
-                    if !pending.isEmpty {
-                        VStack(spacing: 8) {
-                            ForEach(pending) { d in
-                                DraftRow(draft: d) { edit(d) } onDelete: { deletingDraft = d }
-                            }
-                        }
-                        .padding(.horizontal, 12).padding(.top, 10)
+                    metaLine.padding(.horizontal, 16).padding(.top, 8)
+                    if let s = current.openSuggestion {
+                        SuggestionCard(suggestion: s, row: current)
+                            .padding(.horizontal, 16).padding(.top, 10)
                     }
-                } else if let failed {
-                    ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(failed))
-                } else {
-                    ProgressView().frame(maxWidth: .infinity).padding(40)
+                    if !hintActions.isEmpty {
+                        AttachmentActionChips(actions: hintActions, row: current)
+                            .padding(.horizontal, 16).padding(.top, 8)
+                            .accessibilityLabel("Suggested from the attachment")
+                    }
+
+                    if let detail {
+                        messageList(detail.mail).padding(.top, 14)
+                        // The draft being written under the thread is not a
+                        // card to edit as well.
+                        let pending = drafts.filter { $0.id != inlineDraft?.draftKey }
+                        if !pending.isEmpty {
+                            VStack(spacing: 8) {
+                                ForEach(pending) { d in
+                                    DraftRow(draft: d) { edit(d) } onDelete: { deletingDraft = d }
+                                }
+                            }
+                            .padding(.horizontal, 12).padding(.top, 10)
+                        }
+                        if let draft = inlineDraft {
+                            ComposeView(draft: draft, inline: true)
+                                .id(draft.draftKey)
+                                // The thread closing (or the next one taking
+                                // its place) takes the draft with it, saved on
+                                // the way out by the composer itself; the sheet
+                                // must not come up in its place.
+                                .onDisappear {
+                                    if !model.composeDetached, model.composeDraft?.draftKey == draft.draftKey {
+                                        model.composeDraft = nil
+                                    }
+                                }
+                        }
+                    } else if let failed {
+                        ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(failed))
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity).padding(40)
+                    }
+                }
+                .padding(.top, 6)
+                // Room under an inline reply, so it can sit in the middle.
+                .padding(.bottom, inlineDraft == nil ? 150 : max(150, viewportHeight / 2))
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            // The reply opens in the middle of the view: a moment after it
+            // is there, so the lazy stack has laid it out.
+            .onChange(of: inlineDraftShown) { _, key in
+                guard let key else { return }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(120))
+                    withAnimation(.snappy(duration: 0.3)) { proxy.scrollTo(key, anchor: .center) }
                 }
             }
-            .padding(.top, 6)
-            .padding(.bottom, 150)
         }
         .background(Theme.canvas)
         // The names are the principal item. No .toolbar(removing: .title)
@@ -309,17 +354,21 @@ struct ThreadView: View {
 
     private var bottomBars: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                replyPill
-                if model.aiConfigured {
-                    Button { Task { await draftReply() } } label: {
-                        Image(systemName: "sparkles").font(.title3).foregroundStyle(.white)
-                            .frame(width: 48, height: 48)
-                            .background(Theme.accent.opacity(drafting ? 0.4 : 0.9), in: Circle())
+            // While the reply is being written under the thread, the pill
+            // has nothing to offer.
+            if inlineDraft == nil {
+                HStack(spacing: 10) {
+                    replyPill
+                    if model.aiConfigured {
+                        Button { Task { await draftReply() } } label: {
+                            Image(systemName: "sparkles").font(.title3).foregroundStyle(.white)
+                                .frame(width: 48, height: 48)
+                                .background(Theme.accent.opacity(drafting ? 0.4 : 0.9), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(detail == nil || drafting)
+                        .accessibilityLabel("Draft a reply with AI")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(detail == nil || drafting)
-                    .accessibilityLabel("Draft a reply with AI")
                 }
             }
             // Each toggle shows its state: filled icon in the state's colour.

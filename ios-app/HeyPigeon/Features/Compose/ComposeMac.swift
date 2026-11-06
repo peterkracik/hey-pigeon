@@ -852,8 +852,8 @@ struct MacAIPanel: View {
         let t = target()
         guard !Self.isBlank(t.text) else { error = "Nothing to edit — write something first."; return }
         let (history, context) = (self.history, self.context)
-        run { engine in
-            try await engine.aiEditText(instruction: instruction, text: t.text, history: history, context: context)
+        run {
+            try await model.engine.aiEditText(instruction: instruction, text: t.text, history: history, context: context)
         } done: { out in
             result = Outcome(text: out, written: false, hasSelection: t.hasSelection)
         }
@@ -863,8 +863,8 @@ struct MacAIPanel: View {
     /// so chips chain (Warmer, then More concise).
     private func refine(_ r: Outcome, with instruction: String) {
         let (history, context) = (self.history, self.context)
-        run { engine in
-            try await engine.aiEditText(instruction: instruction, text: r.text, history: history, context: context)
+        run {
+            try await model.engine.aiEditText(instruction: instruction, text: r.text, history: history, context: context)
         } done: { out in
             result = Outcome(text: out, written: r.written, hasSelection: r.hasSelection)
         }
@@ -875,30 +875,29 @@ struct MacAIPanel: View {
     private func write(notes: String) {
         let (subject, history, context) = (self.subject, self.history, self.context)
         let reply = isReply
-        run { engine in
+        run {
             if reply, let history {
-                return try await engine.aiDraftReply(subject: subject, history: history,
-                                                     notes: notes.isEmpty ? nil : notes, context: context)
+                return try await model.engine.aiDraftReply(subject: subject, history: history,
+                                                           notes: notes.isEmpty ? nil : notes, context: context)
             }
             guard !notes.isEmpty else { throw AIPanelError.nothingToWrite }
-            return try await engine.aiEditText(instruction: AIEditSheet.writeInstruction(subject: subject),
-                                               text: notes, history: nil, context: context)
+            return try await model.engine.aiEditText(instruction: AIEditSheet.writeInstruction(subject: subject),
+                                                     text: notes, history: nil, context: context)
         } done: { out in
             result = Outcome(text: out, written: true, hasSelection: false)
         }
     }
 
-    private func run(_ work: @escaping (any MailEngine) async throws -> String, done: @escaping (String) -> Void) {
+    /// `work` is main-actor like the engine it calls: a non-isolated async
+    /// closure taking the engine was a send of a non-Sendable value, which
+    /// Swift 6 refuses (the phone's sheet calls the engine inline, same thing).
+    private func run(_ work: @escaping @MainActor () async throws -> String, done: @escaping (String) -> Void) {
         cancel()
         running = true
         error = nil
-        // The engine is read inside the task, as the phone's sheet does:
-        // handing a local `any MailEngine` into the task is a send of a
-        // non-Sendable value, which Swift 6 refuses; the model is a
-        // main-actor object and may be captured.
         task = Task {
             do {
-                let out = try await work(model.engine)
+                let out = try await work()
                 guard !Task.isCancelled else { return }
                 done(out)
             } catch is CancellationError {

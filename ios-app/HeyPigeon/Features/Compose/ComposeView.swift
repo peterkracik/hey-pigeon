@@ -47,6 +47,10 @@ struct ComposeView: View {
     @State private var handingOver = false
     /// Known addresses for the recipient fields' autocomplete.
     @State private var people: [PersonSuggestion] = []
+    /// Written under its thread (the Mac's reply, ThreadView) rather than
+    /// in a sheet: no chrome and no scroll view of its own, and leaving
+    /// means taking the draft off the model, not dismissing a presentation.
+    let inline: Bool
     @Environment(\.scenePhase) private var scenePhase
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -71,7 +75,8 @@ struct ComposeView: View {
     /// Siri's "send it" sends) catches up with the editor.
     private static let mirrorDelay: Duration = .milliseconds(300)
 
-    init(draft: SendDraft) {
+    init(draft: SendDraft, inline: Bool = false) {
+        self.inline = inline
         _draft = State(initialValue: draft)
         _to = State(initialValue: draft.to)
         _cc = State(initialValue: draft.cc)
@@ -108,25 +113,45 @@ struct ComposeView: View {
     private var canSend: Bool { !(to.isEmpty && cc.isEmpty && bcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        headerFields
-                        bodyEditor
-                        if !attachments.isEmpty { attachmentChips }
-                    }
-                    .padding(.bottom, 24)
+        #if os(macOS)
+        if inline {
+            withLifecycle(inlineContent)
+        } else {
+            NavigationStack { withLifecycle(sheetContent) }
+        }
+        #else
+        NavigationStack { withLifecycle(sheetContent) }
+        #endif
+    }
+
+    /// The sheet's column: the fields and the editor over the footer, with
+    /// the title, close and full-screen chrome.
+    private var sheetContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    headerFields
+                    bodyEditor
+                    if !attachments.isEmpty { attachmentChips }
                 }
-                .composeScrollsToEnd(draft.replyToThreadId != nil)
-                .dismissKeyboardOnScroll(.interactively)
-                footer
+                .padding(.bottom, 24)
             }
-            .background(Theme.canvas)
-            .borderlessFields()
-            .composeChrome(title: draft.replyToThreadId == nil ? "New message" : "Reply",
-                           fullScreen: model.composeFullScreen,
-                           close: { close() }, toggleFullScreen: { toggleFullScreen() })
+            .composeScrollsToEnd(draft.replyToThreadId != nil)
+            .dismissKeyboardOnScroll(.interactively)
+            footer
+        }
+        .background(Theme.canvas)
+        .borderlessFields()
+        .composeChrome(title: draft.replyToThreadId == nil ? "New message" : "Reply",
+                       fullScreen: model.composeFullScreen,
+                       close: { close() }, toggleFullScreen: { toggleFullScreen() })
+    }
+
+    /// The draft's lifecycle around either shape: the people for the
+    /// fields, the signature and the baseline on appear, the save on the
+    /// way out, the model's copy for Siri, the pickers and the link alert.
+    private func withLifecycle<Content: View>(_ content: Content) -> some View {
+        content
             .task { people = model.searchPeople() }
             .onAppear {
                 if fromId.isEmpty {
@@ -184,7 +209,6 @@ struct ComposeView: View {
             } message: {
                 Text("Turn the selected text into a link.")
             }
-        }
     }
 
     // MARK: Rows
@@ -284,7 +308,7 @@ struct ComposeView: View {
             .padding(.horizontal, 16)
         }
         .padding(.vertical, 8)
-        .background(Theme.canvas)
+        .background(footerBackground)
     }
 
     /// The From account's signature, when the body still ends with it.
@@ -397,7 +421,7 @@ struct ComposeView: View {
             d.draftSaved = false
         }
         Keyboard.dismiss()
-        dismiss()
+        leave()
         model.send(d, from: from)
     }
 
@@ -429,7 +453,7 @@ struct ComposeView: View {
     private func close() {
         if dismissAssistant() { return }
         Keyboard.dismiss()
-        dismiss()
+        leave()
     }
 
     /// Trash: close and delete the draft, if one was saved.
@@ -437,7 +461,19 @@ struct ComposeView: View {
         finished = true
         if let from = savedFrom { model.deleteDraft(draft.draftKey, from: from) }
         Keyboard.dismiss()
-        dismiss()
+        leave()
+    }
+
+    /// Leave the composer: the sheet is dismissed; written under its
+    /// thread, the draft comes off the model and so off the thread
+    /// (`dismiss` there would pop the thread itself off the navigation
+    /// stack). What was typed is saved on the way out either way.
+    private func leave() {
+        if inline {
+            if model.composeDraft?.draftKey == draft.draftKey { model.composeDraft = nil }
+        } else {
+            dismiss()
+        }
     }
 
     /// Save (create or update) the Gmail draft when the content changed
@@ -463,6 +499,7 @@ extension ComposeView {
 
     private func setBody(text: String) { body_ = AttributedString(text) }
     private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
+    private var footerBackground: Color { Theme.canvas }
 
     /// The From chip and the To / Cc / Bcc / Subject rows.
     @ViewBuilder private var headerFields: some View {
@@ -585,13 +622,33 @@ extension ComposeView {
 
     private func setBody(text: String) { editor.setText(text) }
     private func adoptBody(of d: SendDraft) { editor.set(draft: d) }
+    private var footerBackground: Color { inline ? Theme.card : Theme.canvas }
 
-    /// A reply: the thread, then the "Draft to …" line that keeps the
+    /// Under the thread: the "Draft to …" line (the fields behind it, a
+    /// window button and a close), the editor, the attachments and the
+    /// footer, on a card like the thread's open message — no chrome and
+    /// no scroll view of its own, the thread's does the scrolling. No
+    /// shadow and no clip: both would fall on the editor's web view.
+    private var inlineContent: some View {
+        VStack(spacing: 0) {
+            headerFields
+            bodyEditor
+            if !attachments.isEmpty { attachmentChips }
+            footer
+        }
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
+        .padding(.horizontal, 12).padding(.top, 10)
+        .borderlessFields()
+    }
+
+    /// A reply: the thread (in the sheet; under the thread the messages
+    /// are already on screen), then the "Draft to …" line that keeps the
     /// prefilled fields folded; the fields themselves when shown (always
     /// for a new message or a forward, which has no recipients yet).
     @ViewBuilder private var headerFields: some View {
         if let threadId = draft.replyToThreadId {
-            ComposeThreadHistory(threadId: threadId) { thread = $0 }
+            if !inline { ComposeThreadHistory(threadId: threadId) { thread = $0 } }
             draftHeader
         }
         if showFields {
@@ -641,8 +698,39 @@ extension ComposeView {
             }
             .buttonStyle(.plain)
             .help("Recipients and subject")
+            if inline {
+                headerButton("arrow.up.left.and.arrow.down.right", help: "Open as a window") { detach() }
+                headerButton("xmark", help: "Close and keep the draft (Esc)") { close() }
+            }
         }
-        .padding(.horizontal, 16).padding(.top, 18).padding(.bottom, showFields ? 4 : 0)
+        .padding(.horizontal, 16).padding(.top, inline ? 14 : 18).padding(.bottom, showFields ? 4 : 0)
+        // Under the thread the names for the line come from the store;
+        // the sheet's history view loads them itself.
+        .task(id: draft.replyToThreadId) {
+            if inline, let id = draft.replyToThreadId { thread = try? model.engine.threadLocal(id: id) }
+        }
+    }
+
+    private func headerButton(_ systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    /// The window button: the draft moves to the composer's sheet with
+    /// what is typed. This view is about to go and must not save on the
+    /// way out — the sheet would then save the same draft again.
+    private func detach() {
+        handingOver = true
+        model.composeDraft = composed
+        model.composeDetached = true
     }
 
     private var recipientLine: String {
@@ -686,6 +774,7 @@ extension ComposeView {
                     case .ai: openAI()
                     case .link: askLink = true
                     case .send: if canSend { send() }
+                    case .escape: close()
                     }
                 }
                 if focus == .body { editor.focus() }

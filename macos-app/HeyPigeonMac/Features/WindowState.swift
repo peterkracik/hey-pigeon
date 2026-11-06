@@ -7,6 +7,7 @@
 
 import AppKit
 import SwiftUI
+import WebKit
 
 /// Everything a key, a menu item, a hover button or the palette can do.
 enum MailCommand: Hashable {
@@ -341,9 +342,11 @@ final class WindowState: Equatable {
         }
     }
 
-    /// The first responder is a text editor: a field or the composer. A
-    /// message body's selectable, read-only text is not typing.
+    /// The first responder is a text editor: a field, or the composer's
+    /// web view (EditorWebView). A message body's selectable, read-only
+    /// text — and its web view — is not typing.
     static func isTyping(_ responder: NSResponder?) -> Bool {
+        if responder is EditorWebView { return true }
         guard let text = responder as? NSTextView else { return responder is NSTextField }
         return text.isEditable
     }
@@ -392,6 +395,7 @@ final class WindowState: Equatable {
             guard let row else { return }
             let all = command == .replyAll
             IntentDonations.replied(row, all: all, in: model)
+            showThread(row, in: model)
             Task { try? await model.openReply(to: row, all: all, body: nil) }
         case .forward:
             guard let row else { return }
@@ -502,10 +506,20 @@ final class WindowState: Equatable {
         }
     }
 
+    /// A reply is written under its thread (ThreadView's inline composer):
+    /// the thread opens first when a reply starts from the list or a
+    /// row's preview, as in Superhuman. Not in Drafts, where a row opens
+    /// the composer itself.
+    private func showThread(_ row: ThreadRow, in model: AppModel) {
+        guard model.view != .drafts, path.last?.id != row.id else { return }
+        open(row, in: model)
+    }
+
     /// The thread view's sparkle, from the keyboard or the menu: the AI
     /// writes the reply body and the composer opens on it.
     private func draftReply(for row: ThreadRow, in model: AppModel) {
         guard model.aiConfigured else { model.show("Connect an AI provider in Settings to draft."); return }
+        showThread(row, in: model)
         Task {
             do {
                 guard let detail = try await model.engine.thread(id: row.id), detail.mail.last != nil else { return }

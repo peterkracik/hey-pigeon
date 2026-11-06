@@ -278,7 +278,15 @@ final class AppModel {
 
     var toast: Toast?
     var pendingRemind: ThreadRow?
-    var composeDraft: SendDraft?
+    var composeDraft: SendDraft? {
+        // A new draft starts where its platform puts it (the Mac: under
+        // its thread), whatever the last one was pulled out to.
+        didSet { if composeDraft?.draftKey != oldValue?.draftKey { composeDetached = false } }
+    }
+    /// The Mac writes a reply under its thread; true moves the open draft
+    /// to the composer's sheet instead (the inline composer's window
+    /// button). Reset with every new draft; the phone never sets it.
+    var composeDetached = false
     var showSidebar = false
     var showSettings = false
     /// The Bundles list (a sheet on both platforms).

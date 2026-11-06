@@ -87,14 +87,22 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   between them, bullet and numbered lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and
   ⇧⌘7 / ⇧⌘8 wired in the page (WebKit binds none of them in a
   contenteditable), ⌘J for the AI, ⌘↩ to send, plain text on paste. A
-  reply shows the thread's messages above the draft with a "Draft to …"
-  line that keeps the prefilled fields folded (Superhuman's shape; the
-  sheet opens scrolled to the draft, `composeScrollsToEnd`); a selection
-  gets a floating toolbar; the footer's Aa opens a format bar with the
-  same tools; and the AI is a panel under the text — chips, a line for
-  an instruction, the result reviewed before it replaces anything, a
-  Cancel that works and a timeout — not a sheet. `ComposeView` keeps the
-  draft's lifecycle for both platforms and branches only in its two
+  reply is written **under its thread**, not in a sheet (Superhuman's
+  inline reply): `ThreadView` puts `ComposeView(draft:inline:)` under
+  the messages when the open draft answers its thread
+  (`ComposePresentation.inlineReplies`, `AppModel.composeDetached`) and
+  scrolls it to the middle; a reply from the list or a row's preview
+  opens the thread first (`WindowState.showThread`); `MainWindow` shows
+  the sheet only for a new message, a forward, a reply pulled out with
+  the card's window button, or a reply to a thread no window shows
+  (`ComposePlacement`, `ThreadWindows`). The card's "Draft to …" line
+  keeps the prefilled fields folded; the sheet shows the thread's
+  messages above a reply itself. A selection gets a floating toolbar;
+  the footer's Aa opens a format bar with the same tools; and the AI is
+  a panel under the text — chips, a line for an instruction, the result
+  reviewed before it replaces anything, a Cancel that works and a
+  timeout — not a sheet. `ComposeView` keeps the draft's lifecycle for
+  both platforms (`withLifecycle`) and branches only in its two
   per-platform extensions; the phone's branches are what ship there.
   The AI's prompt carries who writes to whom (`AIWriteContext`) and the
   core keeps the draft's language. The list and the thread keep to

@@ -38,11 +38,9 @@ pub async fn backfill<M: MailProvider, S: Store>(
         let page = provider
             .list_recent(account_id, window_days, page_token.take())
             .await?;
-        for (thread, messages) in &page.threads {
-            store.upsert_thread(thread)?;
-            for m in messages {
-                store.upsert_message(m)?;
-            }
+        // One write per page, not one per thread and message.
+        store.upsert_page(&page.threads)?;
+        for (thread, _) in &page.threads {
             upserted.push(thread.id.clone());
             total += 1;
         }
@@ -98,13 +96,8 @@ pub async fn backfill_older<M: MailProvider, S: Store>(
         let page = provider
             .list_before(account_id, before_ms, page_token.take())
             .await?;
-        for (thread, messages) in &page.threads {
-            store.upsert_thread(thread)?;
-            for m in messages {
-                store.upsert_message(m)?;
-            }
-            total += 1;
-        }
+        store.upsert_page(&page.threads)?;
+        total += page.threads.len();
         match page.next_page_token {
             Some(t) => {
                 store.sync_meta_set(account_id, META_OLDER_CURSOR, &t)?;
@@ -239,10 +232,7 @@ fn apply_change<S: Store>(
     match change {
         // Fresh snapshot from the provider — plain upserts, like backfill.
         HistoryChange::MessageAdded { thread, messages } => {
-            store.upsert_thread(thread)?;
-            for m in messages {
-                store.upsert_message(m)?;
-            }
+            store.upsert_thread_with_messages(thread, messages)?;
         }
         HistoryChange::MessageDeleted {
             thread_id,

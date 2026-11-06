@@ -1,12 +1,16 @@
 //! SQLite adapter: implements `Store`.
-//! Single connection behind a mutex, WAL mode, migration-only schema
-//! (user_version pragma). The DB is a cache — worst case is drop + re-sync.
-// ponytail: one global connection lock; a dedicated writer thread + read pool
-// only if profiling ever shows contention (M1 is one account, tiny writes).
+//! WAL mode, migration-only schema (user_version pragma). Two connections
+//! behind two mutexes: every write and the background passes go through
+//! the first; the UI's reads (`read`) go through the second, so a list or a
+//! count never waits for a sync page to commit — WAL lets a reader and the
+//! writer work at once. (One connection for both had the inbox wait on the
+//! sync, on the main thread.) The DB is a cache — worst case is drop +
+//! re-sync.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use heypigeon_core::domain::*;
 use heypigeon_core::ports::{Store, StoreError};
@@ -312,10 +316,18 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE bundles ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
     ALTER TABLE threads ADD COLUMN bundle_ai_msg_count INTEGER;
     ",
+    // v21 — the unread rows on their own: `unread_counts` reads them in one
+    // pass after every reload (the badge, the sidebar, the widgets), and the
+    // rest of the table — read mail, the bulk of it — stays out of the way.
+    "CREATE INDEX idx_threads_unread ON threads (account_id, last_msg_at DESC) WHERE is_read = 0;",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
 const HEAL_LIST_SENDERS_AT: usize = 17;
+
+/// How long a connection waits for a lock SQLite holds elsewhere (a
+/// checkpoint, the other connection's write) before giving up.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQL predicate: the JSON label array in `col` contains `label`. Only
 /// compile-time system-label constants may be interpolated — user label ids
@@ -382,7 +394,12 @@ fn thread_filter_sql<'a>(filter: &'a ThreadFilter, label_bind: &str) -> (String,
 }
 
 pub struct SqliteStore {
+    /// Every write, and the reads of the background passes.
     conn: Mutex<Connection>,
+    /// The UI's reads (`read`): a second connection to the same file. None
+    /// for an in-memory store, where a second connection would be a second
+    /// database; its reads use `conn`.
+    reader: Option<Mutex<Connection>>,
 }
 
 fn err(e: impl std::fmt::Display) -> StoreError {
@@ -443,7 +460,12 @@ fn heal_list_senders(conn: &Connection) -> rusqlite::Result<()> {
 impl SqliteStore {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let conn = Connection::open(path).map_err(err)?;
-        Self::init(conn)
+        let mut store = Self::init(conn)?;
+        // Opened after the migrations, so it sees the finished schema.
+        let reader = Connection::open(path).map_err(err)?;
+        reader.busy_timeout(BUSY_TIMEOUT).map_err(err)?;
+        store.reader = Some(Mutex::new(reader));
+        Ok(store)
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
@@ -461,8 +483,15 @@ impl SqliteStore {
     fn init_to(conn: Connection, target: usize) -> Result<Self, StoreError> {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(err)?;
+        // A commit no longer waits for the WAL to reach the disk (the
+        // checkpoint does): a sync page is hundreds of small writes, not
+        // hundreds of fsyncs. A power cut costs at most the last commits,
+        // never consistency, and the database is a cache.
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .map_err(err)?;
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(err)?;
+        conn.busy_timeout(BUSY_TIMEOUT).map_err(err)?;
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(err)?;
@@ -481,12 +510,27 @@ impl SqliteStore {
         }
         Ok(Self {
             conn: Mutex::new(conn),
+            reader: None,
         })
     }
 
+    /// The writer connection: every write, and the background passes' reads.
     fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, StoreError> {
         let conn = self
             .conn
+            .lock()
+            .map_err(|_| StoreError("lock poisoned".into()))?;
+        f(&conn).map_err(err)
+    }
+
+    /// The reader connection, for the reads the UI makes: it sees every
+    /// commit (WAL readers start from the latest one) and never waits for a
+    /// write in progress. The writer itself for an in-memory store.
+    fn read<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, StoreError> {
+        let Some(reader) = &self.reader else {
+            return self.with(f);
+        };
+        let conn = reader
             .lock()
             .map_err(|_| StoreError("lock poisoned".into()))?;
         f(&conn).map_err(err)
@@ -523,7 +567,7 @@ impl SqliteStore {
     /// reminder: archiving clears it (`devsync::clear_on_done`), and this
     /// filter covers mail archived elsewhere, e.g. in Gmail.
     pub fn list_scheduled(&self) -> Result<Vec<Thread>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
                  WHERE scheduled_at IS NOT NULL AND {INBOX_SQL}
@@ -538,7 +582,7 @@ impl SqliteStore {
     /// as `list_scheduled`. Newest first, matching the inbox's natural
     /// order.
     pub fn list_needs_reply(&self) -> Result<Vec<Thread>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
                  WHERE needs_reply = 1 AND {INBOX_SQL}
@@ -662,6 +706,84 @@ fn row_to_thread(r: &rusqlite::Row<'_>) -> rusqlite::Result<Thread> {
     })
 }
 
+/// `upsert_thread` on a given connection: the store's, or a transaction's
+/// for a whole page (`upsert_page`).
+fn upsert_thread_on(c: &Connection, t: &Thread) -> rusqlite::Result<()> {
+    let labels = serde_json::to_string(&t.labels)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    // scheduled_at is deliberately absent from the column list AND the
+    // UPDATE set: it is local-only metadata (never synced to Gmail), so a
+    // sync re-upsert of provider data must not clobber an existing schedule.
+    // Writes go through `set_schedule` only. labels, by contrast, ARE
+    // provider data — re-upserts must write them so the folder queries stay
+    // current.
+    c.execute(
+        "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
+                              is_inbox, is_archived, msg_count, from_summary, last_from_addr,
+                              labels, has_attachment)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(id) DO UPDATE SET
+               subject = excluded.subject, snippet = excluded.snippet,
+               last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
+               is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
+               msg_count = excluded.msg_count, from_summary = excluded.from_summary,
+               last_from_addr = excluded.last_from_addr, labels = excluded.labels,
+               has_attachment = excluded.has_attachment",
+        params![
+            t.id,
+            t.account_id,
+            t.subject,
+            t.snippet,
+            t.last_msg_at,
+            t.is_read,
+            t.is_inbox,
+            t.is_archived,
+            t.msg_count,
+            t.from_summary,
+            t.last_from_addr,
+            labels,
+            t.has_attachment
+        ],
+    )?;
+    Ok(())
+}
+
+/// `upsert_message` on a given connection (see `upsert_thread_on`).
+fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
+    let to_addrs = serde_json::to_string(&m.to_addrs)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let label_ids = serde_json::to_string(&m.label_ids)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    c.execute(
+        "INSERT INTO messages
+           (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+            body_html, body_text, label_ids, is_read)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(id) DO UPDATE SET
+           snippet = excluded.snippet,
+           -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
+           -- delta thread refetch) must not wipe them
+           body_html = COALESCE(excluded.body_html, body_html),
+           body_text = COALESCE(excluded.body_text, body_text),
+           label_ids = excluded.label_ids,
+           is_read = excluded.is_read",
+        params![
+            m.id,
+            m.thread_id,
+            m.account_id,
+            m.from_addr,
+            to_addrs,
+            m.date,
+            m.snippet,
+            m.body_html,
+            m.body_text,
+            label_ids,
+            m.is_read
+        ],
+    )?;
+    Ok(())
+}
+
 const THREAD_COLS: &str =
     "id, account_id, subject, snippet, last_msg_at, is_read, is_inbox, is_archived, msg_count, from_summary, last_from_addr, scheduled_at, labels, has_attachment, priority, triage_label_ids, needs_reply, follow_up_since, suggestion, bundle_id";
 
@@ -691,7 +813,7 @@ impl Store for SqliteStore {
     }
 
     fn list_accounts(&self) -> Result<Vec<Account>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt =
                 c.prepare("SELECT id, email, display_name, color, history_id, avatar_url, signature FROM accounts ORDER BY id")?;
             let rows = stmt.query_map([], |r| {
@@ -723,68 +845,39 @@ impl Store for SqliteStore {
     }
 
     fn upsert_thread(&self, t: &Thread) -> Result<(), StoreError> {
-        let labels = serde_json::to_string(&t.labels).map_err(err)?;
-        self.with(|c| {
-            // scheduled_at is deliberately absent from the column list AND
-            // the UPDATE set: it is local-only metadata (never synced to
-            // Gmail), so a sync re-upsert of provider data must not clobber
-            // an existing schedule. Writes go through `set_schedule` only.
-            // labels, by contrast, ARE provider data — re-upserts must write
-            // them so the folder queries stay current.
-            c.execute(
-                "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
-                                      is_inbox, is_archived, msg_count, from_summary, last_from_addr,
-                                      labels, has_attachment)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                     ON CONFLICT(id) DO UPDATE SET
-                       subject = excluded.subject, snippet = excluded.snippet,
-                       last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
-                       is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
-                       msg_count = excluded.msg_count, from_summary = excluded.from_summary,
-                       last_from_addr = excluded.last_from_addr, labels = excluded.labels,
-                       has_attachment = excluded.has_attachment",
-                params![
-                    t.id, t.account_id, t.subject, t.snippet, t.last_msg_at,
-                    t.is_read, t.is_inbox, t.is_archived, t.msg_count, t.from_summary,
-                    t.last_from_addr, labels, t.has_attachment
-                ],
-            )
-            .map(|_| ())
-        })
+        self.with(|c| upsert_thread_on(c, t))
     }
 
     fn upsert_message(&self, m: &Message) -> Result<(), StoreError> {
-        let to_addrs = serde_json::to_string(&m.to_addrs).map_err(err)?;
-        let label_ids = serde_json::to_string(&m.label_ids).map_err(err)?;
+        self.with(|c| upsert_message_on(c, m))
+    }
+
+    fn upsert_thread_with_messages(
+        &self,
+        thread: &Thread,
+        messages: &[Message],
+    ) -> Result<(), StoreError> {
         self.with(|c| {
-            c.execute(
-                "INSERT INTO messages
-                   (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
-                    body_html, body_text, label_ids, is_read)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(id) DO UPDATE SET
-                   snippet = excluded.snippet,
-                   -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
-                   -- delta thread refetch) must not wipe them
-                   body_html = COALESCE(excluded.body_html, body_html),
-                   body_text = COALESCE(excluded.body_text, body_text),
-                   label_ids = excluded.label_ids,
-                   is_read = excluded.is_read",
-                params![
-                    m.id,
-                    m.thread_id,
-                    m.account_id,
-                    m.from_addr,
-                    to_addrs,
-                    m.date,
-                    m.snippet,
-                    m.body_html,
-                    m.body_text,
-                    label_ids,
-                    m.is_read
-                ],
-            )
-            .map(|_| ())
+            let tx = c.unchecked_transaction()?;
+            upsert_thread_on(&tx, thread)?;
+            for m in messages {
+                upsert_message_on(&tx, m)?;
+            }
+            tx.commit()
+        })
+    }
+
+    /// One transaction for the page: one commit, one turn of the lock.
+    fn upsert_page(&self, page: &[(Thread, Vec<Message>)]) -> Result<(), StoreError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            for (thread, messages) in page {
+                upsert_thread_on(&tx, thread)?;
+                for m in messages {
+                    upsert_message_on(&tx, m)?;
+                }
+            }
+            tx.commit()
         })
     }
 
@@ -820,7 +913,7 @@ impl Store for SqliteStore {
         // json_each over the (small) thread label array — only fixed system
         // label ids are interpolated; user label ids bind as ?4.
         let (cond, label_param) = thread_filter_sql(filter, "?4");
-        self.with(|c| {
+        self.read(|c| {
             // Keyset pagination — never OFFSET (DESIGN.md).
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
@@ -848,7 +941,7 @@ impl Store for SqliteStore {
         filter: &ThreadFilter,
     ) -> Result<i64, StoreError> {
         let (cond, label_param) = thread_filter_sql(filter, "?2");
-        self.with(|c| {
+        self.read(|c| {
             let sql = format!(
                 "SELECT COUNT(*) FROM threads
                  WHERE ({cond}) AND is_read = 0
@@ -860,6 +953,38 @@ impl Store for SqliteStore {
                 None => stmt.query_row(params![account_id], |r| r.get(0)),
             }
         })
+    }
+
+    /// One pass over the unread rows — a few hundred at most — classified
+    /// in Rust (`ThreadFilter::matches`), instead of a scan of the whole
+    /// table per folder and per label with `json_each` on every row. The
+    /// shells ask for these after every reload.
+    fn unread_counts(
+        &self,
+        account_id: Option<&AccountId>,
+    ) -> Result<HashMap<String, i64>, StoreError> {
+        let labels = self.list_labels()?;
+        let unread: Vec<Thread> = self.read(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                 WHERE is_read = 0 AND (?1 IS NULL OR account_id = ?1)"
+            ))?;
+            let rows = stmt.query_map(params![account_id], row_to_thread)?;
+            rows.collect()
+        })?;
+        let count =
+            |filter: &ThreadFilter| unread.iter().filter(|t| filter.matches(t)).count() as i64;
+        let mut out = HashMap::new();
+        for (key, filter) in ThreadFilter::COUNTED_FOLDERS {
+            out.insert(key.to_string(), count(&filter));
+        }
+        for label in labels {
+            out.insert(
+                format!("label:{}", label.id),
+                count(&ThreadFilter::Label(label.id)),
+            );
+        }
+        Ok(out)
     }
 
     fn set_labels(&self, account_id: &AccountId, labels: &[Label]) -> Result<(), StoreError> {
@@ -879,7 +1004,7 @@ impl Store for SqliteStore {
     }
 
     fn list_labels(&self) -> Result<Vec<Label>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt = c.prepare(
                 "SELECT account_id, id, name FROM labels
                  ORDER BY name COLLATE NOCASE, account_id",
@@ -896,7 +1021,7 @@ impl Store for SqliteStore {
     }
 
     fn list_triage_labels(&self) -> Result<Vec<TriageLabel>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt =
                 c.prepare("SELECT id, name FROM triage_labels ORDER BY name COLLATE NOCASE")?;
             let rows = stmt.query_map([], |r| {
@@ -977,7 +1102,7 @@ impl Store for SqliteStore {
     }
 
     fn get_pref(&self, name: &str) -> Result<Option<serde_json::Value>, StoreError> {
-        let raw: Option<String> = self.with(|c| {
+        let raw: Option<String> = self.read(|c| {
             c.query_row(
                 "SELECT value FROM prefs WHERE name = ?1",
                 params![name],
@@ -1010,7 +1135,7 @@ impl Store for SqliteStore {
     }
 
     fn list_prefs(&self) -> Result<Vec<(String, serde_json::Value)>, StoreError> {
-        let rows: Vec<(String, String)> = self.with(|c| {
+        let rows: Vec<(String, String)> = self.read(|c| {
             let mut stmt = c.prepare("SELECT name, value FROM prefs ORDER BY name")?;
             let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect()
@@ -1035,7 +1160,7 @@ impl Store for SqliteStore {
     }
 
     fn list_bundles(&self) -> Result<Vec<Bundle>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt = c.prepare(
                 "SELECT id, name, kind, description, status, created_at, updated_at, origin
                    FROM bundles
@@ -1187,7 +1312,7 @@ impl Store for SqliteStore {
             has_label_sql("labels", "TRASH"),
             has_label_sql("labels", "SPAM")
         );
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt = c.prepare(&format!(
                 "SELECT {THREAD_COLS} FROM threads
                   WHERE bundle_id = ?1 AND NOT {junk}
@@ -1472,7 +1597,7 @@ impl Store for SqliteStore {
     }
 
     fn get_thread(&self, thread_id: &ThreadId) -> Result<Option<Thread>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             c.query_row(
                 &format!("SELECT {THREAD_COLS} FROM threads WHERE id = ?1"),
                 params![thread_id],
@@ -1483,7 +1608,7 @@ impl Store for SqliteStore {
     }
 
     fn list_messages(&self, thread_id: &ThreadId) -> Result<Vec<Message>, StoreError> {
-        self.with(|c| {
+        self.read(|c| {
             let mut stmt = c.prepare(
                 "SELECT id, thread_id, account_id, from_addr, to_addrs, date, snippet,
                         body_html, body_text, label_ids, is_read
@@ -1525,7 +1650,7 @@ impl Store for SqliteStore {
         // Backfill deliberately ingests the whole spam/trash corpus (the
         // Trash/Spam folders list locally) — but search must not surface it.
         let not_junk = not_junk_sql("t.labels");
-        self.with(|c| {
+        self.read(|c| {
             if let Some(fts) = &q.fts_match {
                 // bm25()/snippet() must run in a direct full-text query, so
                 // a MATERIALIZED CTE (flattening it back into the join would
@@ -3838,5 +3963,254 @@ mod tests {
             assert_eq!(s.list_accounts().unwrap().len(), 1);
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The one-pass counts agree with the per-folder COUNT queries, label
+    /// and junk rules included.
+    #[test]
+    fn unread_counts_agree_with_count_unread() {
+        let s = store();
+        s.upsert_account(&sample_account("a2")).unwrap();
+        s.set_labels(
+            &"a1".to_string(),
+            &[Label {
+                account_id: "a1".into(),
+                id: "Label_1".into(),
+                name: "Invoices".into(),
+            }],
+        )
+        .unwrap();
+        let mk =
+            |id: &str, account: &str, labels: &[&str], inbox: bool, archived: bool, read: bool| {
+                Thread {
+                    id: id.to_string(),
+                    account_id: account.to_string(),
+                    subject: String::new(),
+                    snippet: String::new(),
+                    last_msg_at: 1,
+                    is_read: read,
+                    is_inbox: inbox,
+                    is_archived: archived,
+                    msg_count: 1,
+                    from_summary: "Someone".to_string(),
+                    last_from_addr: "someone@example.com".to_string(),
+                    scheduled_at: None,
+                    needs_reply: false,
+                    follow_up_since: None,
+                    suggestion: None,
+                    bundle_id: None,
+                    labels: labels.iter().map(|s| s.to_string()).collect(),
+                    has_attachment: false,
+                    priority: None,
+                    triage_label_ids: Vec::new(),
+                }
+            };
+        for t in [
+            mk(
+                "inbox-unread",
+                "a1",
+                &["INBOX", "Label_1"],
+                true,
+                false,
+                false,
+            ),
+            mk("inbox-read", "a1", &["INBOX"], true, false, true),
+            mk("starred", "a1", &["STARRED"], false, false, false),
+            mk("archived", "a1", &["Label_1"], false, true, false),
+            mk("trashed", "a1", &["TRASH", "Label_1"], false, false, false),
+            mk(
+                "trashed-inbox",
+                "a1",
+                &["TRASH", "INBOX"],
+                true,
+                false,
+                false,
+            ),
+            mk("draft", "a1", &["DRAFT"], false, false, false),
+            mk("spam", "a1", &["SPAM"], false, false, false),
+            mk(
+                "other-account",
+                "a2",
+                &["INBOX", "STARRED"],
+                true,
+                false,
+                false,
+            ),
+        ] {
+            s.upsert_thread(&t).unwrap();
+        }
+        s.set_schedule(&"starred".to_string(), Some(5)).unwrap();
+        s.set_needs_reply(&"draft".to_string(), true).unwrap();
+        for account in [None, Some("a1".to_string()), Some("a2".to_string())] {
+            let counts = s.unread_counts(account.as_ref()).unwrap();
+            for (key, filter) in ThreadFilter::COUNTED_FOLDERS {
+                assert_eq!(
+                    counts[key],
+                    s.count_unread(account.as_ref(), &filter).unwrap(),
+                    "{key} for {account:?}"
+                );
+            }
+            assert_eq!(
+                counts["label:Label_1"],
+                s.count_unread(account.as_ref(), &ThreadFilter::Label("Label_1".into()))
+                    .unwrap()
+            );
+            assert_eq!(counts.len(), ThreadFilter::COUNTED_FOLDERS.len() + 1);
+        }
+        let all = s.unread_counts(None).unwrap();
+        assert_eq!(
+            all["inbox"], 3,
+            "inbox-unread, trashed-inbox, other-account"
+        );
+        assert_eq!(
+            all["label:Label_1"], 2,
+            "inbox-unread, archived; the trashed one is junk"
+        );
+        assert_eq!(all["trash"], 2);
+    }
+
+    /// A page lands as one commit: everything or, on a bad row, nothing.
+    #[test]
+    fn upsert_page_is_one_transaction() {
+        let s = store();
+        let thread = |id: &str| Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: id.to_string(),
+            snippet: String::new(),
+            last_msg_at: 1,
+            is_read: false,
+            is_inbox: true,
+            is_archived: false,
+            msg_count: 1,
+            from_summary: "Someone".to_string(),
+            last_from_addr: "someone@example.com".to_string(),
+            scheduled_at: None,
+            needs_reply: false,
+            follow_up_since: None,
+            suggestion: None,
+            bundle_id: None,
+            labels: vec!["INBOX".to_string()],
+            has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
+        };
+        let message = |id: &str, thread_id: &str, account: &str| Message {
+            id: id.to_string(),
+            thread_id: thread_id.to_string(),
+            account_id: account.to_string(),
+            from_addr: "someone@example.com".to_string(),
+            to_addrs: vec!["me@example.com".to_string()],
+            date: 1,
+            snippet: id.to_string(),
+            body_html: None,
+            body_text: None,
+            label_ids: vec!["INBOX".to_string()],
+            is_read: false,
+        };
+        s.upsert_page(&[
+            (
+                thread("t1"),
+                vec![message("m1", "t1", "a1"), message("m2", "t1", "a1")],
+            ),
+            (thread("t2"), vec![message("m3", "t2", "a1")]),
+        ])
+        .unwrap();
+        assert_eq!(s.list_messages(&"t1".to_string()).unwrap().len(), 2);
+        assert_eq!(
+            s.list_threads(None, &ThreadFilter::Inbox, None, 10)
+                .unwrap()
+                .len(),
+            2
+        );
+        // A message for an unknown account breaks the foreign key: the page
+        // rolls back, the good thread before it included.
+        let bad = s.upsert_page(&[
+            (thread("t3"), vec![message("m4", "t3", "a1")]),
+            (thread("t4"), vec![message("m5", "t4", "nobody")]),
+        ]);
+        assert!(bad.is_err());
+        assert!(s.get_thread(&"t3".to_string()).unwrap().is_none());
+        assert!(s.get_thread(&"t4".to_string()).unwrap().is_none());
+    }
+
+    /// A file-backed store reads through its own connection: it sees every
+    /// commit, and a write in progress does not make it wait.
+    #[test]
+    fn reader_sees_commits_and_does_not_wait_for_a_write() {
+        let dir =
+            std::env::temp_dir().join(format!("heypigeon-test-reader-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mail.db");
+        let _ = std::fs::remove_file(&path);
+        let s = std::sync::Arc::new(SqliteStore::open(&path).unwrap());
+        assert!(s.reader.is_some());
+        s.upsert_account(&sample_account("a1")).unwrap();
+        let mk = |id: &str| Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: id.to_string(),
+            snippet: String::new(),
+            last_msg_at: 1,
+            is_read: false,
+            is_inbox: true,
+            is_archived: false,
+            msg_count: 1,
+            from_summary: "Someone".to_string(),
+            last_from_addr: "someone@example.com".to_string(),
+            scheduled_at: None,
+            needs_reply: false,
+            follow_up_since: None,
+            suggestion: None,
+            bundle_id: None,
+            labels: vec!["INBOX".to_string()],
+            has_attachment: false,
+            priority: None,
+            triage_label_ids: Vec::new(),
+        };
+        s.upsert_thread(&mk("t1")).unwrap();
+        // Read-your-write across the two connections.
+        assert_eq!(
+            s.list_threads(None, &ThreadFilter::Inbox, None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(s.unread_counts(None).unwrap()["inbox"], 1);
+
+        // A write transaction stays open on the writer for a while; the
+        // reader answers meanwhile, from the last commit.
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let writer = std::sync::Arc::clone(&s);
+        let hold = std::thread::spawn(move || {
+            writer
+                .with(|c| {
+                    let tx = c.unchecked_transaction()?;
+                    upsert_thread_on(&tx, &mk("t2"))?;
+                    started_tx.send(()).unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    tx.commit()
+                })
+                .unwrap();
+        });
+        started_rx.recv().unwrap();
+        let began = std::time::Instant::now();
+        let seen = s
+            .list_threads(None, &ThreadFilter::Inbox, None, 10)
+            .unwrap();
+        assert!(
+            began.elapsed() < std::time::Duration::from_millis(300),
+            "the read waited on the write"
+        );
+        assert_eq!(seen.len(), 1, "the uncommitted thread is not visible yet");
+        hold.join().unwrap();
+        assert_eq!(
+            s.list_threads(None, &ThreadFilter::Inbox, None, 10)
+                .unwrap()
+                .len(),
+            2
+        );
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

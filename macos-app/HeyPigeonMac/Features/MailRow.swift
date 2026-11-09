@@ -5,11 +5,12 @@
 // row draws its piece, `Position`). Under the pointer the time gives way
 // to Done (the desktop's strike-through, then the row leaves), the other
 // swipe actions from Settings and the arrow that opens the full thread.
-// (A done circle at the row's start read as a selection checkbox.) A
-// click opens the row in place: the latest message, Reply · Reply all ·
-// Forward and "Open full thread ›" (MailPreview). ⌘ and ⇧ gather rows for
-// the batch bar; the context menu and two-finger trackpad swipes act on
-// the row too.
+// (A done circle at the row's start read as a selection checkbox.) The
+// pointer is the hand over a row, as it was in the first desktop client;
+// a click opens the row in place: the latest message, whole, Reply ·
+// Reply all · Forward and "Open full thread ›" (MailPreview). ⌘ and ⇧
+// gather rows for the batch bar; the context menu and two-finger trackpad
+// swipes act on the row too.
 
 import AppKit
 import SwiftUI
@@ -135,6 +136,7 @@ struct MailRow: View {
             }
         }
         .onHover { hovering = $0 }
+        .pointerStyle(.link)
     }
 
     /// Unread: a dot on the left edge, in the account's colour when the
@@ -274,10 +276,12 @@ private struct SmallIcon: View {
     }
 }
 
-/// The open row's card body: the latest message (who it is to, the body,
-/// folded to a readable height), then Reply · Reply all · Forward and the
-/// way to the full thread. The thread is read once, from the store or the
-/// network, the first time the card opens.
+/// The open row's card body: the latest message (who it is to, then the
+/// whole body — the list scrolls, as the first desktop client's did; a
+/// fold cut a message off mid-sentence with nothing to say so), then
+/// Reply · Reply all · Forward and the way to the full thread. The thread
+/// is read once, from the store or the network, the first time the card
+/// opens.
 struct MailPreview: View {
     let row: ThreadRow
     @Bindable var state: WindowState
@@ -294,8 +298,6 @@ struct MailPreview: View {
                     .lineLimit(1)
                 MessageBodyView(html: last.bodyHTML, text: last.bodyText ?? last.snippet, senderAddress: last.fromAddress,
                                 translatable: !last.isMine)
-                    .frame(maxHeight: 440, alignment: .top)
-                    .clipped()
             } else if let failed {
                 Text(failed).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             } else {

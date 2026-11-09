@@ -123,8 +123,9 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   top), `borderlessFields`, `pillButton`, `labelOnlyMenu`. Its body is
   the Mac's own editor (`ComposeMac.swift`, next to the shared view, all
   of it behind `#if os(macOS)`): an HTML editor in a web view, as the
-  first desktop client's contenteditable was — paragraphs with air
-  between them, bullet and numbered lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and
+  first desktop client's contenteditable was — paragraphs with half a
+  line of air between them on Return, a bare line break on
+  Shift-Return, bullet and numbered lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and
   ⇧⌘7 / ⇧⌘8 wired in the page (WebKit binds none of them in a
   contenteditable), ⌘J for the AI, ⌘↩ to send, plain text on paste. A
   reply is written **under its thread**, not in a sheet (Superhuman's

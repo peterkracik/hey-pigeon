@@ -249,14 +249,18 @@ struct HTMLEditorView: NSViewRepresentable {
     private static let style = """
     :root { color-scheme: light dark; }
     html, body { margin: 0; padding: 0; background: transparent; }
-    body { font: 14px/1.6 -apple-system, system-ui, sans-serif; color: #0D0D10; -webkit-font-smoothing: antialiased; }
+    body { font: 14px/1.45 -apple-system, system-ui, sans-serif; color: #0D0D10; -webkit-font-smoothing: antialiased; }
     #editor { position: relative; min-height: 236px; padding: 14px 16px 30px; outline: none; word-wrap: break-word; }
     #editor.blank::before { content: attr(data-placeholder); position: absolute; left: 16px; top: 14px; color: #8E9096; pointer-events: none; }
-    #editor p { margin: 0 0 0.75em; }
+    /* Two sizes of break: Return starts a paragraph, half a line of air
+       under the one before; Shift-Return breaks the line inside it, with
+       none. (A 1.6 line height and 0.75em of air put the next line a
+       whole line and a half down.) */
+    #editor p { margin: 0 0 0.5em; }
     #editor p:last-child { margin-bottom: 0; }
-    #editor ul, #editor ol { margin: 0 0 0.75em; padding-left: 1.6em; }
-    #editor li { margin: 0.15em 0; }
-    #editor blockquote { border-left: 3px solid #9A9CA2; margin: 0 0 0.75em; padding-left: 12px; color: #75787F; }
+    #editor ul, #editor ol { margin: 0 0 0.5em; padding-left: 1.6em; }
+    #editor li { margin: 0.1em 0; }
+    #editor blockquote { border-left: 3px solid #9A9CA2; margin: 0 0 0.5em; padding-left: 12px; color: #75787F; }
     a { color: #33363E; }
     @media (prefers-color-scheme: dark) {
       body { color: #F7F7F8; }
@@ -265,7 +269,8 @@ struct HTMLEditorView: NSViewRepresentable {
     }
     """
 
-    /// Paragraphs on Return (`<p>`, not `<div>`), tags for formatting (not
+    /// Paragraphs on Return (`<p>`, not `<div>`), a line break (`<br>`) on
+    /// Shift-Return, tags for formatting (not
     /// styles), plain text on paste — the clipboard's html would ride into
     /// the message with its styles and trackers — and the keys: WebKit
     /// binds none of the editing shortcuts in a contenteditable, so ⌘B
@@ -376,6 +381,14 @@ struct HTMLEditorView: NSViewRepresentable {
       });
       editor.addEventListener('keydown', function (ev) {
         if (ev.key === 'Escape') { ev.preventDefault(); post({ type: 'command', name: 'escape' }); return; }
+        // Shift-Return: a line break inside the paragraph, never a new
+        // one (left to WebKit it depends on where the caret is).
+        if (ev.key === 'Enter' && ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+          ev.preventDefault();
+          document.execCommand('insertLineBreak', false, null);
+          changed();
+          return;
+        }
         if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
         var k = ev.key.toLowerCase(), cmd = null;
         if (!ev.shiftKey) {

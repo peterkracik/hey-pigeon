@@ -111,6 +111,11 @@ struct MainWindow: View {
         // title is the toolbar's own item.
         .toolbar { MainToolbar(state: state, model: model) }
         .toolbar(removing: .title)
+        // The columns run under the toolbar. What scrolls beneath it fades
+        // out softly; the hard style drew an opaque band with a hairline
+        // over the list column — a second header — whenever the list so
+        // much as relaid out under the pointer.
+        .scrollEdgeEffectStyle(.soft, for: .top)
         // Under a floating panel the bar is clear (and empty), so the dim
         // reaches the top of the window.
         .toolbarBackgroundVisibility(overlaid ? .hidden : .automatic, for: .windowToolbar)

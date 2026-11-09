@@ -355,6 +355,14 @@ struct MacDeepLinkTests {
         #expect(SidebarColumn.badgeText(count: 3, due: 0) != nil)
         #expect(SidebarColumn.badgeText(count: 0, due: 2) != nil)
     }
+
+    @Test func theToolbarsTabsStartPastTheSidebar() {
+        // The item starts where the traffic lights end; it fills the rest
+        // of the sidebar column, and nothing when it is already past it.
+        #expect(SidebarInset.width(sidebar: 233, itemX: 80) == 153)
+        #expect(SidebarInset.width(sidebar: 233, itemX: 0) == 233)
+        #expect(SidebarInset.width(sidebar: 233, itemX: 300) == 0)
+    }
 }
 
 // MARK: - Where a draft is written

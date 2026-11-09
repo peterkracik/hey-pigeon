@@ -58,7 +58,10 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   and drew a top bar of our own; the traffic lights vanished, then had to
   be moved by hand and still felt wrong.) `MainToolbar` holds the phone's
   three tabs (`ViewTabs`: Inbox · Remind me · Need reply, with counts)
-  and, for any other folder, its name at the leading end; summarize /
+  and, for any other folder, its name at the leading end — over the list
+  column: the window lays the sidebar out itself, so with it out a clear
+  first item (`SidebarInset`, which measures its own place in the window)
+  pushes the tabs past the divider; summarize /
   ask / new message / search at the trailing end, after a flexible
   `ToolbarSpacer` (`.primaryAction` puts items at the *leading* end on
   the Mac). No Settings gear and no sidebar button there: Settings is in
@@ -89,7 +92,11 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   (`WindowState.expanded`, the latest message and "Open full thread ›"),
   Return or the row's arrow opens the full thread (`path`). Never put a
   shadow on a view that holds a message: it falls on the web view too.
-  Scroll bars are hidden (`.scrollIndicators(.never)`). The composer on
+  Scroll bars are hidden (`.scrollIndicators(.never)`), and what scrolls
+  under the toolbar fades softly (`.scrollEdgeEffectStyle(.soft)` on the
+  window: the hard style drew a second header over the list). The open
+  row's card shows the whole message, as the first client's did; the
+  pointer over a row is the hand. The composer on
   the Mac (shared `ComposeView`) takes the window's look through
   Platform helpers: `composeChrome` (title, close and full-screen at the
   top), `borderlessFields`, `pillButton`, `labelOnlyMenu`. Its body is

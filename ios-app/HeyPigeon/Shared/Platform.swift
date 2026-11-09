@@ -429,7 +429,104 @@ extension View {
         self
         #endif
     }
+
+    /// A page pushed in a stack whose Back is the window's own toolbar
+    /// item on the Mac (macos-app MainToolbar: at the content column's
+    /// leading end, where the stack's own sat beside the traffic lights,
+    /// over the sidebar); the phone keeps the navigation bar's.
+    @ViewBuilder
+    func backInWindowToolbar() -> some View {
+        #if os(macOS)
+        navigationBarBackButtonHidden(true)
+        #else
+        self
+        #endif
+    }
+
+    /// The thread's Reply pill: the phone's glass capsule; on the Mac the
+    /// window's sunken pill (the composer's buttons), inside the bar's card.
+    @ViewBuilder
+    func replyPillSurface() -> some View {
+        #if os(iOS)
+        glassEffect(.regular, in: .capsule)
+        #else
+        background(Theme.sunken, in: Capsule())
+        #endif
+    }
+
+    /// The thread's floating bar: the phone's glass capsule; on the Mac a
+    /// flat card with a hairline and a soft shadow — glass stretched across
+    /// the thread refracted the message under it into a smear.
+    @ViewBuilder
+    func floatingBar() -> some View {
+        #if os(iOS)
+        glassEffect(.regular, in: .capsule)
+        #else
+        background(Theme.card, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.separator, lineWidth: 1))
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+        #endif
+    }
+
+    /// A button in the thread's bar: plain on the phone's glass; on the
+    /// Mac a square that tints under the pointer, as the window's icon
+    /// buttons do (a plain button there gives no sign that it is one).
+    @ViewBuilder
+    func barButton() -> some View {
+        #if os(iOS)
+        buttonStyle(.plain)
+        #else
+        buttonStyle(MacBarButtonStyle())
+        #endif
+    }
 }
+
+/// How the thread's chrome is laid out: the phone's bars, or the Mac
+/// window's.
+enum ThreadChrome {
+    #if os(iOS)
+    /// The names are the navigation bar's principal item.
+    static let titleInBar = true
+    /// Two full-width glass capsules at the bottom: Reply with the AI
+    /// circle beside it, then the triage bar.
+    static let oneBar = false
+    #else
+    /// The window's toolbar names the thread itself (macos-app
+    /// MainToolbar), after its Back: a principal item there is a bordered
+    /// pill in the middle of the window, half over the sidebar.
+    static let titleInBar = false
+    /// One card as wide as its contents, in the middle of the bottom
+    /// edge: the Reply pill, the AI circle, a hairline, the triage
+    /// buttons. The phone's two capsules, stacked and stretched across
+    /// the thread, read as a smear of the message under them.
+    static let oneBar = true
+    #endif
+}
+
+#if os(macOS)
+/// The thread bar's button: a square that tints under the pointer and
+/// dims while pressed or disabled.
+struct MacBarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Square(configuration: configuration)
+    }
+
+    /// Hover is state of its own, which a style's `makeBody` cannot hold.
+    private struct Square: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background(hovering && isEnabled ? Theme.sunken : .clear,
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+#endif
 
 /// How the composer's full-screen switch works here. The phone swaps a
 /// sheet for a full-screen cover, so the composer is closed and opened

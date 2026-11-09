@@ -77,11 +77,23 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   it is the window's open thread for every key and the inline reply.
   `AppModel.showBundles` is handed to the window the moment it turns
   on, so the root's sheets (`AppModel.modal(_:inBundles: false)`) serve
-  the page. A full thread adds the shared ThreadView's
-  own toolbar items and the navigation stack's Back; a shared view's
+  the page. A page over the list (a full thread; a bundle or an email
+  on the Bundles page) gets the window's own Back as the first item over
+  the content column (`WindowState.canGoBack`, `run(.back)`) and its
+  name after the tabs (`MainToolbar.otherTitle`: the thread's people);
+  the stacks' own Back is hidden (`backInWindowToolbar` — it sat beside
+  the traffic lights, over the sidebar) and ThreadView's principal item
+  is the phone's only (`ThreadChrome.titleInBar` — here it was a
+  bordered pill in the middle of the window). The thread's trailing
+  items (sparkle, actions menu) are the shared view's; a shared view's
   sheet-only item goes behind a helper (`sheetCloseButton`,
-  `composeChrome`). The triage labels are the phone's glass pill
-  (`TriageSplitBar`) at the bottom of the list. Search and the command
+  `composeChrome`). The thread's bottom bars are one small card in the
+  middle (`ThreadChrome.oneBar`, `floatingBar`, `replyPillSurface`,
+  `barButton`): the phone's two glass capsules stretched across the
+  thread smeared the message under them. A `Menu` whose label is a chip
+  or an icon takes `labelOnlyMenu()`: the Mac's default draws a white
+  bezel around it under the pointer. The triage labels are the phone's
+  glass pill (`TriageSplitBar`) at the bottom of the list. Search and the command
   palette are one shape (`SpotlightPanel`: Liquid Glass over the blurred,
   dimmed window, one at a time); while one is up the toolbar is empty
   and clear. The list has no section headers (a Mac list's header floats

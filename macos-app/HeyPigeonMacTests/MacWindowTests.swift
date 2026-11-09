@@ -119,11 +119,12 @@ struct WindowStateTests {
         #expect(!unread.isRead)
         state.select("t1", in: model)
         state.run(.open, in: model)
-        #expect(state.path.map(\.id) == ["t1"] && state.isThreadOpen)
+        #expect(state.path.map(\.id) == ["t1"] && state.isThreadOpen && state.canGoBack)
         try await Task.sleep(for: .milliseconds(50))
         #expect(try engine.threadRow(id: "t1")?.isRead == true)
-        state.run(.escape, in: model)
-        #expect(state.path.isEmpty && state.selection == ["t1"])
+        // The toolbar's Back is the same step as Esc.
+        state.run(.back, in: model)
+        #expect(state.path.isEmpty && state.selection == ["t1"] && !state.canGoBack)
     }
 
     @Test func inAnOpenThreadMarkDoneOpensTheNextOne() async throws {
@@ -202,7 +203,7 @@ struct WindowStateTests {
         state.select("t1", in: model)
         state.openBundles(at: "b1")
         #expect(state.showBundles && state.bundlePath == [.bundle("b1")])
-        #expect(state.bundlesTitle(in: model) == "Lisbon trip")
+        #expect(state.bundlesTitle(in: model) == "Lisbon trip" && state.canGoBack)
         // The list's highlight is under the page, out of sight: no key acts on it.
         #expect(state.focusRow(in: model) == nil && !state.hasTarget && !state.isThreadOpen)
         state.run(.next, in: model)
@@ -221,7 +222,7 @@ struct WindowStateTests {
         state.run(.escape, in: model)
         #expect(state.bundlePath == [.bundle("b1")])
         state.run(.escape, in: model)
-        #expect(state.bundlePath.isEmpty && state.showBundles)
+        #expect(state.bundlePath.isEmpty && state.showBundles && !state.canGoBack)
         state.run(.escape, in: model)
         #expect(!state.showBundles && state.selection == ["t1"])
     }

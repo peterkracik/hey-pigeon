@@ -117,8 +117,10 @@ struct BundlesStack: View {
                     switch route {
                     case .bundle(let id):
                         BundleScreen(bundleId: id) { path.append(.thread($0)) }
+                            .backInWindowToolbar()
                     case .thread(let row):
                         ThreadView(row: row) { if !path.isEmpty { path.removeLast() } }
+                            .backInWindowToolbar()
                     }
                 }
                 .navigationDestination(isPresented: $creating) {

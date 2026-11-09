@@ -7,10 +7,13 @@
 // page); at the trailing end summarize, ask,
 // new message and search. The sidebar button is the
 // glass circle in the window's bottom corner (MainWindow), Settings is in
-// the app menu (⌘,). A full thread brings its own items (the shared
-// ThreadView's title, sparkle and actions menu) and the navigation
-// stack's Back. While the search or the command palette floats over the
-// window the bar is left empty, so nothing sharp sits above the blur.
+// the app menu (⌘,). A page over the list (a thread; a bundle or an email
+// on the Bundles page) gets the window's own Back as the first item over
+// the content column — the stack's sat beside the traffic lights, over the
+// sidebar — and its name after the tabs; the shared view's items (the
+// thread's sparkle and actions menu) join at the trailing end. While the
+// search or the command palette floats over the window the bar is left
+// empty, so nothing sharp sits above the blur.
 
 import SwiftUI
 
@@ -21,10 +24,12 @@ struct MainToolbar: ToolbarContent {
     /// The panels float over the window: the bar stays out of the way.
     private var overlaid: Bool { state.searching || state.showPalette }
 
-    /// The view when it is none of the three tabs (a folder, a label,
-    /// Settings, the Bundles page, a search), for the title after them.
+    /// The view when it is none of the three tabs (the open thread's
+    /// people, a folder, a label, Settings, the Bundles page, a search),
+    /// for the title after them.
     private var otherTitle: String? {
         if state.showSettings { return "Settings" }
+        if let open = state.openThread { return open.fromSummary }
         if state.showBundles { return state.bundlesTitle(in: model) }
         if model.isSearching { return "Search" }
         return ViewTabs.views.contains(model.view) ? nil : model.view.title
@@ -42,6 +47,12 @@ struct MainToolbar: ToolbarContent {
                     SidebarInset()
                 }
                 .sharedBackgroundVisibility(.hidden)
+            }
+            if state.canGoBack {
+                ToolbarItem(placement: .navigation) {
+                    Button { state.run(.back, in: model) } label: { Label("Back", systemImage: "chevron.left") }
+                        .help("Back (Esc, ⌘[)")
+                }
             }
             ToolbarItem(placement: .navigation) {
                 ViewTabs(state: state, model: model)

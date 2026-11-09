@@ -5,9 +5,10 @@
 // floating glass bars at the bottom: the Reply button — tap for the default
 // action, chevron for Reply · Reply all · Forward, as in Superhuman — with
 // the AI draft circle beside it, and one triage bar in the desktop's words:
-// Done · Remind · Need reply · Pin · Delete. Unsent reply drafts sit under
-// the messages, marked as drafts, to edit or delete; the Reply button then
-// continues the draft.
+// Done · Remind · Need reply · Pin · Delete. The Mac window puts the same
+// pieces on one small card and names the thread in its own toolbar
+// (ThreadChrome). Unsent reply drafts sit under the messages, marked as
+// drafts, to edit or delete; the Reply button then continues the draft.
 
 import AppIntents
 import SwiftUI
@@ -164,12 +165,14 @@ struct ThreadView: View {
         .toolbarTitleDisplayMode(.inline)
         .hidesTabBar()
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(participants)
-                    .font(Theme.display(17, relativeTo: .headline))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
+            if ThreadChrome.titleInBar {
+                ToolbarItem(placement: .principal) {
+                    Text(participants)
+                        .font(Theme.display(17, relativeTo: .headline))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                }
             }
             if model.aiConfigured {
                 ToolbarItem(placement: .barTrailing) {
@@ -324,6 +327,9 @@ struct ThreadView: View {
                     Chip(text: names.isEmpty ? "Label" : "", systemImage: "plus",
                          background: Theme.sunken, foreground: Theme.textTertiary)
                 }
+                // The chip is the whole control: the Mac's menu drew a
+                // white bezel around it under the pointer.
+                .labelOnlyMenu()
                 .accessibilityLabel("Edit labels")
             }
             if let at = current.scheduledAt {
@@ -346,65 +352,97 @@ struct ThreadView: View {
 
     // MARK: Bottom bars
 
-    /// The Reply pill, then the triage actions as one glass bar.
+    /// The Reply pill, then the triage actions as one glass bar; on the
+    /// Mac both on one card (ThreadChrome.oneBar).
     /// State colours, shared by the header badges and the active bar buttons.
     private static let remindTone = AccountColor.lavender
     private static let replyTone = AccountColor.sky
     private static let doneTone = AccountColor.mint
 
     private var bottomBars: some View {
-        VStack(spacing: 10) {
-            // While the reply is being written under the thread, the pill
-            // has nothing to offer.
-            if inlineDraft == nil {
-                HStack(spacing: 10) {
-                    replyPill
-                    if model.aiConfigured {
-                        Button { Task { await draftReply() } } label: {
-                            Image(systemName: "sparkles").font(.title3).foregroundStyle(.white)
-                                .frame(width: 48, height: 48)
-                                .background(Theme.accent.opacity(drafting ? 0.4 : 0.9), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(detail == nil || drafting)
-                        .accessibilityLabel("Draft a reply with AI")
+        Group {
+            if ThreadChrome.oneBar {
+                // The Mac: one card as wide as its contents, in the middle.
+                // The keys (e · h · n · s · r · ⌘⌫) run the same actions,
+                // so the bar stays small.
+                HStack(spacing: 4) {
+                    if inlineDraft == nil {
+                        replyPill
+                        if model.aiConfigured { aiButton.padding(.leading, 4) }
+                        Rectangle().fill(Theme.separator).frame(width: 1, height: 20).padding(.horizontal, 6)
                     }
+                    triageButtons
                 }
+                .padding(5)
+                .floatingBar()
+                .padding(.bottom, 12)
+            } else {
+                VStack(spacing: 10) {
+                    // While the reply is being written under the thread, the
+                    // pill has nothing to offer.
+                    if inlineDraft == nil {
+                        HStack(spacing: 10) {
+                            replyPill
+                            if model.aiConfigured { aiButton }
+                        }
+                    }
+                    HStack(spacing: 0) { triageButtons }
+                        .frame(height: 52)
+                        .floatingBar()
+                }
+                .padding(.horizontal, 16).padding(.bottom, 8)
             }
-            // Each toggle shows its state: filled icon in the state's colour.
-            // With a hardware keyboard (iPad, the Mac) the desktop's keys
-            // run them: e · h · n · s · ⌘⌫.
-            HStack(spacing: 0) {
-                bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
-                    tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil, key: "e") {
-                    if !current.isDone { IntentDonations.archived(current, in: model) }
-                    model.toggleDone(current); onClose()
-                }
-                bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
-                    tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone), key: "h") {
-                    model.pendingRemind = current
-                }
-                bar(current.needsReply ? "Clear need reply" : "Need reply",
-                    current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left",
-                    tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil, key: "n") {
-                    model.toggleNeedsReply(current)
-                }
-                bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
-                    model.togglePin(current)
-                }
-                bar("Delete", "trash", tint: Color(hex: 0xB34E2E), key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
-            }
-            .frame(height: 52)
-            .glassEffect(.regular, in: .capsule)
         }
-        .padding(.horizontal, 16).padding(.bottom, 8)
+    }
+
+    /// The AI draft circle, in the accent, beside the Reply pill.
+    private var aiButton: some View {
+        let size: CGFloat = ThreadChrome.oneBar ? 32 : 48
+        return Button { Task { await draftReply() } } label: {
+            Image(systemName: "sparkles")
+                .font(ThreadChrome.oneBar ? .system(size: 14, weight: .semibold) : .title3)
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(Theme.accent.opacity(drafting ? 0.4 : 0.9), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(detail == nil || drafting)
+        .help("Draft a reply with AI")
+        .accessibilityLabel("Draft a reply with AI")
+    }
+
+    /// The five triage buttons. Each toggle shows its state: filled icon
+    /// in the state's colour. With a hardware keyboard (iPad, the Mac)
+    /// the desktop's keys run them: e · h · n · s · ⌘⌫.
+    @ViewBuilder private var triageButtons: some View {
+        bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
+            tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil, key: "e") {
+            if !current.isDone { IntentDonations.archived(current, in: model) }
+            model.toggleDone(current); onClose()
+        }
+        bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
+            tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone), key: "h") {
+            model.pendingRemind = current
+        }
+        bar(current.needsReply ? "Clear need reply" : "Need reply",
+            current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left",
+            tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil, key: "n") {
+            model.toggleNeedsReply(current)
+        }
+        bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
+            model.togglePin(current)
+        }
+        bar("Delete", "trash", tint: Color(hex: 0xB34E2E), key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
     }
 
     /// Superhuman's reply button: the chevron picks Reply · Reply all ·
     /// Forward (kept for this thread), the label runs it on the latest
-    /// message. The AI draft is its own circle next to it.
+    /// message. The AI draft is its own circle next to it. The phone's
+    /// fills its row on glass; the Mac's is a sunken pill as wide as its
+    /// words, on the bar's card.
     private var replyPill: some View {
-        HStack(spacing: 0) {
+        let compact = ThreadChrome.oneBar
+        return HStack(spacing: 0) {
             Menu {
                 ForEach(ReplyKind.allCases) { kind in
                     Button { replyChoice = kind; run(kind) } label: {
@@ -417,24 +455,28 @@ struct ThreadView: View {
                     Image(systemName: replyKind.systemImage)
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold))
                 }
-                .padding(.leading, 18).padding(.trailing, 12)
+                .padding(.leading, compact ? 12 : 18).padding(.trailing, compact ? 8 : 12)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }
+            // The icon and chevron are the control: the Mac's menu put a
+            // bezel and a second chevron around them.
+            .labelOnlyMenu()
             .accessibilityLabel("Choose reply type")
-            Rectangle().fill(Theme.separator).frame(width: 1, height: 22)
+            Rectangle().fill(Theme.separator).frame(width: 1, height: compact ? 16 : 22)
             Button { if let d = drafts.last { edit(d) } else { run(replyKind) } } label: {
                 Text(drafts.isEmpty ? replyKind.title : "Continue draft")
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .font(compact ? Font.system(size: 13, weight: .semibold) : nil)
+                    .padding(.horizontal, compact ? 12 : 14)
+                    .frame(maxWidth: compact ? nil : CGFloat.infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .threadKey("r")
         }
         .foregroundStyle(Theme.textPrimary)
-        .frame(height: 48)
-        .glassEffect(.regular, in: .capsule)
+        .frame(height: compact ? 32 : 48)
+        .replyPillSurface()
         .disabled(detail == nil)
     }
 
@@ -452,17 +494,27 @@ struct ThreadView: View {
         }
     }
 
-    /// One triage button; `key` is its hardware-keyboard shortcut.
+    /// One triage button; `key` is its hardware-keyboard shortcut. On the
+    /// phone it takes a fifth of the bar; on the Mac it is a square that
+    /// tints under the pointer.
     private func bar(_ label: String, _ systemImage: String, tint: Color? = nil,
                      key: KeyEquivalent, modifiers: EventModifiers = [], action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage).font(.title3)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
+            Group {
+                if ThreadChrome.oneBar {
+                    Image(systemName: systemImage).font(.system(size: 15, weight: .medium))
+                        .frame(width: 34, height: 32)
+                } else {
+                    Image(systemName: systemImage).font(.title3)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .barButton()
         .foregroundStyle(tint ?? Theme.textPrimary)
         .threadKey(key, modifiers: modifiers)
+        .help(label)
         .accessibilityLabel(label)
     }
 
@@ -713,6 +765,7 @@ struct MessageRow: View {
             Image(systemName: "ellipsis").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                 .frame(width: 28, height: 22).contentShape(Rectangle())
         }
+        .labelOnlyMenu()
         .accessibilityLabel("Actions for this message")
     }
 }

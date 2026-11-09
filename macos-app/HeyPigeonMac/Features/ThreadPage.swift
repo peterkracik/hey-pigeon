@@ -1,8 +1,9 @@
 // The open thread ("Open full thread ›", Return), in the list's place,
-// under the window's toolbar (where the navigation stack puts Back and the
-// shared ThreadView its title, sparkle and actions menu): the phone's
-// thread screen (Features/Thread/ThreadView — messages, attachments, the Reply pill and
-// the glass triage bar). The thread's "close" (after done, delete, mark
+// under the window's toolbar (which names it and holds its Back
+// (MainToolbar), with the shared ThreadView's sparkle and actions menu):
+// the phone's thread screen (Features/Thread/ThreadView — messages,
+// attachments, and the Reply pill and triage buttons on one card at the
+// bottom). The thread's "close" (after done, delete, mark
 // unread, move) hands the window to the next thread, or back to the list
 // when there is none. ThreadWindow is the same thread in a window of its
 // own (⌘↩).
@@ -18,6 +19,9 @@ struct ThreadPage: View {
     var body: some View {
         ThreadView(row: row) { state.closeOpen(in: model) }
             .id(row.id)
+            // The stack's own Back sat beside the traffic lights, over the
+            // sidebar; the window's toolbar has its own over the content.
+            .navigationBarBackButtonHidden(true)
             .scrollIndicators(.never)
             .frame(maxWidth: MacLayout.maxWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

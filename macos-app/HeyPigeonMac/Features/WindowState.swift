@@ -171,6 +171,13 @@ final class WindowState: Equatable {
     /// The Bundles page is up with an email open in it.
     private var bundleThreadOpen: Bool { showBundles && openThread != nil }
 
+    /// A page is pushed over the list (a thread) or over the Bundles list
+    /// (a bundle, an email in it): the toolbar's Back walks it back, as
+    /// Esc and ⌘[ do (`run(.back)`). The stacks' own Back is hidden
+    /// (`backInWindowToolbar`): it sat beside the traffic lights, over
+    /// the sidebar.
+    var canGoBack: Bool { showBundles ? !bundlePath.isEmpty : !path.isEmpty }
+
     /// The open thread (live from the store), else the one highlighted
     /// row. On the Bundles page without an email open there is nothing:
     /// the list's highlight is under the page, and a key must not act on
@@ -307,8 +314,8 @@ final class WindowState: Equatable {
     }
 
     /// The Bundles page's name for the toolbar: the bundle's, "Bundles" on
-    /// the list; none on an email, which brings its own (ThreadView's
-    /// principal item).
+    /// the list; none on an email, which the toolbar names as it names
+    /// the window's open thread (MainToolbar.otherTitle).
     func bundlesTitle(in model: AppModel) -> String? {
         switch bundlePath.last {
         case .none: "Bundles"

@@ -98,15 +98,24 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   dimmed window, one at a time); while one is up the toolbar is empty
   and clear. The list has no section headers (a Mac list's header floats
   on a grey band): each day group's title is a plain row and its rows
-  share one white card (`MailRow.Position`). Rows are single lines; Done
+  share one white card (`MailRow.Position`); the hover and cursor tint
+  fills a row to 1 pt of the card's edge, rounded only where the card
+  is. The command palette's ⌘B stage lists the bundles, the recently
+  active first, and one opens as the Bundles page
+  (`PaletteStage.bundles`, `MailCommand.bundles`). Rows are single lines; Done
   is the first hover action (a done circle at the start read as a
   selection checkbox). A click opens the row **in place**
   (`WindowState.expanded`, the latest message and "Open full thread ›"),
   Return or the row's arrow opens the full thread (`path`). Never put a
   shadow on a view that holds a message: it falls on the web view too.
-  Scroll bars are hidden (`.scrollIndicators(.never)`), and what scrolls
-  under the toolbar fades softly (`.scrollEdgeEffectStyle(.soft)` on the
-  window: the hard style drew a second header over the list). The open
+  Scroll bars are hidden (`.scrollIndicators(.never)`), and the toolbar
+  draws nothing over the columns: `.toolbarBackgroundVisibility(.hidden)`
+  and `.scrollEdgeEffectHidden(true, for: .top)` on the window. The
+  automatic background and both edge styles came and went with the
+  pointer (the list reports itself scrolled under the bar when it relays
+  out) and drew a lighter strip across the top, behind the traffic
+  lights too. The sidebar is ⌘S (View › Show Folders), nothing in the
+  app saves by hand. The open
   row's card shows the whole message, as the first client's did; the
   pointer over a row is the hand. The composer on
   the Mac (shared `ComposeView`) takes the window's look through
@@ -114,8 +123,9 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   top), `borderlessFields`, `pillButton`, `labelOnlyMenu`. Its body is
   the Mac's own editor (`ComposeMac.swift`, next to the shared view, all
   of it behind `#if os(macOS)`): an HTML editor in a web view, as the
-  first desktop client's contenteditable was — paragraphs with air
-  between them, bullet and numbered lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and
+  first desktop client's contenteditable was — paragraphs with half a
+  line of air between them on Return, a bare line break on
+  Shift-Return, bullet and numbered lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and
   ⇧⌘7 / ⇧⌘8 wired in the page (WebKit binds none of them in a
   contenteditable), ⌘J for the AI, ⌘↩ to send, plain text on paste. A
   reply is written **under its thread**, not in a sheet (Superhuman's

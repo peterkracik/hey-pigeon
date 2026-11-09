@@ -11,7 +11,8 @@ struct ShortcutsSheet: View {
         ("Move", [
             ("J · K", "Next · previous thread (in a thread too)"), ("↩", "Open the thread"), ("⌘↩", "Open it in a new window"),
             ("Esc · ⌘[", "Back to the list; then leave the search; then clear the selection"),
-            ("/", "Search"), ("⌃⌘S", "Show or hide the folders"), ("⌘K", "Command palette"), ("?", "This sheet"),
+            ("/", "Search"), ("⌘S", "Show or hide the folders"), ("⌘K", "Command palette"), ("⌘B", "Open a bundle"),
+            ("?", "This sheet"),
         ]),
         ("Act on a thread", [
             ("E", "Mark done (and back)"), ("H", "Remind me (or remove the reminder)"), ("N", "Need reply"),
@@ -24,7 +25,7 @@ struct ShortcutsSheet: View {
         ("In the composer", [
             ("⌘↩", "Send"), ("⌘J", "Write or edit with AI"), ("Esc", "Close the AI panel; then close and keep the draft"),
             ("⌘B · ⌘I · ⌘U", "Bold · italic · underline"), ("⇧⌘X", "Strikethrough"), ("⌘K", "Link"),
-            ("⇧⌘8 · ⇧⌘7", "Bulleted · numbered list"), ("⇧↩", "Line break inside a paragraph"),
+            ("⇧⌘8 · ⇧⌘7", "Bulleted · numbered list"), ("↩ · ⇧↩", "New paragraph (with air) · line break (without)"),
         ]),
         ("Go", [
             ("G then I", "Inbox"), ("G then S", "Remind me"), ("G then N", "Need reply"), ("G then P", "Pinned (Starred)"),

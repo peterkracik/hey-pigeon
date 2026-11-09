@@ -45,8 +45,10 @@ struct MacCommands: Commands {
 
         // View › the drawer, where macOS keeps "Show Sidebar".
         CommandGroup(after: .sidebar) {
+            // ⌘S: nothing here is saved by hand (drafts save themselves), so
+            // the key is free for the one thing the window shows and hides.
             Button(state?.sidebarVisible == false ? "Show Folders" : "Hide Folders") { run(.toggleSidebar) }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+                .keyboardShortcut("s", modifiers: .command)
         }
 
         CommandMenu("Message") {
@@ -124,6 +126,8 @@ struct MacCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.command, .option])
             Button("Command Palette") { run(.palette) }
                 .keyboardShortcut("k", modifiers: .command)
+            Button("Bundles…") { run(.bundles) }
+                .keyboardShortcut("b", modifiers: .command)
             Button("Keyboard Shortcuts") { run(.shortcuts) }
                 .keyboardShortcut("/", modifiers: .command)
         }

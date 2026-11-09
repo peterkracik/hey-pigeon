@@ -43,11 +43,15 @@ struct MailRow: View {
                     .transition(.opacity)
             }
         }
-        // The hover / cursor tint, inset in the card.
-        .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .padding(.horizontal, 6)
-        .padding(.top, position.first ? 6 : 1)
-        .padding(.bottom, position.last ? 6 : 1)
+        // The hover / cursor tint fills the row to 1 pt of the card's edge,
+        // rounded only where the card is (an inset pill left a white frame
+        // around every highlighted row).
+        .background(background, in: UnevenRoundedRectangle(topLeadingRadius: position.first ? 13 : 0,
+                                                            bottomLeadingRadius: position.last ? 13 : 0,
+                                                            bottomTrailingRadius: position.last ? 13 : 0,
+                                                            topTrailingRadius: position.first ? 13 : 0,
+                                                            style: .continuous))
+        .padding(1)
         // This row's piece of its group's white card; no shadow (on a card
         // holding a message it fell on the message's web view too).
         .background {

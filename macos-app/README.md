@@ -28,7 +28,7 @@ macos-app/
                           MainToolbar, SearchSpotlight, MacStyle (colours, icon buttons, panels), SidebarColumn, MailRow (the row + its in-place preview), InboxPage ( the list, search, hover and swipe actions, the
                           batch bar), ThreadPage (the title row over the shared ThreadView; + ThreadWindow),
                           WindowState (the open thread, the cursor, the keyboard map, every action),
-                          CommandPalette (⌘K), ShortcutsSheet (?), MenuBarExtraView
+                          CommandPalette (⌘K; ⌘B for bundles), ShortcutsSheet (?), MenuBarExtraView
     Resources/            The Mac icon set; drop Manrope-*.ttf into Fonts/ for the brand typeface
   HeyPigeonMacShare/      The share menu's "Hey Pigeon": NSViewController over the shared ShareView
   HeyPigeonMacTests/      Swift Testing: the keyboard map, the selection, the palette filter, the widget links
@@ -42,7 +42,7 @@ macos-app/
 
 | | Phone | Mac |
 | --- | --- | --- |
-| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌃⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no title bar or toolbar; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
+| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no title bar or toolbar; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
 | After Mark done | Undo toast, back to the list | Undo toast; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
 | Several at once | — | ⌘/⇧-click rows: a batch bar on a bordered panel at the bottom |

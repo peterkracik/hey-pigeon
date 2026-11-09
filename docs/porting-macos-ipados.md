@@ -87,7 +87,7 @@ What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
 - `MainWindow` — the split view, the sheets, the toast, the disconnected alert.
 - `SidebarColumn` — accounts, folders (Scheduled and Need reply among them), labels, Add account · Settings.
 - `InboxPage` — the list (single-line `MailRow`s that open in place, the search in `SearchSpotlight` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
-- `ThreadPage` — a header row (back, the people, the sparkle, the actions menu) over the shared `ThreadView`; `ThreadWindow` for a thread in its own window.
+- `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back and the people, then the shared sparkle and actions menu), its bars on one card at the bottom; `ThreadWindow` for a thread in its own window.
 - `WindowState` — the selection, auto-advance, `KeyboardMap` (the desktop's keys and `g`-chords) and every action.
 - `CommandPalette` (⌘K, with the `l` / `v` stages), `ShortcutsSheet` (`?`), `MenuBarExtraView`.
 

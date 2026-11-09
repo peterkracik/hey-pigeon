@@ -122,6 +122,13 @@ final class WindowState: Equatable {
     var expanded: String?
     /// Settings in the content area, from the top bar's gear or ⌘,.
     var showSettings = false
+    /// Bundles — the list, one bundle, an email in it — as a page of the
+    /// window in the list's place, as Settings is: the phone covers its
+    /// screen, and a sheet here looked like a dialog over the window.
+    var showBundles = false
+    /// The Bundles page's stack (BundlesStack): a bundle, then an email in
+    /// it. The window's, so the open email is the window's open thread.
+    var bundlePath: [BundleRoute] = []
     /// The header shows the search field (`/`, the magnifier).
     var searching = false
     var showPalette = false
@@ -150,21 +157,38 @@ final class WindowState: Equatable {
 
     // MARK: What a command acts on
 
-    /// The open thread (live from the store), else the one highlighted row.
+    /// The thread on screen: the Bundles page's open email while the page
+    /// is up (the main stack is under it, out of sight), else the main
+    /// stack's.
+    var openThread: ThreadRow? {
+        if showBundles {
+            if case .thread(let row)? = bundlePath.last { return row }
+            return nil
+        }
+        return path.last
+    }
+
+    /// The Bundles page is up with an email open in it.
+    private var bundleThreadOpen: Bool { showBundles && openThread != nil }
+
+    /// The open thread (live from the store), else the one highlighted
+    /// row. On the Bundles page without an email open there is nothing:
+    /// the list's highlight is under the page, and a key must not act on
+    /// a row the user cannot see.
     func focusRow(in model: AppModel) -> ThreadRow? {
-        if let open = path.last { return model.row(forThreadId: open.id) ?? open }
-        return selectedRow(in: model)
+        if let open = openThread { return model.row(forThreadId: open.id) ?? open }
+        return showBundles ? nil : selectedRow(in: model)
     }
 
     func focusRows(in model: AppModel) -> [ThreadRow] {
-        if let open = path.last { return [model.row(forThreadId: open.id) ?? open] }
-        return selectedRows(in: model)
+        if let open = openThread { return [model.row(forThreadId: open.id) ?? open] }
+        return showBundles ? [] : selectedRows(in: model)
     }
 
     /// For the menus: something to act on at all, and exactly one thread.
-    var hasTarget: Bool { !path.isEmpty || !selection.isEmpty }
-    var hasOneTarget: Bool { !path.isEmpty || selection.count == 1 }
-    var isThreadOpen: Bool { !path.isEmpty }
+    var hasTarget: Bool { openThread != nil || !showBundles && !selection.isEmpty }
+    var hasOneTarget: Bool { openThread != nil || !showBundles && selection.count == 1 }
+    var isThreadOpen: Bool { openThread != nil }
 
     // MARK: Selection
 
@@ -229,6 +253,7 @@ final class WindowState: Equatable {
         if model.view == .drafts { model.openDraft(row); return }
         if !row.isRead { model.markRead(row) }
         showSettings = false
+        if showBundles { closeBundles() }
         path = [row]
     }
 
@@ -244,10 +269,59 @@ final class WindowState: Equatable {
     }
 
     /// Back to the list (Esc, the header's arrow, ⌘[), the cursor still on
-    /// the row.
+    /// the row. On the Bundles page, back from the email to its bundle.
     func close() {
+        if showBundles {
+            if case .thread? = bundlePath.last { bundlePath.removeLast() }
+            return
+        }
         path = []
         listFocusRequest += 1
+    }
+
+    // MARK: The Bundles page
+
+    /// The Bundles page, on the list or straight on one bundle (the
+    /// sidebar): in the list's place, over whatever the window showed, as
+    /// Settings is. `AppModel.openBundles` lands here through MainWindow.
+    func openBundles(at id: String?) {
+        showSettings = false
+        searching = false
+        showPalette = false
+        bundlePath = id.map { [.bundle($0)] } ?? []
+        showBundles = true
+    }
+
+    /// The list again (Esc on the Bundles list, a tab, a folder, a thread
+    /// opening in the main stack).
+    func closeBundles() {
+        showBundles = false
+        bundlePath = []
+        listFocusRequest += 1
+    }
+
+    /// Esc or ⌘[ on the Bundles page: one step back in its stack, and from
+    /// its root the list.
+    private func backInBundles() {
+        if bundlePath.isEmpty { closeBundles() } else { bundlePath.removeLast() }
+    }
+
+    /// The Bundles page's name for the toolbar: the bundle's, "Bundles" on
+    /// the list; none on an email, which brings its own (ThreadView's
+    /// principal item).
+    func bundlesTitle(in model: AppModel) -> String? {
+        switch bundlePath.last {
+        case .none: "Bundles"
+        case .bundle(let id)?: model.bundle(id: id)?.name ?? "Bundle"
+        case .thread?: nil
+        }
+    }
+
+    /// Arm the list's auto-advance for an action that may take the
+    /// highlighted row out — not on the Bundles page, whose list is not
+    /// the window's.
+    private func armAdvance() {
+        pendingAdvance = !showBundles
     }
 
     /// The open thread's own bars did something that closes it (done,
@@ -363,18 +437,22 @@ final class WindowState: Equatable {
         switch command {
         case .markDone:
             guard !rows.isEmpty else { return }
-            pendingAdvance = true
+            armAdvance()
             for r in rows {
                 if !r.isDone { IntentDonations.archived(r, in: model) }
                 model.toggleDone(r)
             }
+            // The bundle's email is done: back to the bundle, as its own
+            // bars do; no list to auto-advance along.
+            if bundleThreadOpen { close() }
         case .delete:
             guard !rows.isEmpty else { return }
-            pendingAdvance = true
+            armAdvance()
             for r in rows {
                 IntentDonations.deleted(r, in: model)
                 model.delete(r)
             }
+            if bundleThreadOpen { close() }
         case .toggleRead:
             // Marking the open thread unread closes it, as on the phone:
             // staying would only read it again.
@@ -384,11 +462,11 @@ final class WindowState: Equatable {
         case .pin:
             for r in rows { model.togglePin(r) }
         case .needReply:
-            pendingAdvance = true
+            armAdvance()
             for r in rows { model.toggleNeedsReply(r) }
         case .remind:
             guard let row else { return }
-            pendingAdvance = true
+            armAdvance()
             // A thread that already has a reminder: the key removes it, as the swipe does.
             model.run(.remind, on: row)
         case .reply, .replyAll:
@@ -421,7 +499,8 @@ final class WindowState: Equatable {
             // title: the search takes the list back.
             showSettings = false
             showPalette = false
-            if isThreadOpen { path = [] }
+            if showBundles { closeBundles() }
+            if !path.isEmpty { path = [] }
             searching = true
             searchFocusRequest += 1
         case .palette:
@@ -440,6 +519,8 @@ final class WindowState: Equatable {
             } else if showSettings {
                 showSettings = false
                 listFocusRequest += 1
+            } else if showBundles {
+                backInBundles()
             } else if isThreadOpen {
                 close()
             } else if expanded != nil {
@@ -450,17 +531,21 @@ final class WindowState: Equatable {
                 selection = []
             }
         case .back:
-            if showSettings { showSettings = false } else if isThreadOpen { close() }
+            if showSettings { showSettings = false } else if showBundles { backInBundles() } else if isThreadOpen { close() }
         case .toggleSidebar:
             sidebarVisible.toggle()
         case .next:
+            // The Bundles page has no cursor: j / k walk the window's list.
+            guard !showBundles else { return }
             move(by: 1, in: model)
             if isThreadOpen, let next = selectedRow(in: model) { open(next, in: model) }
         case .previous:
+            guard !showBundles else { return }
             move(by: -1, in: model)
             if isThreadOpen, let previous = selectedRow(in: model) { open(previous, in: model) }
         case .open:
-            guard let row else { return }
+            // On the Bundles page the email is already open where it is.
+            guard let row, !showBundles else { return }
             open(row, in: model)
         case .openInWindow:
             guard let row else { return }
@@ -478,6 +563,7 @@ final class WindowState: Equatable {
             path = []
             expanded = nil
             showSettings = false
+            if showBundles { closeBundles() }
             if searching || model.isSearching { endSearch(in: model) }
             model.show(view)
             listFocusRequest += 1
@@ -509,9 +595,10 @@ final class WindowState: Equatable {
     /// A reply is written under its thread (ThreadView's inline composer):
     /// the thread opens first when a reply starts from the list or a
     /// row's preview, as in Superhuman. Not in Drafts, where a row opens
-    /// the composer itself.
+    /// the composer itself; and an email open on the Bundles page is
+    /// written under there.
     private func showThread(_ row: ThreadRow, in model: AppModel) {
-        guard model.view != .drafts, path.last?.id != row.id else { return }
+        guard model.view != .drafts, openThread?.id != row.id else { return }
         open(row, in: model)
     }
 

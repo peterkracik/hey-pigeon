@@ -343,7 +343,8 @@ extension View {
 
     /// A screen that covers the whole window on iOS (the Bundles screen:
     /// a sheet left it looking like a dialog); on the Mac a sheet, which
-    /// is a window of its own.
+    /// is a window of its own. (The Mac window shows Bundles as a page of
+    /// itself instead, `BundlesPage`, so only the phone's root uses this.)
     @ViewBuilder
     func coverScreen<Content: View>(isPresented: Binding<Bool>, onDismiss: @escaping () -> Void,
                                     @ViewBuilder content: @escaping () -> Content) -> some View {

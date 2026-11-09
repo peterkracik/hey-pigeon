@@ -6,11 +6,14 @@
 // also folds into one inbox row (`BundleFoldRow`, `AppModel.fold`).
 //
 // The Bundles screen covers the window on iPhone and iPad (a sheet looked
-// like a dialog); on the Mac it is a sheet, which is a window of its own.
-// An email opens inside it and keeps every action (swipes, the
-// long-press menu, the thread view). The shared sheets those actions open
-// (Remind me, Add to bundle, the composer, a summary) are presented by the
-// Bundles sheet while it is open (`BundleSheetPresenters`, `AppModel.modal`).
+// like a dialog), presenting the shared sheets its emails' actions open
+// (Remind me, Add to bundle, the composer, a summary) itself while it is
+// up (`BundleSheetPresenters`, `AppModel.modal`). On the Mac the same
+// stack (`BundlesStack`) is a page of the window in the list's place
+// (`BundlesPage`, `WindowState.showBundles`): a sheet there looked like a
+// dialog too, and an email open in it was cut off from the window's keys
+// and composer. An email opens inside the stack and keeps every action
+// (swipes, the long-press menu, the thread view).
 
 import SwiftUI
 
@@ -80,14 +83,17 @@ enum BundleRoute: Hashable {
     case thread(ThreadRow)
 }
 
-/// The Bundles sheet: active bundles, then archived ones; a bundle opens
-/// its view in the same stack, and an email opens there too.
-struct BundlesSheet: View {
-    /// A bundle to open at once (a folded row or the sidebar was tapped).
-    var initialBundleId: String? = nil
+/// The Bundles stack: active bundles, then archived ones; a bundle opens
+/// its view in the same stack, and an email opens there too. The path is
+/// its host's — the phone's cover (`BundlesSheet`) keeps one of its own,
+/// the Mac window's page (`BundlesPage`) hands over the window's, so the
+/// window knows which email is open for its keys and the composer.
+struct BundlesStack: View {
+    @Binding var path: [BundleRoute]
+    /// What the close item does; without one there is no close item (the
+    /// Mac's page closes through the window: Esc, a tab, a folder).
+    var close: (() -> Void)? = nil
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var path: [BundleRoute] = []
     @State private var creating = false
 
     var body: some View {
@@ -99,9 +105,12 @@ struct BundlesSheet: View {
                     ToolbarItem(placement: .barLeading) {
                         Button { creating = true } label: { Image(systemName: "plus") }
                             .accessibilityLabel("New bundle")
+                            .help("New bundle")
                     }
-                    ToolbarItem(placement: .barTrailing) {
-                        Button(role: .close) { dismiss() }
+                    if let close {
+                        ToolbarItem(placement: .barTrailing) {
+                            Button(role: .close, action: close)
+                        }
                     }
                 }
                 .navigationDestination(for: BundleRoute.self) { route in
@@ -120,11 +129,6 @@ struct BundlesSheet: View {
                         }
                     }
                 }
-        }
-        .coverContent()
-        .modifier(BundleSheetPresenters())
-        .onAppear {
-            if let initialBundleId, path.isEmpty { path = [.bundle(initialBundleId)] }
         }
     }
 
@@ -161,8 +165,29 @@ struct BundlesSheet: View {
     }
 }
 
+/// The Bundles screen as the phone and the iPad show it, covering the
+/// window (`coverScreen`): the stack with a close item, presenting the
+/// shared sheets itself while it is up.
+struct BundlesSheet: View {
+    /// A bundle to open at once (a folded row or the sidebar was tapped).
+    var initialBundleId: String? = nil
+    @Environment(\.dismiss) private var dismiss
+    @State private var path: [BundleRoute] = []
+
+    var body: some View {
+        BundlesStack(path: $path, close: { dismiss() })
+            .coverContent()
+            .modifier(BundleSheetPresenters())
+            .onAppear {
+                if let initialBundleId, path.isEmpty { path = [.bundle(initialBundleId)] }
+            }
+    }
+}
+
 /// The shared sheets an email's actions open, presented from the Bundles
-/// sheet while it is up (the root presents them otherwise).
+/// sheet while it is up (the root presents them otherwise). The Mac never
+/// has it up (`AppModel.showBundles` is handed to the window at once), so
+/// its root presents them for the Bundles page too.
 struct BundleSheetPresenters: ViewModifier {
     @Environment(AppModel.self) private var model
 

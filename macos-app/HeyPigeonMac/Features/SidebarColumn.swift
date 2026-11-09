@@ -38,7 +38,7 @@ struct SidebarColumn: View {
                     folder(.starred)
                     folder(.drafts, count: model.draftsCount)
 
-                    // Bundles open as a sheet (BundlesSheet), not a list view.
+                    // A bundle opens as a page of the window (BundlesPage), not a list view.
                     SectionHeader(title: "Bundles", open: $bundlesOpen)
                     if bundlesOpen {
                         let rows = AppModel.sidebarBundles(model.activeBundles, hidden: model.hiddenBundleIds,
@@ -48,7 +48,8 @@ struct SidebarColumn: View {
                             MoreLabelsRow(expanded: $allBundles, hidden: rows.more, noun: "bundles")
                         }
                         SidebarRow(title: model.activeBundles.isEmpty ? "Bundles" : "All bundles",
-                                   systemImage: "square.stack", help: "Every bundle, archived ones too") {
+                                   systemImage: "square.stack", help: "Every bundle, archived ones too",
+                                   selected: state.showBundles && state.bundlePath.isEmpty) {
                             model.openBundles()
                         }
                     }
@@ -92,7 +93,8 @@ struct SidebarColumn: View {
     /// `pin`: a label row, with the pin that keeps it in the short list.
     private func folder(_ view: MailView, count: Int? = nil, badge: Int = 0, pin label: MailLabelItem? = nil) -> some View {
         let n = count ?? model.counts[view.countKey] ?? 0
-        let selected = !model.isSearching && !state.searching && !state.showSettings && model.view == view
+        let selected = !model.isSearching && !state.searching && !state.showSettings && !state.showBundles
+            && model.view == view
         return SidebarRow(title: view.title, systemImage: view.systemImage, help: view.title,
                           selected: selected, trailing: Self.badgeText(count: n, due: badge),
                           pin: label.map { l in .init(isOn: model.pinnedLabelIds.contains(l.id)) { model.togglePinned(l) } }) {
@@ -105,6 +107,7 @@ struct SidebarColumn: View {
     private func bundleRow(_ b: BundleItem) -> some View {
         let hidden = model.hiddenBundleIds.contains(b.id)
         return SidebarRow(title: b.name, systemImage: b.category.systemImage, help: b.name,
+                          selected: state.showBundles && state.bundlePath.first == .bundle(b.id),
                           trailing: b.openCount > 0 ? Text("\(b.openCount)") : nil,
                           pin: .init(isOn: hidden, onSymbol: "eye.slash", offSymbol: "eye",
                                      onHelp: "Show in the sidebar", offHelp: "Hide from the sidebar") {

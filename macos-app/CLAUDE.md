@@ -17,10 +17,11 @@ too. There is no second model, engine or intent layer.
 HeyPigeonMac/
   App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
-  Features/   MainWindow (sidebar + NavigationStack or Settings), MainToolbar (+ ViewTabs), SearchSpotlight
-              (+ SpotlightPanel),
+  Features/   MainWindow (sidebar + NavigationStack, Settings or the Bundles page), MainToolbar (+ ViewTabs),
+              SearchSpotlight (+ SpotlightPanel),
               MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
-              (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), WindowState,
+              (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), BundlesPage
+              (the shared BundlesStack over the window's path), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
@@ -41,12 +42,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   `macos-ci` both run on a PR that touches the shared folder.
 - **One window state object.** `WindowState` is per window (AppModel is
   per process): the open thread (`path`, the NavigationStack's, at most
-  one deep), the highlighted rows, the drawer, the search, the sheets, the
+  one deep), the highlighted rows, the drawer, the Bundles page and its
+  stack (`showBundles`, `bundlePath`), the search, the sheets, the
   keyboard map and every action. Keys, menus, hover buttons, trackpad
   swipes and the palette all call `WindowState.run(_:in:rows:)`, which acts
-  on the open thread else the highlighted rows (`focusRow`) and calls
-  AppModel like the swipes do. Pure logic is static (`KeyboardMap.resolve`,
-  `PaletteFilter`), tested in `HeyPigeonMacTests`.
+  on the open thread (`openThread`: the Bundles page's open email while
+  the page is up, else the stack's) else the highlighted rows (`focusRow`)
+  and calls AppModel like the swipes do. Pure logic is static
+  (`KeyboardMap.resolve`, `PaletteFilter`), tested in `HeyPigeonMacTests`.
 - **The first desktop client's shape under a standard toolbar.** The
   window has the unified toolbar with no title
   (`.windowToolbarStyle(.unified(showsTitle: false))`,
@@ -62,7 +65,16 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   the app menu (⌘,) and the palette and opens as a page of the window
   (`WindowState.showSettings`, a grouped form through `SettingsList`);
   the sidebar starts hidden and its button is a glass circle in the
-  window's bottom-left corner. A full thread adds the shared ThreadView's
+  window's bottom-left corner. Bundles are a page of the window too
+  (`BundlesPage`: the shared `BundlesStack` — the list, a bundle, an
+  email in it — over `WindowState.bundlePath`; the phone covers its
+  screen with the same stack, and a sheet here looked like a dialog):
+  the sidebar opens it, the toolbar names it, Esc walks its stack back
+  and then leaves it, a tab or a folder leaves it, and an email open in
+  it is the window's open thread for every key and the inline reply.
+  `AppModel.showBundles` is handed to the window the moment it turns
+  on, so the root's sheets (`AppModel.modal(_:inBundles: false)`) serve
+  the page. A full thread adds the shared ThreadView's
   own toolbar items and the navigation stack's Back; a shared view's
   sheet-only item goes behind a helper (`sheetCloseButton`,
   `composeChrome`). The triage labels are the phone's glass pill

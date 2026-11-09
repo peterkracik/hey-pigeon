@@ -37,9 +37,11 @@ tracking links and key facts as one-line lists.
 - **Key facts**, then the emails, open first, done dimmed and folded past
   three.
 - Every email row works like an inbox row: the same swipes, the same
-  long-press menu, and the thread opens inside the sheet. The shared sheets
-  (Remind me, Add to bundle, the composer, a summary) are presented by the
-  Bundles sheet while it is open (`AppModel.modal`).
+  long-press menu, and the thread opens inside the bundle's stack. On the
+  phone the shared sheets (Remind me, Add to bundle, the composer, a
+  summary) are presented by the Bundles cover while it is open
+  (`AppModel.modal`); on the Mac the stack is a page of the window, whose
+  root presents them.
 - **⊖ on each email** (and "Not part of …" in the row menu): the email
   leaves the bundle, never comes back to it, and its subject becomes a "not
   this" example the model sees for that bundle.
@@ -365,7 +367,9 @@ Three touchpoints. Nothing else is added.
    list (archived ones at the bottom). A bundle can be hidden from the
    section (context menu, or the eye in the full list;
    `pref:sidebar.hidden_bundles`, synced); "N more" shows hidden ones too,
-   so they can be shown again. A bundle opens its view as a sheet.
+   so they can be shown again. A bundle opens its view over the whole
+   screen on the phone and the iPad, and as a page of the window on the
+   Mac (`BundlesPage`, in the list's place, as Settings is).
 3. **Add to bundle…** One thread action (swipe menu, context menu, keyboard
    `b`). It opens a picker with the model's best guess first, then the other
    active bundles, then **New bundle…** (name, kind, an optional one-line

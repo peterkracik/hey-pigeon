@@ -4,7 +4,7 @@
 // right): the grey sidebar (SidebarColumn, ⌃⌘S puts it away) beside the
 // content — the list full width up to a readable maximum with rows that
 // open in place, a full thread in its place (NavigationStack, as in
-// MailListScreen), or Settings. The search and the command palette float
+// MailListScreen), Settings, or the Bundles page (BundlesPage). The search and the command palette float
 // over the blurred window as Spotlight panels (SearchSpotlight,
 // CommandPalette); the sidebar button is a glass circle in the bottom
 // corner. The look is in MacStyle. The sheets the phone presents from its root (Remind
@@ -33,7 +33,7 @@ struct MainWindow: View {
         return Binding(
             get: {
                 guard let d = modal.wrappedValue else { return nil }
-                let inline = ComposePlacement.isInline(d, openThread: state.path.last?.id,
+                let inline = ComposePlacement.isInline(d, openThread: state.openThread?.id,
                                                        threadWindows: ThreadWindows.open, detached: model.composeDetached)
                 return inline ? nil : d
             },
@@ -56,6 +56,9 @@ struct MainWindow: View {
                     SettingsView()
                         .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity)
+                } else if state.showBundles {
+                    BundlesPage(state: state)
                         .transition(.opacity)
                 } else {
                     NavigationStack(path: $state.path) {
@@ -97,6 +100,7 @@ struct MainWindow: View {
         }
         .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
         .animation(.easeOut(duration: 0.15), value: state.showSettings)
+        .animation(.easeOut(duration: 0.15), value: state.showBundles)
         .animation(.easeOut(duration: 0.16), value: state.searching)
         .animation(.easeOut(duration: 0.16), value: state.showPalette)
         .background(MacTheme.content)
@@ -120,13 +124,11 @@ struct MainWindow: View {
         // same map the list and the thread handle.
         .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
         .overlay(alignment: .bottom) { MacToast() }
-        // While the Bundles sheet is open it presents these itself
-        // (AppModel.modal, BundleSheetPresenters).
+        // The phone's Bundles cover presents these itself while it is up
+        // (AppModel.modal, BundleSheetPresenters); here Bundles are a page
+        // of the window, so the root presents them for that page too.
         .sheet(item: model.modal(\.pendingRemind, inBundles: false)) { row in RemindSheet(row: row) }
         .sheet(item: model.modal(\.pendingBundlePick, inBundles: false)) { row in AddToBundleSheet(row: row) }
-        .sheet(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
-            BundlesSheet(initialBundleId: model.bundlesStartId)
-        }
         .sheet(item: composeSheet) { draft in
             ComposeView(draft: draft)
                 .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)
@@ -164,6 +166,16 @@ struct MainWindow: View {
             guard show else { return }
             model.showSidebar = false
             state.sidebarVisible = true
+        }
+        // The phone covers its screen with Bundles (AppModel.openBundles);
+        // here they are a page of the window (WindowState.showBundles), so
+        // the model's flag is handed over at once and its sheets stay the
+        // root's.
+        .onChange(of: model.showBundles) { _, show in
+            guard show else { return }
+            model.showBundles = false
+            state.openBundles(at: model.bundlesStartId)
+            model.bundlesStartId = nil
         }
         .onAppear {
             state.openInWindow = { id in openWindow(id: MacWindows.thread, value: id) }

@@ -197,6 +197,57 @@ struct WindowStateTests {
         #expect(!state.showSettings && model.view == .starred)
     }
 
+    @Test func bundlesAreAPageWhoseOpenEmailIsTheWindows() throws {
+        let t4 = try #require(model.row(forThreadId: "t4")) // the sample's Lisbon trip bundle, b1
+        state.select("t1", in: model)
+        state.openBundles(at: "b1")
+        #expect(state.showBundles && state.bundlePath == [.bundle("b1")])
+        #expect(state.bundlesTitle(in: model) == "Lisbon trip")
+        // The list's highlight is under the page, out of sight: no key acts on it.
+        #expect(state.focusRow(in: model) == nil && !state.hasTarget && !state.isThreadOpen)
+        state.run(.next, in: model)
+        #expect(state.selection == ["t1"])
+        // An email open in the bundle is the window's open thread.
+        state.bundlePath.append(.thread(t4))
+        #expect(state.isThreadOpen && state.focusRow(in: model)?.id == "t4")
+        #expect(state.bundlesTitle(in: model) == nil)
+        // A reply is written under it there, not in the main stack and not in a sheet.
+        state.run(.reply, in: model)
+        #expect(state.path.isEmpty && state.showBundles)
+        var reply = SendDraft()
+        reply.replyToThreadId = "t4"
+        #expect(ComposePlacement.isInline(reply, openThread: state.openThread?.id, detached: false))
+        // Esc walks the stack back, then leaves the page where the cursor was.
+        state.run(.escape, in: model)
+        #expect(state.bundlePath == [.bundle("b1")])
+        state.run(.escape, in: model)
+        #expect(state.bundlePath.isEmpty && state.showBundles)
+        state.run(.escape, in: model)
+        #expect(!state.showBundles && state.selection == ["t1"])
+    }
+
+    @Test func markDoneInABundlesEmailGoesBackToTheBundleAndAFolderLeavesThePage() async throws {
+        let t4 = try #require(model.row(forThreadId: "t4"))
+        state.openBundles(at: "b1")
+        state.bundlePath.append(.thread(t4))
+        state.run(.markDone, in: model)
+        #expect(state.bundlePath == [.bundle("b1")] && state.showBundles)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(try engine.threadRow(id: "t4")?.isDone == true)
+        // The window's list changed under the page: nothing auto-selects.
+        state.rowsChanged(in: model)
+        #expect(state.selection.isEmpty)
+        // Opening a thread in the main stack leaves the page.
+        state.openBundles(at: nil)
+        #expect(state.showBundles && state.bundlesTitle(in: model) == "Bundles")
+        state.open(try #require(model.row(forThreadId: "t1")), in: model)
+        #expect(!state.showBundles && state.bundlePath.isEmpty && state.path.map(\.id) == ["t1"])
+        // So does a folder switch.
+        state.openBundles(at: "b1")
+        state.run(.go(.starred), in: model)
+        #expect(!state.showBundles && state.bundlePath.isEmpty && model.view == .starred)
+    }
+
     @Test func typingInAFieldIsNotAShortcut() {
         #expect(WindowState.isTyping(NSTextField()))
         #expect(WindowState.isTyping(NSTextView()))

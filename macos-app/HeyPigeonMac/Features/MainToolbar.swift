@@ -3,7 +3,8 @@
 // leading end, over the list column (past the sidebar when it is out:
 // SidebarInset), the three places the phone has as tabs — Inbox · Remind
 // me · Need reply — with their counts (another folder picked in the
-// sidebar shows its name after them); at the trailing end summarize, ask,
+// sidebar shows its name after them, and so do Settings and the Bundles
+// page); at the trailing end summarize, ask,
 // new message and search. The sidebar button is the
 // glass circle in the window's bottom corner (MainWindow), Settings is in
 // the app menu (⌘,). A full thread brings its own items (the shared
@@ -21,9 +22,10 @@ struct MainToolbar: ToolbarContent {
     private var overlaid: Bool { state.searching || state.showPalette }
 
     /// The view when it is none of the three tabs (a folder, a label,
-    /// Settings, a search), for the title after them.
+    /// Settings, the Bundles page, a search), for the title after them.
     private var otherTitle: String? {
         if state.showSettings { return "Settings" }
+        if state.showBundles { return state.bundlesTitle(in: model) }
         if model.isSearching { return "Search" }
         return ViewTabs.views.contains(model.view) ? nil : model.view.title
     }
@@ -60,7 +62,7 @@ struct MainToolbar: ToolbarContent {
                 if model.isSyncing {
                     ProgressView().controlSize(.small)
                 }
-                if !state.isThreadOpen && !state.showSettings {
+                if !state.isThreadOpen && !state.showSettings && !state.showBundles {
                     if model.aiConfigured {
                         Button { model.openViewSummary() } label: { Label("Summarize", systemImage: "sparkles") }
                             .help("Summarize this view (⌥⌘I)")
@@ -167,7 +169,7 @@ struct ViewTabs: View {
     }
 
     private func tab(_ view: MailView) -> some View {
-        let on = !state.showSettings && !model.isSearching && model.view == view
+        let on = !state.showSettings && !state.showBundles && !model.isSearching && model.view == view
         return Button { state.run(.go(view), in: model) } label: {
             HStack(spacing: 5) {
                 Text(view.title).font(.system(size: 13, weight: on ? .semibold : .regular))

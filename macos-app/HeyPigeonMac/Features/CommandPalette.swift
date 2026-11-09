@@ -204,7 +204,7 @@ struct CommandPalette: View {
             state.run(.search, in: model)
         })
         out.append(PaletteItem(id: "sidebar", title: state.sidebarVisible ? "Hide folders" : "Show folders",
-                               systemImage: "sidebar.leading", key: "⌃⌘S") {
+                               systemImage: "sidebar.leading", key: "⌘S") {
             state.run(.toggleSidebar, in: model)
         })
         if state.isThreadOpen {

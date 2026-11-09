@@ -104,9 +104,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   (`WindowState.expanded`, the latest message and "Open full thread ›"),
   Return or the row's arrow opens the full thread (`path`). Never put a
   shadow on a view that holds a message: it falls on the web view too.
-  Scroll bars are hidden (`.scrollIndicators(.never)`), and what scrolls
-  under the toolbar fades softly (`.scrollEdgeEffectStyle(.soft)` on the
-  window: the hard style drew a second header over the list). The open
+  Scroll bars are hidden (`.scrollIndicators(.never)`), and the toolbar
+  draws nothing over the columns: `.toolbarBackgroundVisibility(.hidden)`
+  and `.scrollEdgeEffectHidden(true, for: .top)` on the window. The
+  automatic background and both edge styles came and went with the
+  pointer (the list reports itself scrolled under the bar when it relays
+  out) and drew a lighter strip across the top, behind the traffic
+  lights too. The sidebar is ⌘S (View › Show Folders), nothing in the
+  app saves by hand. The open
   row's card shows the whole message, as the first client's did; the
   pointer over a row is the hand. The composer on
   the Mac (shared `ComposeView`) takes the window's look through

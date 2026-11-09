@@ -6,7 +6,7 @@
 // pinned ones show, with ••• for the rest (AppModel.sidebarLabels). A row only tints: on hover, and a stronger tint on the folder
 // the list shows. New message, Search, Ask and Settings are the top bar's.
 // The phone shows the same list as a sheet
-// (Features/Sidebar/SidebarSheet); here ⌃⌘S and the top bar's button
+// (Features/Sidebar/SidebarSheet); here ⌘S and the window's corner button
 // slide it in and out, and a folder picked here closes the open thread.
 
 import SwiftUI

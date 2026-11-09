@@ -1,7 +1,7 @@
 // The main window, in the first desktop client's shape under a standard
 // Mac toolbar (MainToolbar: the traffic lights where they always are, the
 // sidebar button and the view's title beside them, the actions at the
-// right): the grey sidebar (SidebarColumn, ⌃⌘S puts it away) beside the
+// right): the grey sidebar (SidebarColumn, ⌘S puts it away) beside the
 // content — the list full width up to a readable maximum with rows that
 // open in place, a full thread in its place (NavigationStack, as in
 // MailListScreen), Settings, or the Bundles page (BundlesPage). The search and the command palette float
@@ -82,7 +82,7 @@ struct MainWindow: View {
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: .circle)
-            .help(state.sidebarVisible ? "Hide the sidebar (⌃⌘S)" : "Show the sidebar (⌃⌘S)")
+            .help(state.sidebarVisible ? "Hide the sidebar (⌘S)" : "Show the sidebar (⌘S)")
             .accessibilityLabel(state.sidebarVisible ? "Hide the sidebar" : "Show the sidebar")
             .padding(12)
         }
@@ -111,14 +111,17 @@ struct MainWindow: View {
         // title is the toolbar's own item.
         .toolbar { MainToolbar(state: state, model: model) }
         .toolbar(removing: .title)
-        // The columns run under the toolbar. What scrolls beneath it fades
-        // out softly; the hard style drew an opaque band with a hairline
-        // over the list column — a second header — whenever the list so
-        // much as relaid out under the pointer.
-        .scrollEdgeEffectStyle(.soft, for: .top)
-        // Under a floating panel the bar is clear (and empty), so the dim
-        // reaches the top of the window.
-        .toolbarBackgroundVisibility(overlaid ? .hidden : .automatic, for: .windowToolbar)
+        // The columns run under the toolbar, and the toolbar draws nothing
+        // of its own over them: no background and no scroll edge effect.
+        // Both came and went with the pointer — the list and the sidebar
+        // report themselves as scrolled under the bar whenever they relay
+        // out under it — and drew a lighter strip across the top of the
+        // window, over the list column and behind the traffic lights (the
+        // hard edge style as an opaque band with a hairline, the soft one
+        // and the automatic toolbar background as a paler rectangle). The
+        // items are glass, so rows that scroll under them stay readable.
+        .scrollEdgeEffectHidden(true, for: .top)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .focusedSceneValue(\.windowState, state)
         // Keys that reach the window itself (nothing else has focus): the
         // same map the list and the thread handle.

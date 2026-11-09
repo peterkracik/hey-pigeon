@@ -126,6 +126,8 @@ struct MacCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.command, .option])
             Button("Command Palette") { run(.palette) }
                 .keyboardShortcut("k", modifiers: .command)
+            Button("Bundles…") { run(.bundles) }
+                .keyboardShortcut("b", modifiers: .command)
             Button("Keyboard Shortcuts") { run(.shortcuts) }
                 .keyboardShortcut("/", modifiers: .command)
         }

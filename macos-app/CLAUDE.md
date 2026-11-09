@@ -98,7 +98,11 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   dimmed window, one at a time); while one is up the toolbar is empty
   and clear. The list has no section headers (a Mac list's header floats
   on a grey band): each day group's title is a plain row and its rows
-  share one white card (`MailRow.Position`). Rows are single lines; Done
+  share one white card (`MailRow.Position`); the hover and cursor tint
+  fills a row to 1 pt of the card's edge, rounded only where the card
+  is. The command palette's ⌘B stage lists the bundles, the recently
+  active first, and one opens as the Bundles page
+  (`PaletteStage.bundles`, `MailCommand.bundles`). Rows are single lines; Done
   is the first hover action (a done circle at the start read as a
   selection checkbox). A click opens the row **in place**
   (`WindowState.expanded`, the latest message and "Open full thread ›"),

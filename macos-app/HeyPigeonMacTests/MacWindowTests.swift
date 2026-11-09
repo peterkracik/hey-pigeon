@@ -297,6 +297,14 @@ struct WindowStateTests {
         state.showPalette = false
         state.run(.move, in: model)
         #expect(state.showPalette && state.paletteStage == .move)
+        // ⌘B needs no selection: the bundles stage, from anywhere.
+        state.showPalette = false
+        state.selection = []
+        state.run(.bundles, in: model)
+        #expect(state.showPalette && state.paletteStage == .bundles)
+        // A bundle picked there is the Bundles page, the palette gone.
+        state.openBundles(at: "b1")
+        #expect(!state.showPalette && state.showBundles && state.bundlePath == [.bundle("b1")])
     }
 
     @Test func accountsSwitchByIndex() {

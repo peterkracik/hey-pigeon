@@ -11,7 +11,8 @@ struct ShortcutsSheet: View {
         ("Move", [
             ("J · K", "Next · previous thread (in a thread too)"), ("↩", "Open the thread"), ("⌘↩", "Open it in a new window"),
             ("Esc · ⌘[", "Back to the list; then leave the search; then clear the selection"),
-            ("/", "Search"), ("⌘S", "Show or hide the folders"), ("⌘K", "Command palette"), ("?", "This sheet"),
+            ("/", "Search"), ("⌘S", "Show or hide the folders"), ("⌘K", "Command palette"), ("⌘B", "Open a bundle"),
+            ("?", "This sheet"),
         ]),
         ("Act on a thread", [
             ("E", "Mark done (and back)"), ("H", "Remind me (or remove the reminder)"), ("N", "Need reply"),

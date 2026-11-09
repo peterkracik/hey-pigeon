@@ -1,8 +1,10 @@
 // ⌘K: the desktop's command palette. One field, every command and folder
 // filtered as you type, arrows to pick, Return to run — in the search's
 // Spotlight panel (SpotlightPanel) over the blurred window, not a sheet. `l` and `v` open
-// it pre-staged on the label and move pickers for the selected thread.
-// The filter is a pure function (PaletteFilter) so it can be tested.
+// it pre-staged on the label and move pickers for the selected thread; ⌘B
+// (or the Bundles… row) on the bundles stage, the recently active ones
+// first, where one opens as the Bundles page. The filter is a pure
+// function (PaletteFilter) so it can be tested.
 
 import SwiftUI
 
@@ -47,6 +49,16 @@ struct CommandPalette: View {
         case .all: "Type a command or a folder…"
         case .label: "Add or remove a label…"
         case .move: "Move to folder…"
+        case .bundles: "Open a bundle…"
+        }
+    }
+
+    private var stageImage: String {
+        switch stage {
+        case .all: "command"
+        case .label: "tag"
+        case .move: "folder"
+        case .bundles: "square.stack"
         }
     }
 
@@ -59,7 +71,7 @@ struct CommandPalette: View {
     private var panel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: stage == .all ? "command" : (stage == .label ? "tag" : "folder"))
+                Image(systemName: stageImage)
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(Theme.textTertiary)
                 TextField(placeholder, text: $query)
@@ -145,6 +157,7 @@ struct CommandPalette: View {
         switch stage {
         case .label: return row.map { labelItems(for: $0) } ?? []
         case .move: return row.map { moveItems(for: $0) } ?? []
+        case .bundles: return bundleItems
         case .all: break
         }
         var out: [PaletteItem] = []
@@ -212,6 +225,11 @@ struct CommandPalette: View {
                 state.run(.back, in: model)
             })
         }
+        out.append(PaletteItem(id: "stage.bundles", title: "Bundles…", subtitle: bundlesSubtitle,
+                               systemImage: "square.stack", key: "⌘B") {
+            state.paletteStage = .bundles
+            state.showPalette = true
+        })
         let folders: [(MailView, String?)] = [
             (.inbox, "G I"), (.scheduled, "G S"), (.needReply, "G N"), (.starred, "G P"), (.sent, "G T"),
             (.drafts, "G D"), (.archive, "G A"), (.all, nil), (.spam, nil), (.trash, nil),
@@ -263,6 +281,44 @@ struct CommandPalette: View {
             state.run(.shortcuts, in: model)
         })
         return out
+    }
+
+    /// The Bundles… row's second line: the newest bundles by name.
+    private var bundlesSubtitle: String? {
+        let names = recentBundles.prefix(3).map(\.name)
+        return names.isEmpty ? nil : names.joined(separator: " · ")
+    }
+
+    /// The active bundles, most recently active first (the sidebar's
+    /// order, with nothing folded or hidden).
+    private var recentBundles: [BundleItem] {
+        AppModel.sidebarBundles(model.activeBundles, hidden: [], expanded: true).shown
+    }
+
+    /// ⌘B: every active bundle, the recent ones first, then the list of
+    /// them all; one opens as the Bundles page (WindowState.openBundles).
+    private var bundleItems: [PaletteItem] {
+        var out = recentBundles.map { b in
+            PaletteItem(id: "bundle.\(b.id)", title: b.name, subtitle: Self.bundleSubtitle(b),
+                        systemImage: b.category.systemImage) {
+                state.openBundles(at: b.id)
+            }
+        }
+        out.append(PaletteItem(id: "bundle.all", title: model.activeBundles.isEmpty ? "Bundles" : "All bundles",
+                               subtitle: model.activeBundles.isEmpty ? "No bundles yet" : nil,
+                               systemImage: "square.stack") {
+            state.openBundles(at: nil)
+        })
+        return out
+    }
+
+    /// "Trip · 3 open · 2 days ago": the category, what is still in the
+    /// inbox, and when it last moved. Pure, for the tests.
+    static func bundleSubtitle(_ b: BundleItem, now: Date = .now) -> String {
+        var parts = [b.category.title]
+        if b.openCount > 0 { parts.append("\(b.openCount) open") }
+        if let at = b.lastActivityAt { parts.append(Formatters.rowTime(at, now: now)) }
+        return parts.joined(separator: " · ")
     }
 
     private func accountLabels(for row: ThreadRow) -> [MailLabelItem] {

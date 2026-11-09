@@ -15,7 +15,7 @@ enum MailCommand: Hashable {
     case reply, replyAll, forward
     case label, move
     case summarizeThread, draftReply
-    case compose, search, palette, shortcuts, escape, back, toggleSidebar
+    case compose, search, palette, bundles, shortcuts, escape, back, toggleSidebar
     case next, previous, open, openInWindow
     /// Switch account: the index in `AppModel.accounts`, nil for all.
     case account(Int?)
@@ -96,7 +96,8 @@ enum KeyboardMap {
 /// What the command palette opens on: everything, or straight into the
 /// label / move pickers (the desktop's `l` and `v`).
 enum PaletteStage: Equatable {
-    case all, label, move
+    /// `bundles`: the bundles, most recently active first (⌘B).
+    case all, label, move, bundles
 }
 
 @MainActor
@@ -513,6 +514,12 @@ final class WindowState: Equatable {
         case .palette:
             if searching { endSearch(in: model) }
             paletteStage = .all
+            showPalette = true
+        case .bundles:
+            // ⌘B: the palette on its bundles stage, the recent ones first;
+            // one opens as the Bundles page.
+            if searching { endSearch(in: model) }
+            paletteStage = .bundles
             showPalette = true
         case .shortcuts:
             showShortcuts.toggle()

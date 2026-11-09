@@ -89,7 +89,7 @@ What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
 - `InboxPage` — the list (single-line `MailRow`s that open in place, the search in `SearchSpotlight` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
 - `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back and the people, then the shared sparkle and actions menu), its bars on one card at the bottom; `ThreadWindow` for a thread in its own window.
 - `WindowState` — the selection, auto-advance, `KeyboardMap` (the desktop's keys and `g`-chords) and every action.
-- `CommandPalette` (⌘K, with the `l` / `v` stages), `ShortcutsSheet` (`?`), `MenuBarExtraView`.
+- `CommandPalette` (⌘K, with the `l` / `v` stages and the ⌘B bundles stage), `ShortcutsSheet` (`?`), `MenuBarExtraView`.
 
 Rules that came out of it are in `macos-app/CLAUDE.md`: shared first, no
 bare `#if` in a feature file, bare letters only through `onKeyPress`,

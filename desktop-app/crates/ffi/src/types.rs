@@ -155,6 +155,11 @@ pub struct MailMessage {
     /// header was kept, until its thread is next fetched in full (the
     /// first `get_thread` after the update does that).
     pub cc_addrs: Vec<String>,
+    /// The Reply-To header's entries, in the same form; empty when the
+    /// sender set none (and, like `cc_addrs`, for older mail until its
+    /// thread is next fetched in full). A reply goes there instead of to
+    /// `from_addr`.
+    pub reply_to_addrs: Vec<String>,
     /// Epoch milliseconds.
     pub date: i64,
     pub snippet: String,
@@ -227,6 +232,7 @@ impl From<domain::Message> for MailMessage {
             from_addr: m.from_addr,
             to_addrs: m.to_addrs,
             cc_addrs: m.cc_addrs,
+            reply_to_addrs: m.reply_to_addrs,
             date: m.date,
             snippet: m.snippet,
             body_html,

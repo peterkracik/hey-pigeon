@@ -430,18 +430,20 @@ const MIGRATIONS: &[&str] = &[
     // thread's next full fetch (one more refetch per thread opened in
     // that window, none for anyone else).
     "UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;",
-    // v27 — why a queued change has not gone out: the last drain's error,
+    // v27 — the Reply-To header (JSON array, like `cc_addrs`): a reply
+    // goes there instead of to the sender. As in v22, `body_fetched`
+    // starts over so that mail already opened gets the header: a thread
+    // fetched in full is never fetched again otherwise, and a reply to a
+    // booking confirmation read before the update would keep going to
+    // its no-reply sender. One more full fetch per opened thread, on its
+    // next open; until then its body is cleaned on the way out (v26).
+    "
+    ALTER TABLE messages ADD COLUMN reply_to_addrs TEXT NOT NULL DEFAULT '[]';
+    UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;
+    ",
+    // v28 — why a queued change has not gone out: the last drain's error,
     // in words, for the outbox view. NULL until a drain fails on the row.
     "ALTER TABLE outbox ADD COLUMN last_error TEXT;",
-    // v28 — a marker. This step once re-indexed every message that has a
-    // Cc, in place, inside this transaction: 18 s on a mailbox of half a
-    // million messages, on the thread that opens the store at launch —
-    // long enough for a phone to kill the app, roll the step back and
-    // meet it again at every launch. It also took entries out of the
-    // index with the thread's current subject, which corrupts the index
-    // wherever a subject changed after it was indexed. Search over Cc is
-    // v30's, and no step may walk the mail: see there.
-    "SELECT 1;",
     // v29 — the tracking links of a thread, as last read from its bodies
     // (`bundles::refresh_tracking_links`). The bundle view lists them for
     // up to fifteen threads, and used to load every one of those threads'
@@ -482,7 +484,12 @@ const MIGRATIONS: &[&str] = &[
     //
     // Nothing here reads the mail: the step is the same few statements
     // on an empty store and on one with a million messages (ADD COLUMN
-    // does not rewrite rows). New mail goes into the new index as it is
+    // does not rewrite rows). Putting Cc into the first index in place,
+    // inside a step, was tried and never released: 18 s on half a million
+    // messages, on the thread that opens the store at launch — long
+    // enough for a phone to kill the app, roll the step back and meet it
+    // again at every launch — and it removed entries by the thread's
+    // current subject, the very thing that malforms that index. New mail goes into the new index as it is
     // stored. The mail already there is moved over after the store is
     // open, by `SqliteStore::reindex_step`, a few hundred messages per
     // transaction, picking up where it was after a kill — only ever
@@ -1503,17 +1510,20 @@ pub struct Correspondence {
 /// The message columns, in `row_to_message`'s order.
 const MESSAGE_COLS: &str = "id, thread_id, account_id, from_addr, to_addrs, date, snippet, \
      body_html, body_text, label_ids, is_read, cc_addrs, message_id_header, \
-     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched";
+     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched, \
+     reply_to_addrs";
 
 /// `MESSAGE_COLS` without reading the bodies (`Store::list_message_meta`).
 const MESSAGE_META_COLS: &str = "id, thread_id, account_id, from_addr, to_addrs, date, snippet, \
      NULL, NULL, label_ids, is_read, cc_addrs, message_id_header, \
-     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched";
+     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched, \
+     reply_to_addrs";
 
 fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     let to_addrs: String = r.get(4)?;
     let label_ids: String = r.get(9)?;
     let cc_addrs: String = r.get(11)?;
+    let reply_to_addrs: String = r.get(17)?;
     Ok(Message {
         id: r.get(0)?,
         thread_id: r.get(1)?,
@@ -1532,6 +1542,7 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         list_unsubscribe: r.get(14)?,
         list_unsubscribe_one_click: r.get(15)?,
         body_fetched: r.get(16)?,
+        reply_to_addrs: serde_json::from_str(&reply_to_addrs).unwrap_or_default(),
     })
 }
 
@@ -1637,14 +1648,15 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
     };
     let to_addrs = json(&m.to_addrs)?;
     let cc_addrs = json(&m.cc_addrs)?;
+    let reply_to_addrs = json(&m.reply_to_addrs)?;
     let label_ids = json(&m.label_ids)?;
     c.prepare_cached(
         "INSERT INTO messages
            (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
             body_html, body_text, label_ids, is_read, cc_addrs, message_id_header,
             references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched,
-            fts_subject)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+            reply_to_addrs, fts_subject)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
                  -- new mail goes into the search index (`mail_fts`) under
                  -- its thread's subject, which the row keeps; a thread
                  -- that arrives after its message brings the subject then
@@ -1670,6 +1682,8 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
            -- carry one (a row read without it and written back) keeps it
            cc_addrs = CASE WHEN excluded.cc_addrs = '[]' THEN cc_addrs
                            ELSE excluded.cc_addrs END,
+           reply_to_addrs = CASE WHEN excluded.reply_to_addrs = '[]' THEN reply_to_addrs
+                                 ELSE excluded.reply_to_addrs END,
            message_id_header = COALESCE(excluded.message_id_header, message_id_header),
            references_header = COALESCE(excluded.references_header, references_header),
            list_unsubscribe = COALESCE(excluded.list_unsubscribe, list_unsubscribe),
@@ -1695,7 +1709,8 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
         m.references_header,
         m.list_unsubscribe,
         m.list_unsubscribe_one_click,
-        m.body_fetched
+        m.body_fetched,
+        reply_to_addrs
     ])?;
     Ok(())
 }
@@ -5627,6 +5642,7 @@ mod tests {
         let t1 = "t1".to_string();
         let mut full = s.list_messages(&t1).unwrap().remove(0);
         full.cc_addrs = vec!["\"Doe, Jane\" <jane@x.com>".to_string()];
+        full.reply_to_addrs = vec!["Support <help@x.com>".to_string()];
         full.message_id_header = Some("<m1@x.com>".to_string());
         full.references_header = Some("<m0@x.com>".to_string());
         full.list_unsubscribe = Some("<https://x.com/u>".to_string());
@@ -5666,6 +5682,7 @@ mod tests {
         assert_eq!(stored.body_text.as_deref(), Some("zanzibar itinerary"));
         assert!(stored.body_fetched && stored.list_unsubscribe_one_click);
         assert_eq!(stored.cc_addrs, full.cc_addrs);
+        assert_eq!(stored.reply_to_addrs, full.reply_to_addrs);
         assert_eq!(stored.message_id_header, full.message_id_header);
         assert_eq!(stored.references_header, full.references_header);
         assert_eq!(stored.list_unsubscribe, full.list_unsubscribe);
@@ -5833,20 +5850,20 @@ mod tests {
             let conn = Connection::open(&path).unwrap();
             let s = SqliteStore::init_to(conn, 25).unwrap();
             s.upsert_account(&sample_account("a1")).unwrap();
+            // Written as a v25 build did: `upsert_message` names columns
+            // (v27's `reply_to_addrs`) this schema does not have yet.
             for (id, fetched) in [("m-raw", true), ("m-old", false)] {
-                old_message(
-                    &s,
-                    &Message {
-                        id: id.to_string(),
-                        thread_id: "t1".to_string(),
-                        account_id: "a1".to_string(),
-                        body_html: Some(RAW_BODY.to_string()),
-                        body_text: Some("hi".to_string()),
-                        cc_addrs: vec!["lee@x.com".to_string()],
-                        body_fetched: fetched,
-                        ..Default::default()
-                    },
-                );
+                s.with(|c| {
+                    c.execute(
+                        "INSERT INTO messages
+                           (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                            body_html, body_text, label_ids, is_read, cc_addrs, body_fetched)
+                         VALUES (?1, 't1', 'a1', '', '[]', 0, '', ?2, 'hi', '[]', 1,
+                                 '[\"lee@x.com\"]', ?3)",
+                        params![id, RAW_BODY, fetched],
+                    )
+                })
+                .unwrap();
             }
         }
         let s = SqliteStore::open(&path).unwrap(); // runs v26
@@ -5857,6 +5874,44 @@ mod tests {
             assert_eq!(m.body_html.as_deref(), Some(RAW_BODY));
             assert_eq!(m.cc_addrs, vec!["lee@x.com"]);
         }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Mail opened before v27 has no Reply-To and was fetched in full: the
+    /// upgrade asks for that fetch once more, and the fetch fills it.
+    #[test]
+    fn v27_upgrade_refetches_opened_mail_for_its_reply_to() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v27-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v26.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 26).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO messages
+                       (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                        body_text, label_ids, is_read, body_fetched)
+                     VALUES ('m1', 't1', 'a1', 'no-reply@hotel.com', '[]', 0, '', 'hi', '[]', 1, 1)",
+                    [],
+                )
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v27
+        let t1 = "t1".to_string();
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        assert!(m.reply_to_addrs.is_empty());
+        assert!(heypigeon_core::sync::needs_bodies(std::slice::from_ref(&m)));
+        // The full fetch that follows.
+        m.reply_to_addrs = vec!["Front desk <desk@hotel.com>".to_string()];
+        m.body_fetched = true;
+        s.upsert_message(&m).unwrap();
+        let stored = s.list_messages(&t1).unwrap().remove(0);
+        assert_eq!(stored.reply_to_addrs, vec!["Front desk <desk@hotel.com>"]);
+        assert!(stored.body_fetched);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -5929,19 +5984,19 @@ mod tests {
         assert!(by_id("m1").body_fetched && by_id("m1").is_read);
     }
 
-    // ---- v27: the outbox as a list, with each row's last error
+    // ---- v28: the outbox as a list, with each row's last error
 
     /// A queued row from before the column existed is still there, reads
     /// without an error, and can take one.
     #[test]
-    fn v27_upgrade_keeps_queued_rows() {
-        let dir = std::env::temp_dir().join(format!("heypigeon-test-v27-{}", std::process::id()));
+    fn v28_upgrade_keeps_queued_rows() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v28-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("v26.db");
+        let path = dir.join("v27.db");
         let _ = std::fs::remove_file(&path);
         {
             let conn = Connection::open(&path).unwrap();
-            let s = SqliteStore::init_to(conn, 26).unwrap();
+            let s = SqliteStore::init_to(conn, 27).unwrap();
             s.upsert_account(&sample_account("a1")).unwrap();
             s.with(|c| {
                 c.execute(
@@ -5952,7 +6007,7 @@ mod tests {
             })
             .unwrap();
         }
-        let s = SqliteStore::open(&path).unwrap(); // runs v27
+        let s = SqliteStore::open(&path).unwrap(); // runs v28
         let rows = s.outbox_list(10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!((rows[0].attempts, rows[0].last_error.clone()), (2, None));
@@ -6212,74 +6267,6 @@ mod tests {
         assert!(fts_is_consistent(&s));
     }
 
-    /// v28 as it first went out, to test builds: it re-indexed the mail
-    /// that has a Cc in place (see the marker that step is now). A
-    /// database that ran it has the old index's view and triggers in this
-    /// shape.
-    const V28_AS_FIRST_SHIPPED: &str =
-    "
-    INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
-    SELECT 'delete', m.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
-                m.from_addr,
-                m.to_addrs,
-                COALESCE(m.body_text, m.snippet, '')
-      FROM messages m WHERE m.cc_addrs <> '[]';
-    DROP VIEW messages_fts_content;
-    CREATE VIEW messages_fts_content AS
-      SELECT m.rowid AS rowid,
-             COALESCE((SELECT subject FROM threads t WHERE t.id = m.thread_id), '') AS subject,
-             m.from_addr AS from_addr,
-             CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END AS to_addrs,
-             COALESCE(m.body_text, m.snippet, '') AS body_text
-      FROM messages m;
-    DROP TRIGGER messages_fts_ai;
-    DROP TRIGGER messages_fts_au;
-    DROP TRIGGER messages_fts_ad;
-    CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
-        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
-        VALUES (new.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
-                new.from_addr,
-                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
-                COALESCE(new.body_text, new.snippet, ''));
-    END;
-    CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages
-    WHEN old.from_addr IS NOT new.from_addr
-      OR old.to_addrs IS NOT new.to_addrs
-      OR old.cc_addrs IS NOT new.cc_addrs
-      OR COALESCE(old.body_text, old.snippet, '') IS NOT COALESCE(new.body_text, new.snippet, '')
-    BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
-        VALUES ('delete', old.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
-                old.from_addr,
-                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
-                COALESCE(old.body_text, old.snippet, ''));
-        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
-        VALUES (new.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
-                new.from_addr,
-                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
-                COALESCE(new.body_text, new.snippet, ''));
-    END;
-    CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
-        VALUES ('delete', old.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
-                old.from_addr,
-                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
-                COALESCE(old.body_text, old.snippet, ''));
-    END;
-    INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
-    SELECT m.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
-                m.from_addr,
-                CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END,
-                COALESCE(m.body_text, m.snippet, '')
-      FROM messages m WHERE m.cc_addrs <> '[]';
-    ";
-
     // ---- v30: the search index moves to `mail_fts`, after open
 
     /// Rows of the messages table that are in the new index.
@@ -6306,8 +6293,39 @@ mod tests {
     }
 
     /// A message row as a store before v30 wrote it (the upsert of today
-    /// names a column those did not have).
-    fn old_message(s: &SqliteStore, m: &Message) {
+    /// names a column those did not have). `version` is the schema the
+    /// store is at: from v27 a row has its Reply-To.
+    fn old_message(s: &SqliteStore, version: usize, m: &Message) {
+        if version >= 27 {
+            // A plain insert of today's columns but the index's.
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO messages
+                       (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                        body_html, body_text, label_ids, is_read, cc_addrs, body_fetched,
+                        reply_to_addrs)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    params![
+                        m.id,
+                        m.thread_id,
+                        m.account_id,
+                        m.from_addr,
+                        serde_json::to_string(&m.to_addrs).unwrap(),
+                        m.date,
+                        m.snippet,
+                        m.body_html,
+                        m.body_text,
+                        serde_json::to_string(&m.label_ids).unwrap(),
+                        m.is_read,
+                        serde_json::to_string(&m.cc_addrs).unwrap(),
+                        m.body_fetched,
+                        serde_json::to_string(&m.reply_to_addrs).unwrap()
+                    ],
+                )
+            })
+            .unwrap();
+            return;
+        }
         s.with(|c| {
             c.execute(
                 "INSERT INTO messages
@@ -6370,11 +6388,14 @@ mod tests {
     /// indexed and its message was written again since — the drift that
     /// leaves the old index malformed. Thread 7 is from an address hidden
     /// behind a quoted display name, with the list sender the old reading
-    /// gave it.
+    /// gave it. Every fifth thread was opened, so its message was fetched
+    /// in full.
     ///
-    /// `ran_v28`: the database also ran v28 as it first shipped (the old
-    /// index's view and triggers carry Cc, the version is 29).
-    fn old_mailbox(name: &str, ran_v28: bool) -> std::path::PathBuf {
+    /// `version` is the schema the store is at, which is one of the two a
+    /// device can have: 26 (the release before Reply-To) or 27 (main's
+    /// step ran: an opened message was fetched again since and has its
+    /// Reply-To).
+    fn old_mailbox(name: &str, version: usize) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("heypigeon-test-v30-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
@@ -6382,7 +6403,7 @@ mod tests {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
         let conn = Connection::open(&path).unwrap();
-        let s = SqliteStore::init_to(conn, if ran_v28 { 27 } else { 26 }).unwrap();
+        let s = SqliteStore::init_to(conn, version).unwrap();
         s.upsert_account(&sample_account("a1")).unwrap();
         for n in 0..30 {
             let id = format!("t{n:02}");
@@ -6401,8 +6422,10 @@ mod tests {
                 })
                 .unwrap();
             }
+            let opened = n % 5 == 0;
             old_message(
                 &s,
+                version,
                 &Message {
                     id: format!("{id}-m1"),
                     thread_id: id.clone(),
@@ -6414,6 +6437,12 @@ mod tests {
                     label_ids: vec!["INBOX".to_string()],
                     cc_addrs: if n % 3 == 0 {
                         vec!["Samira Okafor <samira@partner.example>".to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                    body_fetched: opened,
+                    reply_to_addrs: if opened && version >= 27 {
+                        vec![format!("Desk <frontdesk{n:02}@hotel.example>")]
                     } else {
                         Vec::new()
                     },
@@ -6435,15 +6464,19 @@ mod tests {
             !index_is_whole(&s, "messages_fts"),
             "the fixture's old index is malformed"
         );
-        if ran_v28 {
-            s.with(|c| {
-                c.execute_batch(V28_AS_FIRST_SHIPPED)?;
-                c.execute_batch(MIGRATIONS[28])?;
-                c.pragma_update(None, "user_version", 29)
-            })
-            .unwrap();
-        }
         path
+    }
+
+    /// The full fetch main's v27 asks for (it lowers `body_fetched` on
+    /// opened mail): the message comes back as it was, with its Reply-To.
+    fn refetch_with_reply_to(s: &SqliteStore, thread_id: &str, reply_to: &str) {
+        let mut m = s.list_messages(&thread_id.to_string()).unwrap().remove(0);
+        m.reply_to_addrs = vec![reply_to.to_string()];
+        m.body_fetched = true;
+        s.upsert_message(&m).unwrap();
+        let stored = s.list_messages(&thread_id.to_string()).unwrap().remove(0);
+        assert_eq!(stored.reply_to_addrs, vec![reply_to]);
+        assert!(stored.body_fetched);
     }
 
     /// The proof for v30. An old mailbox whose index has drifted is
@@ -6452,13 +6485,23 @@ mod tests {
     /// inside one); the move is picked up and finished. At every stop the
     /// new index agrees with its content (FTS5's integrity-check), at the
     /// end it holds everything, Cc included, and the old index is gone.
-    fn the_index_moves(name: &str, ran_v28: bool) {
-        let path = old_mailbox(name, ran_v28);
+    fn the_index_moves(name: &str, version: usize) {
+        let path = old_mailbox(name, version);
         let s = SqliteStore::open(&path).unwrap();
         assert!(s.reindex_pending().unwrap());
         assert_eq!(moved(&s), 0, "opening moved nothing");
         // Meanwhile the old index answers.
         assert_eq!(found(&s, "body17"), vec!["t17"]);
+        // Main's v27 ran before the index steps, here or on the device:
+        // opened mail is to be fetched again unless it already was.
+        let opened = s.list_messages(&"t25".to_string()).unwrap().remove(0);
+        assert_eq!(opened.body_fetched, version >= 27);
+        assert_eq!(opened.reply_to_addrs.is_empty(), version < 27);
+        // That fetch, for a message the move has not reached: the row is
+        // written, and still waits its turn for the new index.
+        refetch_with_reply_to(&s, "t25", "Desk <frontdesk25@hotel.example>");
+        assert_eq!(moved(&s), 0);
+        assert_eq!(found(&s, "body25"), vec!["t25"]);
 
         for through in [4, 8, 12] {
             assert_eq!(s.reindex_step(4).unwrap(), Reindex::Indexing { through });
@@ -6543,6 +6586,16 @@ mod tests {
             .collect();
         assert_eq!(found(&s, "samira"), cc);
         assert_eq!(found(&s, "okafor renamed06"), vec!["t06"]);
+        // The same fetch for a message that has moved: nothing the index
+        // holds changed, so nothing is indexed again — and Reply-To is
+        // not part of the index.
+        let before = fts_bytes(&s);
+        refetch_with_reply_to(&s, "t10", "Desk <frontdesk10@hotel.example>");
+        assert_eq!(fts_bytes(&s), before, "no re-index for a Reply-To");
+        for reply_to in ["frontdesk10", "frontdesk25", "hotel.example"] {
+            assert!(found(&s, reply_to).is_empty(), "{reply_to}");
+        }
+        assert!(fts_is_consistent(&s));
         // The sender behind the quoted name is the one the list shows.
         let spoofed = s.get_thread(&"t07".to_string()).unwrap().unwrap();
         assert_eq!(spoofed.last_from_addr, "attacker@evil.example");
@@ -6569,15 +6622,62 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// From the release before Reply-To: main's v27 runs, then every
+    /// step of this branch.
     #[test]
     fn v30_the_index_moves_after_open_through_drift_and_a_kill() {
-        the_index_moves("v26.db", false);
+        the_index_moves("v26.db", 26);
     }
 
-    /// The same for a database that ran v28 as test builds first had it.
+    /// From main's v27, where devices are once it ships: every step after
+    /// it runs, to the end.
     #[test]
-    fn v30_the_index_moves_on_a_store_that_ran_the_first_v28() {
-        the_index_moves("v29.db", true);
+    fn v30_the_index_moves_on_a_store_at_mains_v27() {
+        the_index_moves("v27.db", 27);
+    }
+
+    /// The steps in the order devices meet them: main's Reply-To step is
+    /// the 27th, as it shipped, and this branch's follow it.
+    #[test]
+    fn the_steps_after_v26_are_mains_then_this_branchs() {
+        assert_eq!(MIGRATIONS.len(), 31);
+        for (version, names) in [
+            (27, "reply_to_addrs"),
+            (28, "last_error"),
+            (29, "thread_links"),
+            (30, "mail_fts"),
+            (31, "rule_marks"),
+        ] {
+            assert!(MIGRATIONS[version - 1].contains(names), "v{version}");
+            assert!(!MIGRATIONS[version - 2].contains(names), "v{version}");
+        }
+        assert_eq!(FTS_MOVE_AT, 30);
+        // A store at 26 and one at 27 end with the same schema.
+        let schema = |version: usize| {
+            let conn = Connection::open_in_memory().unwrap();
+            let s = SqliteStore::init_to(conn, version).unwrap();
+            // What `open` does to a store it finds at `version`.
+            let s = SqliteStore::init(s.conn.into_inner().unwrap()).unwrap();
+            let listed: Vec<String> = s
+                .with(|c| {
+                    c.prepare(
+                        "SELECT type || ' ' || name || ' ' || COALESCE(sql, '')
+                           FROM sqlite_master ORDER BY type, name",
+                    )?
+                    .query_map([], |r| r.get(0))?
+                    .collect()
+                })
+                .unwrap();
+            let version: i64 = s
+                .with(|c| c.pragma_query_value(None, "user_version", |r| r.get(0)))
+                .unwrap();
+            (version, listed)
+        };
+        let fresh = schema(0);
+        assert_eq!(fresh.0, 31);
+        for from in [26, 27, 28, 29, 30] {
+            assert_eq!(schema(from), fresh, "from v{from}");
+        }
     }
 
     /// A new install has nothing to move: it is on the new index from the
@@ -6608,9 +6708,13 @@ mod tests {
     }
 
     /// Opening a big old mailbox does not read the mail, and each step of
-    /// the move afterwards is short. Run by hand:
-    /// `HP_BIG=500000 cargo test -p heypigeon-adapter-sqlite --release \
-    ///    -- --ignored --nocapture opening_a_big_old_mailbox`
+    /// the move afterwards is short. The mailbox is one from the release
+    /// before Reply-To (v26), with `HP_OPENED` percent of its mail opened
+    /// (fetched in full, with an HTML body); main's v27 is timed on its
+    /// own, then the open from there, which is this branch's steps. Run by
+    /// hand:
+    /// `HP_BIG=500000 HP_OPENED=10 cargo test -p heypigeon-adapter-sqlite \
+    ///    --release -- --ignored --nocapture opening_a_big_old_mailbox`
     #[test]
     #[ignore]
     fn opening_a_big_old_mailbox_is_quick() {
@@ -6619,6 +6723,11 @@ mod tests {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(100_000);
+        let opened_percent: i64 = std::env::var("HP_OPENED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        let html = "<p>Some words of a newsletter, as they come.</p>\n".repeat(400);
         let dir = std::env::temp_dir().join(format!("heypigeon-test-big-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("big.db");
@@ -6640,9 +6749,9 @@ mod tests {
                     let mut message = tx.prepare(
                         "INSERT INTO messages (id, thread_id, account_id, from_addr, to_addrs,
                                                date, snippet, body_text, label_ids, is_read,
-                                               cc_addrs)
+                                               cc_addrs, body_html, body_fetched)
                          VALUES (?1, ?2, 'a1', ?3, '[\"me@heypigeon.app\"]', ?4, '', ?5, '[]', 1,
-                                 ?6)",
+                                 ?6, ?7, ?8)",
                     )?;
                     for i in 0..n {
                         let thread_id = format!("t{}", i / 3);
@@ -6665,7 +6774,9 @@ mod tests {
                             format!("Sender {} <s{}@x.com>", i % 900, i % 900),
                             i,
                             body,
-                            cc
+                            cc,
+                            (i % 100 < opened_percent).then_some(html.as_str()),
+                            i % 100 < opened_percent
                         ])?;
                     }
                 }
@@ -6677,10 +6788,19 @@ mod tests {
         let size = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) >> 20;
         eprintln!("file: {} MiB", size(&path));
 
+        // Main's step, where a device that ships main meets it.
+        let conn = Connection::open(&path).unwrap();
+        let opening = Instant::now();
+        drop(SqliteStore::init_to(conn, 27).unwrap());
+        eprintln!(
+            "open (v26 -> v27, main's Reply-To step, {opened_percent}% opened): {:?}",
+            opening.elapsed()
+        );
+
         let opening = Instant::now();
         let s = SqliteStore::open(&path).unwrap();
         let opened = opening.elapsed();
-        eprintln!("open (v26 -> v{}): {opened:?}", MIGRATIONS.len());
+        eprintln!("open (v27 -> v{}): {opened:?}", MIGRATIONS.len());
         assert!(opened < Duration::from_secs(1), "{opened:?}");
         assert!(s.reindex_pending().unwrap());
 

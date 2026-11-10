@@ -137,6 +137,29 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     /// whether a POST to its https link is enough (RFC 8058 one-click).
     var listUnsubscribe: String?
     var unsubscribeOneClick = false
+    /// The Reply-To line, like `to`: where the sender asked replies to go
+    /// (a list, a booking system writing from a no-reply address). Empty
+    /// when it set none, and for mail stored before the header was kept.
+    var replyTo: [String] = []
+}
+
+extension ThreadRow {
+    /// The row's state in words, for VoiceOver on both apps: unread is a
+    /// bar (a dot on the Mac) and a font weight, the rest bare symbols or
+    /// a time. In the app's own words ("Need reply", "Follow up … if no
+    /// reply").
+    func spokenState(showsDone: Bool) -> String {
+        var parts: [String] = []
+        if !isRead { parts.append("Unread") }
+        if let at = scheduledAt {
+            parts.append(isFollowUp ? "Follow up \(Formatters.reminder(at)) if no reply" : "Reminder \(Formatters.reminder(at))")
+        }
+        if needsReply { parts.append("Need reply") }
+        if isPinned { parts.append("Pinned") }
+        if isDone && showsDone { parts.append("Done") }
+        if hasAttachment { parts.append("Has attachment") }
+        return parts.joined(separator: ", ")
+    }
 }
 
 /// An open thread: its row and every stored message, drafts included.
@@ -816,6 +839,11 @@ struct SendDraft: Hashable {
     var draftKey = UUID().uuidString
     /// A Gmail draft was saved for it (a send or a discard deletes it).
     var draftSaved = false
+    /// A reply that goes where the message's Reply-To says and not to its
+    /// sender. The sender chose that address, so the composer shows it as
+    /// an address, never under a name the thread knows (the Mac opens the
+    /// fields): a reply must not be sent somewhere the user did not see.
+    var repliesElsewhere = false
     /// Bumped when something other than the composer changed the open
     /// draft (Siri's "update draft"); the composer adopts the new fields.
     var externalRevision = 0
@@ -840,21 +868,31 @@ struct SendDraft: Hashable {
     /// A reply to one message of a thread: to its sender (or, for a message
     /// of ours, its recipients), everyone else in Cc for Reply all, the
     /// subject with one "Re:", from the thread's account. The thread view
-    /// and the Siri Reply intent build the same draft.
-    static func reply(to m: MessageItem, in thread: ThreadRow, all: Bool, history: String?) -> SendDraft {
+    /// and the Siri Reply intent build the same draft. `mine` is the
+    /// account's other addresses, lowercased ("Send mail as" aliases):
+    /// mail sent from one is the user's own, and none of them is a
+    /// recipient of the reply.
+    static func reply(to m: MessageItem, in thread: ThreadRow, all: Bool, history: String?,
+                      mine: Set<String> = []) -> SendDraft {
         var d = SendDraft()
-        func others(_ list: [String]) -> [String] { list.filter { $0 != "me" && !$0.isEmpty } }
-        if m.isMine {
+        func others(_ list: [String]) -> [String] {
+            list.filter { $0 != "me" && !$0.isEmpty && !mine.contains($0.lowercased()) }
+        }
+        if m.isMine || mine.contains(m.fromAddress.lowercased()) {
             // A reply to one's own message goes where that one went.
             d.to = others(m.to)
             if all { d.cc = others(m.cc) }
         } else {
-            d.to = [m.fromAddress]
+            // Where the sender asked for replies, when it did: the From of
+            // a list or a booking system is often a no-reply address.
+            let asked = others(m.replyTo)
+            d.to = asked.isEmpty ? [m.fromAddress] : asked
+            d.repliesElsewhere = !asked.isEmpty && !asked.contains { EmailAddress.same($0, m.fromAddress) }
             // Reply all: everyone else the message went to, To and Cc
             // alike (the Cc line used to be dropped: the store did not
             // keep it), each once, the sender not again.
             if all {
-                var seen: Set<String> = [m.fromAddress.lowercased()]
+                var seen = Set(d.to.map { $0.lowercased() } + [m.fromAddress.lowercased()])
                 d.cc = (others(m.to) + others(m.cc)).filter { seen.insert($0.lowercased()).inserted }
             }
         }

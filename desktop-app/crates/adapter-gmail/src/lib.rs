@@ -26,11 +26,12 @@ const UPLOAD_API: &str = "https://gmail.googleapis.com/upload/gmail/v1/users/me"
 const FETCH_CONCURRENCY: usize = 10;
 /// The headers the metadata tier asks Gmail for (`format=metadata` returns
 /// only the ones named): the list row (From, To, Subject), reply-all (Cc),
-/// reply threading (Message-ID, References) and the unsubscribe action.
+/// where a reply goes (Reply-To), reply threading (Message-ID, References) and the unsubscribe action.
 const METADATA_HEADERS: &[&str] = &[
     "From",
     "To",
     "Cc",
+    "Reply-To",
     "Subject",
     "Message-ID",
     "References",
@@ -1482,6 +1483,7 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
         from_addr,
         to_addrs: addresses("To"),
         cc_addrs: addresses("Cc"),
+        reply_to_addrs: addresses("Reply-To"),
         date: w.internal_date.parse().unwrap_or(0),
         snippet: decode_entities(&w.snippet),
         body_html,
@@ -3147,6 +3149,7 @@ mod tests {
             "From",
             "To",
             "Cc",
+            "Reply-To",
             "Subject",
             "Message-ID",
             "References",

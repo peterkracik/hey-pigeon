@@ -72,6 +72,7 @@ struct ThreadRowView: View {
                 }
                 if row.hasAttachment {
                     Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)
+                        .accessibilityHidden(true) // "Has attachment", in the row's value
                 }
             }
             if !row.snippet.isEmpty {
@@ -94,6 +95,10 @@ struct ThreadRowView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+        // Unread is a bar and a font weight, the marks are bare symbols:
+        // none of it was said aloud.
+        .accessibilityValue(row.spokenState(showsDone: model.view != .archive))
+        .accessibilityAddTraits(.isButton)
     }
 
     /// The text with every search word underlined in the accent and lifted
@@ -139,7 +144,8 @@ struct ThreadRowView: View {
     }
 
     private func mark(_ name: String) -> some View {
-        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary)
+        // Said through the row's value (`spokenState`), not as symbol names.
+        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary).accessibilityHidden(true)
     }
 }
 

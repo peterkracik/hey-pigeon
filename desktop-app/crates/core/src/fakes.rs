@@ -163,6 +163,9 @@ impl Store for MemStore {
             if m.cc_addrs.is_empty() {
                 m.cc_addrs = old.cc_addrs.clone();
             }
+            if m.reply_to_addrs.is_empty() {
+                m.reply_to_addrs = old.reply_to_addrs.clone();
+            }
             if m.message_id_header.is_none() {
                 m.message_id_header = old.message_id_header.clone();
             }

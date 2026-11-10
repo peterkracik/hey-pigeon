@@ -183,6 +183,26 @@ struct ThreadModelTests {
         #expect(SendDraft.reply(to: theirs, in: makeRow(subject: "RE: Contract"), all: false, history: nil).subject == "RE: Contract")
     }
 
+    @Test func replyGoesWhereTheSenderAskedAndNeverToTheUsersOwnAlias() {
+        let row = makeRow(subject: "Booking")
+        var list = makeMessage("1", address: "no-reply@hotel.test", to: ["me", "marek@acme.test", "alias@work.test"])
+        list.replyTo = ["desk@hotel.test"]
+        #expect(SendDraft.reply(to: list, in: row, all: false, history: nil).to == ["desk@hotel.test"])
+        #expect(SendDraft.reply(to: list, in: row, all: false, history: nil).repliesElsewhere)
+        let all = SendDraft.reply(to: list, in: row, all: true, history: nil, mine: ["alias@work.test"])
+        #expect(all.to == ["desk@hotel.test"] && all.cc == ["marek@acme.test"])
+        // A Reply-To that is the sender itself redirects nothing.
+        var same = makeMessage("3", address: "ana@acme.test")
+        same.replyTo = ["Ana@acme.test"]
+        #expect(!SendDraft.reply(to: same, in: row, all: false, history: nil).repliesElsewhere)
+        // The row's state, as VoiceOver says it on both apps.
+        #expect(makeRow().spokenState(showsDone: true) == "")
+        #expect(makeRow(read: false, needsReply: true, starred: true).spokenState(showsDone: true) == "Unread, Need reply, Pinned")
+        // Mail sent from an alias is the user's own: the reply follows it.
+        let sent = makeMessage("2", address: "Alias@work.test", to: ["ana@acme.test"])
+        #expect(SendDraft.reply(to: sent, in: row, all: false, history: nil, mine: ["alias@work.test"]).to == ["ana@acme.test"])
+    }
+
     @Test func forwardQuotesTheMessageUnderOneFwd() {
         let m = makeMessage("1", from: "Ana", address: "ana@acme.test", text: "The deck.")
         let d = SendDraft.forward(of: m, in: makeRow(subject: "Deck"))
@@ -307,6 +327,30 @@ struct TextFormattingTests {
         link.link = URL(string: "https://x.test/?a=1&b=2")
         let html = RichText.html(AttributedString("a < b\n") + bold + AttributedString(" ") + link)
         #expect(html == "a &lt; b<br><b>bold</b> <a href=\"https://x.test/?a=1&amp;b=2\">site</a>")
+    }
+
+    /// A saved draft reopens with its formatting: the html part reads back
+    /// into what wrote it. Anything else opens as plain text.
+    @Test func aSavedDraftsHTMLReadsBackIntoTheEditor() throws {
+        // The phone's editor only: the Mac's loads the html part as it is
+        // (these tests also build for the Mac).
+        #if os(iOS)
+        let html = "a &lt; b<br><b>bold</b> <i>it</i> <u>under</u> <s>gone</s> <a href=\"https://x.test/?a=1&amp;b=2\" rel=\"noopener noreferrer\">site</a>"
+        let rich = try #require(RichText.attributed(html: html))
+        #expect(String(rich.characters) == "a < b\nbold it under gone site")
+        #expect(RichText.html(rich) == html.replacingOccurrences(of: " rel=\"noopener noreferrer\"", with: ""))
+        // The Mac editor's paragraphs read as blank lines; anything richer
+        // (a list, Gmail's blocks) opens as plain text.
+        let mac = try #require(RichText.attributed(html: "<p>Hi <b>Ana</b>,</p><p><br></p><p>see you</p>"))
+        #expect(String(mac.characters) == "Hi Ana,\n\n\n\n\nsee you")
+        #expect(RichText.attributed(html: "<ul><li>one</li></ul>") == nil)
+        // Only web and mail links come back as links.
+        let odd = try #require(RichText.attributed(html: "<a href=\"javascript:alert(1)\">x</a>"))
+        #expect(odd.runs.allSatisfy { $0.link == nil })
+        #endif
+        var draft = SendDraft()
+        draft.bodyText = "plain"
+        #expect(String(ComposeView.richBody(of: draft).characters) == "plain")
     }
 
     @Test func swipeTiersArmAtTheirDistances() {

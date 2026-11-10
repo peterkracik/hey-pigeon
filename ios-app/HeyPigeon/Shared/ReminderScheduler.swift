@@ -74,8 +74,9 @@ enum ReminderScheduler {
         }
         // A plan that did not go in whole (no permission yet) is tried
         // again next time.
+        let complete = scheduledAll
         await MainActor.run {
-            lastPlan = scheduledAll && !overlapped ? plan : []
+            lastPlan = complete && !overlapped ? plan : []
             running -= 1
             if running == 0 { overlapped = false }
         }

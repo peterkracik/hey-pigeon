@@ -450,3 +450,20 @@ struct RowActionPresentationTests {
         #expect(RowAction.remindSheetLabel(for: makeRow(scheduledAt: Date().addingTimeInterval(3600))) == "Change reminder")
     }
 }
+
+struct ReadableLayoutTests {
+    /// The iPad's readable column: centred when the screen is wider, the
+    /// whole width when it is not.
+    @Test func marginsCentreTheColumn() {
+        #expect(ReadableLayout.margin(in: 390) == 0)
+        #expect(ReadableLayout.margin(in: ReadableLayout.maxWidth) == 0)
+        #expect(ReadableLayout.margin(in: ReadableLayout.maxWidth + 200) == 100)
+    }
+}
+
+struct RowActionKeyTests {
+    /// The letters are the Mac's (`RowAction.key`).
+    @Test func rowKeysAreOneMap() {
+        #expect(RowAction.allCases.map(\.key) == ["E", "#", "H", "N", "S", "U"])
+    }
+}

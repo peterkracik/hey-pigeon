@@ -11,9 +11,35 @@
 import AppIntents
 import SwiftUI
 
+/// A page pushed from Settings' root.
+enum SettingsRoute: Hashable {
+    /// The provider, its key and model, what to do when it cannot answer.
+    case ai
+    /// The classifier, auto-triage and the triage labels.
+    case triage
+    /// "Triage my inbox": the run, its rules and the journal.
+    case siriTriage
+
+    /// The page's name: its navigation title, and the Mac window's.
+    var title: String {
+        switch self {
+        case .ai: "AI"
+        case .triage: "Triage"
+        case .siriTriage: "Siri triage"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// The pages pushed over the root, when the host keeps them: the
+    /// Mac's window does (`WindowState.settingsPath`), so its own Back,
+    /// Esc and title follow a pushed page. The phone's sheet keeps its
+    /// own (`ownPath`).
+    private let hostPath: Binding<[SettingsRoute]>?
+    @State private var ownPath: [SettingsRoute] = []
+    private var path: Binding<[SettingsRoute]> { hostPath ?? $ownPath }
     @State private var removing: MailAccount?
     /// The crash and hang reports on this device, read as Settings opens
     /// (DiagnosticsSection shows nothing when there are none).
@@ -26,36 +52,29 @@ struct SettingsView: View {
     @AppStorage("menuBarExtra") private var menuBarExtra = true
     #endif
 
+    init(path: Binding<[SettingsRoute]>? = nil) {
+        hostPath = path
+    }
+
     var body: some View {
         @Bindable var model = model
-        NavigationStack {
+        NavigationStack(path: path) {
             SettingsList {
                 accountsSection
-                if SettingsLayout.pushesPages {
-                    // The phone: AI and Triage are a page each. On one
-                    // scroll their pickers, keys and privacy footers stood
-                    // between the top and everything else in Settings.
-                    Section {
-                        NavigationLink {
-                            SettingsPage(title: "AI") { AISection() }
-                        } label: {
-                            pageLabel("AI", "Who summarizes, drafts and edits", systemImage: "sparkles")
-                        }
-                        NavigationLink {
-                            SettingsPage(title: "Triage") { TriageSection() }
-                        } label: {
-                            pageLabel("Triage", "Sorting new mail into your labels", systemImage: "tray.2")
-                        }
+                // AI and Triage are a page each, on the phone and on the
+                // Mac. On one scroll their pickers, keys and privacy
+                // footers stood between the top and everything else.
+                Section {
+                    NavigationLink(value: SettingsRoute.ai) {
+                        pageLabel("AI", "Who summarizes, drafts and edits", systemImage: "sparkles")
                     }
-                    .menuCard()
-                    SiriSection()
-                    DefaultAppSection()
-                } else {
-                    AISection()
-                    SiriSection()
-                    DefaultAppSection()
-                    TriageSection()
+                    NavigationLink(value: SettingsRoute.triage) {
+                        pageLabel("Triage", "Sorting new mail into your labels", systemImage: "tray.2")
+                    }
                 }
+                .menuCard()
+                SiriSection()
+                DefaultAppSection()
                 NotificationsSection()
                 ComposeSection()
                 #if os(macOS)
@@ -130,6 +149,12 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .toolbarTitleDisplayMode(.inline)
+            // The pages, by route. On the Mac their Back is the window's
+            // (`backInWindowToolbar`): the stack's sat beside the traffic
+            // lights, as a thread's did.
+            .navigationDestination(for: SettingsRoute.self) { route in
+                page(route).backInWindowToolbar()
+            }
             // The "not sent" line over the list opens Settings here.
             .navigationDestination(isPresented: $model.showOutbox) { OutboxView() }
             .onAppear { diagnosticReports = DiagnosticsCollector.reports() }
@@ -162,6 +187,14 @@ struct SettingsView: View {
             }
         }
         #endif
+    }
+
+    @ViewBuilder private func page(_ route: SettingsRoute) -> some View {
+        switch route {
+        case .ai: SettingsPage(title: route.title) { AISection() }
+        case .triage: SettingsPage(title: route.title) { TriageSection() }
+        case .siriTriage: TriageJournalView()
+        }
     }
 
     /// A row that opens one of Settings' pages: its name and, under it,
@@ -230,8 +263,8 @@ struct SettingsView: View {
     }()
 }
 
-/// A page pushed from Settings' root (the phone's AI and Triage): the same
-/// list look, the page's name in the bar.
+/// A page pushed from Settings' root (AI, Triage): the same list look,
+/// the page's name in the bar.
 private struct SettingsPage<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
@@ -270,7 +303,16 @@ private struct AccountRow: View {
             LabeledContent("Name") {
                 TextField("Name", text: $name)
                     .multilineTextAlignment(.trailing)
-                    .onSubmit { model.updateAccount(account, displayName: name) }
+                    .onSubmit { saveName() }
+                    // Saved once typing pauses, like the signature: it was
+                    // saved on Return only, and a name typed and left by
+                    // closing Settings was lost.
+                    .task(id: name) {
+                        try? await Task.sleep(for: AppModel.prefSaveDelay)
+                        guard !Task.isCancelled else { return }
+                        saveName()
+                    }
+                    .onDisappear { saveName() }
             }
             LabeledContent("Color") {
                 HStack(spacing: 10) {
@@ -325,6 +367,12 @@ private struct AccountRow: View {
         // Renamed or re-signed on another device while this row is open.
         .onChange(of: account.displayName) { _, v in name = v }
         .onChange(of: account.signature) { _, v in if v != signature { signature = v } }
+    }
+
+    /// An emptied field is not a name to save.
+    private func saveName() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty, trimmed != account.displayName { model.updateAccount(account, displayName: trimmed) }
     }
 
     private func saveSignature() {
@@ -558,10 +606,17 @@ private struct KeyedProviderControls: View {
                 }
                 Spacer()
                 if hasKey {
-                    Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
-                        if confirmRemove { remove() } else { confirmRemove = true }
-                    }
-                    .font(.footnote.weight(.semibold))
+                    // Asks once, in the dialog an account's Remove uses (a
+                    // key is not kept anywhere to bring back): it was a
+                    // second tap on a button that had changed its words.
+                    Button("Remove") { confirmRemove = true }
+                        .font(.footnote.weight(.semibold))
+                        .confirmationDialog("Remove the \(provider.shortName) key?", isPresented: $confirmRemove,
+                                            titleVisibility: .visible) {
+                            Button("Remove key", role: .destructive) { remove() }
+                        } message: {
+                            Text("The key is deleted from this \(Device.name). \(provider.shortName) answers here again once you paste one.")
+                        }
                 }
             }
             if hasKey {
@@ -703,7 +758,7 @@ private struct SiriSection: View {
                 }
             }
             if InboxAsk.isAvailable(model) {
-                Button { model.askSheet = AskPresentation() } label: {
+                Button { model.askFromSettings() } label: {
                     Label("Ask my inbox", systemImage: "questionmark.bubble")
                 }
             }
@@ -813,6 +868,8 @@ private struct TriageSection: View {
     @State private var error: String?
     @State private var confirmRemove = false
     @State private var newLabel = ""
+    /// The triage label the Remove dialog is asking about.
+    @State private var removing: TriageLabelItem?
     @State private var reanalyzeQueued = false
 
     private var jevConfigured: Bool { status?.jevConfigured == true }
@@ -849,10 +906,13 @@ private struct TriageSection: View {
                     }
                     Spacer()
                     if jevConfigured {
-                        Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
-                            if confirmRemove { remove() } else { confirmRemove = true }
-                        }
-                        .font(.footnote.weight(.semibold))
+                        Button("Remove") { confirmRemove = true }
+                            .font(.footnote.weight(.semibold))
+                            .confirmationDialog("Remove the Jev key?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                                Button("Remove key", role: .destructive) { remove() }
+                            } message: {
+                                Text("The key is deleted from this \(Device.name). Jev classifies here again once you paste one.")
+                            }
                     }
                 }
                 if !jevConfigured {
@@ -894,7 +954,7 @@ private struct TriageSection: View {
             // rules and the journal of what it did are one page
             // (TriageJournalView).
             if onDevice {
-                NavigationLink { TriageJournalView() } label: {
+                NavigationLink(value: SettingsRoute.siriTriage) {
                     Label(model.triageAgent.map { "Siri triage · \($0.phase.title)" } ?? "Siri triage and journal",
                           systemImage: "list.bullet.rectangle")
                 }
@@ -916,8 +976,14 @@ private struct TriageSection: View {
         Section {
             ForEach(model.triageLabels) { l in
                 Text(l.name)
+                    // Asks first: a label made again is a new label, so
+                    // there is no Undo to offer. The menu is the way on
+                    // the Mac, whose form has no swipe.
                     .swipeActions {
-                        Button(role: .destructive) { delete(l) } label: { Label("Remove", systemImage: "trash") }
+                        Button(role: .destructive) { removing = l } label: { Label("Remove", systemImage: "trash") }
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) { removing = l } label: { Label("Remove…", systemImage: "trash") }
                     }
             }
             .onMove { model.moveTriageLabels(from: $0, to: $1) }
@@ -929,6 +995,15 @@ private struct TriageSection: View {
                 Button("Add") { add() }
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
                     .font(.footnote.weight(.semibold))
+            }
+            // On this one row, not on the labels: a modifier on the
+            // ForEach goes to every row, and each would present it.
+            .confirmationDialog("Remove “\(removing?.name ?? "")”?",
+                                isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                                titleVisibility: .visible, presenting: removing) { l in
+                Button("Remove label", role: .destructive) { delete(l) }
+            } message: { _ in
+                Text("It leaves the bar over your inbox, on every device.")
             }
         } header: {
             Text("Labels")
@@ -958,7 +1033,7 @@ private struct TriageSection: View {
 
     /// How to reorder and remove a label, in this platform's gestures.
     #if os(macOS)
-    private static let labelHint = "Drag a label to change the order the bar shows; swipe it left to remove it."
+    private static let labelHint = "Drag a label to change the order the bar shows; right-click it to remove it."
     #else
     private static let labelHint = "Touch and hold a label, then drag it to change the order the bar shows; swipe it left to remove it."
     #endif
@@ -1206,8 +1281,9 @@ private struct SnippetEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(isNew ? "New snippet" : "Snippet")
-                .font(Theme.display(18, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
+            // The title row the other bar-less sheets have (Theme's
+            // SheetHeader); its close, and Esc, leave without saving.
+            SheetHeader(title: isNew ? "New snippet" : "Snippet") { dismiss() }
             TextField("Name (shown in the menu)", text: $snippet.name)
                 .textFieldStyle(.roundedBorder)
             TextEditor(text: $snippet.body)
@@ -1222,9 +1298,8 @@ private struct SnippetEditor: View {
                     }
                 }
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
                 Button("Save") { save() }
+                    .pillButton(prominent: true)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
             }

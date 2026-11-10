@@ -38,7 +38,7 @@ struct ToastStack: View {
                 }
             }
         }
-        .padding(.bottom, ToastMetrics.bottomInset)
+        .padding(.bottom, ToastMetrics.bottomInset(threadOpen: model.openThread != nil))
     }
 }
 

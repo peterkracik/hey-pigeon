@@ -133,6 +133,16 @@ enum AIAssist {
 
     // MARK: What a request sends
 
+    /// What starts a request, in the platform's word: the footer is under
+    /// the phone's sheet and the Mac's panel.
+    static var gesture: String {
+        #if os(macOS)
+        "click"
+        #else
+        "tap"
+        #endif
+    }
+
     /// Who answers a request (Settings › AI): the model on this device,
     /// Apple's cloud, or a provider reached with the user's key.
     enum Destination: Equatable {
@@ -163,24 +173,29 @@ enum AIAssist {
         var parts: [String]
         switch (mode, isReply) {
         case _ where refining:
-            parts = ["the draft shown above", "the tone you tap"]
+            parts = ["the draft shown above", "the tone you \(gesture)"]
             if isReply { parts.append("the conversation you are replying to") }
         case (.edit, true): parts = ["the text being edited", "your instruction", "the conversation you are replying to"]
         case (.edit, false): parts = ["the text being edited", "your instruction"]
         case (.write, true): parts = ["the conversation you are replying to", "its subject", "your notes"]
         case (.write, false): parts = ["your brief", "the subject"]
         }
-        if sendsWriter { parts.append("who is writing to whom") }
+        if sendsWriter {
+            // The Mac's AIWriteContext carries the subject with the names
+            // and addresses, in every mode.
+            if !parts.contains(where: { $0.contains("subject") }) { parts.append("the subject") }
+            parts.append("who is writing to whom")
+        }
         let what = parts.count > 1
             ? parts.dropLast().joined(separator: ", ") + " and " + (parts.last ?? "")
             : parts.first ?? ""
         switch destination {
         case .device:
-            return "On a tap, Apple Intelligence on this \(Device.name) reads \(what). Nothing leaves the device."
+            return "On a \(gesture), Apple Intelligence on this \(Device.name) reads \(what). Nothing leaves the device."
         case .appleCloud:
-            return "On a tap, \(what) go to Apple's Private Cloud Compute, which does not store them."
+            return "On a \(gesture), \(what) go to Apple's Private Cloud Compute, which does not store them."
         case .provider:
-            return "On a tap, \(what) are sent to your AI provider."
+            return "On a \(gesture), \(what) are sent to your AI provider."
         }
     }
 }

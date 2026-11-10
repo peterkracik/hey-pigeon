@@ -4,7 +4,8 @@
 //
 // A plain iOS 26 sheet: the system draws the glass background and the
 // grabber; the content is a grouped list with a title row and a close
-// button, no navigation bar.
+// button (Theme's SheetHeader), no navigation bar. The follow-up switch
+// comes first, then the presets, each of which sets and closes.
 
 import SwiftUI
 
@@ -29,6 +30,21 @@ struct RemindSheet: View {
 
     var body: some View {
         List {
+            // First, above the presets: a preset sets the reminder and
+            // closes the sheet, so the switch below them was only ever
+            // seen too late.
+            Section {
+                Toggle(isOn: $onlyIfNoReply) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Only if nobody replies")
+                        Text("Clears itself as soon as someone else writes in the thread.")
+                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                .tint(Theme.accent)
+            } header: {
+                SheetHeader(title: "Remind me", subtitle: row.subject.isEmpty ? row.fromSummary : row.subject) { dismiss() }
+            }
             Section {
                 ForEach(presets, id: \.0) { title, date in
                     Button { set(date) } label: {
@@ -44,32 +60,9 @@ struct RemindSheet: View {
                     DatePicker("Remind at", selection: $custom, in: Date()..., displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.graphical)
                     Button { set(custom) } label: { Text("Set reminder").frame(maxWidth: .infinity) }
-                        .buttonStyle(.glassProminent)
+                        .pillButton(prominent: true)
                         .listRowBackground(Color.clear)
                 }
-            } header: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Remind me").font(Theme.display(22, relativeTo: .title2)).foregroundStyle(Theme.textPrimary)
-                        Text(row.subject.isEmpty ? row.fromSummary : row.subject).font(.subheadline).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                    Spacer()
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.glass)
-                        .accessibilityLabel("Close")
-                }
-                .textCase(nil)
-                .padding(.bottom, 6)
-            }
-            Section {
-                Toggle(isOn: $onlyIfNoReply) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Only if nobody replies")
-                        Text("Clears itself as soon as someone else writes in the thread.")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                .tint(Theme.accent)
             }
             if row.scheduledAt != nil {
                 Section {

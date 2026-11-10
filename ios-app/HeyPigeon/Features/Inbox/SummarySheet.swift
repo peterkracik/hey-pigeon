@@ -22,15 +22,9 @@ struct SummarySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let s = summary, let text = s.text {
-                        SummaryTextView(text: text).font(.body).foregroundStyle(Theme.textPrimary)
-                    } else if let s = summary, let error = s.error {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.dangerText)
-                    } else {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Summarizing…").font(.body).foregroundStyle(Theme.textSecondary)
-                        }
+                    ResultState(working: "Summarizing…", error: summary?.error, isReady: summary?.text != nil,
+                                retry: { model.retrySummary(presentation) }) {
+                        SummaryTextView(text: summary?.text ?? "").font(.body).foregroundStyle(Theme.textPrimary)
                     }
                     Text(footnote)
                         .font(.caption).foregroundStyle(Theme.textTertiary)

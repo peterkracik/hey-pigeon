@@ -90,16 +90,17 @@ floating "splits" pill above the tab bar. Here that maps to:
   tab bar; Search is the system's separate search circle. Inbox carries an
   unread badge, Remind me the number of reminders due today, Need reply its
   count. The app icon badge is unified unread + reminders due today.
-- **The sidebar (≡)** is the desktop sidebar as a sheet: the accounts
-  (All / each account) nested under Inbox, then the desktop's folders in
-  its order — Starred · Sent · Drafts · Archive · Remind me · Need reply ·
+- **The sidebar (≡)** is the desktop sidebar as a sheet: Inbox, then the
+  accounts (All / each account) on a card of their own — a disconnected
+  one with a Reconnect row under it — then the desktop's folders in
+  its order — Pinned (Gmail's Starred) · Sent · Drafts · Archive · Remind me · Need reply ·
   All emails · Spam · Trash — the Gmail labels, Add account and Settings.
   Picking a folder shows it in the Inbox tab.
 - **The label pill** above the tab bar is the desktop's label tabs under the
   folder title: the folder (no filter), then the **Jev triage labels** from
   Settings › Triage. One tap narrows the list to that label. Gmail labels
   stay in the sidebar. Accounts (desktop `0`/`1`/`2`) switch in the sidebar,
-  nested under Inbox, and the choice applies across all tabs.
+  under Inbox, and the choice applies across all tabs.
 - **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
   Last 7 days · Older. Remind me buckets by due date; Need reply has no
   Pinned group.
@@ -228,10 +229,12 @@ Pull-to-refresh runs `sync_all`. The app also syncs on every foreground.
 
 ### Remind sheet
 
-Half-height sheet with the presets as a grouped list — *Later today (18:00)*,
+Half-height sheet: the title row (`SheetHeader`, shared with Add to
+bundle), then the toggle **"Only if nobody replies"** (desktop's
+follow-up) — first, because a preset sets the reminder and closes the
+sheet — then the presets as a grouped list — *Later today (18:00)*,
 *Tomorrow (09:00)*, *This weekend*, *Next week*, *In a month*, *Pick date…* —
-a toggle **"Only if nobody replies"** (desktop's follow-up), and a *Remove
-reminder* row when one is set. Times respect the user's locale and a
+and a *Remove reminder* row when one is set. Times respect the user's locale and a
 "day starts at" setting (default 09:00).
 
 ### Thread view
@@ -332,10 +335,11 @@ label management (rename, colour, delete) stays in Settings.
 
 ### Settings
 
-The desktop's sections, same wording. On the phone and the iPad the root
-is short: **AI** and **Triage** are a page each, pushed from two rows
-under Accounts (`SettingsLayout.pushesPages`); the Mac keeps one grouped
-form, as System Settings' panes are.
+The desktop's sections, same wording. The root is short: **AI** and
+**Triage** are a page each, pushed from two rows under Accounts
+(`SettingsRoute`), on the phone, the iPad and the Mac. On the Mac
+Settings is a page of the window, and the window's own Back, Esc and
+title follow a pushed page (`WindowState.settingsPath`).
 
 - **Accounts** — avatar, name, email, connection state; Name, Color (the
   five tags), Sync (reminder sync over the account's Drive app folder),
@@ -391,6 +395,15 @@ only when formatting was applied.
 
 ### States and motion
 
+- Waiting on a model or the network (a summary, Ask my inbox, Explain
+  attachment, a translation) is one view, `ResultState`: a spinner and a
+  word, or what went wrong with **Try again**, or the result. A thread
+  that could not load has Try again too.
+- Removing what cannot be brought back asks once, in one way — a
+  confirmation dialog: an account, an API key, a triage label, a Gmail
+  label. What can be undone gets Undo in the toast instead.
+- The toast sits above the tab bar, and above the thread's two bars
+  while a thread is open (`ToastMetrics.bottomInset(threadOpen:)`).
 - The toast (`ToastStack`, one view for the phone and the Mac) is spoken
   by VoiceOver as it appears and stays 20 s while VoiceOver runs.
 - Reduce Motion: the row leaves without the slide, a swiped row is back
@@ -412,10 +425,11 @@ only when formatting was applied.
 
 ### iPad and hardware keyboards
 
-`NavigationSplitView` gives the sidebar · list · thread layout for free on
-iPad, and SwiftUI's `.keyboardShortcut` brings the desktop keyboard map
-back 1:1 when a keyboard is attached: `j`/`k`/`e`/`u`/`h`/`n`/`/`/`⌘K`.
-Not an M1 goal, but the structure above does not have to change for it.
+At regular width an iPad shows three columns (`Features/Pad/PadSplitView`:
+the sidebar's list, the thread list, the open thread) with the list's
+keys (`PadKeys`); see `porting-macos-ipados.md`. In a narrow window it is
+the phone's tabs. The open thread keeps to a readable column
+(`readableColumn`, 760 pt, centred) when its column is wider than that.
 
 ## Platform constraints and how we handle them
 

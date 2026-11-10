@@ -54,6 +54,8 @@ struct MailListScreen: View {
                     Color.clear
                 }
             }
+            // On a wide iPad the rows keep to a readable column.
+            .readableColumn()
             // Pull to refresh on the list only. Applied after the bottom
             // inset it reached the label bar's scroll view too: a slightly
             // vertical swipe on the labels pulled the bar down with a spinner.
@@ -324,19 +326,13 @@ struct ThreadList: View {
     /// One row with its gestures, annotation and menu. Its own builder so
     /// the list body type-checks in reasonable time.
     private func cell(_ row: ThreadRow) -> some View {
-        SwipeableRow(
-            leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
-            trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
-            background: row.id == openThreadId ? Theme.rowOpen : Theme.card
-        ) {
+        // The thread open beside the list (the iPad's columns) is tinted.
+        RowSwipes.row(row, model: model, background: row.id == openThreadId ? Theme.rowOpen : Theme.card) {
             ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
                           highlight: model.tab == .search ? model.searchTerms : [])
                 .padding(.horizontal, 16).padding(.vertical, 7)
                 .contentShape(Rectangle())
-                // Unread marker: a bar on the left edge, flush with the screen.
-                .overlay(alignment: .leading) {
-                    if !row.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
-                }
+                .unreadEdge(!row.isRead)
                 .onTapGesture {
                     Keyboard.dismiss()
                     if model.view == .drafts { model.openDraft(row); return }
@@ -381,10 +377,6 @@ struct ThreadList: View {
             Button { model.markDone(fold) } label: { Label("Mark all done", systemImage: "checkmark") }
         }
     }
-
-    private func swipe(_ action: RowAction, _ row: ThreadRow) -> SwipeAction {
-        RowSwipes.action(action, row, model: model)
-    }
 }
 
 /// The swipe tiers from Settings as actions on one row: the inbox list and
@@ -395,6 +387,27 @@ enum RowSwipes {
     static func action(_ action: RowAction, _ row: ThreadRow, model: AppModel) -> SwipeAction {
         SwipeAction(title: action.shortLabel(for: row), systemImage: action.glyph(for: row), tint: action.tint) {
             model.run(action, on: row)
+        }
+    }
+
+    /// A row behind the four swipe tiers from Settings, on the card
+    /// surface: the inbox's cell and the bundle's (they each spelled the
+    /// tiers out).
+    @MainActor
+    static func row<Content: View>(_ row: ThreadRow, model: AppModel, background: Color = Theme.card,
+                                   @ViewBuilder content: @escaping () -> Content) -> SwipeableRow<Content> {
+        let tiers = model.swipeActions.map { action($0, row, model: model) }
+        return SwipeableRow(leading: Array(tiers.prefix(2)), trailing: Array(tiers.dropFirst(2).prefix(2)),
+                            background: background, content: content)
+    }
+}
+
+extension View {
+    /// The unread mark: a 3 pt bar on the row's left edge, flush with
+    /// the screen (the inbox's rows and the bundle's).
+    func unreadEdge(_ unread: Bool) -> some View {
+        overlay(alignment: .leading) {
+            if unread { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
         }
     }
 }
@@ -421,10 +434,6 @@ struct GroupHeader: View {
 struct RowMenu: View {
     let row: ThreadRow
     @Environment(AppModel.self) private var model
-
-    private var accountLabels: [MailLabelItem] {
-        model.labels.filter { $0.accountId == row.accountId && !$0.id.hasPrefix("CATEGORY_") }
-    }
 
     var body: some View {
         // The AI's proposal first: it is what the row is asking about.
@@ -462,10 +471,40 @@ struct RowMenu: View {
         Button { model.toggleRead(row) } label: {
             Label(RowAction.read.label(for: row), systemImage: RowAction.read.glyph(for: row))
         }
+        LabelMenuItems(row: row)
+        if !model.triageLabels.isEmpty {
+            Menu { TriageLabelToggles(row: row) } label: { Label("Jev labels", systemImage: "sparkles") }
+        }
+        Divider()
+        FolderMoveItem(row: row)
+        Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: {
+            Label(RowAction.delete.label(for: row), systemImage: RowAction.delete.glyph(for: row))
+        }
+    }
+}
+
+/// "Move to folder" and "Add label": the thread's account's own Gmail
+/// labels, as two submenus (none when the account has no labels). The
+/// long-press menu and the thread's More menu both show them; `afterMove`
+/// runs once a move is asked for (the thread view closes).
+struct LabelMenuItems: View {
+    let row: ThreadRow
+    var afterMove: () -> Void = {}
+    @Environment(AppModel.self) private var model
+
+    private var accountLabels: [MailLabelItem] {
+        model.labels.filter { $0.accountId == row.accountId && !$0.id.hasPrefix("CATEGORY_") }
+    }
+
+    var body: some View {
         if !accountLabels.isEmpty {
             Menu {
                 ForEach(accountLabels) { label in
-                    Button { IntentDonations.labeled(row, label, on: true, in: model); model.move(row, to: label) } label: { Label(label.name, systemImage: "tray") }
+                    Button {
+                        IntentDonations.labeled(row, label, on: true, in: model)
+                        model.move(row, to: label)
+                        afterMove()
+                    } label: { Label(label.name, systemImage: "tray") }
                 }
             } label: { Label("Move to folder", systemImage: "folder") }
             Menu {
@@ -477,22 +516,25 @@ struct RowMenu: View {
                 }
             } label: { Label("Add label", systemImage: "tag") }
         }
-        if !model.triageLabels.isEmpty {
-            Menu {
-                ForEach(model.triageLabels) { label in
-                    let on = row.triageLabelIds.contains(label.id)
-                    Button {
-                        var ids = row.triageLabelIds
-                        if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
-                        model.setTriageLabels(row, ids)
-                    } label: { Label(label.name, systemImage: on ? "checkmark" : "sparkles") }
-                }
-            } label: { Label("Jev labels", systemImage: "sparkles") }
-        }
-        Divider()
-        FolderMoveItem(row: row)
-        Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: {
-            Label(RowAction.delete.label(for: row), systemImage: RowAction.delete.glyph(for: row))
+    }
+}
+
+/// The triage (Jev) labels as a menu's items: a tap puts one on the
+/// thread or takes it off (kept by hand until "Reanalyze all emails").
+/// `offImage` is the symbol of a label that is not on.
+struct TriageLabelToggles: View {
+    let row: ThreadRow
+    var offImage = "sparkles"
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ForEach(model.triageLabels) { label in
+            let on = row.triageLabelIds.contains(label.id)
+            Button {
+                var ids = row.triageLabelIds
+                if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
+                model.setTriageLabels(row, ids)
+            } label: { Label(label.name, systemImage: on ? "checkmark" : offImage) }
         }
     }
 }

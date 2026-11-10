@@ -235,7 +235,7 @@ struct CommandPalette: View {
                             .onHover { if $0 { cursor = index } }
                         }
                         if items.isEmpty {
-                            Text("Nothing matches").font(.subheadline).foregroundStyle(Theme.textTertiary).padding(20)
+                            Text("No matches").font(.subheadline).foregroundStyle(Theme.textTertiary).padding(20)
                         }
                     }
                     .padding(8)

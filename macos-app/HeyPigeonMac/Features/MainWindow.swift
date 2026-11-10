@@ -60,7 +60,7 @@ struct MainWindow: View {
                     Rectangle().fill(MacTheme.hairline).frame(width: 1)
                 }
                 if state.showSettings {
-                    SettingsView()
+                    SettingsView(path: $state.settingsPath)
                         .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .transition(.opacity)

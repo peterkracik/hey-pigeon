@@ -21,20 +21,13 @@ struct SidebarColumn: View {
     @AppStorage("sidebarBundlesOpen") private var bundlesOpen = true
     /// "N more" under the bundles: every active one, hidden ones too.
     @AppStorage("sidebarAllBundles") private var allBundles = false
-    /// Gmail labels made, renamed and deleted from here: the label a
-    /// dialog is about, and the name typed into it.
-    @State private var creatingLabel = false
-    @State private var renaming: MailLabelItem?
-    @State private var deleting: MailLabelItem?
-    @State private var labelName = ""
+    /// Gmail labels made, renamed and deleted from here (the shared
+    /// LabelDialogs, the phone's sidebar's too).
+    @State private var labelEditing = LabelEditing()
 
-    /// The account a new label is made in: the one shown, else the first.
-    private var labelAccountId: String? { model.selectedAccountId ?? model.accounts.first?.id }
-
+    /// No Gmail categories, the account on screen (the phone's rule too).
     private var labels: [MailLabelItem] {
-        model.labels.filter { l in
-            !l.id.hasPrefix("CATEGORY_") && (model.selectedAccountId == nil || l.accountId == model.selectedAccountId)
-        }
+        AppModel.visibleLabels(model.labels, accountId: model.selectedAccountId)
     }
 
     var body: some View {
@@ -72,7 +65,7 @@ struct SidebarColumn: View {
                         folder(.trash)
                     }
 
-                    if !labels.isEmpty || labelAccountId != nil {
+                    if !labels.isEmpty || model.labelAccountId != nil {
                         SectionHeader(title: "Labels", open: $labelsOpen)
                         if labelsOpen {
                             let rows = AppModel.sidebarLabels(labels, pinned: model.pinnedLabelIds,
@@ -80,16 +73,15 @@ struct SidebarColumn: View {
                             ForEach(rows.shown) { l in
                                 folder(.label(id: l.id, name: l.name), pin: l)
                                     .contextMenu {
-                                        Button("Rename…") { labelName = l.name; renaming = l }
-                                        Button("Delete…", role: .destructive) { deleting = l }
+                                        Button("Rename…") { labelEditing.startRenaming(l) }
+                                        Button("Delete…", role: .destructive) { labelEditing.deleting = l }
                                     }
                             }
                             if rows.hidden > 0 || allLabels && labels.contains(where: { model.pinnedLabelIds.contains($0.id) }) {
                                 MoreLabelsRow(expanded: $allLabels, hidden: rows.hidden)
                             }
                             SidebarRow(title: "New label…", systemImage: "plus", help: "A new Gmail label") {
-                                labelName = ""
-                                creatingLabel = true
+                                labelEditing.startNew()
                             }
                         }
                     }
@@ -105,34 +97,7 @@ struct SidebarColumn: View {
         .background(MacTheme.sidebar)
         // Gmail's labels are the account's own: made, renamed and deleted
         // there, so they are the same on the web and the phone.
-        .alert("New label", isPresented: $creatingLabel) {
-            TextField("Name", text: $labelName)
-            Button("Add") {
-                guard let account = labelAccountId else { return }
-                let name = labelName
-                Task { await model.createLabel(named: name, accountId: account) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(labelAccountId.map { "A Gmail label in \($0)." } ?? "Add an account first.")
-        }
-        .alert("Rename label", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
-               presenting: renaming) { label in
-            TextField("Name", text: $labelName)
-            Button("Rename") {
-                let name = labelName
-                Task { await model.renameLabel(label, to: name) }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog("Delete this label?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-                            titleVisibility: .visible, presenting: deleting) { label in
-            Button("Delete \(label.name)", role: .destructive) {
-                Task { await model.deleteLabel(label) }
-            }
-        } message: { _ in
-            Text("The label is removed from Gmail. Its mail stays where it is, without the label.")
-        }
+        .labelDialogs($labelEditing)
     }
 
     /// A folder row with its count; `badge` is the Scheduled row's due
@@ -153,7 +118,7 @@ struct SidebarColumn: View {
     /// What rows dragged onto a folder or a label do there, nil where a
     /// drop means nothing (Sent, Drafts, All emails…): a label files the
     /// thread under it and marks it done, as `v` does; Archive is Mark
-    /// done, Inbox brings a done thread back, Trash deletes, Starred pins,
+    /// done, Inbox brings a done thread back, Trash deletes, Pinned pins,
     /// Need reply flags.
     private func dropAction(for view: MailView, label: MailLabelItem?) -> (([String]) -> Bool)? {
         let act: ((ThreadRow) -> Void)?

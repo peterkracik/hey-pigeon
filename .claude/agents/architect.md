@@ -169,8 +169,11 @@ the wrong layer.
 **5. Verify** (below) — always, including when someone else implemented.
 
 When you can delegate, have the `performance` agent review the change
-(speed, crash paths, needless complexity) before you call it verified;
-otherwise apply `.claude/agents/performance.md`'s checklist yourself.
+(speed, crash paths, needless complexity) before you call it verified,
+and the `security-privacy` agent when it touches what leaves the device,
+secrets, mail rendering or privacy copy; hand core-heavy work (sync,
+Gmail, SQLite, Drive sync) to the `core` agent. Otherwise apply the
+checklists in `.claude/agents/` yourself.
 
 **6. Record.** Set the spec's status, tick the acceptance criteria, and
 update any guide the change made untrue (`CLAUDE.md` files, `docs/`,

@@ -79,7 +79,7 @@ struct SidebarList: View {
                         Button {
                             Task {
                                 await model.addAccount(loginHint: a.id)
-                                dismiss()
+                                onPick()
                             }
                         } label: {
                             Label("Reconnect \(a.displayName)", systemImage: "arrow.clockwise")

@@ -28,6 +28,14 @@ struct KeyboardMapTests {
         #expect(KeyboardMap.resolve(.character("0")) == .run(.account(nil)))
         #expect(KeyboardMap.resolve(.character("2")) == .run(.account(1)))
         #expect(KeyboardMap.resolve(.character("q")) == .ignore)
+        // The keys the pointer used to be needed for.
+        #expect(KeyboardMap.resolve(.character(" ")) == .run(.peek))
+        #expect(KeyboardMap.resolve(.character(" "), modifiers: .shift) == .run(.pageUp))
+        #expect(KeyboardMap.resolve(.character("J"), modifiers: .shift) == .run(.extendNext))
+        #expect(KeyboardMap.resolve(.character("K"), modifiers: .shift) == .run(.extendPrevious))
+        #expect(KeyboardMap.resolve(.down, modifiers: .shift) == .run(.extendNext))
+        #expect(KeyboardMap.resolve(.character("x")) == .run(.extendNext))
+        #expect(KeyboardMap.resolve(.character("z")) == .run(.undo))
     }
 
     @Test func osChordsAreLeftToTheMenus() {
@@ -58,6 +66,23 @@ struct WindowStateTests {
     init() {
         engine = MockEngine()
         model = AppModel(engine: engine)
+    }
+
+    @Test func theSelectionGrowsFromTheKeyboardAndUndoTakesTheLastActionBack() {
+        let ids = state.flatIds(model)
+        state.run(.next, in: model)
+        state.run(.extendNext, in: model)
+        state.run(.extendNext, in: model)
+        #expect(state.selection == Set(ids.prefix(3)))
+        state.run(.selectAll, in: model)
+        #expect(state.selection == Set(ids))
+        // Done, then Z: the row is back.
+        state.select(ids[1], in: model)
+        state.run(.markDone, in: model)
+        #expect(model.listIndex(of: ids[1]) == nil)
+        #expect(model.canUndoLast)
+        state.run(.undo, in: model)
+        #expect(!model.canUndoLast)
     }
 
     @Test func movingWalksTheListInDisplayOrderAndClamps() {
@@ -337,6 +362,111 @@ struct PaletteFilterTests {
         ]
         #expect(PaletteFilter.filter(items, query: "tra").map(\.id) == ["b"])
         #expect(PaletteFilter.filter(items, query: "go").map(\.id) == ["a", "b"])
+    }
+
+    @Test func theBestMatchComesFirstAndRecentsWinATie() {
+        let items = [
+            PaletteItem(id: "reply", title: "Reply", subtitle: "Mark's notes", systemImage: "arrowshape.turn.up.left") {},
+            PaletteItem(id: "unread", title: "Mark unread", systemImage: "envelope.badge") {},
+            PaletteItem(id: "done", title: "Mark done", systemImage: "checkmark") {},
+            PaletteItem(id: "inbox", title: "Go to Inbox", systemImage: "tray") {},
+        ]
+        // A title that starts with the words beats a subtitle that holds them.
+        #expect(PaletteFilter.filter(items, query: "mark").map(\.id) == ["unread", "done", "reply"])
+        // Run lately: ahead of an equally good match.
+        #expect(PaletteFilter.filter(items, query: "mark", recents: ["done"]).map(\.id) == ["done", "unread", "reply"])
+        // Initials find a command: "gti" is Go to Inbox, "mu" Mark unread.
+        #expect(PaletteFilter.filter(items, query: "gti").map(\.id) == ["inbox"])
+        #expect(PaletteFilter.filter(items, query: "mu").map(\.id) == ["unread"])
+        // An empty palette opens on what was run lately.
+        #expect(PaletteFilter.filter(items, query: "", recents: ["inbox", "done"]).map(\.id) == ["inbox", "done", "reply", "unread"])
+        #expect(PaletteRecents.pushed("b", onto: ["a", "b", "c"]) == ["b", "a", "c"])
+        #expect(PaletteRecents.pushed("z", onto: (0..<8).map(String.init)).count == PaletteRecents.limit)
+    }
+}
+
+struct ShortcutsSheetTests {
+    /// The bare keys the sheet shows outside the composer: "J · K" is J
+    /// and K, "Space" is the space bar; chords and ⌘ keys are not bare.
+    private var listed: [String] {
+        ShortcutsSheet.groups.filter { $0.0 != "In the composer" }.flatMap(\.1).flatMap { row in
+            row.0.components(separatedBy: " · ").compactMap { token -> String? in
+                if token == "Space" { return " " }
+                if token.hasPrefix("G then ") { return "g" }
+                if token.hasPrefix("⇧"), token.count == 2 { return String(token.dropFirst()) }
+                return token.count == 1 && token != "↩" && token != "⌫" ? token.lowercased() : nil
+            }
+        }
+    }
+
+    @Test func theSheetAndTheKeyboardMapAgree() {
+        // Every key the sheet promises does something…
+        for key in listed where Int(key) == nil {
+            #expect(KeyboardMap.resolve(.character(key)) != .ignore, "the sheet lists \(key), the map ignores it")
+        }
+        // …and every key the map acts on is on the sheet.
+        for key in KeyboardMap.characters {
+            #expect(listed.contains(key.lowercased()), "the map handles \(key), the sheet does not list it")
+        }
+    }
+}
+
+@MainActor
+struct ComposeExtrasTests {
+    @Test func snippetsSurviveThePrefAndAScheduledSendCanBeTakenBack() {
+        let snippets = [Snippet(id: "a", name: "Address", body: "Hlavná 1\nBratislava"), Snippet(id: "b", name: "No", body: "Thanks, but no.")]
+        #expect(SnippetStore.decode(SnippetStore.encode(snippets)) == snippets)
+        #expect(SnippetStore.decode("not json").isEmpty)
+
+        let model = AppModel(engine: MockEngine())
+        var draft = SendDraft()
+        draft.to = ["ana@example.com"]
+        draft.subject = "Friday"
+        let at = Date().addingTimeInterval(3600)
+        model.sendLater(draft, from: model.accounts.first?.id ?? "me@example.com", at: at)
+        #expect(model.scheduledSends.map(\.id) == [draft.draftKey])
+        // Not due yet: nothing leaves.
+        model.sendDueScheduled(now: Date())
+        #expect(model.scheduledSends.count == 1)
+        // The toast's Undo (and Z) puts it back in the composer.
+        #expect(model.undoLast())
+        #expect(model.scheduledSends.isEmpty)
+        #expect(model.composeDraft?.draftKey == draft.draftKey)
+    }
+
+    @Test func laterTodayIsOfferedOnlyBeforeTheEvening() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Bratislava"))
+        let noon = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 12)))
+        let night = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 21)))
+        #expect(SendLaterPreset.laterToday.date(now: noon, calendar: calendar) != nil)
+        #expect(SendLaterPreset.laterToday.date(now: night, calendar: calendar) == nil)
+        #expect(SendLaterPreset.inAnHour.date(now: noon, calendar: calendar) == noon.addingTimeInterval(3600))
+    }
+}
+
+@MainActor
+struct ThreadPrinterTests {
+    @Test func theThreadPrintsAsOnePageWithNothingFromTheWeb() {
+        let row = makeRow("t1", subject: "Q4 <plan> & budget")
+        var first = makeMessage("m1", from: "Ana", address: "ana@acme.test", text: "Numbers attached.\n<b>not markup</b>")
+        first.cc = ["ben@acme.test"]
+        let html = ThreadPrinter.document(ThreadDetail(thread: row, messages: [first, makeMessage("m2", mine: true)]))
+        #expect(html.contains("<h1>Q4 &lt;plan&gt; &amp; budget</h1>"))
+        #expect(html.contains("Cc: ben@acme.test"))
+        // A plain-text body is text, not markup; and no remote sources.
+        #expect(html.contains("&lt;b&gt;not markup&lt;/b&gt;"))
+        #expect(html.contains("default-src 'none'"))
+        #expect(!html.contains("img-src *"))
+    }
+}
+
+struct WindowRestorationTests {
+    @Test func aViewSurvivesARelaunch() {
+        for view in [MailView.inbox, .needReply, .archive, .label(id: "Label_7", name: "Receipts / 2026")] {
+            #expect(WindowRestoration.decode(WindowRestoration.encode(view)) == view)
+        }
+        #expect(WindowRestoration.decode("nonsense") == nil)
     }
 }
 

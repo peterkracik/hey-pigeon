@@ -35,6 +35,9 @@ struct ThreadView: View {
     /// read on device as soon as the thread opens; the chips sit under the
     /// subject line. Nil until (and unless) there is something to offer.
     @State private var hintActions: [AttachmentAction] = []
+    /// The invitation an .ics attachment of the thread holds, read on the
+    /// device once the attachments are listed (InviteCard).
+    @State private var invite: CalendarInvite?
     /// The draft the delete confirmation is asking about.
     @State private var deletingDraft: ThreadDraft?
     /// The scroll view's height: room under an inline reply, so it can
@@ -54,7 +57,7 @@ struct ThreadView: View {
     /// else Reply.
     private var defaultReply: ReplyKind {
         guard let last = detail?.mail.last, !last.isMine else { return .reply }
-        return last.to.contains { $0 != "me" && !$0.isEmpty } ? .replyAll : .reply
+        return (last.to + last.cc).contains { $0 != "me" && !$0.isEmpty } ? .replyAll : .reply
     }
 
     private var replyKind: ReplyKind { replyChoice ?? defaultReply }
@@ -103,6 +106,10 @@ struct ThreadView: View {
                     metaLine.padding(.horizontal, 16).padding(.top, 8)
                     if let s = current.openSuggestion {
                         SuggestionCard(suggestion: s, row: current)
+                            .padding(.horizontal, 16).padding(.top, 10)
+                    }
+                    if let invite {
+                        InviteCard(invite: invite, row: current)
                             .padding(.horizontal, 16).padding(.top, 10)
                     }
                     if !hintActions.isEmpty {
@@ -213,7 +220,11 @@ struct ThreadView: View {
                     Button { if let last = detail?.mail.last { forward(last) } } label: {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
+                    if let offer = unsubscribeOffer {
+                        Button { unsubscribe(offer) } label: { Label("Unsubscribe", systemImage: "hand.raised") }
+                    }
                     Divider()
+                    FolderMoveItem(row: current) { onClose() }
                     Button(role: .destructive) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() } label: { Label("Delete", systemImage: "trash") }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("More")
@@ -236,20 +247,68 @@ struct ThreadView: View {
         .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
         .task(id: row.id) {
+            // What the store already holds is on screen at once (a thread
+            // opened before, or prefetched, whole; another as its snippets):
+            // the thread used to show a spinner until Gmail had answered,
+            // and nothing at all without a network.
+            let id = row.id
+            let hadBodies: Bool
+            if detail == nil, let local = try? await model.engine.readInBackground({ try $0.threadLocal(id: id) }),
+               !local.mail.isEmpty, !Task.isCancelled {
+                detail = local
+                hadBodies = local.mail.allSatisfy { $0.bodyHTML != nil || $0.bodyText != nil }
+            } else {
+                hadBodies = false
+            }
             do {
-                detail = try await model.engine.thread(id: row.id)
+                let fresh = try await model.engine.thread(id: row.id)
+                if fresh != detail { detail = fresh }
                 // The first open stores the bodies: the index can now carry them.
-                SpotlightIndexer.invalidate(threadId: row.id)
+                if !hadBodies { SpotlightIndexer.invalidate(threadId: row.id) }
                 if detail == nil { failed = "This thread is no longer available." }
                 else if model.autoSummarize && model.aiConfigured, let d = detail {
                     model.summarizeThread(current, messages: d.mail)
                 }
-            } catch { failed = error.localizedDescription }
+            } catch {
+                // Offline with the stored copy on screen: keep reading it.
+                if detail == nil { failed = error.localizedDescription }
+            }
             await loadAttachments()
         }
         // A draft was saved, edited or deleted and is now in the store.
         .onChange(of: model.draftsRevision) { _, _ in
             Task { if let fresh = try? await model.engine.thread(id: row.id) { detail = fresh } }
+        }
+    }
+
+    // MARK: Unsubscribe
+
+    /// What the thread's sender offers for leaving its list (the
+    /// List-Unsubscribe header of its newest message), if anything.
+    private var unsubscribeOffer: Unsubscribe.Offer? {
+        detail.flatMap { Unsubscribe.offer(in: $0.mail) }
+    }
+
+    /// One click where the sender supports it; else the sender's
+    /// unsubscribe address gets a message (with the send's Undo), or its
+    /// page opens in the browser.
+    private func unsubscribe(_ offer: Unsubscribe.Offer) {
+        switch offer.method {
+        case .post(let url):
+            Task {
+                do {
+                    try await Unsubscribe.post(url)
+                    model.show("Unsubscribed from \(offer.sender)")
+                } catch {
+                    model.show("Couldn't unsubscribe: \(error.localizedDescription)")
+                }
+            }
+        case .mail(let url):
+            var draft = SendDraft(mailto: url)
+            if draft.subject.isEmpty { draft.subject = "unsubscribe" }
+            model.send(draft, from: current.accountId)
+        case .open(let url):
+            Browser.open(url)
         }
     }
 
@@ -261,6 +320,12 @@ struct ThreadView: View {
     private func loadAttachments() async {
         guard current.hasAttachment, let list = try? await model.engine.attachments(threadId: row.id), !list.isEmpty else { return }
         attachments = Dictionary(grouping: list, by: \.messageId)
+        // An invitation (the newest .ics): what, when and where, with the
+        // answers, above the messages.
+        if let ics = list.last(where: \.isCalendar), let file = try? await model.engine.attachmentFile(ics),
+           let text = try? String(contentsOf: file, encoding: .utf8), let parsed = CalendarInvite.parse(text) {
+            withAnimation(.snappy) { invite = parsed }
+        }
         guard AttachmentUnderstanding.isAvailable, AttachmentUnderstanding.looksActionable(subject: row.subject),
               let first = list.first(where: \.isExplainable) else { return }
         do {
@@ -340,6 +405,14 @@ struct ThreadView: View {
             if current.needsReply {
                 Chip(text: "Need reply", systemImage: "arrowshape.turn.up.left",
                      background: Theme.tagBackground(Self.replyTone), foreground: Theme.tagForeground(Self.replyTone), capsule: true)
+            }
+            // A list's mail says how to leave it: one tap here.
+            if let offer = unsubscribeOffer {
+                Button { unsubscribe(offer) } label: {
+                    Chip(text: "Unsubscribe", systemImage: "hand.raised", background: Theme.sunken, foreground: Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Unsubscribe from \(offer.sender)")
             }
             Spacer(minLength: 4)
             let count = detail?.mail.count ?? row.messageCount

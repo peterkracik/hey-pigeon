@@ -16,6 +16,8 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     let text: String
     var undo: (() -> Void)?
+    /// How long it stays: five seconds, or a send's undo window.
+    var duration: Duration = .seconds(5)
     static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
 }
 
@@ -149,6 +151,8 @@ final class AppModel {
         }
     }
     private(set) var counts: [String: Int] = [:]
+    /// Changes still waiting to reach Gmail, as of the last reload.
+    private(set) var queuedChanges = 0
     private(set) var aiConfigured = false
     /// Accounts, bundles and triage label names by id. Every row looks
     /// these up on each render, and each changes only when its source does
@@ -223,6 +227,18 @@ final class AppModel {
     @ObservationIgnored private var reloadLoop: Task<Void, Never>?
     @ObservationIgnored private var lastBackfillRefresh = Date.distantPast
     private(set) var isSyncing = false
+    /// The sync is worth showing: the user asked for it, or it has been
+    /// running for longer than `syncActivityDelay`. The Mac syncs every 30
+    /// seconds, and a spinner for each round made the toolbar twitch.
+    private(set) var showsSyncActivity = false
+    static let syncActivityDelay: Duration = .milliseconds(1200)
+    /// A list nothing touched is still re-read this often (its "Today"
+    /// group moves with the clock).
+    static let idleReloadInterval: TimeInterval = 600
+    /// When the last snapshot landed, and the reload count the reminders
+    /// and the Spotlight index were last brought up to date at.
+    @ObservationIgnored private var lastAppliedAt = Date.distantPast
+    @ObservationIgnored private var postSyncReloadCount = -1
     private var isBackfillingOlder = false
     /// The background analysis pass (auto-triage): the inbox's progress bar,
     /// Settings › Triage and the Live Activity read it.
@@ -321,16 +337,19 @@ final class AppModel {
     /// 30-second tick, the icon badge and the widget snapshot read it
     /// instead of asking the store again: reminders come due with time,
     /// and every change to the list itself goes through `reload`.
-    @ObservationIgnored private(set) var scheduledAcrossAccounts: [ThreadRow] = []
+    private(set) var scheduledAcrossAccounts: [ThreadRow] = []
     /// Every Need reply thread across accounts as of the last reload: the
     /// widgets' list; `needReplyCount` narrows it to the account shown.
-    @ObservationIgnored private(set) var needReplyAcrossAccounts: [ThreadRow] = []
+    private(set) var needReplyAcrossAccounts: [ThreadRow] = []
     /// Unread per folder across accounts and per account, as of the last
     /// reload: the app badge, the reminder notifications and the widgets
     /// read these instead of asking the store again (they used to, on the
-    /// main thread, after every reload).
-    @ObservationIgnored private(set) var unifiedCounts: [String: Int] = [:]
-    @ObservationIgnored private(set) var countsByAccount: [String: [String: Int]] = [:]
+    /// main thread, after every reload). Observed, and assigned only when
+    /// they moved: the Mac's toolbar tabs, its sidebar's account menu and
+    /// the menu bar extra draw their unread numbers from them (they used
+    /// to query the store inside a view body, which no reload redrew).
+    private(set) var unifiedCounts: [String: Int] = [:]
+    private(set) var countsByAccount: [String: [String: Int]] = [:]
     /// Unread in the unified inbox: the app badge's first half.
     var inboxUnreadAllAccounts: Int { unifiedCounts["inbox"] ?? 0 }
     /// Unread in one account's inbox, for the widgets' account rows.
@@ -397,6 +416,10 @@ final class AppModel {
         /// Settings › AI › "Make bundles" (the core reads it too:
         /// crates/ffi/src/bundles.rs, unset = on).
         static let autoBundles = "bundles.auto"
+        /// The snippets, one JSON string (SnippetStore).
+        static let snippets = "compose.snippets"
+        /// How long a send waits for Undo, in seconds, as a string.
+        static let sendUndo = "send.undo_seconds"
     }
 
     /// The user's order of the triage labels, by id. The core lists them
@@ -656,6 +679,8 @@ final class AppModel {
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
         if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
+        if let v = prefs[PrefName.snippets] as? String { snippets = SnippetStore.decode(v) }
+        if let v = (prefs[PrefName.sendUndo] as? String).flatMap(Int.init), Self.sendUndoChoices.contains(v) { sendUndoSeconds = v }
         adoptingPrefs = false
     }
 
@@ -691,6 +716,9 @@ final class AppModel {
         AppModel.current = self
         // Donations are system state: not from the sample inbox or the tests.
         IntentDonations.enabled = !(engine is MockEngine)
+        // What was scheduled to send before the last quit; the first tick
+        // sends whatever came due meanwhile.
+        if persistsScheduledSends { scheduledSends = ScheduledSendStore.load() }
         clock = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -703,6 +731,7 @@ final class AppModel {
     /// and the icon badge adds it (the notification carries the same count
     /// for the asleep case).
     private func tick() {
+        sendDueScheduled()
         let before = dueCount
         dueCount = Self.due(Self.scoped(scheduledAcrossAccounts, to: selectedAccountId)).count
         if dueCount != before {
@@ -838,6 +867,7 @@ final class AppModel {
     /// redraw the whole list.
     private func apply(_ snapshot: ListSnapshot) {
         reloadCount &+= 1
+        lastAppliedAt = Date()
         // The list moved on while this was read (a tab or folder switch
         // reloaded the new one on the main actor): nothing of this applies.
         guard snapshot.request.view == view, snapshot.request.accountId == selectedAccountId else { return }
@@ -849,10 +879,10 @@ final class AppModel {
         if more != hasMore { hasMore = more }
         if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved { regroup() }
         if snapshot.counts != counts { counts = snapshot.counts }
-        unifiedCounts = snapshot.unifiedCounts
-        countsByAccount = snapshot.countsByAccount
-        scheduledAcrossAccounts = snapshot.scheduledAcrossAccounts
-        needReplyAcrossAccounts = snapshot.needReplyAcrossAccounts
+        if snapshot.unifiedCounts != unifiedCounts { unifiedCounts = snapshot.unifiedCounts }
+        if snapshot.countsByAccount != countsByAccount { countsByAccount = snapshot.countsByAccount }
+        if snapshot.scheduledAcrossAccounts != scheduledAcrossAccounts { scheduledAcrossAccounts = snapshot.scheduledAcrossAccounts }
+        if snapshot.needReplyAcrossAccounts != needReplyAcrossAccounts { needReplyAcrossAccounts = snapshot.needReplyAcrossAccounts }
         let scheduled = Self.scoped(snapshot.scheduledAcrossAccounts, to: selectedAccountId)
         if scheduled.count != scheduledCount { scheduledCount = scheduled.count }
         let due = Self.due(scheduled).count
@@ -861,6 +891,8 @@ final class AppModel {
         if needReply != needReplyCount { needReplyCount = needReply }
         if snapshot.draftsCount != draftsCount { draftsCount = snapshot.draftsCount }
         if !hasLoadedOnce { hasLoadedOnce = true }
+        let queued = engine.pendingChanges()
+        if queued != queuedChanges { queuedChanges = queued }
         refreshOpenThread()
         if isSearching { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }
@@ -1013,6 +1045,16 @@ final class AppModel {
     /// label filter or the pin setting change, instead of on every render
     /// of every view that reads it (the list, the empty state, the title).
     private(set) var groupedRows: [RowGroup] = []
+    /// The list's thread ids in display order, and a counter bumped when
+    /// that order changes. The Mac's cursor (j / k, auto-advance, ⇧-click)
+    /// walks them: it used to flatten the groups again on every key press,
+    /// and the list compared a fresh array of every id on every render.
+    @ObservationIgnored private(set) var flatRowIds: [String] = []
+    @ObservationIgnored private var flatRowIndex: [String: Int] = [:]
+    private(set) var rowOrderRevision = 0
+
+    /// Where a thread sits in the list on screen, nil when it is not in it.
+    func listIndex(of id: String) -> Int? { flatRowIndex[id] }
 
     private func regroup() {
         groupedRows = Self.group(
@@ -1022,6 +1064,11 @@ final class AppModel {
             pinList: pinListEnabled,
             bundles: Self.foldsOnThisPlatform && foldBundlesEnabled ? bundles : []
         )
+        let ids = groupedRows.flatMap { $0.rows.map(\.id) }
+        guard ids != flatRowIds else { return }
+        flatRowIds = ids
+        flatRowIndex = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        rowOrderRevision &+= 1
     }
 
     /// The phone and the iPad fold; the Mac's list keeps one row per thread
@@ -1111,28 +1158,56 @@ final class AppModel {
 
     // MARK: Sync
 
-    func sync() async {
-        guard !isSyncing else { return }
+    /// `manual`: the user asked (Check for Mail, the palette, the Dock):
+    /// the spinner shows at once. A round the timer started shows it only
+    /// once it has run for a moment (`showsSyncActivity`). `quiet`: the
+    /// Mac's 30-second round, which leaves the list, the reminders and the
+    /// index alone when the round brought nothing.
+    func sync(manual: Bool = false, quiet: Bool = false) async {
+        guard !isSyncing else {
+            if manual { showsSyncActivity = true }
+            return
+        }
         isSyncing = true
-        defer { isSyncing = false }
+        if manual { showsSyncActivity = true }
+        let slow = Task { [weak self] in
+            try? await Task.sleep(for: Self.syncActivityDelay)
+            guard !Task.isCancelled, let self, self.isSyncing else { return }
+            self.showsSyncActivity = true
+        }
+        defer {
+            slow.cancel()
+            isSyncing = false
+            if showsSyncActivity { showsSyncActivity = false }
+        }
         // Which models this device can run follows the network and the
         // Apple Intelligence switch; re-register before the round so the
         // triage at its end picks the right one.
         engine.refreshAIProviders()
         do {
-            _ = try await engine.syncAll()
+            let changed = try await engine.syncAll()
             lastSyncAt = Date()
             reloadAccounts()
             // The round's change notices are already waiting (reloadSoon);
             // this joins them, so the list is current when the pull-to-
             // refresh spinner goes, and before the reminders and the index
-            // read the counts.
-            reloadSoon()
+            // read the counts. A quiet round that brought nothing (most of
+            // the Mac's, every 30 seconds) asks for no reload of its own:
+            // the engine's notices still reload when another device moved
+            // something, and the list is re-read anyway once it is old
+            // enough for its day groups to have moved.
+            if !quiet || changed || Date().timeIntervalSince(lastAppliedAt) > Self.idleReloadInterval { reloadSoon() }
             await settleReloads()
-            await rescheduleReminders()
-            // What Siri and Spotlight know follows the store, same cadence
-            // as the reminder notifications.
-            await SpotlightIndexer.refresh(self)
+            // The reminders and the index follow the store: a quiet round
+            // has nothing to do when no reload landed since they were last
+            // brought up to date (and the index has no backlog left).
+            if !quiet || reloadCount != postSyncReloadCount || SpotlightIndexer.needsRefresh {
+                await rescheduleReminders()
+                // What Siri and Spotlight know follows the store, same
+                // cadence as the reminder notifications.
+                await SpotlightIndexer.refresh(self)
+                postSyncReloadCount = reloadCount
+            }
         } catch {
             show("Sync failed: \(error.localizedDescription)")
         }
@@ -1224,6 +1299,83 @@ final class AppModel {
         guard now.timeIntervalSince(lastBackfillRefresh) >= Self.backfillRefreshInterval else { return }
         lastBackfillRefresh = now
         reloadSoon()
+    }
+
+    // MARK: Prefetch
+
+    /// How many rows from the top of the inbox have their bodies brought
+    /// in ahead of a click.
+    static let prefetchDepth = 8
+    /// Threads whose bodies were already asked for, with the message count
+    /// they had then: a new message asks again.
+    @ObservationIgnored private var prefetched: [String: Int] = [:]
+    @ObservationIgnored private var prefetchQueue: [String] = []
+    @ObservationIgnored private var prefetchTask: Task<Void, Never>?
+
+    /// Bring these threads' bodies into the store, one at a time, so that
+    /// opening one shows the message at once instead of a spinner while
+    /// Gmail answers. The engine fetches only what the store lacks; a
+    /// thread already whole costs one local read. Not in Low Power Mode,
+    /// and not on a metered path or in Low Data Mode (the phone on
+    /// cellular fetches a thread when it is opened, as before).
+    func prefetchBodies(_ rows: [ThreadRow]) {
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled, Connectivity.shared.allowsPrefetch else { return }
+        for row in rows where prefetched[row.id] != row.messageCount {
+            prefetched[row.id] = row.messageCount
+            if !prefetchQueue.contains(row.id) { prefetchQueue.append(row.id) }
+        }
+        guard prefetchTask == nil, !prefetchQueue.isEmpty else { return }
+        prefetchTask = Task { [weak self] in
+            while let model = self, let id = model.prefetchQueue.first {
+                model.prefetchQueue.removeFirst()
+                _ = try? await model.engine.thread(id: id)
+            }
+            self?.prefetchTask = nil
+        }
+    }
+
+    /// The top of the inbox, when that is the list on screen.
+    func prefetchTopOfInbox() {
+        guard view == .inbox, !isSearching else { return }
+        prefetchBodies(Array(rows.prefix(Self.prefetchDepth)))
+    }
+
+    // MARK: Focus filter (Intents/FocusFilter.swift)
+
+    private static let focusAccountKey = "focus.account"
+    private static let focusPreviousKey = "focus.previousAccount"
+
+    /// The account the Focus that is on narrows the app to; nil without
+    /// one. Kept across launches: the system only says when it changes.
+    private(set) var focusAccountId: String? = UserDefaults.standard.string(forKey: AppModel.focusAccountKey)
+
+    /// A Focus with the filter turned on (an account) or off (nil): the
+    /// list shows that account, and goes back to what it showed before
+    /// when the Focus ends. An account that is gone is no filter.
+    func applyFocus(accountId: String?) {
+        let defaults = UserDefaults.standard
+        let id = accountId.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
+        guard id != focusAccountId else { return }
+        if let id {
+            // Only the first Focus remembers: a second one on top of it
+            // would remember the first one's account.
+            if focusAccountId == nil { defaults.set(selectedAccountId ?? "", forKey: Self.focusPreviousKey) }
+            focusAccountId = id
+            defaults.set(id, forKey: Self.focusAccountKey)
+            if selectedAccountId != id { selectedAccountId = id }
+        } else {
+            let previous = defaults.string(forKey: Self.focusPreviousKey).flatMap { $0.isEmpty ? nil : $0 }
+            focusAccountId = nil
+            defaults.removeObject(forKey: Self.focusAccountKey)
+            defaults.removeObject(forKey: Self.focusPreviousKey)
+            let back = previous.flatMap { p in accounts.contains { $0.id == p } ? p : nil }
+            if selectedAccountId != back { selectedAccountId = back }
+        }
+    }
+
+    /// Whether a new-mail banner for this thread fits the Focus that is on.
+    func focusAllows(_ row: ThreadRow) -> Bool {
+        focusAccountId == nil || row.accountId == focusAccountId
     }
 
     /// Deep link from a notification (reminder or new mail): the inbox tab
@@ -1478,6 +1630,120 @@ final class AppModel {
         markDone(row)
     }
 
+    /// Report spam: the thread goes to Gmail's Spam (and trains its
+    /// filter); Undo brings it back.
+    func markSpam(_ row: ThreadRow) {
+        Haptics.archive()
+        perform(.markSpam(threadId: row.id, spam: true), on: row, toast: "Moved to Spam") { [weak self] in
+            self?.perform(.markSpam(threadId: row.id, spam: false), on: row)
+            self?.reloadSoon()
+        }
+    }
+
+    /// "Not spam": out of Spam, back into the inbox.
+    func markNotSpam(_ row: ThreadRow) {
+        perform(.markSpam(threadId: row.id, spam: false), on: row, toast: "Moved to the inbox")
+    }
+
+    /// Out of Trash, back into the inbox.
+    func untrash(_ row: ThreadRow) {
+        perform(.untrash(threadId: row.id), on: row, toast: "Moved to the inbox")
+    }
+
+    // MARK: Gmail labels
+
+    /// A new label in the account, then the list of labels again.
+    @discardableResult
+    func createLabel(named name: String, accountId: String) async -> MailLabelItem? {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        do {
+            let label = try await engine.createLabel(accountId: accountId, name: name)
+            reloadAccounts()
+            show("Label added · \(label.name)")
+            return label
+        } catch {
+            show("Couldn't add the label: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func renameLabel(_ label: MailLabelItem, to name: String) async {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, name != label.name else { return }
+        do {
+            try await engine.renameLabel(label, to: name)
+            reloadAccounts()
+            // The list on screen may be the label's own: it carries the name.
+            if case .label(let id, _) = folder, id == label.id { folder = .label(id: id, name: name) }
+        } catch { show("Couldn't rename the label: \(error.localizedDescription)") }
+    }
+
+    /// Delete the label in Gmail. Its mail stays where it is, without it.
+    func deleteLabel(_ label: MailLabelItem) async {
+        do {
+            try await engine.deleteLabel(label)
+            if pinnedLabelIds.contains(label.id) { pinnedLabelIds.remove(label.id) }
+            if case .label(let id, _) = folder, id == label.id { navigate(to: .inbox, folder: .inbox) }
+            reloadAccounts()
+            reload()
+            show("Label deleted · \(label.name)")
+        } catch { show("Couldn't delete the label: \(error.localizedDescription)") }
+    }
+
+    // MARK: Gmail's own search
+
+    /// Gmail is being asked for the search on screen.
+    private(set) var isSearchingGmail = false
+
+    /// The search on screen, asked of Gmail itself: mail older than what
+    /// this device has downloaded is found too. What comes back joins the
+    /// results (and the store), newest first.
+    func searchGmail() async {
+        guard isSearching, !isSearchingGmail else { return }
+        let text = searchText.trimmingCharacters(in: .whitespaces)
+        var parts: [String] = []
+        if let from = searchFilters.from { parts.append("from:\(from.address)") }
+        if let to = searchFilters.to { parts.append("to:\(to.address)") }
+        if searchFilters.unreadOnly { parts.append("is:unread") }
+        if !text.isEmpty { parts.append(text) }
+        let query = parts.joined(separator: " ")
+        guard !query.isEmpty else { return }
+        isSearchingGmail = true
+        defer { isSearchingGmail = false }
+        do {
+            let rows = try await engine.searchRemote(query, accountId: searchFilters.accountId, limit: Self.searchLimit)
+            // The search moved on while Gmail answered: not these results.
+            guard isSearching, searchText.trimmingCharacters(in: .whitespaces) == text else { return }
+            let merged = Self.unique(searchResults + rows).sorted { $0.lastMessageAt > $1.lastMessageAt }
+            if merged != searchResults { searchResults = merged }
+            if rows.isEmpty { show("Gmail found nothing more") }
+        } catch {
+            show("Couldn't search Gmail: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Send-as addresses
+
+    /// Each account's addresses to send from (its own first), once asked
+    /// for: the composer's From menu lists them.
+    private(set) var sendAliases: [String: [SendAlias]] = [:]
+    @ObservationIgnored private var aliasesAsked: Set<String> = []
+
+    /// Ask Gmail for every account's aliases, once per launch.
+    func loadSendAliases() {
+        for account in accounts where !aliasesAsked.contains(account.id) {
+            aliasesAsked.insert(account.id)
+            Task {
+                guard let list = try? await engine.sendAliases(accountId: account.id) else {
+                    aliasesAsked.remove(account.id)
+                    return
+                }
+                sendAliases[account.id] = list
+            }
+        }
+    }
+
     /// Manual Jev label edit — sticky until "Reanalyze all emails".
     func setTriageLabels(_ row: ThreadRow, _ ids: [String]) {
         do {
@@ -1506,9 +1772,84 @@ final class AppModel {
 
     // MARK: Send — deferred, with an undo window (desktop `sendCompose`)
 
-    /// How long a send waits in the toast before it commits. Same window
-    /// as the toast itself, so Undo is available exactly while it shows.
-    static let sendUndoWindow: Duration = .seconds(5)
+    /// How long a send waits in the toast before it commits (Settings ›
+    /// Compose; synced). The toast stays for the same time, so Undo is
+    /// available exactly while it shows.
+    var sendUndoSeconds = 5 {
+        didSet { if sendUndoSeconds != oldValue { savePref(PrefName.sendUndo, String(sendUndoSeconds)) } }
+    }
+    static let sendUndoChoices = [5, 10, 20, 30]
+    var sendUndoWindow: Duration { .seconds(sendUndoSeconds) }
+
+    /// The user's snippets (Shared/Snippets.swift), synced as one pref.
+    var snippets: [Snippet] = [] {
+        didSet { if snippets != oldValue { savePref(PrefName.snippets, SnippetStore.encode(snippets)) } }
+    }
+
+    // MARK: Send later (Shared/ScheduledSends.swift)
+
+    /// Messages waiting for their time on this device, soonest first.
+    private(set) var scheduledSends: [ScheduledSend] = []
+    /// The sample inbox and the tests keep nothing on disk.
+    private var persistsScheduledSends: Bool { !(engine is MockEngine) }
+
+    private func storeScheduledSends() {
+        if persistsScheduledSends { ScheduledSendStore.save(scheduledSends) }
+    }
+
+    /// Send `draft` at `date` instead of now. It leaves the composer, is
+    /// kept as a Gmail draft meanwhile, and the toast's Undo brings it
+    /// back to the composer.
+    func sendLater(_ draft: SendDraft, from accountId: String, at date: Date) {
+        var d = draft
+        d.fromAccountId = accountId
+        d.draftSaved = true
+        let item = ScheduledSend(id: d.draftKey, draft: d, accountId: accountId, at: date)
+        scheduledSends.removeAll { $0.id == item.id }
+        scheduledSends.append(item)
+        scheduledSends.sort { $0.at < $1.at }
+        storeScheduledSends()
+        saveDraft(d, from: accountId)
+        show("Will send \(Formatters.reminder(date))") { [weak self] in
+            self?.cancelScheduledSend(item.id, reopen: true)
+        }
+    }
+
+    /// Take a message off the list; `reopen` puts it back in the composer
+    /// (its Gmail draft stays, as for any open draft).
+    func cancelScheduledSend(_ id: String, reopen: Bool) {
+        guard let index = scheduledSends.firstIndex(where: { $0.id == id }) else { return }
+        let item = scheduledSends.remove(at: index)
+        storeScheduledSends()
+        if reopen {
+            Keyboard.dismiss()
+            composeDraft = item.draft
+        }
+    }
+
+    /// Send what has come due: every half minute while the app runs, and
+    /// once at launch for what came due while it did not. Off the list
+    /// before the send starts, so a slow send is never started twice.
+    func sendDueScheduled(now: Date = Date()) {
+        let due = scheduledSends.filter { $0.at <= now }
+        guard !due.isEmpty else { return }
+        scheduledSends.removeAll { $0.at <= now }
+        storeScheduledSends()
+        for item in due {
+            Task {
+                do {
+                    try await engine.perform(.send(item.draft), accountId: item.accountId)
+                    show("Sent · \(item.draft.subject.isEmpty ? "(no subject)" : item.draft.subject)")
+                    deleteDraft(item.draft.draftKey, from: item.accountId)
+                } catch {
+                    // Not queued again here: the engine's outbox keeps a
+                    // send Gmail did not take and retries it, and a second
+                    // copy could go out twice. The Gmail draft is still there.
+                    show("Scheduled message not sent yet: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
 
     private struct PendingSend {
         let draft: SendDraft
@@ -1526,13 +1867,13 @@ final class AppModel {
         let id = UUID()
         pendingSends[id] = PendingSend(draft: d, accountId: accountId)
         pendingSends[id]?.task = Task { [weak self] in
-            try? await Task.sleep(for: Self.sendUndoWindow)
+            try? await Task.sleep(for: self?.sendUndoWindow ?? .seconds(5))
             guard !Task.isCancelled else { return }
             await self?.commitSend(id)
         }
         let n = d.to.count + d.cc.count + d.bcc.count
         let first = d.to.first ?? d.cc.first ?? d.bcc.first ?? ""
-        show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")") { [weak self] in
+        show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")", duration: sendUndoWindow) { [weak self] in
             // A send that already committed must not reopen the composer
             // (that is how duplicates get sent).
             guard let self, let pending = self.pendingSends.removeValue(forKey: id) else { return }
@@ -1549,7 +1890,12 @@ final class AppModel {
             Haptics.success()
             show("Sent")
             if pending.draft.draftSaved { deleteDraft(pending.draft.draftKey, from: pending.accountId) }
-        } catch { show("Couldn't send: \(error.localizedDescription)") }
+        } catch {
+            // The engine keeps a send Gmail did not take in its outbox and
+            // tries again on the next sync: say so, or the user sends it a
+            // second time by hand.
+            show("Not sent yet: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Drafts — the composer's Gmail draft
@@ -1624,6 +1970,9 @@ final class AppModel {
         var leaves = false
         if view.archivesOut, case .archive = action { leaves = true }
         if case .trash = action { leaves = true }
+        // To Spam from anywhere; out of Spam or Trash from that folder.
+        if case .markSpam(_, let spam) = action, spam || view == .spam { leaves = true }
+        if case .untrash = action, view == .trash { leaves = true }
         if leaves {
             withAnimation(.easeOut(duration: 0.15)) { rows.removeAll { $0.id == row.id } }
         }
@@ -1638,8 +1987,32 @@ final class AppModel {
         if let text { show(text, undo: undo) }
     }
 
-    func show(_ text: String, undo: (() -> Void)? = nil) {
-        toast = Toast(text: text, undo: undo)
+    func show(_ text: String, duration: Duration = .seconds(5), undo: (() -> Void)? = nil) {
+        toast = Toast(text: text, undo: undo, duration: duration)
+        if let undo { lastUndo = (undo, Date()) }
+    }
+
+    /// The last action's Undo, kept after its toast has gone: the Mac's
+    /// `z` and Edit › Undo run it for a while longer than the five seconds
+    /// the toast shows.
+    @ObservationIgnored private var lastUndo: (run: () -> Void, at: Date)?
+    static let undoLifetime: TimeInterval = 120
+
+    /// Whether `undoLast` has something to take back.
+    var canUndoLast: Bool {
+        guard let last = lastUndo else { return false }
+        return Date().timeIntervalSince(last.at) < Self.undoLifetime
+    }
+
+    /// Take back the last action that offered an Undo. False when there
+    /// is none (or it is too old to be what the user means).
+    @discardableResult
+    func undoLast() -> Bool {
+        guard canUndoLast, let last = lastUndo else { return false }
+        lastUndo = nil
+        if toast?.undo != nil { toast = nil }
+        last.run()
+        return true
     }
 
     // MARK: Bundles (docs/bundles.md)

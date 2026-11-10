@@ -452,10 +452,21 @@ renders untrusted HTML all day. Threat model + mitigations:
 
 ### Rendering untrusted mail (the big one)
 
-- **Sanitize in Rust** with `ammonia` before HTML ever reaches the webview: strip
-  scripts, event handlers, forms, iframes, external CSS.
-- Render inside a **sandboxed iframe** (`sandbox` attr, no `allow-scripts`,
-  `allow-same-origin` off) as defense-in-depth — sanitizer bugs shouldn't own the app.
+- **Sanitize in Rust** with `ammonia` before HTML ever reaches a view
+  (`core/src/sanitize.rs`): message bodies once, as they enter the store, and a
+  draft's body on its way to the composer. Scripts, event handlers, forms, frames,
+  objects, `<meta>` / `<base>` / `<link>`, SVG and non-web URL schemes go; what mail
+  needs to look like mail stays — tables and their attributes, inline styles and
+  `<style>` blocks (scrubbed of `@import`, `expression()`, `position`), classes and
+  ids, `cid:` and `data:image` pictures. Links keep their exact http, https and
+  mailto address. Bodies stored before the sanitizer existed are cleaned on their
+  way out until the thread's next fetch replaces them.
+- The view is the second layer: in the native apps a `WKWebView` with the mail's
+  JavaScript off, a strict CSP (`default-src 'none'`: no scripts, frames or forms,
+  images only when allowed), and every navigation cancelled and handed to the
+  browser (`MessageBodyView`) — which is why a link opens in the default browser.
+- The Tauri client rendered inside a **sandboxed iframe** (`sandbox` attr, no
+  `allow-scripts`, `allow-same-origin` off) for the same reason.
 - **Strict CSP** on the Tauri webview: no inline script, no eval, `connect-src` limited
   to the IPC bridge — mail content can't exfiltrate even if something slips through.
 - **Remote images blocked by default** (tracking pixels), per-sender allow. When
@@ -560,8 +571,8 @@ Ports (traits) in v1 — and what each one future-proofs:
   uses batching + `format=metadata` to stay cheap. Low risk for 2 accounts.
 - **OAuth verification** for a distributed app with `gmail.modify` = Google review +
   possible security assessment. v1 sidesteps via bring-your-own client ID.
-- **HTML email rendering**: sanitization (XSS) and CSS chaos in a webview. Use a
-  battle-tested sanitizer (ammonia in Rust) + sandboxed iframe; accept imperfect
+- **HTML email rendering**: XSS and CSS chaos in a webview. Sanitize in Rust
+  (ammonia), then render with scripts off under a strict CSP; accept imperfect
   rendering of marketing mail.
 - **Webview perf** on huge lists: virtualize the list from day one.
 - **iOS**: a second UI to maintain and a Rust cross-compile in the Xcode build.
@@ -572,7 +583,7 @@ Ports (traits) in v1 — and what each one future-proofs:
 | Piece | Choice |
 | --- | --- |
 | Shell | Tauri 2 (desktop) · SwiftUI over `crates/ffi` via UniFFI (iOS) |
-| Core | Rust (reqwest, rusqlite/sqlx, ammonia, keyring) |
+| Core | Rust (reqwest, rusqlite, ammonia, keyring) |
 | DB | SQLite + FTS5 |
 | UI | Svelte + TypeScript |
 | Auth | OAuth 2 PKCE loopback, tokens in OS keychain |

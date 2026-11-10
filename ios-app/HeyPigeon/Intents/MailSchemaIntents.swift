@@ -317,3 +317,35 @@ extension AppModel {
         }
     }
 }
+
+// MARK: - Donations
+
+/// The donations of the intents above, here rather than in
+/// IntentDonations.swift: see the note there on the Mac's batch compile.
+extension IntentDonations {
+    static func archived(_ row: ThreadRow, in model: AppModel) {
+        guard enabled, let e = messageEntity(row, model) else { return }
+        let intent = ArchiveMailIntent()
+        intent.entities = [e]
+        donate(intent, result: .result(dialog: "Marked done."))
+    }
+
+    static func deleted(_ row: ThreadRow, in model: AppModel) {
+        guard enabled, let e = messageEntity(row, model) else { return }
+        let intent = DeleteMailIntent()
+        intent.entities = [e]
+        donate(intent, result: .result(dialog: "Deleted."))
+    }
+
+    static func replied(_ row: ThreadRow, all: Bool, in model: AppModel) {
+        guard enabled, let e = messageEntity(row, model) else { return }
+        let intent = ReplyMailIntent()
+        intent.target = e
+        intent.isReplyAll = all
+        intent.attachments = []
+        intent.to = []
+        intent.cc = []
+        intent.bcc = []
+        donate(intent, result: .result())
+    }
+}

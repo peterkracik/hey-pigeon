@@ -17,6 +17,7 @@ struct InboxPage: View {
     @Environment(AppModel.self) private var model
     @State private var picking: PersonField?
     @FocusState private var listFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,11 +88,20 @@ struct InboxPage: View {
             .defaultFocus($listFocused, true)
             .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
             .onDeleteCommand { state.run(.delete, in: model) }
+            // Edit › Select All and Edit › Undo while the list has the keys.
+            .onCommand(#selector(NSResponder.selectAll(_:))) { state.run(.selectAll, in: model) }
+            .onCommand(Selector(("undo:"))) { state.run(.undo, in: model) }
             .onChange(of: state.scrollTarget) { _, id in
                 guard let id else { return }
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { proxy.scrollTo(id) }
             }
-            .onChange(of: model.groupedRows.map { $0.rows.map(\.id) }) { _, _ in state.rowsChanged(in: model) }
+            // The order of the rows moved (the model counts it: comparing
+            // a fresh array of every id on every render added up).
+            .onChange(of: model.rowOrderRevision) { _, _ in
+                state.rowsChanged(in: model)
+                model.prefetchTopOfInbox()
+            }
+            .onAppear { model.prefetchTopOfInbox() }
             // A notification, a widget, Spotlight or the menu bar extra
             // asked for a thread.
             .onChange(of: model.pendingThreadId, initial: true) { _, id in
@@ -99,8 +109,10 @@ struct InboxPage: View {
                 model.pendingThreadId = nil
                 state.open(row, in: model)
             }
-            .animation(.easeOut(duration: 0.18), value: model.rows.map(\.id))
-            .animation(.snappy(duration: 0.22), value: state.expanded)
+            // No animation keyed on the rows (ios-app/CLAUDE.md): it laid
+            // every row out again on each reload. A row that leaves is
+            // animated where the rows change (AppModel.perform).
+            .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: state.expanded)
         }
     }
 }

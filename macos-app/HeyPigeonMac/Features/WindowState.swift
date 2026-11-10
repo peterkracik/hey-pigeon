@@ -17,6 +17,15 @@ enum MailCommand: Hashable {
     case summarizeThread, draftReply
     case compose, search, palette, bundles, shortcuts, escape, back, toggleSidebar
     case next, previous, open, openInWindow
+    /// Space: the highlighted row's preview in the list, a page down in a
+    /// thread; ⇧Space a page up.
+    case peek, pageUp
+    /// ⇧J / ⇧K (and X): one more row into the selection; ⌘A: every row.
+    case extendNext, extendPrevious, selectAll
+    /// Z, Edit › Undo: take the last action back (AppModel.undoLast).
+    case undo
+    /// ⌘P: the thread on paper or as a PDF (ThreadPrinter).
+    case print
     /// Switch account: the index in `AppModel.accounts`, nil for all.
     case account(Int?)
     case go(MailView)
@@ -39,13 +48,16 @@ enum KeyboardMap {
     }
 
     static let chordWindow: TimeInterval = 1.0
+    /// Every bare character the map acts on (the account digits aside):
+    /// what the shortcuts sheet must list (the tests hold it to that).
+    static let characters = ["g", "?", "/", "c", "e", "#", "u", "s", "r", "a", "f", "n", "h", "l", "v", "i", "j", "k", "x", "z", " "]
 
     static func resolve(_ key: MailKey, modifiers: EventModifiers = [], chordArmed: Bool = false) -> Resolution {
         // OS chords (⌘C, ⌃A, ⌥…) belong to the menus and the text fields.
         if !modifiers.isDisjoint(with: [.command, .control, .option]) { return .ignore }
         switch key {
-        case .up: return .run(.previous)
-        case .down: return .run(.next)
+        case .up: return .run(modifiers.contains(.shift) ? .extendPrevious : .previous)
+        case .down: return .run(modifiers.contains(.shift) ? .extendNext : .next)
         case .return: return .run(.open)
         case .escape: return .run(.escape)
         case .delete: return .run(.delete)
@@ -70,6 +82,10 @@ enum KeyboardMap {
             case "i": return .run(.summarizeThread)
             case "j": return .run(.next)
             case "k": return .run(.previous)
+            case "J", "x": return .run(.extendNext)
+            case "K": return .run(.extendPrevious)
+            case " ": return .run(modifiers.contains(.shift) ? .pageUp : .peek)
+            case "z": return .run(.undo)
             case "0": return .run(.account(nil))
             default:
                 if c.count == 1, let n = Int(c), (1...9).contains(n) { return .run(.account(n - 1)) }
@@ -121,6 +137,10 @@ final class WindowState: Equatable {
     /// row, the desktop's preview card, without leaving the list; its arrow
     /// (or Return) opens the full thread.
     var expanded: String?
+    /// The list and the open thread side by side (View › Reading Pane, on
+    /// a window wide enough; MainWindow keeps this current). A click or
+    /// Space then opens the thread beside the list instead of in the row.
+    var readingPane = false
     /// Settings in the content area, from the top bar's gear or ⌘,.
     var showSettings = false
     /// Bundles — the list, one bundle, an email in it — as a page of the
@@ -202,7 +222,7 @@ final class WindowState: Equatable {
 
     /// The list's ids in display order.
     func flatIds(_ model: AppModel) -> [String] {
-        model.groupedRows.flatMap { $0.rows.map(\.id) }
+        model.flatRowIds
     }
 
     /// The one highlighted thread, from the list or the store.
@@ -217,7 +237,7 @@ final class WindowState: Equatable {
 
     func select(_ id: String?, in model: AppModel) {
         selection = id.map { [$0] } ?? []
-        lastIndex = id.flatMap { flatIds(model).firstIndex(of: $0) } ?? lastIndex
+        lastIndex = id.flatMap { model.listIndex(of: $0) } ?? lastIndex
         scrollTarget = id
     }
 
@@ -226,7 +246,7 @@ final class WindowState: Equatable {
     func move(by delta: Int, in model: AppModel) {
         let ids = flatIds(model)
         guard !ids.isEmpty else { return }
-        let current = selection.count == 1 ? selection.first.flatMap { ids.firstIndex(of: $0) } : nil
+        let current = selection.count == 1 ? selection.first.flatMap { model.listIndex(of: $0) } : nil
         let next: Int
         if let current {
             next = min(max(current + delta, 0), ids.count - 1)
@@ -239,15 +259,36 @@ final class WindowState: Equatable {
     /// ⌘-click: the row joins or leaves the selection.
     func toggle(_ id: String, in model: AppModel) {
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-        lastIndex = flatIds(model).firstIndex(of: id) ?? lastIndex
+        lastIndex = model.listIndex(of: id) ?? lastIndex
     }
 
     /// ⇧-click: every row between the cursor and this one.
     func extend(to id: String, in model: AppModel) {
         let ids = flatIds(model)
-        guard let to = ids.firstIndex(of: id) else { return }
+        guard let to = model.listIndex(of: id) else { return }
         let from = lastIndex ?? to
         selection.formUnion(ids[min(from, to)...max(from, to)])
+    }
+
+    /// ⇧J / ⇧K / X: the row after (or before) the moving end joins the
+    /// selection, so a run of rows can be gathered for the batch bar
+    /// without the pointer. With nothing highlighted it starts like j / k.
+    func extendSelection(by delta: Int, in model: AppModel) {
+        let ids = flatIds(model)
+        guard !ids.isEmpty else { return }
+        guard !selection.isEmpty, let from = lastIndex, ids.indices.contains(from) else {
+            move(by: delta, in: model)
+            return
+        }
+        let to = min(max(from + delta, 0), ids.count - 1)
+        selection.insert(ids[to])
+        lastIndex = to
+        scrollTarget = ids[to]
+    }
+
+    /// ⌘A: every row of the list.
+    func selectAll(in model: AppModel) {
+        selection = Set(flatIds(model))
     }
 
     // MARK: The open thread
@@ -269,6 +310,8 @@ final class WindowState: Equatable {
     /// phone's tap), or closes when it was the open one. A draft opens the
     /// composer instead.
     func expand(_ row: ThreadRow, in model: AppModel) {
+        // Beside the list there is room for the whole thread.
+        if readingPane { open(row, in: model); return }
         select(row.id, in: model)
         if expanded == row.id { expanded = nil; return }
         if model.view == .drafts { model.openDraft(row); return }
@@ -337,7 +380,7 @@ final class WindowState: Equatable {
     /// row left the list, else the list comes back.
     func closeOpen(in model: AppModel) {
         guard let open = path.last else { return }
-        if flatIds(model).contains(open.id) { close() } else { advanceOpen(in: model) }
+        if model.listIndex(of: open.id) != nil { close() } else { advanceOpen(in: model) }
     }
 
     /// The palette is about to move the thread on (a folder chosen): in the
@@ -557,6 +600,43 @@ final class WindowState: Equatable {
             guard !showBundles else { return }
             move(by: -1, in: model)
             if isThreadOpen, let previous = selectedRow(in: model) { open(previous, in: model) }
+        case .peek:
+            // In a thread Space pages, as in every reader; in the list it
+            // opens (or closes) the highlighted row's preview, which only
+            // a click could do.
+            if isThreadOpen {
+                WindowScroller.page(down: true)
+            } else if !showBundles, let row = selectedRow(in: model) {
+                expand(row, in: model)
+            }
+        case .pageUp:
+            if isThreadOpen { WindowScroller.page(down: false) }
+        case .extendNext:
+            guard !showBundles, !isThreadOpen else { return }
+            extendSelection(by: 1, in: model)
+        case .extendPrevious:
+            guard !showBundles, !isThreadOpen else { return }
+            extendSelection(by: -1, in: model)
+        case .selectAll:
+            guard !showBundles, !isThreadOpen else { return }
+            selectAll(in: model)
+        case .undo:
+            model.undoLast()
+        case .print:
+            guard let row else { return }
+            let window = NSApp.keyWindow
+            Task {
+                // The stored copy when it is whole; else Gmail's, once.
+                var detail = try? model.engine.threadLocal(id: row.id)
+                let whole = detail?.mail.isEmpty == false
+                    && detail?.mail.allSatisfy { $0.bodyHTML != nil || $0.bodyText != nil } == true
+                if !whole { detail = (try? await model.engine.thread(id: row.id)) ?? detail }
+                guard let detail, !detail.mail.isEmpty else {
+                    model.show("Couldn't load the thread to print")
+                    return
+                }
+                ThreadPrinter.print(detail, in: window)
+            }
         case .open:
             // On the Bundles page the email is already open where it is.
             guard let row, !showBundles else { return }
@@ -588,7 +668,7 @@ final class WindowState: Equatable {
         case .triage:
             showTriage = true
         case .syncNow:
-            Task { await model.sync() }
+            Task { await model.sync(manual: true) }
         }
     }
 
@@ -630,6 +710,80 @@ final class WindowState: Equatable {
                 model.show(error.localizedDescription)
             }
         }
+    }
+}
+
+// MARK: - Dragging rows
+
+/// A row dragged out of the list, onto a label, a bundle or a folder in
+/// the sidebar: its thread id (every highlighted row's when it is one of
+/// them) as text only this app's drop targets read.
+enum ThreadDrag {
+    static let prefix = "heypigeon.threads:"
+
+    static func payload(for id: String, selection: Set<String>) -> String {
+        let ids = selection.contains(id) && selection.count > 1 ? selection.sorted() : [id]
+        return prefix + ids.joined(separator: ",")
+    }
+
+    /// The thread ids in what was dropped; none for any other text.
+    static func ids(in items: [String]) -> [String] {
+        items.filter { $0.hasPrefix(prefix) }
+            .flatMap { $0.dropFirst(prefix.count).split(separator: ",").map(String.init) }
+    }
+}
+
+// MARK: - What the window showed, across launches
+
+/// The folder on screen and the open thread, kept in the defaults so a
+/// relaunch (an update installs on quit) comes back where the reader was
+/// instead of at the top of the inbox.
+enum WindowRestoration {
+    static let viewKey = "window.view"
+    static let threadKey = "window.thread"
+    /// Once per process: a second window starts on the inbox.
+    @MainActor static var restored = false
+
+    private static let plain: [MailView] = [.inbox, .scheduled, .needReply, .starred, .drafts, .sent, .archive, .all, .spam, .trash]
+
+    /// A folder by its case name; a label as its id and name.
+    static func encode(_ view: MailView) -> String {
+        if case .label(let id, let name) = view { return "label\u{1F}\(id)\u{1F}\(name)" }
+        return String(describing: view)
+    }
+
+    static func decode(_ raw: String) -> MailView? {
+        let parts = raw.split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
+        if parts.count == 3, parts[0] == "label" { return .label(id: parts[1], name: parts[2]) }
+        return plain.first { String(describing: $0) == raw }
+    }
+}
+
+// MARK: - Paging the thread
+
+/// Space in a thread: a page down (⇧Space: up) in the window's main
+/// scroll view. The shared ThreadView owns its ScrollView, so the page is
+/// asked of AppKit: the largest scroll view on screen that has something
+/// to scroll, the one drawn last when two are the same size.
+@MainActor
+enum WindowScroller {
+    static func page(down: Bool) {
+        guard let root = NSApp.keyWindow?.contentView else { return }
+        var best: NSScrollView?
+        var bestArea: CGFloat = 0
+        func walk(_ view: NSView) {
+            if let scroll = view as? NSScrollView, !scroll.isHiddenOrHasHiddenAncestor, !scroll.visibleRect.isEmpty,
+               let document = scroll.documentView, document.frame.height > scroll.contentView.bounds.height + 1 {
+                let area = scroll.frame.width * scroll.frame.height
+                if area >= bestArea {
+                    best = scroll
+                    bestArea = area
+                }
+            }
+            for sub in view.subviews { walk(sub) }
+        }
+        walk(root)
+        if down { best?.pageDown(nil) } else { best?.pageUp(nil) }
     }
 }
 

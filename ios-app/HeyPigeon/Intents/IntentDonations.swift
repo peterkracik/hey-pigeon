@@ -14,43 +14,20 @@ enum IntentDonations {
     /// Off in the sample inbox and in tests: donations are system state.
     nonisolated(unsafe) static var enabled = true
 
-    static func archived(_ row: ThreadRow, in model: AppModel) {
-        guard enabled, let e = messageEntity(row, model) else { return }
-        let intent = ArchiveMailIntent()
-        intent.entities = [e]
-        donate(intent, result: .result(dialog: "Marked done."))
-    }
-
-    static func deleted(_ row: ThreadRow, in model: AppModel) {
-        guard enabled, let e = messageEntity(row, model) else { return }
-        let intent = DeleteMailIntent()
-        intent.entities = [e]
-        donate(intent, result: .result(dialog: "Deleted."))
-    }
-
-    static func replied(_ row: ThreadRow, all: Bool, in model: AppModel) {
-        guard enabled, let e = messageEntity(row, model) else { return }
-        let intent = ReplyMailIntent()
-        intent.target = e
-        intent.isReplyAll = all
-        intent.attachments = []
-        intent.to = []
-        intent.cc = []
-        intent.bcc = []
-        donate(intent, result: .result())
-    }
-
-    // labeled(_:_:on:in:) and reminded(_:at:onlyIfNoReply:in:) live in
-    // ThreadIntents.swift, next to their intents: the Mac's Debug build
-    // compiles files in batches, and setting an intent's @Parameter from a
-    // batch without Entities.swift lost MailThreadEntity's macro-made
-    // AppEntity conformance ("requires that 'MailThreadEntity' conform to
-    // '_IntentValue'", macos-ci on #102). A new file was enough to move
-    // the batch boundary.
+    // The donations themselves live next to their intents: labeled(_:_:on:in:)
+    // and reminded(_:at:onlyIfNoReply:in:) in ThreadIntents.swift,
+    // archived(_:in:), deleted(_:in:) and replied(_:all:in:) in
+    // MailSchemaIntents.swift. The Mac's Debug build compiles files in
+    // batches, and setting an intent's @Parameter from another file lost
+    // the entity's macro-made AppEntity conformance whenever a new file
+    // moved the batch boundary ("requires that 'MailThreadEntity' conform
+    // to '_IntentValue'", macos-ci on #102; the same for
+    // 'MailMessageEntity' on #118, with this file in the intents' own batch
+    // but ahead of them).
 
     // MARK: Plumbing
 
-    private static func messageEntity(_ row: ThreadRow, _ model: AppModel) -> MailMessageEntity? {
+    static func messageEntity(_ row: ThreadRow, _ model: AppModel) -> MailMessageEntity? {
         model.account(for: row).map { MailMessageEntity(row, account: $0) }
     }
 

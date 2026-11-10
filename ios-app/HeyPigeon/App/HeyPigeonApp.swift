@@ -201,7 +201,7 @@ struct ToastView: View {
             .padding(.bottom, 72) // clears the floating tab bar
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .task(id: toast.id) {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: toast.duration)
                 if model.toast?.id == toast.id { withAnimation { model.toast = nil } }
             }
         }

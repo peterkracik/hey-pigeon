@@ -18,11 +18,15 @@ struct SearchScreen: View {
                 if model.isSearching && model.groupedRows.isEmpty && model.isSearchPending {
                     Color.clear
                 } else if model.isSearching && model.groupedRows.isEmpty {
-                    EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
+                    VStack(spacing: 0) {
+                        EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
+                        GmailSearchRow()
+                    }
                 } else if model.isSearching {
                     VStack(spacing: 0) {
                         ResultCount(count: model.searchResults.count)
                         ThreadList(path: $path)
+                        GmailSearchRow()
                     }
                 } else {
                     RecentSearches()
@@ -48,6 +52,35 @@ struct SearchScreen: View {
             }
             .sheet(item: $picking) { field in PersonPicker(field: field) }
         }
+    }
+}
+
+/// "Search all of Gmail" under the results: the search on this device
+/// covers the mail it has downloaded; Gmail's own covers everything
+/// (AppModel.searchGmail). What it finds joins the results.
+struct GmailSearchRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button { Task { await model.searchGmail() } } label: {
+            HStack(spacing: 8) {
+                if model.isSearchingGmail {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "tray.and.arrow.down")
+                }
+                Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail")
+                Spacer()
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isSearchingGmail)
+        .background(Theme.canvas)
+        .accessibilityHint("Finds older mail that is not on this \(Device.name) yet")
     }
 }
 

@@ -975,7 +975,7 @@ impl Engine {
         let labels = self.store.list_triage_labels()?;
         let mut n = 0;
         for thread in pending {
-            let messages = self.store.list_messages(&thread.id)?;
+            let messages = self.store.list_message_meta(&thread.id)?;
             // Thread row landed before its messages (mid-sync race): the
             // next round sees it again.
             let Some(last) = messages.last() else {
@@ -1523,6 +1523,7 @@ mod tests {
                 body_text: Some("Invoice 42 is due".into()),
                 label_ids: vec!["INBOX".into()],
                 is_read: false,
+                ..Default::default()
             })
             .unwrap();
 
@@ -1613,6 +1614,7 @@ mod tests {
                     body_text: None,
                     label_ids: vec!["INBOX".into()],
                     is_read: false,
+                    ..Default::default()
                 })
                 .unwrap();
         }

@@ -54,6 +54,16 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   maps (`account(for:)`, `bundle(id:)`, `triageLabelName`), which change
   only when their source does, so a reload that moved nothing redraws no
   row. No `.animation(value:)` keyed on the rows on a `List`.
+- **A banner's buttons act through the model.** Mark Done, Remind Me in 1
+  Hour and Reply (`NotificationActions`) are registered and acted on in
+  `NewMailNotifier` (`registerActions`, `perform`) for both apps; each
+  app delegate only hands the action over. In the background the phone
+  holds a `BackgroundGrace` until the change has left the outbox.
+- **The network path is `Connectivity.shared`.** Offline shows as a line
+  over the list (`OfflineBar`) with `AppModel.queuedChanges`; bodies are
+  fetched ahead of a tap only on an unmetered path
+  (`AppModel.prefetchBodies`). No send-later on the phone
+  (`ComposePresentation.offersSendLater`): iOS decides when the app runs.
 - **SwiftUI `List` aborts on duplicate ids.** Rows go through
   `AppModel.unique`; keep it that way when adding sources of rows.
 - **Platform code goes in `Shared/Platform.swift`.** Haptics, keyboard,

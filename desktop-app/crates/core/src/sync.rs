@@ -136,7 +136,7 @@ pub fn settle_follow_ups<S: Store>(
             continue;
         };
         let replied = store
-            .list_messages(thread_id)?
+            .list_message_meta(thread_id)?
             .iter()
             .any(|m| m.date > since && !m.label_ids.iter().any(|l| l == "SENT"));
         if !replied {
@@ -269,8 +269,10 @@ fn update_labels<S: Store>(
     remove: &[String],
 ) -> Result<(), StoreError> {
     // Unknown message (outside the backfill window) — nothing to update.
+    // Metadata only: the write below keeps the stored bodies, and loading
+    // them to flip a label read every message's HTML once per label change.
     let Some(mut m) = store
-        .list_messages(thread_id)?
+        .list_message_meta(thread_id)?
         .into_iter()
         .find(|m| m.id == message_id)
     else {
@@ -286,18 +288,16 @@ fn update_labels<S: Store>(
     store.upsert_message(&m)
 }
 
-/// True when at least one message of an opened thread has no body yet, so
-/// the thread needs a full (`format=full`) refetch before it renders.
+/// True when at least one message of an opened thread was never fetched in
+/// full, so the thread needs a `format=full` fetch before it renders.
 ///
-/// Bodies arrive lazily, and only for the whole thread at once: a thread
-/// opened earlier has them, but a reply that lands afterwards through
-/// backfill or delta is metadata-tier (no body). Checking "all messages
-/// lack a body" misses exactly that reply, which then renders from Gmail's
-/// snippet — one line, ~200 chars, no paragraph breaks.
+/// Bodies arrive lazily: a thread opened earlier has them, but a reply that
+/// lands afterwards through backfill or delta is metadata-tier. The test is
+/// the per-message `body_fetched` flag, not "has a body": a message with no
+/// text at all (an attachment alone, an empty draft) never gets one, and
+/// its thread was fetched again on every open.
 pub fn needs_bodies(messages: &[Message]) -> bool {
-    messages
-        .iter()
-        .any(|m| m.body_html.is_none() && m.body_text.is_none())
+    messages.iter().any(|m| !m.body_fetched)
 }
 
 /// Union of Gmail label ids over a thread's messages — the thread-level
@@ -340,7 +340,7 @@ fn refresh_thread<S: Store>(store: &S, thread_id: &ThreadId) -> Result<(), Store
     let Some(mut t) = store.get_thread(thread_id)? else {
         return Ok(()); // never synced locally — ignore
     };
-    let messages = store.list_messages(thread_id)?; // sorted by date
+    let messages = store.list_message_meta(thread_id)?; // sorted by date
     let Some(last) = messages.last() else {
         return store.delete_thread(thread_id);
     };
@@ -632,14 +632,17 @@ mod tests {
     fn needs_bodies_when_any_message_is_metadata_tier() {
         let mut opened = sender_msg("a@x.com", "me@example.com", 1, &["INBOX"]);
         opened.body_text = Some("hello\n\nbye".to_string());
-        let mut html = sender_msg("a@x.com", "me@example.com", 2, &["INBOX"]);
-        html.body_html = Some("<p>hi</p>".to_string());
+        opened.body_fetched = true;
+        // Fetched in full and it has no text at all (an attachment alone):
+        // nothing more to fetch, though it has no body.
+        let mut empty = sender_msg("a@x.com", "me@example.com", 2, &["INBOX"]);
+        empty.body_fetched = true;
         let later_reply = sender_msg("a@x.com", "me@example.com", 3, &["INBOX"]);
 
         assert!(!needs_bodies(&[]));
-        assert!(!needs_bodies(&[opened.clone(), html.clone()]));
-        // A reply synced after the thread was first opened has no body yet.
-        assert!(needs_bodies(&[opened, html, later_reply.clone()]));
+        assert!(!needs_bodies(&[opened.clone(), empty.clone()]));
+        // A reply synced after the thread was first opened was never fetched.
+        assert!(needs_bodies(&[opened, empty, later_reply.clone()]));
         assert!(needs_bodies(&[later_reply]));
     }
 
@@ -670,6 +673,7 @@ mod tests {
             body_text: None,
             label_ids: labels.iter().map(|l| l.to_string()).collect(),
             is_read: true,
+            ..Default::default()
         }
     }
 
@@ -845,6 +849,7 @@ mod tests {
             body_text: None,
             label_ids: vec!["INBOX".to_string(), "UNREAD".to_string()],
             is_read: false,
+            ..Default::default()
         };
         HistoryChange::MessageAdded {
             thread,
@@ -1060,6 +1065,7 @@ mod tests {
             body_text: None,
             label_ids: labels.iter().map(|s| s.to_string()).collect(),
             is_read: true,
+            ..Default::default()
         };
         // Sent-only thread: never in the inbox ≠ archived — belongs to Sent.
         let sent_only = vec![msg(&["SENT"])];

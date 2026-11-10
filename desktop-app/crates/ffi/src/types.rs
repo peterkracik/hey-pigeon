@@ -150,31 +150,82 @@ pub struct MailMessage {
     pub account_id: String,
     pub from_addr: String,
     pub to_addrs: Vec<String>,
+    /// The Cc header, entry by entry, in the same form as `to_addrs`
+    /// (`Name <addr>` or a bare address). Empty for mail synced before the
+    /// header was kept, until its thread is next fetched in full (the
+    /// first `get_thread` after the update does that).
+    pub cc_addrs: Vec<String>,
     /// Epoch milliseconds.
     pub date: i64,
     pub snippet: String,
-    /// Sanitized HTML (ammonia, in the Gmail adapter) — still render it in
-    /// a non-scripting web view with remote images blocked (DESIGN.md).
+    /// The HTML body, sanitized by the core (`heypigeon_core::sanitize`,
+    /// an allowlist over a real HTML parse) before it gets here — when it
+    /// is stored, or on the way out for a body an older build stored as
+    /// received.
+    ///
+    /// Gone: `<script>`, every `on…` handler, forms and their controls,
+    /// frames, `<object>` / `<embed>` / `<applet>`, `<link>`, `<meta>`,
+    /// `<base>`, the `<title>` and its text, SVG and MathML, comments,
+    /// and any URL that is not `http`, `https`, `mailto` or `tel` on a
+    /// link (`javascript:` and the rest) or `http`, `https`, `cid:` or
+    /// `data:image/…` on a picture.
+    ///
+    /// Kept, as the sender wrote them: links (`<a href>` with its full
+    /// URL, plus `rel="noopener noreferrer"`; `target` is dropped),
+    /// pictures (`src="cid:…"` byte for byte), tables and the layout
+    /// attributes mail leans on (`width`, `height`, `align`, `valign`,
+    /// `bgcolor`, `border`, `cellpadding`, `cellspacing`, `colspan`,
+    /// `rowspan`, `background`), `<font>`, `<center>`, `class` and `id`
+    /// unprefixed (`gmail_quote`), inline `style` (minus `position` and
+    /// anything that could run script) and `<style>` blocks (minus
+    /// `@import`; `url(…)` stays, so remote pictures in CSS load or not
+    /// by the view's content security policy). A full document comes as
+    /// its content, the `<body>`'s attributes on a `<div>` around it.
+    ///
+    /// This is one layer of two. The shell's view is the other: the
+    /// mail's JavaScript off, a content security policy, remote images
+    /// blocked until the user allows them, navigation handed out. Keep
+    /// both — still never put this string in a page that runs scripts
+    /// without that policy.
     pub body_html: Option<String>,
     pub body_text: Option<String>,
     pub label_ids: Vec<String>,
     pub is_read: bool,
+    /// The raw `List-Unsubscribe` header (`<mailto:…>, <https://…>`), when
+    /// the sender offers one.
+    pub list_unsubscribe: Option<String>,
+    /// `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058): a
+    /// POST to the https link unsubscribes, no page needs to open.
+    pub list_unsubscribe_one_click: bool,
 }
 
 impl From<domain::Message> for MailMessage {
     fn from(m: domain::Message) -> Self {
+        // A body with the flag was sanitized when it was stored. One
+        // without was stored as received by an older build: it is cleaned
+        // here, each time, until the thread's next full fetch stores it
+        // clean (the first `get_thread` does that; `get_thread_local`
+        // alone never fetches).
+        let body_html = if m.body_fetched {
+            m.body_html
+        } else {
+            m.body_html.as_deref().map(heypigeon_core::sanitize::html)
+        };
         Self {
             id: m.id,
             thread_id: m.thread_id,
             account_id: m.account_id,
             from_addr: m.from_addr,
             to_addrs: m.to_addrs,
+            cc_addrs: m.cc_addrs,
             date: m.date,
             snippet: m.snippet,
-            body_html: m.body_html,
+            body_html,
             body_text: m.body_text,
             label_ids: m.label_ids,
             is_read: m.is_read,
+            list_unsubscribe: m.list_unsubscribe,
+            list_unsubscribe_one_click: m.list_unsubscribe_one_click,
         }
     }
 }
@@ -218,6 +269,37 @@ impl From<domain::Label> for MailLabel {
             name: l.name,
         }
     }
+}
+
+/// An address the account may send from (`Engine::list_send_as`): its
+/// own, or a "Send mail as" alias it has verified in Gmail.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct SendAsAddress {
+    pub email: String,
+    /// The display name the address sends under; empty when none is set.
+    pub name: String,
+    /// The address Gmail uses when a send names none.
+    pub is_default: bool,
+}
+
+impl From<domain::SendAs> for SendAsAddress {
+    fn from(a: domain::SendAs) -> Self {
+        Self {
+            email: a.email,
+            name: a.name,
+            is_default: a.is_default,
+        }
+    }
+}
+
+/// One suggestion for a recipient field (`Engine::search_contacts`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ContactSuggestion {
+    /// Display name; empty when only the address is known.
+    pub name: String,
+    pub email: String,
+    /// Google contact photo, when the People API has one.
+    pub photo_url: Option<String>,
 }
 
 /// One app-local Jev triage category.
@@ -291,6 +373,9 @@ pub struct DraftContent {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body_text: Option<String>,
+    /// Sanitized like `MailMessage::body_html` (see there): no script, no
+    /// event handlers, links and pictures kept. The composer may load it
+    /// into its own page.
     pub body_html: Option<String>,
     pub attachments: Vec<OutAttachment>,
     /// The thread it replies to; None for a stand-alone draft.
@@ -333,8 +418,13 @@ pub enum Mutation {
         /// Rich compose: HTML alternative part. None sends plain text only.
         body_html: Option<String>,
         attachments: Vec<OutAttachment>,
-        /// Reply threading: thread to attach the message to.
+        /// Reply threading: thread to attach the message to. The core adds
+        /// `In-Reply-To` / `References` from that thread's newest message,
+        /// so the reply threads in the recipient's mail client too.
         reply_to_thread: Option<String>,
+        /// Send from this address — one of `list_send_as` — instead of the
+        /// account's default. None = the default.
+        from_addr: Option<String>,
     },
     /// Create/update the Gmail draft of an open composer; `key` is the
     /// composer's stable id.
@@ -348,10 +438,22 @@ pub enum Mutation {
         body_html: Option<String>,
         attachments: Vec<OutAttachment>,
         reply_to_thread: Option<String>,
+        /// As on `Send`.
+        from_addr: Option<String>,
     },
     /// Delete the draft saved under `key`; a no-op when there is none.
     DeleteDraft {
         key: String,
+    },
+    /// Take a thread out of Trash, back into the inbox.
+    Untrash {
+        thread_id: String,
+    },
+    /// `spam` true: move the thread to Spam. False ("Not spam"): back to
+    /// the inbox.
+    MarkSpam {
+        thread_id: String,
+        spam: bool,
     },
 }
 
@@ -381,6 +483,7 @@ impl From<Mutation> for domain::Mutation {
                 body_html,
                 attachments,
                 reply_to_thread,
+                from_addr,
             } => Self::Send {
                 to,
                 cc,
@@ -390,6 +493,10 @@ impl From<Mutation> for domain::Mutation {
                 body_html,
                 attachments: attachments.into_iter().map(Into::into).collect(),
                 reply_to_thread,
+                from_addr: from_addr.filter(|a| !a.trim().is_empty()),
+                // Filled when the mutation is queued (`Engine::mutate`).
+                in_reply_to: None,
+                references: None,
             },
             Mutation::SaveDraft {
                 key,
@@ -401,6 +508,7 @@ impl From<Mutation> for domain::Mutation {
                 body_html,
                 attachments,
                 reply_to_thread,
+                from_addr,
             } => Self::SaveDraft {
                 key,
                 to,
@@ -411,8 +519,13 @@ impl From<Mutation> for domain::Mutation {
                 body_html,
                 attachments: attachments.into_iter().map(Into::into).collect(),
                 reply_to_thread,
+                from_addr: from_addr.filter(|a| !a.trim().is_empty()),
+                in_reply_to: None,
+                references: None,
             },
             Mutation::DeleteDraft { key } => Self::DeleteDraft { key },
+            Mutation::Untrash { thread_id } => Self::Untrash { thread_id },
+            Mutation::MarkSpam { thread_id, spam } => Self::MarkSpam { thread_id, spam },
         }
     }
 }

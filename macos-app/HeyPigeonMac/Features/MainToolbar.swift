@@ -70,7 +70,19 @@ struct MainToolbar: ToolbarContent {
             }
             ToolbarSpacer(.flexible)
             ToolbarItemGroup {
-                if model.isSyncing {
+                // No network: say so, with what is waiting to be sent.
+                if !Connectivity.shared.isOnline {
+                    Label(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send" : "Offline", systemImage: "wifi.slash")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 6)
+                        .help("No network. What you do is kept and sent when it is back.")
+                }
+                // Only a sync worth showing: one the user asked for, or one
+                // that takes a while. A spinner for every 30-second round
+                // came and went, and moved the buttons each time.
+                if model.showsSyncActivity {
                     ProgressView().controlSize(.small)
                 }
                 if !state.isThreadOpen && !state.showSettings && !state.showBundles {

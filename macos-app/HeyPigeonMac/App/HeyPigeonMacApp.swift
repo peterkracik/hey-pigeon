@@ -18,6 +18,8 @@ import SwiftUI
 enum MacWindows {
     static let main = "main"
     static let thread = "thread"
+    /// The defaults key of View › Reading Pane.
+    static let readingPaneKey = "readingPane"
 }
 
 @main

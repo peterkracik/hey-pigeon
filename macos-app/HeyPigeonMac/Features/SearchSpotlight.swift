@@ -8,6 +8,7 @@
 // window's shortcut map ignores keys while a text field is typing
 // (WindowState.isTyping).
 
+import AppKit
 import SwiftUI
 
 struct SearchSpotlight: View {
@@ -34,7 +35,35 @@ struct SearchSpotlight: View {
             SearchFilterBar(picking: $picking).padding(.bottom, 6)
             Hairline().opacity(0.6)
             content
+            if model.isSearching {
+                Hairline().opacity(0.6)
+                gmailRow
+            }
         }
+    }
+
+    /// The same search asked of Gmail itself: the list on this Mac holds
+    /// what has been downloaded, Gmail everything (AppModel.searchGmail).
+    private var gmailRow: some View {
+        Button { Task { await model.searchGmail() } } label: {
+            HStack(spacing: 8) {
+                if model.isSearchingGmail {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "tray.and.arrow.down")
+                }
+                Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail — older mail not on this \(Device.name) yet")
+                Spacer()
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 20)
+            .frame(height: 36)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isSearchingGmail)
+        .help("Ask Gmail for this search and add what it finds to the results")
     }
 
     // MARK: The field
@@ -179,7 +208,7 @@ private struct ResultRow: View {
 
 /// The floating shape the search and the command palette share, like
 /// Spotlight's: a Liquid Glass panel near the top of the window over a
-/// dimmed, blurred window (MainWindow blurs it); a click outside closes.
+/// dimmed, blurred window (WindowBackdrop); a click outside closes.
 /// The dim reaches under the toolbar, which is transparent and empty
 /// while a panel is up.
 struct SpotlightPanel<Content: View>: View {
@@ -188,10 +217,19 @@ struct SpotlightPanel<Content: View>: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.opacity(0.1)
+            // The window behind the panel, blurred and dimmed by one
+            // backdrop layer. The window's content used to carry a blur
+            // of its own, which drew the list — and any message's web
+            // view — into an offscreen pass for as long as a panel was up.
+            WindowBackdrop()
+                // The dim takes the click: a tap on the AppKit view under
+                // it would not reach a SwiftUI gesture.
+                .overlay {
+                    Color.black.opacity(0.06)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onClose() }
+                }
                 .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { onClose() }
             content()
                 .frame(maxWidth: 680)
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -200,4 +238,18 @@ struct SpotlightPanel<Content: View>: View {
                 .padding(.horizontal, 24)
         }
     }
+}
+
+/// What is behind a Spotlight panel: the window's own content, blurred in
+/// place by AppKit's within-window effect.
+private struct WindowBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .withinWindow
+        view.material = .fullScreenUI
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }

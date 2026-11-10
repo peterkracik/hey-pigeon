@@ -20,6 +20,9 @@ import UniformTypeIdentifiers
 struct ComposeView: View {
     @State private var draft: SendDraft
     @State private var fromId: String
+    /// A "Send mail as" address of the From account, when one is picked
+    /// instead of the account's own (AppModel.sendAliases).
+    @State private var fromAddress: String?
     @State private var to: [String]
     @State private var cc: [String]
     @State private var bcc: [String]
@@ -83,6 +86,7 @@ struct ComposeView: View {
         _bcc = State(initialValue: draft.bcc)
         _showCc = State(initialValue: !draft.cc.isEmpty || !draft.bcc.isEmpty)
         _fromId = State(initialValue: draft.fromAccountId ?? "")
+        _fromAddress = State(initialValue: draft.fromAddress)
         _body_ = State(initialValue: draft.bodyRich ?? AttributedString(draft.bodyText))
         _attachments = State(initialValue: draft.attachments)
         // A forward or a restored (undone) send arrives with a body the user
@@ -110,14 +114,23 @@ struct ComposeView: View {
     }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
+    /// An account's other addresses to send from: its aliases, without
+    /// the one it sends from anyway.
+    private func aliases(of account: MailAccount) -> [SendAlias] {
+        (model.sendAliases[account.id] ?? []).filter { !EmailAddress.same($0.email, account.email) }
+    }
+    /// The From row is worth showing: there is a choice to make.
+    private var showsFromRow: Bool {
+        model.accounts.count > 1 || model.accounts.contains { !aliases(of: $0).isEmpty }
+    }
     private var canSend: Bool { !(to.isEmpty && cc.isEmpty && bcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
         #if os(macOS)
         if inline {
-            withLifecycle(inlineContent)
+            withLifecycle(inlineContent).droppingFiles { urls in Task { await addFiles(urls) } }
         } else {
-            NavigationStack { withLifecycle(sheetContent) }
+            NavigationStack { withLifecycle(sheetContent) }.droppingFiles { urls in Task { await addFiles(urls) } }
         }
         #else
         NavigationStack { withLifecycle(sheetContent) }
@@ -154,6 +167,7 @@ struct ComposeView: View {
         content
             .task { people = model.searchPeople() }
             .onAppear {
+                model.loadSendAliases()
                 if fromId.isEmpty {
                     fromId = model.selectedAccountId ?? model.accounts.first?.id ?? ""
                 }
@@ -218,13 +232,26 @@ struct ComposeView: View {
             Menu {
                 ForEach(model.accounts) { a in
                     Button { switchFrom(a) } label: {
-                        Label { Text("\(a.displayName)  \(a.email)") } icon: { Image(systemName: a.id == fromId ? "checkmark" : "circle.fill") }
+                        Label { Text("\(a.displayName)  \(a.email)") } icon: {
+                            Image(systemName: a.id == fromId && fromAddress == nil ? "checkmark" : "circle.fill")
+                        }
+                    }
+                    // The account's "Send mail as" addresses, under it.
+                    ForEach(aliases(of: a)) { alias in
+                        Button {
+                            if a.id != fromId { switchFrom(a) }
+                            fromAddress = alias.email
+                        } label: {
+                            Label { Text(alias.name.isEmpty ? alias.email : "\(alias.name)  \(alias.email)") } icon: {
+                                Image(systemName: a.id == fromId && fromAddress == alias.email ? "checkmark" : "arrow.turn.down.right")
+                            }
+                        }
                     }
                 }
             } label: {
                 HStack(spacing: 8) {
                     if let a = fromAccount { Circle().fill(Theme.tagForeground(a.color)).frame(width: 8, height: 8) }
-                    Text(fromAccount?.email ?? "Choose account").foregroundStyle(Theme.textPrimary)
+                    Text(fromAddress ?? fromAccount?.email ?? "Choose account").foregroundStyle(Theme.textPrimary)
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
@@ -282,6 +309,20 @@ struct ComposeView: View {
                 .pillButton(prominent: true)
                 .tint(Theme.textPrimary)
                 .disabled(!canSend)
+                if ComposePresentation.offersSendLater {
+                    // The same message at a later hour. It is sent by this
+                    // device, so the help says what that takes.
+                    Menu {
+                        ForEach(SendLaterPreset.available(), id: \.preset) { item in
+                            Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { sendLater(at: item.date) }
+                        }
+                    } label: { Image(systemName: "clock").frame(width: 22, height: 22) }
+                        .pillButton()
+                        .labelOnlyMenu()
+                        .disabled(!canSend)
+                        .help("Send later — from this \(Device.name), while Hey Pigeon is open")
+                        .accessibilityLabel("Send later")
+                }
                 Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
                     .pillButton()
                     .accessibilityLabel("Discard")
@@ -290,6 +331,17 @@ struct ComposeView: View {
                     Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
                         .pillButton()
                         .accessibilityLabel("Write or edit with AI")
+                }
+                if ComposePresentation.offersSnippets, !model.snippets.isEmpty {
+                    Menu {
+                        ForEach(model.snippets) { snippet in
+                            Button(snippet.name) { insertAtCaret(snippet.body) }
+                        }
+                    } label: { Image(systemName: "text.quote").frame(width: 22, height: 22) }
+                        .pillButton()
+                        .labelOnlyMenu()
+                        .help("Insert a snippet (Settings › Compose)")
+                        .accessibilityLabel("Insert a snippet")
                 }
                 Menu {
                     Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
@@ -337,6 +389,8 @@ struct ComposeView: View {
             pristine = true
         }
         fromId = next.id
+        // The account's own address again: an alias is another account's.
+        fromAddress = nil
     }
 
     // MARK: Attachments
@@ -406,6 +460,7 @@ struct ComposeView: View {
         d.bodyHTML = bodyHTML
         d.bodyRich = bodyRich
         d.attachments = attachments
+        d.fromAddress = fromAddress
         return d
     }
 
@@ -423,6 +478,22 @@ struct ComposeView: View {
         Keyboard.dismiss()
         leave()
         model.send(d, from: from)
+    }
+
+    /// Send's twin for a later hour (AppModel.sendLater): the composer
+    /// closes the same way, the message waits on this device.
+    private func sendLater(at date: Date) {
+        sending = true
+        finished = true
+        var d = composed
+        let from = fromId
+        if let old = savedFrom, old != from {
+            model.deleteDraft(d.draftKey, from: old)
+            d.draftSaved = false
+        }
+        Keyboard.dismiss()
+        leave()
+        model.sendLater(d, from: from, at: date)
     }
 
     /// Take the fields of a draft changed outside the editor (an intent).
@@ -498,12 +569,27 @@ extension ComposeView {
     private var bodyRich: AttributedString? { body_ }
 
     private func setBody(text: String) { body_ = AttributedString(text) }
+    /// A snippet goes in where the caret is, or over the selection.
+    private func insertAtCaret(_ text: String) {
+        let snippet = AttributedString(text)
+        switch selection.indices(in: body_) {
+        case .insertionPoint(let index):
+            body_.transform(updating: &selection) { $0.insert(snippet, at: index) }
+        case .ranges(let set):
+            if let first = set.ranges.first {
+                body_.transform(updating: &selection) { $0.replaceSubrange(first, with: snippet) }
+            } else {
+                body_ = snippet + body_
+            }
+        }
+        pristine = false
+    }
     private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
     private var footerBackground: Color { Theme.canvas }
 
     /// The From chip and the To / Cc / Bcc / Subject rows.
     @ViewBuilder private var headerFields: some View {
-        if model.accounts.count > 1 { fromRow }
+        if showsFromRow { fromRow }
         fieldRow("To") {
             RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
             if !showCc {
@@ -621,6 +707,12 @@ extension ComposeView {
     private var bodyRich: AttributedString? { AttributedString(editor.text) }
 
     private func setBody(text: String) { editor.setText(text) }
+    /// A snippet goes in where the caret is, as typing would (⌘Z takes it
+    /// back).
+    private func insertAtCaret(_ text: String) {
+        editor.replaceSelection(with: text)
+        pristine = false
+    }
     private func adoptBody(of d: SendDraft) { editor.set(draft: d) }
     private var footerBackground: Color { inline ? Theme.card : Theme.canvas }
 
@@ -652,7 +744,7 @@ extension ComposeView {
             draftHeader
         }
         if showFields {
-            if model.accounts.count > 1 { fromRow }
+            if showsFromRow { fromRow }
             fieldRow("To") {
                 RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
                 if !showCc {
@@ -776,6 +868,11 @@ extension ComposeView {
                     case .send: if canSend { send() }
                     case .escape: close()
                     }
+                }
+                editor.onFiles = { urls in Task { await addFiles(urls) } }
+                editor.onPastedImage = { data in
+                    add(DraftAttachment(filename: "pasted-image-\(attachments.count + 1).png", mimeType: "image/png",
+                                        size: data.count, dataBase64: data.base64EncodedString()))
                 }
                 if focus == .body { editor.focus() }
             }

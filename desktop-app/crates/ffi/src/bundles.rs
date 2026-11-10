@@ -288,12 +288,16 @@ impl Engine {
     /// Every bundle: active first, then archived, each by name. A model
     /// bundle shows once it holds two emails.
     pub fn list_bundles(&self) -> Result<Vec<MailBundle>, EngineError> {
-        let bundles = self.store.list_bundles()?;
-        let all: Vec<MailBundle> = bundles
+        // One grouped count for all of them: this runs on every reload, and
+        // used to read every thread of every bundle to count it.
+        let stats = self.store.bundle_stats()?;
+        Ok(self
+            .store
+            .list_bundles()?
             .iter()
-            .map(|b| self.mail_bundle(b))
-            .collect::<Result<_, _>>()?;
-        Ok(all.into_iter().filter(|b| !is_forming(b)).collect())
+            .map(|b| mail_bundle_row(b, stats.get(&b.id).cloned().unwrap_or_default()))
+            .filter(|b| !is_forming(b))
+            .collect())
     }
 
     /// The bundle view: the row, its key facts and its threads. `None`
@@ -822,18 +826,26 @@ impl Engine {
     fn prune_ai_bundles(&self) -> Result<usize, EngineError> {
         let now = now_ms();
         let mut left = 0;
-        for b in self.store.list_bundles()? {
-            if b.origin != BundleOrigin::Ai {
-                continue;
-            }
-            let threads = self.store.list_bundle_threads(&b.id)?;
-            let stale = match threads.as_slice() {
-                [] => true,
-                [only] => now - only.last_msg_at.max(b.created_at) > AI_SINGLE_TTL_MS,
+        let ai: Vec<domain::Bundle> = self
+            .store
+            .list_bundles()?
+            .into_iter()
+            .filter(|b| b.origin == BundleOrigin::Ai)
+            .collect();
+        if ai.is_empty() {
+            return Ok(0);
+        }
+        // Counted in one query: this runs at the end of every sync round.
+        let stats = self.store.bundle_stats()?;
+        for b in ai {
+            let s = stats.get(&b.id).cloned().unwrap_or_default();
+            let stale = match s.thread_count {
+                0 => true,
+                1 => now - s.last_activity_at.max(b.created_at) > AI_SINGLE_TTL_MS,
                 _ => false,
             };
             if stale {
-                left += threads.len();
+                left += s.thread_count as usize;
                 self.store.delete_bundle(&b.id)?;
             }
         }
@@ -842,18 +854,30 @@ impl Engine {
 
     fn mail_bundle(&self, b: &domain::Bundle) -> Result<MailBundle, EngineError> {
         let threads = self.store.list_bundle_threads(&b.id)?;
-        Ok(MailBundle {
-            id: b.id.clone(),
-            name: b.name.clone(),
-            kind: b.kind.into(),
-            description: b.description.clone(),
-            archived: b.status == BundleStatus::Archived,
-            automatic: b.origin == BundleOrigin::Ai,
-            created_at: b.created_at,
-            thread_count: threads.len() as u32,
-            open_count: threads.iter().filter(|t| is_open(t)).count() as u32,
-            last_activity_at: threads.iter().map(|t| t.last_msg_at).max().unwrap_or(0),
-        })
+        Ok(mail_bundle_row(
+            b,
+            domain::BundleStats {
+                thread_count: threads.len() as u32,
+                open_count: threads.iter().filter(|t| is_open(t)).count() as u32,
+                last_activity_at: threads.iter().map(|t| t.last_msg_at).max().unwrap_or(0),
+            },
+        ))
+    }
+}
+
+/// The Bundles-list row for a bundle and its counts.
+fn mail_bundle_row(b: &domain::Bundle, stats: domain::BundleStats) -> MailBundle {
+    MailBundle {
+        id: b.id.clone(),
+        name: b.name.clone(),
+        kind: b.kind.into(),
+        description: b.description.clone(),
+        archived: b.status == BundleStatus::Archived,
+        automatic: b.origin == BundleOrigin::Ai,
+        created_at: b.created_at,
+        thread_count: stats.thread_count,
+        open_count: stats.open_count,
+        last_activity_at: stats.last_activity_at,
     }
 }
 
@@ -1167,6 +1191,7 @@ mod tests {
                 body_text: None,
                 label_ids: vec!["INBOX".into()],
                 is_read: true,
+                ..Default::default()
             })
             .unwrap();
         let b = e

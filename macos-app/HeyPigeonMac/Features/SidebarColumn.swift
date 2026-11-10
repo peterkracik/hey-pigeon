@@ -21,6 +21,15 @@ struct SidebarColumn: View {
     @AppStorage("sidebarBundlesOpen") private var bundlesOpen = true
     /// "N more" under the bundles: every active one, hidden ones too.
     @AppStorage("sidebarAllBundles") private var allBundles = false
+    /// Gmail labels made, renamed and deleted from here: the label a
+    /// dialog is about, and the name typed into it.
+    @State private var creatingLabel = false
+    @State private var renaming: MailLabelItem?
+    @State private var deleting: MailLabelItem?
+    @State private var labelName = ""
+
+    /// The account a new label is made in: the one shown, else the first.
+    private var labelAccountId: String? { model.selectedAccountId ?? model.accounts.first?.id }
 
     private var labels: [MailLabelItem] {
         model.labels.filter { l in
@@ -63,16 +72,24 @@ struct SidebarColumn: View {
                         folder(.trash)
                     }
 
-                    if !labels.isEmpty {
+                    if !labels.isEmpty || labelAccountId != nil {
                         SectionHeader(title: "Labels", open: $labelsOpen)
                         if labelsOpen {
                             let rows = AppModel.sidebarLabels(labels, pinned: model.pinnedLabelIds,
                                                               expanded: allLabels, current: model.currentLabelId)
                             ForEach(rows.shown) { l in
                                 folder(.label(id: l.id, name: l.name), pin: l)
+                                    .contextMenu {
+                                        Button("Rename…") { labelName = l.name; renaming = l }
+                                        Button("Delete…", role: .destructive) { deleting = l }
+                                    }
                             }
                             if rows.hidden > 0 || allLabels && labels.contains(where: { model.pinnedLabelIds.contains($0.id) }) {
                                 MoreLabelsRow(expanded: $allLabels, hidden: rows.hidden)
+                            }
+                            SidebarRow(title: "New label…", systemImage: "plus", help: "A new Gmail label") {
+                                labelName = ""
+                                creatingLabel = true
                             }
                         }
                     }
@@ -86,6 +103,36 @@ struct SidebarColumn: View {
             AccountFooter()
         }
         .background(MacTheme.sidebar)
+        // Gmail's labels are the account's own: made, renamed and deleted
+        // there, so they are the same on the web and the phone.
+        .alert("New label", isPresented: $creatingLabel) {
+            TextField("Name", text: $labelName)
+            Button("Add") {
+                guard let account = labelAccountId else { return }
+                let name = labelName
+                Task { await model.createLabel(named: name, accountId: account) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(labelAccountId.map { "A Gmail label in \($0)." } ?? "Add an account first.")
+        }
+        .alert("Rename label", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
+               presenting: renaming) { label in
+            TextField("Name", text: $labelName)
+            Button("Rename") {
+                let name = labelName
+                Task { await model.renameLabel(label, to: name) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Delete this label?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { label in
+            Button("Delete \(label.name)", role: .destructive) {
+                Task { await model.deleteLabel(label) }
+            }
+        } message: { _ in
+            Text("The label is removed from Gmail. Its mail stays where it is, without the label.")
+        }
     }
 
     /// A folder row with its count; `badge` is the Scheduled row's due
@@ -97,9 +144,48 @@ struct SidebarColumn: View {
             && model.view == view
         return SidebarRow(title: view.title, systemImage: view.systemImage, help: view.title,
                           selected: selected, trailing: Self.badgeText(count: n, due: badge),
-                          pin: label.map { l in .init(isOn: model.pinnedLabelIds.contains(l.id)) { model.togglePinned(l) } }) {
+                          pin: label.map { l in .init(isOn: model.pinnedLabelIds.contains(l.id)) { model.togglePinned(l) } },
+                          onDrop: dropAction(for: view, label: label)) {
             state.run(.go(view), in: model)
         }
+    }
+
+    /// What rows dragged onto a folder or a label do there, nil where a
+    /// drop means nothing (Sent, Drafts, All emails…): a label files the
+    /// thread under it and marks it done, as `v` does; Archive is Mark
+    /// done, Inbox brings a done thread back, Trash deletes, Starred pins,
+    /// Need reply flags.
+    private func dropAction(for view: MailView, label: MailLabelItem?) -> (([String]) -> Bool)? {
+        let act: ((ThreadRow) -> Void)?
+        if let label {
+            act = { row in
+                guard row.accountId == label.accountId else {
+                    model.show("\(label.name) belongs to another account")
+                    return
+                }
+                model.move(row, to: label)
+            }
+        } else {
+            switch view {
+            case .archive: act = { if !$0.isDone { model.markDone($0) } }
+            case .inbox: act = { if $0.isDone { model.markNotDone($0) } }
+            case .trash: act = { model.delete($0) }
+            case .starred: act = { if !$0.isPinned { model.togglePin($0) } }
+            case .needReply: act = { if !$0.needsReply { model.toggleNeedsReply($0) } }
+            default: act = nil
+            }
+        }
+        guard let act else { return nil }
+        return { items in dropped(items, act) }
+    }
+
+    /// Run `act` on every dropped thread; false when the drop held none.
+    private func dropped(_ items: [String], _ act: (ThreadRow) -> Void) -> Bool {
+        let rows = ThreadDrag.ids(in: items).compactMap { model.row(forThreadId: $0) }
+        guard !rows.isEmpty else { return false }
+        state.advance(in: model)
+        for row in rows { act(row) }
+        return true
     }
 
     /// A bundle with its open count; on hover the eye hides it from the
@@ -112,7 +198,8 @@ struct SidebarColumn: View {
                           pin: .init(isOn: hidden, onSymbol: "eye.slash", offSymbol: "eye",
                                      onHelp: "Show in the sidebar", offHelp: "Hide from the sidebar") {
                               model.toggleHidden(b)
-                          }) {
+                          },
+                          onDrop: { items in dropped(items) { model.addToBundle($0, bundleId: b.id) } }) {
             model.openBundles(at: b.id)
         }
         .opacity(hidden ? 0.55 : 1)
@@ -137,8 +224,13 @@ private struct SidebarRow: View {
     var selected = false
     var trailing: Text?
     var pin: Pin?
+    /// Rows dragged from the list and dropped here (ThreadDrag); nil for
+    /// a row that takes none.
+    var onDrop: (([String]) -> Bool)?
     let action: () -> Void
     @State private var hovering = false
+    /// A drag is over the row: it tints like the shown folder.
+    @State private var targeted = false
 
     /// A label row's pin, shown on hover in place of the count: filled
     /// when the label is in the short list.
@@ -200,10 +292,15 @@ private struct SidebarRow: View {
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .dropDestination(for: String.self) { items, _ in
+            onDrop?(items) ?? false
+        } isTargeted: { over in
+            targeted = over && onDrop != nil
+        }
     }
 
     private var background: Color {
-        if selected { return MacTheme.selected }
+        if selected || targeted { return MacTheme.selected }
         return hovering ? MacTheme.hover : .clear
     }
 }
@@ -352,9 +449,12 @@ private struct AccountFooter: View {
 }
 
 extension AppModel {
-    /// The unified or one account's unread inbox count, read from the store
-    /// (the sidebar's per-account numbers; `counts` is the selected scope's).
+    /// The unified or one account's unread inbox count, from the last
+    /// reload's snapshot (the sidebar's per-account numbers; `counts` is
+    /// the selected scope's). It used to ask the store from inside a view
+    /// body — a query on the main thread per render, and a number no
+    /// reload redrew, since nothing observed it.
     func engineUnread(accountId: String?) -> Int {
-        (try? engine.unreadCounts(accountId: accountId))?["inbox"] ?? 0
+        accountId.map { inboxUnread(accountId: $0) } ?? inboxUnreadAllAccounts
     }
 }

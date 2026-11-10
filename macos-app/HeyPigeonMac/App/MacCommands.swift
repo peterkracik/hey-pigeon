@@ -15,6 +15,7 @@ struct MacCommands: Commands {
     let model: AppModel
     let updater: MacUpdater
     @FocusedValue(\.windowState) private var state
+    @AppStorage(MacWindows.readingPaneKey) private var readingPane = false
     @Environment(\.openWindow) private var openWindow
 
     private var hasSelection: Bool { state?.hasTarget ?? false }
@@ -38,9 +39,16 @@ struct MacCommands: Commands {
         CommandGroup(before: .newItem) {
             Button("New Message") { model.compose(SendDraft()) }
                 .keyboardShortcut("n", modifiers: .command)
-            Button("Check for Mail") { Task { await model.sync() } }
+            Button("Check for Mail") { Task { await model.sync(manual: true) } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
+        }
+
+        // File › Print…: the open (or highlighted) thread, as a PDF too.
+        CommandGroup(replacing: .printItem) {
+            Button("Print…") { run(.print) }
+                .keyboardShortcut("p", modifiers: .command)
+                .disabled(!hasOne)
         }
 
         // View › the drawer, where macOS keeps "Show Sidebar".
@@ -49,6 +57,9 @@ struct MacCommands: Commands {
             // the key is free for the one thing the window shows and hides.
             Button(state?.sidebarVisible == false ? "Show Folders" : "Hide Folders") { run(.toggleSidebar) }
                 .keyboardShortcut("s", modifiers: .command)
+            // The open thread beside the list on a wide window.
+            Toggle("Reading Pane", isOn: $readingPane)
+                .keyboardShortcut("p", modifiers: [.command, .option])
         }
 
         CommandMenu("Message") {

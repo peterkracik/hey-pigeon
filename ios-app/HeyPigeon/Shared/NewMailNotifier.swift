@@ -58,7 +58,8 @@ enum NewMailNotifier {
         let fresh = unreadInbox(model, accountId: accountId).filter { !before.contains($0.id) }
         // In front, the list is live and a banner would be noise.
         if !AppLifecycle.isActive {
-            for row in fresh {
+            // A Focus filter narrows the banners to its account.
+            for row in fresh where model.focusAllows(row) {
                 await post(row)
             }
         }
@@ -88,6 +89,59 @@ enum NewMailNotifier {
             .filter { !$0.isRead }
     }
 
+    /// Tell the system which buttons a new-mail banner has. Once, at launch.
+    static func registerActions() {
+        let actions = [
+            UNNotificationAction(identifier: NotificationActions.done, title: "Mark Done", options: []),
+            UNNotificationAction(identifier: NotificationActions.remindInAnHour, title: "Remind Me in 1 Hour", options: []),
+            UNNotificationAction(identifier: NotificationActions.reply, title: "Reply", options: [.foreground]),
+        ]
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: NotificationActions.newMailCategory, actions: actions, intentIdentifiers: [], options: []),
+        ])
+    }
+
+    /// What a tap on a banner, or on one of its buttons, does — through the
+    /// model, like the swipes and the widgets, so undo, the badge and the
+    /// other surfaces follow. Done and Remind run where the app is (in the
+    /// background on the phone: `BackgroundGrace` keeps it alive until the
+    /// change has reached Gmail, or its time is up and the outbox sends it
+    /// on the next sync); Reply and a plain tap open the thread.
+    @MainActor
+    static func perform(_ action: String, threadId: String, model: AppModel) async {
+        switch action {
+        case NotificationActions.done, NotificationActions.remindInAnHour:
+            let grace = BackgroundGrace("Notification action")
+            defer { grace.end() }
+            if action == NotificationActions.done {
+                if let row = try? model.engine.threadRow(id: threadId), !row.isDone { model.markDone(row) }
+            } else {
+                model.snooze(threadId: threadId, hours: 1)
+            }
+            // The engine queues the change and sends it in the background:
+            // wait for the queue to empty, for a few seconds at most.
+            // The badge follows by itself: the change reloads the model,
+            // and every reload refreshes it (AppModel.refreshStoreSurfaces).
+            // Awaiting it here hung under the iPhone tests, where the
+            // system never answers a badge request.
+            for _ in 0..<40 {
+                try? await Task.sleep(for: .milliseconds(250))
+                if grace.isExpired || model.engine.pendingChanges() == 0 { break }
+            }
+        case NotificationActions.reply:
+            model.openThread(id: threadId)
+            guard let row = try? model.engine.threadRow(id: threadId) else { return }
+            // A moment for the thread to be on screen: the Mac then writes
+            // the reply under it, the phone opens its sheet over it.
+            try? await Task.sleep(for: .milliseconds(300))
+            try? await model.openReply(to: row, all: false, body: nil)
+        case UNNotificationDismissActionIdentifier:
+            break
+        default:
+            model.openThread(id: threadId)
+        }
+    }
+
     /// One banner for one new thread, composed here from the local store.
     static func post(_ row: ThreadRow) async {
         let (name, address) = sender(of: row)
@@ -98,6 +152,8 @@ enum NewMailNotifier {
         content.sound = .default
         content.threadIdentifier = row.accountId
         content.userInfo = ["threadId": row.id, "accountId": row.accountId]
+        // Mark Done · Remind Me in 1 Hour · Reply (`registerActions`).
+        content.categoryIdentifier = NotificationActions.newMailCategory
         // iOS 27: Siri can act on "that notification" as the thread entity.
         content.appEntityIdentifiers = [MailThreadEntity.identifier(row.id)]
 

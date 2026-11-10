@@ -25,7 +25,7 @@ pub struct Account {
     pub signature: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Thread {
     pub id: ThreadId,
     pub account_id: AccountId,
@@ -371,20 +371,54 @@ impl ThreadFilter {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Message {
     pub id: MessageId,
     pub thread_id: ThreadId,
     pub account_id: AccountId,
     pub from_addr: String,
     pub to_addrs: Vec<String>,
+    /// The Cc header, entry by entry, in the same form as `to_addrs`
+    /// (`Name <addr>` or a bare address). Reply-all needs it. Empty for
+    /// mail synced before the header was asked for, until its thread is
+    /// opened again.
+    #[serde(default)]
+    pub cc_addrs: Vec<String>,
     /// Epoch milliseconds.
     pub date: i64,
     pub snippet: String,
+    /// The HTML body. Sanitized (`sanitize::html`) when `body_fetched` is
+    /// set — providers clean it before they hand it over. A row without
+    /// the flag that still has one was stored by a build that kept mail
+    /// as received: it is sanitized on its way to a view, until the
+    /// thread's next full fetch replaces it.
     pub body_html: Option<String>,
     pub body_text: Option<String>,
     pub label_ids: Vec<String>,
     pub is_read: bool,
+    /// The RFC 822 `Message-ID` header, angle brackets included. A reply
+    /// names it in `In-Reply-To` so other mail clients thread it.
+    #[serde(default)]
+    pub message_id_header: Option<String>,
+    /// The message's own `References` header: a reply's `References` is
+    /// this plus `message_id_header`.
+    #[serde(default)]
+    pub references_header: Option<String>,
+    /// The raw `List-Unsubscribe` header (`<mailto:…>, <https://…>`), when
+    /// the sender offers one.
+    #[serde(default)]
+    pub list_unsubscribe: Option<String>,
+    /// `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058): the
+    /// https link accepts a POST and no page needs to open.
+    #[serde(default)]
+    pub list_unsubscribe_one_click: bool,
+    /// True once the provider's full message was fetched. A message with no
+    /// text at all (an attachment alone, an empty draft) has no body to
+    /// show, so "has a body" cannot stand in for "was fetched": such a
+    /// thread used to be fetched again on every open. It also says the
+    /// stored `body_html` is sanitized (see there).
+    #[serde(default)]
+    pub body_fetched: bool,
 }
 
 // Log hygiene: no bodies or addresses in Debug output (DESIGN.md Security).
@@ -450,6 +484,20 @@ pub enum Mutation {
         /// Reply threading: provider-side thread to attach the message to.
         #[serde(default)]
         reply_to_thread: Option<ThreadId>,
+        /// The address to send from, when it is not the account's own: one
+        /// of its send-as aliases. None lets the provider use the default.
+        /// (`serde(default)` on this and the two below: outbox rows written
+        /// by older builds carry none of them.)
+        #[serde(default)]
+        from_addr: Option<String>,
+        /// `In-Reply-To` / `References` for a reply, read from the message
+        /// being answered when the mutation is queued (`outbox::reply_headers`).
+        /// The provider-side thread id only threads the mail for the
+        /// sender; these are what the recipient's mail client goes by.
+        #[serde(default)]
+        in_reply_to: Option<String>,
+        #[serde(default)]
+        references: Option<String>,
     },
     /// Create or update the Gmail draft for an open composer. `key` is the
     /// composer's own id (stable across saves), so repeated saves update one
@@ -469,12 +517,57 @@ pub enum Mutation {
         attachments: Vec<OutAttachment>,
         #[serde(default)]
         reply_to_thread: Option<ThreadId>,
+        /// Same three as on `Send`.
+        #[serde(default)]
+        from_addr: Option<String>,
+        #[serde(default)]
+        in_reply_to: Option<String>,
+        #[serde(default)]
+        references: Option<String>,
     },
     /// Delete the draft saved under `key` (discarded or sent). A no-op when
     /// no such draft exists.
     DeleteDraft {
         key: String,
     },
+    /// Take a thread out of Trash and put it back in the inbox (the reverse
+    /// of `Trash`, which is how mail gets there from this app).
+    Untrash {
+        thread_id: ThreadId,
+    },
+    /// `spam` true: move the thread to Spam. False ("Not spam"): back to
+    /// the inbox.
+    MarkSpam {
+        thread_id: ThreadId,
+        spam: bool,
+    },
+}
+
+impl Mutation {
+    /// The thread a mutation changes; None for outgoing mail and drafts,
+    /// which change no stored thread.
+    pub fn thread_id(&self) -> Option<&ThreadId> {
+        match self {
+            Mutation::Archive { thread_id }
+            | Mutation::Unarchive { thread_id }
+            | Mutation::MarkRead { thread_id, .. }
+            | Mutation::Trash { thread_id }
+            | Mutation::Star { thread_id, .. }
+            | Mutation::ModifyLabel { thread_id, .. }
+            | Mutation::Untrash { thread_id }
+            | Mutation::MarkSpam { thread_id, .. } => Some(thread_id),
+            Mutation::Send { .. } | Mutation::SaveDraft { .. } | Mutation::DeleteDraft { .. } => {
+                None
+            }
+        }
+    }
+
+    /// Outgoing mail and draft changes: the ones whose caller waits for the
+    /// provider's answer (a send that failed must be reported), where a
+    /// label flip is done for the user the moment it is applied locally.
+    pub fn is_outgoing(&self) -> bool {
+        self.thread_id().is_none()
+    }
 }
 
 /// A saved draft as the provider holds it, for reopening it in the
@@ -600,6 +693,15 @@ impl std::fmt::Debug for Mutation {
             Mutation::DeleteDraft { key } => {
                 f.debug_struct("DeleteDraft").field("key", key).finish()
             }
+            Mutation::Untrash { thread_id } => f
+                .debug_struct("Untrash")
+                .field("thread_id", thread_id)
+                .finish(),
+            Mutation::MarkSpam { thread_id, spam } => f
+                .debug_struct("MarkSpam")
+                .field("thread_id", thread_id)
+                .field("spam", spam)
+                .finish(),
         }
     }
 }
@@ -620,6 +722,27 @@ pub struct OutboxItem {
 pub struct SearchResult {
     pub thread: Thread,
     pub snippet: String,
+}
+
+/// What the Bundles list shows next to a bundle's name, counted over its
+/// threads (trash and spam left out, like `Store::list_bundle_threads`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BundleStats {
+    pub thread_count: u32,
+    /// Threads still waiting in the inbox.
+    pub open_count: u32,
+    /// Epoch ms of the newest message in the bundle; 0 when it is empty.
+    pub last_activity_at: i64,
+}
+
+/// An address the account may send from (Gmail "Send mail as"): its own,
+/// or an alias it has verified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendAs {
+    pub email: String,
+    /// The display name the alias sends under; empty when none is set.
+    pub name: String,
+    pub is_default: bool,
 }
 
 /// Provider profile snapshot fetched at connect/sync time.

@@ -12,16 +12,26 @@ struct RecipientField<Field: Hashable>: View {
     /// Known people to complete from, most frequent first.
     var people: [PersonSuggestion] = []
     @State private var text = ""
+    /// What the engine knows for the typed letters: everyone the stored
+    /// mail was exchanged with, then the account's Google contacts
+    /// (`MailEngine.searchContacts`). `people` only has who wrote lately.
+    @State private var found: [PersonSuggestion] = []
+    @Environment(AppModel.self) private var model
 
     private var typed: String { text.trimmingCharacters(in: .whitespaces).lowercased() }
 
     private var matches: [PersonSuggestion] {
         let q = typed
         guard !q.isEmpty, focused.wrappedValue == field else { return [] }
-        return Array(people.lazy.filter { p in
+        let known = people.filter { p in
             !addresses.contains(p.person.address)
                 && (p.person.address.contains(q) || p.person.name.lowercased().contains(q))
-        }.prefix(5))
+        }
+        var seen = Set(known.map { $0.person.address.lowercased() })
+        let more = found.filter { p in
+            !addresses.contains(p.person.address) && seen.insert(p.person.address.lowercased()).inserted
+        }
+        return Array((known + more).prefix(6))
     }
 
     var body: some View {
@@ -68,6 +78,21 @@ struct RecipientField<Field: Hashable>: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { focused.wrappedValue = field }
+        // Two letters or more, a moment after the last one; the newest wins.
+        .task(id: typed) {
+            let q = typed
+            guard q.count >= 2, focused.wrappedValue == field else {
+                if !found.isEmpty { found = [] }
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(160))
+            guard !Task.isCancelled else { return }
+            let contacts = await model.engine.searchContacts(q, limit: 6)
+            guard !Task.isCancelled else { return }
+            found = contacts.map { c in
+                PersonSuggestion(person: SearchPerson(name: c.name.isEmpty ? c.email : c.name, address: c.email.lowercased()), accountId: "")
+            }
+        }
     }
 
     private func suggestion(_ p: PersonSuggestion) -> some View {

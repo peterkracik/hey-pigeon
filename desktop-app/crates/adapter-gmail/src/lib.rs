@@ -14,6 +14,7 @@ use heypigeon_core::domain::*;
 use heypigeon_core::ports::{
     HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage, WatchState,
 };
+use heypigeon_core::sanitize;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -23,6 +24,78 @@ const API: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 const UPLOAD_API: &str = "https://gmail.googleapis.com/upload/gmail/v1/users/me";
 /// threads.get concurrency during backfill (quota-friendly, still fast).
 const FETCH_CONCURRENCY: usize = 10;
+/// The headers the metadata tier asks Gmail for (`format=metadata` returns
+/// only the ones named): the list row (From, To, Subject), reply-all (Cc),
+/// reply threading (Message-ID, References) and the unsubscribe action.
+const METADATA_HEADERS: &[&str] = &[
+    "From",
+    "To",
+    "Cc",
+    "Subject",
+    "Message-ID",
+    "References",
+    "List-Unsubscribe",
+    "List-Unsubscribe-Post",
+];
+/// How long an ordinary API call may take in all. A request that never
+/// answered used to hang its caller for good — a sync round stuck on one
+/// left the account marked as syncing until the app was restarted.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait for a connection (DNS, TCP, TLS).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// The cap for a transfer that may be large (an attachment, a full thread,
+/// a send with attachments). Those are not held to `REQUEST_TIMEOUT` — a
+/// 25 MB attachment on a slow line takes minutes and is doing fine — but
+/// to `STALL_TIMEOUT` between chunks, with this as the outer bound.
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// A download that delivers nothing for this long has stalled.
+const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// A thread missing at most this many bodies fetches those messages one by
+/// one instead of the whole thread again (a reply landing in a long,
+/// already-read thread).
+const PARTIAL_FETCH_MAX: usize = 3;
+/// Inline attachment parts remembered from full fetches (`inline_parts`).
+const INLINE_PARTS_MAX: usize = 256;
+
+/// The HTTP client every Google call goes through: one connection pool for
+/// mail, Drive, the token endpoint and People.
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        // Google's API docs ask for "gzip" in the user agent as well as
+        // Accept-Encoding before they compress a response.
+        .user_agent("heypigeon (gzip)")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        // A laptop that slept holds connections the far end closed long
+        // ago. Pings while a request is in flight find that out in seconds
+        // instead of when the request times out.
+        .http2_keep_alive_interval(Duration::from_secs(20))
+        .http2_keep_alive_timeout(Duration::from_secs(15))
+        .tcp_keepalive(Duration::from_secs(30))
+        .build()
+        .unwrap_or_default()
+}
+
+/// What a full fetch of a thread (or of some of its messages) brought.
+pub struct FullFetch {
+    /// The fetched messages, bodies included, `body_fetched` set.
+    pub messages: Vec<Message>,
+    /// Their attachment parts.
+    pub attachments: Vec<AttachmentRef>,
+    /// Whether any fetched message carries a named attachment.
+    pub has_attachment: bool,
+    /// True when the whole thread was fetched, so `attachments` is the
+    /// thread's complete list; false when only the missing messages were.
+    pub whole_thread: bool,
+}
+
+/// A contact the People API found for a recipient search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonMatch {
+    pub name: String,
+    pub email: String,
+    pub photo_url: Option<String>,
+}
 /// Retries of a rate-limited read before the error reaches the caller.
 /// Gmail's per-user quota is per minute, so the waits (2, 4, 8, 16 s plus
 /// jitter, or the server's Retry-After) span most of a quota window.
@@ -64,12 +137,18 @@ pub struct GmailProvider {
     /// thread open all wait out the same window instead of each spending
     /// more of the per-minute quota on requests that will be refused.
     cooldown: std::sync::Mutex<HashMap<AccountId, Instant>>,
+    /// (message, index among its attachment parts) → the base64url data of
+    /// a part Gmail embedded in the message (`inline:<n>`), remembered from
+    /// full fetches so showing it does not download the message again.
+    inline_parts: std::sync::Mutex<HashMap<(MessageId, usize), String>>,
+    /// account → its send-as addresses, for the session.
+    send_as: Mutex<HashMap<AccountId, Vec<SendAs>>>,
 }
 
 impl GmailProvider {
     pub fn new(client: ClientConfig, secrets: Arc<dyn SecretStore + Send + Sync>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: http_client(),
             client,
             secrets,
             tokens: Mutex::new(HashMap::new()),
@@ -77,6 +156,8 @@ impl GmailProvider {
             photo_warmed: Mutex::new(std::collections::HashSet::new()),
             draft_ids: Mutex::new(HashMap::new()),
             cooldown: std::sync::Mutex::new(HashMap::new()),
+            inline_parts: std::sync::Mutex::new(HashMap::new()),
+            send_as: Mutex::new(HashMap::new()),
         }
     }
 
@@ -123,7 +204,7 @@ impl GmailProvider {
         // changed). Any other token-endpoint answer — a 5xx, a rate limit,
         // `temporarily_unavailable` — is Google having a moment, and must not
         // sign the user out either.
-        let tokens = oauth::refresh(&self.client, &refresh_token)
+        let tokens = oauth::refresh_with(&self.http, &self.client, &refresh_token)
             .await
             .map_err(|e| match e {
                 oauth::OauthError::Token(body) if is_invalid_grant(&body) => {
@@ -180,21 +261,7 @@ impl GmailProvider {
         if let Some(cached) = self.photo_cache.lock().await.get(&key) {
             return cached.clone();
         }
-        // People API search caches need one warmup request per session.
-        if self.photo_warmed.lock().await.insert(account_id.clone()) {
-            let _ = self
-                .get_json::<serde_json::Value>(
-                    account_id,
-                    "https://people.googleapis.com/v1/people:searchContacts?query=&readMask=photos",
-                )
-                .await;
-            let _ = self
-                .get_json::<serde_json::Value>(
-                    account_id,
-                    "https://people.googleapis.com/v1/otherContacts:search?query=&readMask=photos",
-                )
-                .await;
-        }
+        self.warm_people_search(account_id).await;
         let query = urlencode(email);
         let mut found: Option<String> = None;
         for endpoint in [
@@ -258,28 +325,8 @@ impl GmailProvider {
         let list: WireThreadsList = self.get_json(account_id, url.as_str()).await?;
 
         // Backfill list rendering needs metadata only (DESIGN.md tiering).
-        // Bounded fan-out per chunk keeps Gmail quota happy.
-        let urls: Vec<String> = list
-            .threads
-            .iter()
-            .map(|t| {
-                format!(
-                    "{API}/threads/{}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject",
-                    t.id
-                )
-            })
-            .collect();
-        let mut threads = Vec::with_capacity(urls.len());
-        for chunk in urls.chunks(FETCH_CONCURRENCY) {
-            let futs: Vec<_> = chunk
-                .iter()
-                .map(|url| async move {
-                    let wire: WireThread = self.get_json(account_id, url).await?;
-                    Ok::<_, MailError>(to_thread(account_id, &wire))
-                })
-                .collect();
-            threads.extend(futures::future::try_join_all(futs).await?);
-        }
+        let ids: Vec<ThreadId> = list.threads.into_iter().map(|t| t.id).collect();
+        let threads = self.fetch_thread_metadata(account_id, &ids).await?;
 
         Ok(ThreadPage {
             threads,
@@ -287,10 +334,278 @@ impl GmailProvider {
         })
     }
 
+    /// The given threads at the metadata tier (headers, labels, snippet —
+    /// no bodies), in the order asked. Bounded fan-out per chunk keeps
+    /// Gmail quota happy. A thread that is gone by now (404) is left out.
+    pub async fn fetch_thread_metadata(
+        &self,
+        account_id: &AccountId,
+        thread_ids: &[ThreadId],
+    ) -> Result<Vec<(Thread, Vec<Message>)>, MailError> {
+        let mut threads = Vec::with_capacity(thread_ids.len());
+        for chunk in thread_ids.chunks(FETCH_CONCURRENCY) {
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|tid| async move {
+                    let url = thread_metadata_url(tid);
+                    match self.get_json::<WireThread>(account_id, &url).await {
+                        Ok(wire) => Ok(Some(to_thread(account_id, &wire))),
+                        Err(e) if is_not_found(&e) => Ok(None),
+                        Err(e) => Err(e),
+                    }
+                })
+                .collect();
+            threads.extend(
+                futures::future::try_join_all(futs)
+                    .await?
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        Ok(threads)
+    }
+
+    /// Thread ids matching a Gmail search (`threads.list?q=`), best match
+    /// first as Gmail orders them, at most `limit` (one page: 100). Spam
+    /// and Trash stay out, as in Gmail's own search.
+    pub async fn search_thread_ids(
+        &self,
+        account_id: &AccountId,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<ThreadId>, MailError> {
+        let mut url = url::Url::parse(&format!("{API}/threads")).expect("static url");
+        url.query_pairs_mut()
+            .append_pair("q", query)
+            .append_pair("maxResults", &limit.clamp(1, 100).to_string());
+        let list: WireThreadsList = self.get_json(account_id, url.as_str()).await?;
+        Ok(list.threads.into_iter().map(|t| t.id).collect())
+    }
+
+    /// Bodies for a thread the store holds only in part: the whole thread
+    /// in one request, or — when at most `PARTIAL_FETCH_MAX` of its `total`
+    /// messages are `missing` — just those. Also returns what the fetched
+    /// messages have attached, so the caller need not ask again.
+    pub async fn fetch_full(
+        &self,
+        account_id: &AccountId,
+        thread_id: &ThreadId,
+        missing: &[MessageId],
+        total: usize,
+    ) -> Result<FullFetch, MailError> {
+        if !missing.is_empty() && missing.len() <= PARTIAL_FETCH_MAX && missing.len() < total {
+            let futs: Vec<_> = missing
+                .iter()
+                .map(|id| async move {
+                    self.get_json_big::<WireMessage>(
+                        account_id,
+                        &format!("{API}/messages/{id}?format=full"),
+                    )
+                    .await
+                })
+                .collect();
+            match futures::future::try_join_all(futs).await {
+                Ok(wires) => return Ok(self.full_fetch(account_id, thread_id, &wires, false)),
+                // One of them is gone (deleted since the list was read):
+                // the whole thread says what is left.
+                Err(e) if is_not_found(&e) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let wire: WireThread = self
+            .get_json_big(
+                account_id,
+                &format!("{API}/threads/{thread_id}?format=full"),
+            )
+            .await?;
+        Ok(self.full_fetch(account_id, thread_id, &wire.messages, true))
+    }
+
+    fn full_fetch(
+        &self,
+        account_id: &AccountId,
+        thread_id: &ThreadId,
+        wires: &[WireMessage],
+        whole_thread: bool,
+    ) -> FullFetch {
+        self.remember_inline_parts(wires);
+        FullFetch {
+            messages: wires
+                .iter()
+                .map(|w| {
+                    let mut m = to_message(account_id, thread_id, w);
+                    // Sanitized here, once, on the way into the store:
+                    // `body_fetched` on a message means its HTML is safe
+                    // to hand to a view as it is.
+                    m.body_html = m.body_html.as_deref().map(sanitize::html);
+                    m.body_fetched = true;
+                    m
+                })
+                .collect(),
+            attachments: wires.iter().flat_map(message_attachments).collect(),
+            has_attachment: wires
+                .iter()
+                .any(|m| m.payload.as_ref().is_some_and(part_has_attachment)),
+            whole_thread,
+        }
+    }
+
+    /// Keep the data of parts Gmail embedded in these messages, so
+    /// `fetch_attachment` on an `inline:<n>` id is answered from memory.
+    fn remember_inline_parts(&self, wires: &[WireMessage]) {
+        let mut cache = self.inline_parts.lock().unwrap();
+        for m in wires {
+            let mut parts = Vec::new();
+            if let Some(p) = m.payload.as_ref() {
+                collect_attachments(p, &mut parts);
+            }
+            for (index, (_, _, body, _)) in parts.into_iter().enumerate() {
+                if let (None, Some(data)) = (body.attachment_id.as_ref(), body.data.as_ref()) {
+                    if cache.len() >= INLINE_PARTS_MAX {
+                        cache.clear();
+                    }
+                    cache.insert((m.id.clone(), index), data.clone());
+                }
+            }
+        }
+    }
+
+    /// The `Message-ID` and `References` headers of one message, asked from
+    /// Gmail: for a reply to mail that was synced before the store kept them.
+    pub async fn message_reply_headers(
+        &self,
+        account_id: &AccountId,
+        message_id: &MessageId,
+    ) -> Result<(Option<String>, Option<String>), MailError> {
+        let wire: WireMessage = self
+            .get_json(
+                account_id,
+                &format!(
+                    "{API}/messages/{message_id}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References"
+                ),
+            )
+            .await?;
+        let get = |name: &str| {
+            wire.payload
+                .as_ref()
+                .and_then(|p| header(p, name))
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        Ok((get("Message-ID"), get("References")))
+    }
+
+    /// The addresses this account may send from (`users.settings.sendAs`):
+    /// its own and its verified aliases. Asked once per session.
+    pub async fn list_send_as(&self, account_id: &AccountId) -> Result<Vec<SendAs>, MailError> {
+        if let Some(cached) = self.send_as.lock().await.get(account_id) {
+            return Ok(cached.clone());
+        }
+        let list: WireSendAsList = self
+            .get_json(account_id, &format!("{API}/settings/sendAs"))
+            .await?;
+        let addresses = send_as_from_wire(list);
+        self.send_as
+            .lock()
+            .await
+            .insert(account_id.clone(), addresses.clone());
+        Ok(addresses)
+    }
+
+    /// The `From` header for mail sent from `addr`: the alias's display
+    /// name when Gmail knows one (asked once, never an error), else the
+    /// bare address.
+    async fn sender_header(&self, account_id: &AccountId, addr: &str) -> String {
+        let name = self
+            .list_send_as(account_id)
+            .await
+            .ok()
+            .and_then(|list| {
+                list.into_iter()
+                    .find(|a| a.email.eq_ignore_ascii_case(addr))
+                    .map(|a| a.name)
+            })
+            .unwrap_or_default();
+        format_from(&name, addr)
+    }
+
+    /// Contacts matching what the user typed in a recipient field, from the
+    /// People API: saved contacts, then "other contacts" (people written to
+    /// before). At most `limit` from each.
+    pub async fn search_people(
+        &self,
+        account_id: &AccountId,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<PersonMatch>, MailError> {
+        self.warm_people_search(account_id).await;
+        let q = urlencode(query);
+        let size = limit.clamp(1, 30);
+        let contacts = format!(
+            "https://people.googleapis.com/v1/people:searchContacts?query={q}&readMask=names,emailAddresses,photos&pageSize={size}"
+        );
+        let others = format!(
+            "https://people.googleapis.com/v1/otherContacts:search?query={q}&readMask=names,emailAddresses,photos&pageSize={size}"
+        );
+        let (contacts, others) = tokio::join!(
+            self.get_json::<WirePeopleSearch>(account_id, &contacts),
+            self.get_json::<WirePeopleSearch>(account_id, &others),
+        );
+        // One of the two failing (a grant without the "other contacts"
+        // scope) still leaves the other's answers.
+        let (contacts, others) = match (contacts, others) {
+            (Err(e), Err(_)) => return Err(e),
+            (a, b) => (a.ok(), b.ok()),
+        };
+        Ok(contacts
+            .into_iter()
+            .chain(others)
+            .flat_map(people_matches)
+            .collect())
+    }
+
+    /// People API search caches need one warmup request per session.
+    async fn warm_people_search(&self, account_id: &AccountId) {
+        if self.photo_warmed.lock().await.insert(account_id.clone()) {
+            let _ = self
+                .get_json::<serde_json::Value>(
+                    account_id,
+                    "https://people.googleapis.com/v1/people:searchContacts?query=&readMask=photos",
+                )
+                .await;
+            let _ = self
+                .get_json::<serde_json::Value>(
+                    account_id,
+                    "https://people.googleapis.com/v1/otherContacts:search?query=&readMask=photos",
+                )
+                .await;
+        }
+    }
+
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         account_id: &AccountId,
         url: &str,
+    ) -> Result<T, MailError> {
+        self.get_json_with(account_id, url, false).await
+    }
+
+    /// `get_json` for an answer that may be large (an attachment, a full
+    /// thread): held to `STALL_TIMEOUT` between chunks, not to the request
+    /// timeout, which would cut a slow download that is still coming in.
+    async fn get_json_big<T: serde::de::DeserializeOwned>(
+        &self,
+        account_id: &AccountId,
+        url: &str,
+    ) -> Result<T, MailError> {
+        self.get_json_with(account_id, url, true).await
+    }
+
+    async fn get_json_with<T: serde::de::DeserializeOwned>(
+        &self,
+        account_id: &AccountId,
+        url: &str,
+        big: bool,
     ) -> Result<T, MailError> {
         // Reads are idempotent, so a rate limit is retried here with
         // exponential backoff (Gmail's documented remedy) and only reaches
@@ -300,14 +615,20 @@ impl GmailProvider {
         loop {
             self.wait_cooldown(account_id).await;
             let token = self.access_token(account_id).await?;
-            let sent = self
-                .http
-                .get(url)
-                .bearer_auth(token)
+            let mut request = self.http.get(url).bearer_auth(token);
+            if big {
+                request = request.timeout(TRANSFER_TIMEOUT);
+            }
+            let sent = request
                 .send()
                 .await
                 .map_err(|e| MailError::Network(e.to_string()))?;
             match Self::check(sent).await {
+                Ok(resp) if big => {
+                    let bytes = read_body(resp).await?;
+                    return serde_json::from_slice(&bytes)
+                        .map_err(|e| MailError::Provider(e.to_string()));
+                }
                 Ok(resp) => {
                     return resp
                         .json::<T>()
@@ -447,6 +768,9 @@ impl GmailProvider {
             .http
             .request(method, url)
             .bearer_auth(token)
+            // A send with attachments is many MB going up: not held to the
+            // request timeout, which is sized for small calls.
+            .timeout(TRANSFER_TIMEOUT)
             .header(
                 "Content-Type",
                 format!("multipart/related; boundary=\"{B}\""),
@@ -694,8 +1018,94 @@ struct WirePeopleResult {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WirePerson {
     photos: Option<Vec<WirePhoto>>,
+    #[serde(default)]
+    names: Vec<WirePersonName>,
+    #[serde(default)]
+    email_addresses: Vec<WirePersonEmail>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WirePersonName {
+    #[serde(default)]
+    display_name: String,
+}
+
+#[derive(Deserialize)]
+struct WirePersonEmail {
+    #[serde(default)]
+    value: String,
+}
+
+/// One entry per address a found person has (a contact may hold several).
+fn people_matches(search: WirePeopleSearch) -> Vec<PersonMatch> {
+    search
+        .results
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|r| r.person)
+        .flat_map(|p| {
+            let name = p
+                .names
+                .first()
+                .map(|n| n.display_name.trim().to_string())
+                .unwrap_or_default();
+            let photo_url = p
+                .photos
+                .unwrap_or_default()
+                .into_iter()
+                .find(|ph| !ph.default.unwrap_or(false) && ph.url.is_some())
+                .and_then(|ph| ph.url);
+            p.email_addresses
+                .into_iter()
+                .map(|e| e.value.trim().to_string())
+                .filter(|e| !e.is_empty())
+                .map(move |email| PersonMatch {
+                    name: name.clone(),
+                    email,
+                    photo_url: photo_url.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireSendAsList {
+    #[serde(default)]
+    send_as: Vec<WireSendAs>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireSendAs {
+    send_as_email: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    is_default: bool,
+    #[serde(default)]
+    is_primary: bool,
+    #[serde(default)]
+    verification_status: String,
+}
+
+/// The account's own address and the aliases it has verified: Gmail
+/// refuses to send from one still pending.
+fn send_as_from_wire(list: WireSendAsList) -> Vec<SendAs> {
+    list.send_as
+        .into_iter()
+        .filter(|a| a.is_primary || a.verification_status == "accepted")
+        .map(|a| SendAs {
+            email: a.send_as_email,
+            name: a.display_name,
+            is_default: a.is_default,
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -878,6 +1288,82 @@ struct WireDraftMessage {
 
 // ------------------------------------------------------------------ mapping
 
+/// `threads.get` at the metadata tier, asking for `METADATA_HEADERS`.
+fn thread_metadata_url(thread_id: &str) -> String {
+    let headers: String = METADATA_HEADERS
+        .iter()
+        .map(|h| format!("&metadataHeaders={h}"))
+        .collect();
+    format!("{API}/threads/{thread_id}?format=metadata{headers}")
+}
+
+/// A response body read chunk by chunk: an error when nothing arrives for
+/// `STALL_TIMEOUT`, however long the whole download takes.
+async fn read_body(mut resp: reqwest::Response) -> Result<Vec<u8>, MailError> {
+    let mut bytes = Vec::with_capacity(resp.content_length().unwrap_or(0) as usize);
+    loop {
+        match tokio::time::timeout(STALL_TIMEOUT, resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => bytes.extend_from_slice(&chunk),
+            Ok(Ok(None)) => return Ok(bytes),
+            Ok(Err(e)) => return Err(MailError::Network(e.to_string())),
+            Err(_) => return Err(MailError::Network("download stalled".into())),
+        }
+    }
+}
+
+/// The entries of an address-list header (`To`, `Cc`), each kept as
+/// written (`Name <addr>` or a bare address). Commas inside a quoted name
+/// or angle brackets do not split: `"Doe, Jane" <jane@x.com>` is one entry.
+fn split_addresses(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let (mut cur, mut quoted, mut angle) = (String::new(), false, false);
+    for c in value.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '<' if !quoted => angle = true,
+            '>' if !quoted => angle = false,
+            ',' if !quoted && !angle => {
+                parts.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    parts.push(cur);
+    parts
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
+/// A header value safe to write into outgoing mail: one line.
+fn one_line(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// The `From` header value: `"Name" <addr>`, or the bare address when the
+/// alias has no display name.
+fn format_from(name: &str, addr: &str) -> String {
+    let addr = one_line(addr);
+    let name = one_line(name);
+    if name.is_empty() {
+        return addr;
+    }
+    if name.is_ascii() {
+        let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{quoted}\" <{addr}>")
+    } else {
+        format!("{} <{addr}>", encode_header(&name))
+    }
+}
+
 fn header<'a>(part: &'a WirePart, name: &str) -> Option<&'a str> {
     part.headers
         .iter()
@@ -966,10 +1452,18 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
         .and_then(|p| header(p, "From"))
         .unwrap_or("")
         .to_string();
-    let to_addrs = payload
-        .and_then(|p| header(p, "To"))
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
-        .unwrap_or_default();
+    let addresses = |name: &str| {
+        payload
+            .and_then(|p| header(p, name))
+            .map(split_addresses)
+            .unwrap_or_default()
+    };
+    let text_header = |name: &str| {
+        payload
+            .and_then(|p| header(p, name))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
     let body_of = |mime: &str| {
         payload
             .and_then(|p| find_part(p, mime))
@@ -999,13 +1493,27 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
         thread_id: thread_id.to_string(),
         account_id: account_id.clone(),
         from_addr,
-        to_addrs,
+        to_addrs: addresses("To"),
+        cc_addrs: addresses("Cc"),
         date: w.internal_date.parse().unwrap_or(0),
         snippet: decode_entities(&w.snippet),
         body_html,
         body_text,
         label_ids: w.label_ids.clone(),
         is_read: !w.label_ids.iter().any(|l| l == "UNREAD"),
+        message_id_header: text_header("Message-ID"),
+        references_header: text_header("References"),
+        list_unsubscribe: text_header("List-Unsubscribe"),
+        // RFC 8058: the header's one defined value, compared loosely
+        // (senders vary the case and the spacing).
+        list_unsubscribe_one_click: text_header("List-Unsubscribe-Post").is_some_and(|v| {
+            v.to_ascii_lowercase()
+                .replace(' ', "")
+                .contains("list-unsubscribe=one-click")
+        }),
+        // Which tier this came from is the caller's knowledge (`fetch_full`
+        // sets it): the metadata tier has no body to tell it apart by.
+        body_fetched: false,
     }
 }
 
@@ -1077,9 +1585,25 @@ fn encode_header(value: &str) -> String {
     }
 }
 
-/// Minimal RFC 2822 message. Gmail fills in From/Date/Message-ID. With an
-/// HTML body: multipart/alternative (plain part first, html preferred).
-/// With attachments: multipart/mixed wrapping the body plus one part each.
+/// The headers a message carries beyond its recipients and subject.
+#[derive(Default)]
+struct MimeExtra<'a> {
+    /// The whole `From` value (`format_from`), when sending from an alias.
+    /// None leaves it to Gmail, which writes the account's default.
+    from: Option<String>,
+    /// Reply threading (RFC 5322 3.6.4). Gmail's `threadId` only files the
+    /// mail in the sender's own thread; the recipient's client threads by
+    /// these, and a reply without them showed up there as a new
+    /// conversation.
+    in_reply_to: Option<&'a str>,
+    references: Option<&'a str>,
+}
+
+/// Minimal RFC 2822 message. Gmail fills in Date/Message-ID, and From
+/// unless `extra` names one. With an HTML body: multipart/alternative
+/// (plain part first, html preferred). With attachments: multipart/mixed
+/// wrapping the body plus one part each.
+#[allow(clippy::too_many_arguments)]
 fn build_mime(
     to: &[String],
     cc: &[String],
@@ -1088,8 +1612,12 @@ fn build_mime(
     body: &str,
     body_html: Option<&str>,
     attachments: &[OutAttachment],
+    extra: &MimeExtra<'_>,
 ) -> String {
     let mut mime = String::new();
+    if let Some(from) = &extra.from {
+        mime.push_str(&format!("From: {from}\r\n"));
+    }
     mime.push_str(&format!("To: {}\r\n", to.join(", ")));
     if !cc.is_empty() {
         mime.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
@@ -1098,6 +1626,12 @@ fn build_mime(
         mime.push_str(&format!("Bcc: {}\r\n", bcc.join(", ")));
     }
     mime.push_str(&format!("Subject: {}\r\n", encode_header(subject)));
+    if let Some(id) = extra.in_reply_to.map(one_line).filter(|v| !v.is_empty()) {
+        mime.push_str(&format!("In-Reply-To: {id}\r\n"));
+    }
+    if let Some(refs) = extra.references.map(one_line).filter(|v| !v.is_empty()) {
+        mime.push_str(&format!("References: {refs}\r\n"));
+    }
     mime.push_str("MIME-Version: 1.0\r\n");
     // base64 bodies sidestep line-length and bare-CRLF pitfalls entirely
     // (and '-' is outside the base64 alphabet, so a part can never fake a
@@ -1225,6 +1759,22 @@ impl MailProvider for GmailProvider {
         .await
     }
 
+    async fn create_label(&self, account_id: &AccountId, name: &str) -> Result<Label, MailError> {
+        let body = serde_json::json!({
+            "name": name,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        });
+        let wire: WireLabel = self
+            .post_json_returning(account_id, &format!("{API}/labels"), &body)
+            .await?;
+        Ok(Label {
+            account_id: account_id.clone(),
+            id: wire.id,
+            name: wire.name,
+        })
+    }
+
     async fn delete_label(&self, account_id: &AccountId, label_id: &str) -> Result<(), MailError> {
         self.delete(account_id, &format!("{API}/labels/{label_id}"))
             .await
@@ -1285,28 +1835,13 @@ impl MailProvider for GmailProvider {
 
         // New mail: refetch the whole thread at the metadata tier (the feed
         // carries no headers) — same shape as backfill, bodies stay lazy.
-        for chunk in added_threads.chunks(FETCH_CONCURRENCY) {
-            let futs: Vec<_> = chunk
-                .iter()
-                .map(|tid| async move {
-                    let url = format!(
-                        "{API}/threads/{tid}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject"
-                    );
-                    match self.get_json::<WireThread>(account_id, &url).await {
-                        Ok(wire) => Ok(Some(to_thread(account_id, &wire))),
-                        // 404: thread vanished again since the feed entry.
-                        Err(e) if is_not_found(&e) => Ok(None),
-                        Err(e) => Err(e),
-                    }
-                })
-                .collect();
-            for (thread, messages) in futures::future::try_join_all(futs)
-                .await?
-                .into_iter()
-                .flatten()
-            {
-                changes.push(HistoryChange::MessageAdded { thread, messages });
-            }
+        // (A 404 — the thread vanished again since the feed entry — is
+        // left out by the fetch.)
+        for (thread, messages) in self
+            .fetch_thread_metadata(account_id, &added_threads)
+            .await?
+        {
+            changes.push(HistoryChange::MessageAdded { thread, messages });
         }
 
         let latest_history_id = history_checkpoint(&list, start_history_id);
@@ -1322,14 +1857,8 @@ impl MailProvider for GmailProvider {
         account_id: &AccountId,
         thread_id: &ThreadId,
     ) -> Result<(bool, Vec<Message>), MailError> {
-        let wire: WireThread = self
-            .get_json(
-                account_id,
-                &format!("{API}/threads/{thread_id}?format=full"),
-            )
-            .await?;
-        let (thread, messages) = to_thread(account_id, &wire);
-        Ok((thread.has_attachment, messages))
+        let full = self.fetch_full(account_id, thread_id, &[], 0).await?;
+        Ok((full.has_attachment, full.messages))
     }
 
     async fn get_draft(
@@ -1338,7 +1867,7 @@ impl MailProvider for GmailProvider {
         message_id: &MessageId,
     ) -> Result<DraftContent, MailError> {
         let wire: WireMessage = self
-            .get_json(
+            .get_json_big(
                 account_id,
                 &format!("{API}/messages/{message_id}?format=full"),
             )
@@ -1353,7 +1882,7 @@ impl MailProvider for GmailProvider {
                 (Some(d), _) => d.to_string(),
                 (None, Some(aid)) => {
                     let a: WireBody = self
-                        .get_json(
+                        .get_json_big(
                             account_id,
                             &format!("{API}/messages/{message_id}/attachments/{aid}"),
                         )
@@ -1380,11 +1909,12 @@ impl MailProvider for GmailProvider {
         thread_id: &ThreadId,
     ) -> Result<Vec<AttachmentRef>, MailError> {
         let wire: WireThread = self
-            .get_json(
+            .get_json_big(
                 account_id,
                 &format!("{API}/threads/{thread_id}?format=full"),
             )
             .await?;
+        self.remember_inline_parts(&wire.messages);
         Ok(thread_attachments(&wire))
     }
 
@@ -1401,24 +1931,38 @@ impl MailProvider for GmailProvider {
             let index: usize = n
                 .parse()
                 .map_err(|_| MailError::Provider("bad inline attachment id".into()))?;
-            let wire: WireMessage = self
-                .get_json(
-                    account_id,
-                    &format!("{API}/messages/{message_id}?format=full"),
-                )
-                .await?;
-            let mut parts = Vec::new();
-            if let Some(p) = wire.payload.as_ref() {
-                collect_attachments(p, &mut parts);
+            // The full fetch that listed this part usually kept its data:
+            // every inline picture used to download the message again.
+            let remembered = self
+                .inline_parts
+                .lock()
+                .unwrap()
+                .get(&(message_id.clone(), index))
+                .cloned();
+            match remembered {
+                Some(data) => data,
+                None => {
+                    let wire: WireMessage = self
+                        .get_json_big(
+                            account_id,
+                            &format!("{API}/messages/{message_id}?format=full"),
+                        )
+                        .await?;
+                    self.remember_inline_parts(std::slice::from_ref(&wire));
+                    let mut parts = Vec::new();
+                    if let Some(p) = wire.payload.as_ref() {
+                        collect_attachments(p, &mut parts);
+                    }
+                    parts
+                        .get(index)
+                        .and_then(|(_, _, body, _)| body.data.clone())
+                        .ok_or_else(|| MailError::Provider("attachment part is gone".into()))?
+                }
             }
-            parts
-                .get(index)
-                .and_then(|(_, _, body, _)| body.data.clone())
-                .ok_or_else(|| MailError::Provider("attachment part is gone".into()))?
         } else {
             let aid = &attachment.attachment_id;
             let body: WireBody = self
-                .get_json(
+                .get_json_big(
                     account_id,
                     &format!("{API}/messages/{message_id}/attachments/{aid}"),
                 )
@@ -1438,8 +1982,19 @@ impl MailProvider for GmailProvider {
             body_html,
             attachments,
             reply_to_thread,
+            from_addr,
+            in_reply_to,
+            references,
         } = mutation
         {
+            let extra = MimeExtra {
+                from: match from_addr {
+                    Some(addr) => Some(self.sender_header(account_id, addr).await),
+                    None => None,
+                },
+                in_reply_to: in_reply_to.as_deref(),
+                references: references.as_deref(),
+            };
             let mime = build_mime(
                 to,
                 cc,
@@ -1448,6 +2003,7 @@ impl MailProvider for GmailProvider {
                 body_text,
                 body_html.as_deref(),
                 attachments,
+                &extra,
             );
             if attachments.is_empty() {
                 let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime);
@@ -1478,8 +2034,19 @@ impl MailProvider for GmailProvider {
             body_html,
             attachments,
             reply_to_thread,
+            from_addr,
+            in_reply_to,
+            references,
         } = mutation
         {
+            let extra = MimeExtra {
+                from: match from_addr {
+                    Some(addr) => Some(self.sender_header(account_id, addr).await),
+                    None => None,
+                },
+                in_reply_to: in_reply_to.as_deref(),
+                references: references.as_deref(),
+            };
             let mut mime = format!("Message-ID: {}\r\n", draft_message_id(key));
             mime.push_str(&build_mime(
                 to,
@@ -1489,6 +2056,7 @@ impl MailProvider for GmailProvider {
                 body_text,
                 body_html.as_deref(),
                 attachments,
+                &extra,
             ));
             return self
                 .save_draft(account_id, key, &mime, reply_to_thread.as_ref())
@@ -1503,6 +2071,23 @@ impl MailProvider for GmailProvider {
                     account_id,
                     &format!("{API}/threads/{thread_id}/trash"),
                     &serde_json::json!({}),
+                )
+                .await;
+        }
+        if let Mutation::Untrash { thread_id } = mutation {
+            // `threads.untrash` only lifts TRASH; the inbox is a label of
+            // its own. Both calls are safe to repeat if the second fails.
+            self.post_json(
+                account_id,
+                &format!("{API}/threads/{thread_id}/untrash"),
+                &serde_json::json!({}),
+            )
+            .await?;
+            return self
+                .post_json(
+                    account_id,
+                    &format!("{API}/threads/{thread_id}/modify"),
+                    &serde_json::json!({ "addLabelIds": ["INBOX"] }),
                 )
                 .await;
         }
@@ -1585,7 +2170,10 @@ fn header_addresses(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// Headers and bodies of a draft message (attachments are fetched by the caller).
+/// Headers and bodies of a draft message (attachments are fetched by the
+/// caller). The HTML body is sanitized like any mail's: a draft may have
+/// been written anywhere (another client, a message saved as a draft),
+/// and the composer loads it into a page of its own.
 fn to_draft(w: &WireMessage) -> DraftContent {
     let payload = w.payload.as_ref();
     let list = |name: &str| {
@@ -1605,7 +2193,7 @@ fn to_draft(w: &WireMessage) -> DraftContent {
             .unwrap_or("")
             .to_string(),
         body_text: m.body_text,
-        body_html: m.body_html,
+        body_html: m.body_html.as_deref().map(sanitize::html),
         attachments: Vec::new(),
     }
 }
@@ -1648,14 +2236,20 @@ fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<WireAttachment<'a>>
 /// `inline:<n>`, its index among the message's attachment parts, so
 /// `fetch_attachment` can find it again in the message payload.
 fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
-    let mut out = Vec::new();
-    for m in &wire.messages {
-        let mut parts = Vec::new();
-        if let Some(p) = m.payload.as_ref() {
-            collect_attachments(p, &mut parts);
-        }
-        for (index, (filename, mime_type, body, content_id)) in parts.into_iter().enumerate() {
-            out.push(AttachmentRef {
+    wire.messages.iter().flat_map(message_attachments).collect()
+}
+
+/// One message's attachment parts (see `thread_attachments`).
+fn message_attachments(m: &WireMessage) -> Vec<AttachmentRef> {
+    let mut parts = Vec::new();
+    if let Some(p) = m.payload.as_ref() {
+        collect_attachments(p, &mut parts);
+    }
+    parts
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (filename, mime_type, body, content_id))| AttachmentRef {
                 message_id: m.id.clone(),
                 attachment_id: body
                     .attachment_id
@@ -1669,10 +2263,9 @@ fn thread_attachments(wire: &WireThread) -> Vec<AttachmentRef> {
                 },
                 size: body.size,
                 content_id,
-            });
-        }
-    }
-    out
+            },
+        )
+        .collect()
 }
 
 /// Message-ID a saved draft carries, so it can be found again by its
@@ -1725,7 +2318,21 @@ fn modify_body(mutation: &Mutation) -> Option<(&ThreadId, serde_json::Value)> {
             };
             (thread_id, serde_json::json!({ key: [label_id] }))
         }
+        // Spam is a label like the inbox: one flip moves the thread there,
+        // the opposite one brings it back.
+        Mutation::MarkSpam { thread_id, spam } => {
+            let (add, remove) = if *spam {
+                ("SPAM", "INBOX")
+            } else {
+                ("INBOX", "SPAM")
+            };
+            (
+                thread_id,
+                serde_json::json!({ "addLabelIds": [add], "removeLabelIds": [remove] }),
+            )
+        }
         Mutation::Trash { .. }
+        | Mutation::Untrash { .. }
         | Mutation::Send { .. }
         | Mutation::SaveDraft { .. }
         | Mutation::DeleteDraft { .. } => return None,
@@ -1869,6 +2476,7 @@ mod tests {
             "body text",
             None,
             &[],
+            &MimeExtra::default(),
         );
         assert!(mime.starts_with("To: a@x.com\r\n"));
         assert!(mime.contains("Cc: c@x.com\r\n"));
@@ -1893,6 +2501,7 @@ mod tests {
             "plain body",
             Some("<b>rich</b> body"),
             &[],
+            &MimeExtra::default(),
         );
         assert!(mime.contains("Content-Type: multipart/alternative; boundary="));
         assert!(mime.contains("Content-Type: text/plain; charset=UTF-8\r\n"));
@@ -1934,6 +2543,7 @@ mod tests {
             "plain body",
             Some("<b>rich</b>"),
             std::slice::from_ref(&att),
+            &MimeExtra::default(),
         );
         // mixed wraps alternative; attachment part carries sanitized name.
         assert!(mime.contains("Content-Type: multipart/mixed; boundary="));
@@ -1943,7 +2553,16 @@ mod tests {
         assert!(mime.trim_end().ends_with("--"));
 
         // No html, no attachments → still a bare text/plain message.
-        let plain = build_mime(&["a@x.com".to_string()], &[], &[], "Hi", "b", None, &[]);
+        let plain = build_mime(
+            &["a@x.com".to_string()],
+            &[],
+            &[],
+            "Hi",
+            "b",
+            None,
+            &[],
+            &MimeExtra::default(),
+        );
         assert!(plain.contains("Content-Type: text/plain"));
         assert!(!plain.contains("multipart"));
     }
@@ -1992,6 +2611,7 @@ mod tests {
             "b",
             None,
             &[],
+            &MimeExtra::default(),
         );
         assert!(mime.contains("Subject: Plain subject\r\n"));
     }
@@ -2350,5 +2970,369 @@ mod tests {
         assert_eq!(user.len(), 1);
         assert_eq!(user[0].id, "Label_7");
         assert_eq!(user[0].name, "Receipts");
+    }
+
+    // ---- Cc, threading and unsubscribe headers; outgoing headers
+
+    struct NoSecrets;
+    impl SecretStore for NoSecrets {
+        fn get(&self, _: &str) -> Result<Option<String>, heypigeon_core::ports::StoreError> {
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), heypigeon_core::ports::StoreError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), heypigeon_core::ports::StoreError> {
+            Ok(())
+        }
+    }
+
+    fn provider() -> GmailProvider {
+        GmailProvider::new(
+            ClientConfig {
+                client_id: "id".into(),
+                client_secret: None,
+            },
+            Arc::new(NoSecrets),
+        )
+    }
+
+    fn list_message() -> serde_json::Value {
+        serde_json::json!({
+            "id": "m1",
+            "labelIds": ["INBOX"],
+            "snippet": "Weekly deals",
+            "internalDate": "1756600000000",
+            "payload": {
+                "mimeType": "text/html",
+                "headers": [
+                    {"name": "From", "value": "Shop <news@shop.com>"},
+                    {"name": "To", "value": "\"Doe, Jane\" <jane@x.com>, me@example.com"},
+                    {"name": "CC", "value": "Sam <sam@x.com>,lee@x.com , "},
+                    {"name": "Subject", "value": "Deals"},
+                    {"name": "Message-Id", "value": " <deal-1@shop.com> "},
+                    {"name": "References", "value": "<deal-0@shop.com>"},
+                    {"name": "List-Unsubscribe",
+                     "value": "<mailto:u@shop.com>, <https://shop.com/u?id=1>"},
+                    {"name": "List-Unsubscribe-Post", "value": "List-Unsubscribe=One-Click"}
+                ]
+            }
+        })
+    }
+
+    #[test]
+    fn metadata_tier_asks_for_the_headers_the_store_keeps() {
+        let url = thread_metadata_url("t1");
+        assert!(url.starts_with(&format!("{API}/threads/t1?format=metadata&")));
+        for h in [
+            "From",
+            "To",
+            "Cc",
+            "Subject",
+            "Message-ID",
+            "References",
+            "List-Unsubscribe",
+            "List-Unsubscribe-Post",
+        ] {
+            assert!(url.contains(&format!("&metadataHeaders={h}")), "{h}: {url}");
+        }
+    }
+
+    #[test]
+    fn message_keeps_cc_threading_and_unsubscribe_headers() {
+        let wire: WireMessage = serde_json::from_value(list_message()).unwrap();
+        let m = to_message(&"acc".to_string(), "t1", &wire);
+
+        // A comma inside a quoted name does not split the entry, and both
+        // lists keep their entries as written.
+        assert_eq!(
+            m.to_addrs,
+            vec!["\"Doe, Jane\" <jane@x.com>", "me@example.com"]
+        );
+        assert_eq!(m.cc_addrs, vec!["Sam <sam@x.com>", "lee@x.com"]);
+        // Header names match whatever their case.
+        assert_eq!(m.message_id_header.as_deref(), Some("<deal-1@shop.com>"));
+        assert_eq!(m.references_header.as_deref(), Some("<deal-0@shop.com>"));
+        assert_eq!(
+            m.list_unsubscribe.as_deref(),
+            Some("<mailto:u@shop.com>, <https://shop.com/u?id=1>")
+        );
+        assert!(m.list_unsubscribe_one_click);
+        assert!(!m.body_fetched, "the list tier is not a full fetch");
+    }
+
+    #[test]
+    fn message_without_the_optional_headers() {
+        let mut json = list_message();
+        json["payload"]["headers"] = serde_json::json!([
+            {"name": "From", "value": "a@x.com"},
+            {"name": "To", "value": "me@example.com"},
+            {"name": "List-Unsubscribe", "value": "<https://x.com/u>"},
+            {"name": "List-Unsubscribe-Post", "value": "something else"}
+        ]);
+        let wire: WireMessage = serde_json::from_value(json).unwrap();
+        let m = to_message(&"acc".to_string(), "t1", &wire);
+        assert!(m.cc_addrs.is_empty());
+        assert!(m.message_id_header.is_none() && m.references_header.is_none());
+        assert_eq!(m.list_unsubscribe.as_deref(), Some("<https://x.com/u>"));
+        assert!(!m.list_unsubscribe_one_click);
+    }
+
+    /// A full fetch marks every message as fetched — also the one with no
+    /// body at all — and hands over what is attached, inline parts' data
+    /// included.
+    #[test]
+    fn full_fetch_marks_messages_fetched_and_keeps_inline_parts() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "messages": [
+                {"id": "m1", "labelIds": ["INBOX"], "internalDate": "1",
+                 "payload": {"mimeType": "multipart/mixed", "headers": [], "parts": [
+                     {"mimeType": "application/pdf", "filename": "a.pdf", "headers": [],
+                      "body": {"attachmentId": "att-1", "size": 10}},
+                     {"mimeType": "image/png", "filename": "", "body": {"data": "aGk", "size": 2},
+                      "headers": [{"name": "Content-ID", "value": "<logo@x>"}]}
+                 ]}},
+                {"id": "m2", "labelIds": ["INBOX"], "internalDate": "2",
+                 "payload": {"mimeType": "text/plain", "headers": [], "body": {"size": 0}}}
+            ]
+        });
+        let wire: WireThread = serde_json::from_value(json).unwrap();
+        let p = provider();
+        let full = p.full_fetch(&"acc".to_string(), &"t1".to_string(), &wire.messages, true);
+
+        assert!(full.whole_thread && full.has_attachment);
+        assert_eq!(full.messages.len(), 2);
+        assert!(full.messages.iter().all(|m| m.body_fetched));
+        assert!(full.messages[1].body_text.is_none() && full.messages[1].body_html.is_none());
+        let ids: Vec<&str> = full
+            .attachments
+            .iter()
+            .map(|a| a.attachment_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["att-1", "inline:1"]);
+        assert_eq!(
+            p.inline_parts
+                .lock()
+                .unwrap()
+                .get(&("m1".to_string(), 1))
+                .map(String::as_str),
+            Some("aGk")
+        );
+    }
+
+    #[test]
+    fn reply_and_alias_headers_are_written() {
+        let extra = MimeExtra {
+            from: Some(format_from("Priya Nair", "priya@alias.co")),
+            in_reply_to: Some("<two@x.com>"),
+            references: Some("<one@x.com>\r\n <two@x.com>"),
+        };
+        let mime = build_mime(
+            &["a@x.com".to_string()],
+            &[],
+            &[],
+            "Re: Hi",
+            "b",
+            None,
+            &[],
+            &extra,
+        );
+        assert!(mime.starts_with("From: \"Priya Nair\" <priya@alias.co>\r\nTo: a@x.com\r\n"));
+        assert!(mime.contains("\r\nIn-Reply-To: <two@x.com>\r\n"));
+        // A folded header value goes out on one line: a line break in it
+        // would start a new header.
+        assert!(mime.contains("\r\nReferences: <one@x.com>   <two@x.com>\r\n"));
+
+        // Nothing to say, nothing written (Gmail fills in From itself).
+        let plain = build_mime(
+            &["a@x.com".to_string()],
+            &[],
+            &[],
+            "Hi",
+            "b",
+            None,
+            &[],
+            &MimeExtra::default(),
+        );
+        assert!(!plain.contains("From:") && !plain.contains("In-Reply-To:"));
+        assert!(!plain.contains("References:"));
+    }
+
+    #[test]
+    fn from_header_forms() {
+        assert_eq!(format_from("", "a@x.com"), "a@x.com");
+        assert_eq!(format_from("Ann Lee", "a@x.com"), "\"Ann Lee\" <a@x.com>");
+        assert_eq!(
+            format_from("Ann \"The\" Lee", "a@x.com"),
+            "\"Ann \\\"The\\\" Lee\" <a@x.com>"
+        );
+        assert_eq!(
+            format_from("Žofia", "z@x.com"),
+            "=?UTF-8?B?xb1vZmlh?= <z@x.com>"
+        );
+        // No way to smuggle a second header in.
+        assert_eq!(
+            format_from("Ann\r\nBcc: x@y.z", "a@x.com\r\n"),
+            "\"Ann  Bcc: x@y.z\" <a@x.com>"
+        );
+    }
+
+    #[test]
+    fn spam_and_untrash_wire_bodies() {
+        let spam = Mutation::MarkSpam {
+            thread_id: "t1".into(),
+            spam: true,
+        };
+        let (id, body) = modify_body(&spam).unwrap();
+        assert_eq!(id, "t1");
+        assert_eq!(
+            body,
+            serde_json::json!({"addLabelIds": ["SPAM"], "removeLabelIds": ["INBOX"]})
+        );
+        let not_spam = Mutation::MarkSpam {
+            thread_id: "t1".into(),
+            spam: false,
+        };
+        let (_, body) = modify_body(&not_spam).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"addLabelIds": ["INBOX"], "removeLabelIds": ["SPAM"]})
+        );
+        // Untrash has its own endpoint.
+        assert!(modify_body(&Mutation::Untrash {
+            thread_id: "t1".into()
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn send_as_lists_the_primary_and_verified_aliases_only() {
+        let list: WireSendAsList = serde_json::from_value(serde_json::json!({
+            "sendAs": [
+                {"sendAsEmail": "me@x.com", "displayName": "Me", "isDefault": true,
+                 "isPrimary": true},
+                {"sendAsEmail": "alias@y.com", "displayName": "", "verificationStatus": "accepted"},
+                {"sendAsEmail": "pending@z.com", "verificationStatus": "pending"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            send_as_from_wire(list),
+            vec![
+                SendAs {
+                    email: "me@x.com".into(),
+                    name: "Me".into(),
+                    is_default: true
+                },
+                SendAs {
+                    email: "alias@y.com".into(),
+                    name: String::new(),
+                    is_default: false
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn people_search_results_become_one_match_per_address() {
+        let search: WirePeopleSearch = serde_json::from_value(serde_json::json!({
+            "results": [
+                {"person": {
+                    "names": [{"displayName": "Priya Nair"}],
+                    "emailAddresses": [{"value": "priya@acme.co"}, {"value": "p@home.net"}],
+                    "photos": [{"url": "https://photo/default", "default": true},
+                               {"url": "https://photo/p"}]
+                }},
+                {"person": {"emailAddresses": [{"value": "nameless@x.com"}]}},
+                {"person": {"names": [{"displayName": "No Address"}]}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            people_matches(search),
+            vec![
+                PersonMatch {
+                    name: "Priya Nair".into(),
+                    email: "priya@acme.co".into(),
+                    photo_url: Some("https://photo/p".into())
+                },
+                PersonMatch {
+                    name: "Priya Nair".into(),
+                    email: "p@home.net".into(),
+                    photo_url: Some("https://photo/p".into())
+                },
+                PersonMatch {
+                    name: String::new(),
+                    email: "nameless@x.com".into(),
+                    photo_url: None
+                },
+            ]
+        );
+    }
+
+    // ---- bodies are sanitized where they enter the core
+
+    /// base64url of `text`, the way Gmail carries a part's body.
+    fn part_data(text: &str) -> String {
+        base64::engine::general_purpose::URL_SAFE.encode(text)
+    }
+
+    const RAW_HTML: &str = concat!(
+        "<html><head><title>Hidden title</title></head><body>",
+        "<p onclick=\"steal()\">Hello <a href=\"https://example.com/?a=1&b=2#f\" ",
+        "onmouseover=\"x()\">link</a></p><script>alert(1)</script>",
+        "<img src=\"cid:logo@x\"></body></html>",
+    );
+    const CLEAN_HTML: &str = concat!(
+        "<p>Hello <a href=\"https://example.com/?a=1&amp;b=2#f\" ",
+        "rel=\"noopener noreferrer\">link</a></p><img src=\"cid:logo@x\">",
+    );
+
+    fn html_message() -> serde_json::Value {
+        serde_json::json!({
+            "id": "m1", "labelIds": ["INBOX"], "internalDate": "1",
+            "payload": {"mimeType": "multipart/alternative", "headers": [
+                {"name": "To", "value": "a@x.com"},
+                {"name": "Subject", "value": "Hi"}
+            ], "parts": [
+                {"mimeType": "text/plain", "headers": [],
+                 "body": {"data": part_data("Hello <b>link</b> & more")}},
+                {"mimeType": "text/html", "headers": [], "body": {"data": part_data(RAW_HTML)}}
+            ]}
+        })
+    }
+
+    /// The full fetch is where a body enters the store: its HTML comes out
+    /// sanitized, link and inline picture intact, and the message says so
+    /// (`body_fetched`). The plain text is left exactly as received.
+    #[test]
+    fn full_fetch_sanitizes_html_bodies_once() {
+        let wire: WireMessage = serde_json::from_value(html_message()).unwrap();
+        let p = provider();
+        let full = p.full_fetch(
+            &"acc".to_string(),
+            &"t1".to_string(),
+            std::slice::from_ref(&wire),
+            true,
+        );
+        let m = &full.messages[0];
+        assert!(m.body_fetched);
+        assert_eq!(m.body_html.as_deref(), Some(CLEAN_HTML));
+        assert_eq!(m.body_text.as_deref(), Some("Hello <b>link</b> & more"));
+        // The list tier (and anything else that maps a message) does not
+        // sanitize and does not claim to have.
+        let listed = to_message(&"acc".to_string(), "t1", &wire);
+        assert!(!listed.body_fetched);
+        assert_eq!(listed.body_html.as_deref(), Some(RAW_HTML));
+    }
+
+    #[test]
+    fn a_draft_reaches_the_composer_sanitized() {
+        let wire: WireMessage = serde_json::from_value(html_message()).unwrap();
+        let draft = to_draft(&wire);
+        assert_eq!(draft.body_html.as_deref(), Some(CLEAN_HTML));
+        assert_eq!(draft.body_text.as_deref(), Some("Hello <b>link</b> & more"));
+        assert_eq!(draft.subject, "Hi");
     }
 }

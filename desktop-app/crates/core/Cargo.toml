@@ -9,6 +9,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 log.workspace = true
+# HTML sanitation of mail bodies (sanitize.rs): an allowlist over a real
+# HTML parse.
+ammonia = "4.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

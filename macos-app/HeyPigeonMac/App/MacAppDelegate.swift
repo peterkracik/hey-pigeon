@@ -10,6 +10,7 @@ import UserNotifications
 final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        NewMailNotifier.registerActions()
         // After the window is up: a copy run from the download cannot sign
         // in or update (InstallLocation.swift).
         Task { @MainActor in InstallLocation.warnIfTranslocated() }
@@ -59,7 +60,7 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
 
     @objc private func syncFromDock() {
         guard let model = AppModel.current else { return }
-        Task { await model.sync() }
+        Task { await model.sync(manual: true) }
     }
 
     // MARK: Notification taps → the thread
@@ -74,11 +75,16 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let threadId = response.notification.request.content.userInfo["threadId"] as? String
+        let action = response.actionIdentifier
         completionHandler()
         guard let threadId else { return }
         Task { @MainActor in
-            NSApp.activate()
-            AppModel.current?.openThread(id: threadId)
+            guard let model = AppModel.current else { return }
+            // Reply and a plain click bring the app forward; Done and
+            // Remind act where it is (NewMailNotifier.perform).
+            let quiet = [NotificationActions.done, NotificationActions.remindInAnHour, UNNotificationDismissActionIdentifier]
+            if !quiet.contains(action) { NSApp.activate() }
+            await NewMailNotifier.perform(action, threadId: threadId, model: model)
         }
     }
 

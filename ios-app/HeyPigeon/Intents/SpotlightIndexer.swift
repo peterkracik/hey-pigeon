@@ -36,6 +36,11 @@ enum SpotlightIndexer {
 
     /// The fingerprints of the indexed threads, by id, loaded from disk on
     /// first use and written back a moment after each change.
+    /// The index is behind the store: a thread's bodies arrived since the
+    /// last refresh (`invalidate`), or the last refresh stopped at its cap.
+    /// The Mac's quiet sync rounds skip the refresh while this is false and
+    /// no reload landed.
+    @MainActor private(set) static var needsRefresh = true
     @MainActor private static var loaded: [String: Int]?
     @MainActor private static var saveTask: Task<Void, Never>?
 
@@ -85,6 +90,7 @@ enum SpotlightIndexer {
         for id in plan.forgotten { map[id] = nil }
         map.merge(plan.fresh) { _, new in new }
         fingerprints = map
+        needsRefresh = plan.more
     }
 
     /// What one refresh tells Spotlight: the threads whose fingerprint
@@ -180,12 +186,14 @@ enum SpotlightIndexer {
     @MainActor
     static func invalidate(threadId: String) {
         fingerprints[threadId] = nil
+        needsRefresh = true
     }
 
     /// Forget every fingerprint: the next refresh indexes every thread.
     @MainActor
     static func invalidateAll() {
         fingerprints = [:]
+        needsRefresh = true
     }
 
     /// The fingerprints on disk, next to the store: lost or unreadable, the

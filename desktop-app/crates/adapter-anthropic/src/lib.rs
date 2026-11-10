@@ -26,16 +26,29 @@ pub struct AnthropicProvider {
     api_key: String,
 }
 
-impl AnthropicProvider {
-    pub fn new(api_key: String) -> Self {
-        Self {
+/// The HTTP client every instance shares. A provider value is made per
+/// call (the key is read from the keychain each time), and a client of
+/// its own meant a new connection — a TLS handshake — for every request:
+/// one per email during a triage pass.
+fn http_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
             // A request that never answers used to hang the caller for
             // good: the shells showed a spinner nothing could cancel. Long
             // enough for a completion, short enough to come back with an error.
-            http: reqwest::Client::builder()
+            reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(90))
                 .build()
-                .unwrap_or_default(),
+                .unwrap_or_default()
+        })
+        .clone()
+}
+
+impl AnthropicProvider {
+    pub fn new(api_key: String) -> Self {
+        Self {
+            http: http_client(),
             api_key,
         }
     }

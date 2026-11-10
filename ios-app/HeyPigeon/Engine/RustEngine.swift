@@ -202,6 +202,34 @@ final class RustEngine: MailEngine {
         try await engine.mutate(accountId: accountId, mutation: action.mutation)
     }
 
+    func pendingChanges() -> Int { Int(engine.pendingMutations()) }
+
+    func createLabel(accountId: String, name: String) async throws -> MailLabelItem {
+        let l = try await engine.createLabel(accountId: accountId, name: name)
+        return MailLabelItem(id: l.id, accountId: l.accountId, name: l.name)
+    }
+
+    func renameLabel(_ label: MailLabelItem, to name: String) async throws {
+        try await engine.renameLabel(accountId: label.accountId, labelId: label.id, newName: name)
+    }
+
+    func deleteLabel(_ label: MailLabelItem) async throws {
+        try await engine.deleteLabel(accountId: label.accountId, labelId: label.id)
+    }
+
+    func searchRemote(_ query: String, accountId: String?, limit: Int) async throws -> [ThreadRow] {
+        try await engine.searchRemote(query: query, accountId: accountId, limit: UInt32(limit)).map { ThreadRow($0) }
+    }
+
+    func sendAliases(accountId: String) async throws -> [SendAlias] {
+        try await engine.listSendAs(accountId: accountId).map { SendAlias(email: $0.email, name: $0.name, isDefault: $0.isDefault) }
+    }
+
+    func searchContacts(_ query: String, limit: Int) async -> [ContactMatch] {
+        let found = (try? await engine.searchContacts(query: query, limit: UInt32(limit))) ?? []
+        return found.map { ContactMatch(name: $0.name, email: $0.email) }
+    }
+
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws {
         try engine.setSchedule(threadId: threadId, scheduledAt: date.map(\.epochMs), followUp: onlyIfNoReply)
     }
@@ -551,7 +579,10 @@ private extension MessageItem {
             date: Date(epochMs: m.date), snippet: m.snippet,
             bodyHTML: m.bodyHtml, bodyText: m.bodyText, isRead: m.isRead,
             isMine: EmailAddress.same(m.fromAddr, myEmail),
-            isDraft: m.labelIds.contains("DRAFT")
+            isDraft: m.labelIds.contains("DRAFT"),
+            cc: m.ccAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) },
+            listUnsubscribe: m.listUnsubscribe,
+            unsubscribeOneClick: m.listUnsubscribeOneClick
         )
     }
 }
@@ -581,16 +612,18 @@ private extension MailAction {
         case .trash(let id): .trash(threadId: id)
         case .star(let id, let starred): .star(threadId: id, starred: starred)
         case .modifyLabel(let id, let label, let add): .modifyLabel(threadId: id, labelId: label, add: add)
+        case .untrash(let id): .untrash(threadId: id)
+        case .markSpam(let id, let spam): .markSpam(threadId: id, spam: spam)
         case .send(let d):
             .send(to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
                   bodyHtml: d.bodyHTML,
                   attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
-                  replyToThread: d.replyToThreadId)
+                  replyToThread: d.replyToThreadId, fromAddr: d.fromAddress)
         case .saveDraft(let d):
             .saveDraft(key: d.draftKey, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
                        bodyHtml: d.bodyHTML,
                        attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
-                       replyToThread: d.replyToThreadId)
+                       replyToThread: d.replyToThreadId, fromAddr: d.fromAddress)
         case .deleteDraft(let key): .deleteDraft(key: key)
         }
     }

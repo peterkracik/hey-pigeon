@@ -30,6 +30,7 @@ struct MailRow: View {
     @State private var hovering = false
     /// Between a click on Done and the row leaving: the strike runs.
     @State private var completing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var expanded: Bool { state.expanded == row.id }
     private var selected: Bool { state.selection.contains(row.id) }
@@ -106,7 +107,7 @@ struct MailRow: View {
                         .monospacedDigit()
                 }
             }
-            .frame(width: MacLayout.senderWidth, alignment: .leading)
+            .frame(width: state.readingPane ? MacLayout.paneSenderWidth : MacLayout.senderWidth, alignment: .leading)
             HStack(spacing: 10) {
                 Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                     .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
@@ -141,13 +142,27 @@ struct MailRow: View {
         }
         .onHover { hovering = $0 }
         .pointerStyle(.link)
+        // Onto a label, a bundle or a folder in the sidebar (SidebarColumn).
+        .draggable(ThreadDrag.payload(for: row.id, selection: state.selection))
+        // The hover bar's actions for VoiceOver and Voice Control, which
+        // have no pointer to bring it up; the row reads as one element.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { state.open(row, in: model) }
+        .accessibilityActions {
+            ForEach(RowAction.allCases) { action in
+                Button(action.label(for: row)) { state.run(action.command, in: model, rows: [row]) }
+            }
+            Button(expanded ? "Close preview" : "Preview") { state.expand(row, in: model) }
+        }
     }
 
     /// Unread: a dot on the left edge, in the account's colour when the
     /// list mixes accounts. Read rows keep a faint account dot there.
     @ViewBuilder private var marker: some View {
-        let account = model.selectedAccountId == nil && model.accounts.count > 1
-            ? model.accounts.first(where: { $0.id == row.accountId }) : nil
+        // Through the model's map, which changes only when an account does:
+        // every row used to scan the accounts on every render.
+        let account = model.selectedAccountId == nil && model.accountsById.count > 1 ? model.account(for: row) : nil
         Circle()
             .fill(account.map { Theme.tagForeground($0.color) } ?? Theme.unreadBar)
             .frame(width: 6, height: 6)
@@ -194,7 +209,8 @@ struct MailRow: View {
     /// Done: the strike runs, then the row is marked done and leaves
     /// (auto-advance hands the highlight on). On a done row it undoes.
     private func complete() {
-        guard !row.isDone else { state.run(.markDone, in: model, rows: [row]); return }
+        // With Reduce Motion the row just leaves: no strike to wait for.
+        guard !row.isDone, !reduceMotion else { state.run(.markDone, in: model, rows: [row]); return }
         withAnimation(.easeOut(duration: 0.25)) { completing = true }
         Task {
             try? await Task.sleep(for: .milliseconds(380))
@@ -333,11 +349,20 @@ struct MailPreview: View {
         // The same margin on both sides of the message and its buttons.
         .padding(.horizontal, 20).padding(.vertical, 14)
         .task(id: row.id) {
+            // The stored copy first (whole when the thread was opened or
+            // prefetched, else its snippet), then Gmail's: the card used
+            // to spin until the network had answered.
+            let id = row.id
+            if detail == nil, let local = try? await model.engine.readInBackground({ try $0.threadLocal(id: id) }),
+               !local.mail.isEmpty, !Task.isCancelled {
+                detail = local
+            }
             do {
-                detail = try await model.engine.thread(id: row.id)
+                let fresh = try await model.engine.thread(id: row.id)
+                if fresh != detail { detail = fresh }
                 if detail == nil { failed = "This thread is no longer available." }
             } catch {
-                failed = error.localizedDescription
+                if detail == nil { failed = error.localizedDescription }
             }
         }
     }

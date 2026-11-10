@@ -38,6 +38,12 @@ enum MacLayout {
     static let sidebarWidth: CGFloat = 232
     /// The sender column of a row.
     static let senderWidth: CGFloat = 180
+    /// With the reading pane (View › Reading Pane): the list's column, its
+    /// narrower sender column, and how wide the content must be for the
+    /// pane to fit beside the list — under that the window is one column.
+    static let paneListWidth: CGFloat = 420
+    static let paneSenderWidth: CGFloat = 120
+    static let paneMinWidth: CGFloat = 1000
 }
 
 /// One icon, no chrome until the pointer is on it: the title row's and the

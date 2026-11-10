@@ -184,6 +184,60 @@ final class BackgroundGrace {
     }
 }
 
+/// The buttons a new-mail banner carries, on both platforms: Mark Done and
+/// Remind Me in 1 Hour act without opening the app, Reply opens it on the
+/// thread with the composer. Registered and acted on in NewMailNotifier
+/// (`registerActions`, `perform`), from each platform's app delegate.
+enum NotificationActions {
+    static let done = "mail.done"
+    static let remindInAnHour = "mail.remind.1h"
+    static let reply = "mail.reply"
+    /// The category a new-mail banner is filed under.
+    static let newMailCategory = "mail.new"
+}
+
+/// An attachment out of the app: the Mac copies it into the Downloads
+/// folder and shows it in the Finder. The phone has the share sheet in
+/// Quick Look for that.
+enum Downloads {
+    static var isAvailable: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    enum Failure: LocalizedError {
+        case unavailable
+        var errorDescription: String? { "There is no Downloads folder here." }
+    }
+
+    /// Copy `file` into Downloads as `name` ("name 2.pdf" when taken) and
+    /// reveal it. Returns where it went.
+    @MainActor
+    @discardableResult
+    static func save(_ file: URL, as name: String) throws -> URL {
+        #if os(macOS)
+        let manager = FileManager.default
+        guard let folder = manager.urls(for: .downloadsDirectory, in: .userDomainMask).first else { throw Failure.unavailable }
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+        var target = folder.appendingPathComponent(name)
+        var n = 2
+        while manager.fileExists(atPath: target.path) {
+            target = folder.appendingPathComponent(ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)")
+            n += 1
+        }
+        try manager.copyItem(at: file, to: target)
+        NSWorkspace.shared.activateFileViewerSelecting([target])
+        return target
+        #else
+        throw Failure.unavailable
+        #endif
+    }
+}
+
 /// APNs registration (the optional push relay, PushController). The token
 /// comes back through the app delegate.
 @MainActor
@@ -534,10 +588,19 @@ struct MacBarButtonStyle: ButtonStyle {
 enum ComposePresentation {
     #if os(iOS)
     static let switchReopens = true
+    /// No send-later on the phone: the message would wait for the app to
+    /// run again, and iOS decides when that is — it could leave hours
+    /// after the time picked. The Mac's app is open at its desk all day.
+    static let offersSendLater = false
+    static let offersSnippets = true
     /// A reply opens the phone's composer sheet.
     static let inlineReplies = false
     #else
     static let switchReopens = false
+    /// The Mac's composer has the send-later clock beside Send; both
+    /// have the snippets menu.
+    static let offersSendLater = true
+    static let offersSnippets = true
     /// The Mac writes a reply under its thread (ThreadView's inline
     /// composer, ComposeView's `inline`), as Superhuman does; the sheet
     /// stays for a new message, a forward, and a reply pulled out into a

@@ -32,6 +32,9 @@ struct AttachmentChips: View {
                     .buttonStyle(.plain)
                     .contextMenu {
                         Button { Task { await open(a) } } label: { Label("Open", systemImage: "eye") }
+                        if Downloads.isAvailable {
+                            Button { Task { await save(a) } } label: { Label("Save to Downloads", systemImage: "arrow.down.circle") }
+                        }
                         if a.isExplainable && AttachmentUnderstanding.isAvailable {
                             Button { explaining = a } label: { Label("Explain attachment", systemImage: "sparkles") }
                         }
@@ -47,6 +50,18 @@ struct AttachmentChips: View {
 
     private func icon(_ a: AttachmentItem) -> String {
         a.isImage ? "photo" : a.isPDF ? "doc.richtext" : "doc"
+    }
+
+    /// The file into the Downloads folder, shown in the Finder (the Mac).
+    private func save(_ a: AttachmentItem) async {
+        guard fetching == nil else { return }
+        fetching = a.id
+        defer { fetching = nil }
+        do {
+            let file = try await model.engine.attachmentFile(a)
+            try Downloads.save(file, as: a.filename.isEmpty ? "attachment" : a.filename)
+            error = nil
+        } catch { self.error = "Couldn't save \(a.filename): \(error.localizedDescription)" }
     }
 
     private func open(_ a: AttachmentItem) async {

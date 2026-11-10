@@ -135,6 +135,9 @@ pub async fn drain<M: MailProvider, S: Store>(
 
 /// `drain`, with the reason each failed row failed.
 ///
+/// Every failure is written on its row (`Store::outbox_set_error`), so the
+/// outbox view can say why a change is still waiting.
+///
 /// What a failure means decides what happens next:
 /// - The provider refused the row (`Provider`): it is counted against
 ///   `MAX_ATTEMPTS` and the drain goes on to the next row.
@@ -162,15 +165,25 @@ pub async fn drain_report<M: MailProvider, S: Store>(
     let mut unreached: Option<i64> = None;
     let mut after_id = 0i64;
     'pages: loop {
-        let items = store.outbox_list_due(after_id, batch.max(1), MAX_ATTEMPTS)?;
-        let Some(last) = items.last() else {
+        let due = store.outbox_due(after_id, batch.max(1), MAX_ATTEMPTS)?;
+        let Some((last, _)) = due.last() else {
             break;
         };
-        after_id = last.id;
-        for item in items {
-            if signed_out.contains(&item.account_id) {
+        after_id = *last;
+        for (id, account_id) in due {
+            if signed_out.contains(&account_id) {
+                // Not tried, and for the same reason as the row that was:
+                // whoever waits on this one (a send) is told so.
+                store.outbox_set_error(id, &MailError::AuthExpired.to_string())?;
+                report.failed += 1;
+                report.failures.push((id, MailError::AuthExpired));
                 continue;
             }
+            // One row in memory at a time, and only when it is its turn.
+            // Gone since the page was read: the user discarded it.
+            let Some(item) = store.outbox_get(id)? else {
+                continue;
+            };
             match provider.apply(&item.account_id, &item.mutation).await {
                 Ok(()) => {
                     store.outbox_delete(item.id)?;
@@ -184,12 +197,14 @@ pub async fn drain_report<M: MailProvider, S: Store>(
                         "outbox drain: auth expired for {}, skipping its rows",
                         item.account_id
                     );
+                    store.outbox_set_error(item.id, &MailError::AuthExpired.to_string())?;
                     signed_out.push(item.account_id.clone());
                     report.failed += 1;
                     report.failures.push((item.id, MailError::AuthExpired));
                 }
                 Err(e @ (MailError::Network(_) | MailError::RateLimited { .. })) => {
                     log::warn!("outbox drain: item {} not sent: {e}", item.id);
+                    store.outbox_set_error(item.id, &e.to_string())?;
                     let rate_limited = matches!(e, MailError::RateLimited { .. });
                     report.failed += 1;
                     report.failures.push((item.id, e));
@@ -200,6 +215,7 @@ pub async fn drain_report<M: MailProvider, S: Store>(
                 }
                 Err(e) => {
                     store.outbox_bump_attempts(item.id)?;
+                    store.outbox_set_error(item.id, &e.to_string())?;
                     if item.attempts + 1 >= MAX_ATTEMPTS {
                         log::warn!(
                             "outbox drain: item {} refused {MAX_ATTEMPTS} times, parked: {e}",
@@ -223,7 +239,7 @@ pub async fn drain_report<M: MailProvider, S: Store>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ThreadFilter;
+    use crate::domain::{OutboxSummary, ThreadFilter};
     use crate::fakes::{FakeProvider, MemStore};
 
     fn seeded_store() -> MemStore {
@@ -424,6 +440,52 @@ mod tests {
         assert_eq!(store.outbox_list(10).unwrap()[0].attempts, MAX_ATTEMPTS);
         assert_eq!(store.outbox_counts(MAX_ATTEMPTS).unwrap(), (0, 1));
         assert!(store.outbox_contains(left[0].id).unwrap());
+    }
+
+    /// Why a row is still queued is written on it, whatever the reason,
+    /// and a row discarded while the drain runs is not sent.
+    #[tokio::test]
+    async fn a_failed_row_remembers_why() {
+        let store = seeded_store();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        let ids = three_queued(&store, &provider).await;
+        assert!(store
+            .outbox_list(10)
+            .unwrap()
+            .iter()
+            .all(|i| i.last_error.is_none()));
+
+        provider.refuse_thread(&ids[0]);
+        drain(&provider, &store, 10).await.unwrap();
+        let refused = store.outbox_list(10).unwrap().remove(0);
+        assert_eq!(
+            (refused.attempts, refused.last_error.as_deref()),
+            (1, Some("provider: 404 Not Found: fake"))
+        );
+
+        // Offline: no attempt counted, the reason still recorded.
+        enqueue(
+            &store,
+            &"a1".to_string(),
+            Mutation::Unarchive {
+                thread_id: ids[1].clone(),
+            },
+        )
+        .unwrap();
+        provider.fail_applies(true);
+        drain(&provider, &store, 10).await.unwrap();
+        let offline = store.outbox_list(10).unwrap().remove(1);
+        assert_eq!(
+            (offline.attempts, offline.last_error.as_deref()),
+            (0, Some("network: fake failure"))
+        );
+        assert_eq!(OutboxSummary::of(&offline).kind, "unarchive");
+
+        // A fresh start forgets both the count and the reason.
+        assert!(store.outbox_reset(refused.id).unwrap());
+        let reset = store.outbox_get(refused.id).unwrap().unwrap();
+        assert_eq!((reset.attempts, reset.last_error), (0, None));
+        assert!(!store.outbox_reset(9_999).unwrap());
     }
 
     #[test]

@@ -168,6 +168,8 @@ final class RustEngine: MailEngine {
         }
         draft.replyToThreadId = d.replyToThread
         draft.fromAccountId = d.accountId
+        // The alias it was written from, when not the account's own address.
+        draft.fromAddress = d.fromAddr
         draft.draftKey = d.messageId
         draft.draftSaved = true
         return draft
@@ -207,6 +209,22 @@ final class RustEngine: MailEngine {
     }
 
     func pendingChanges() -> Int { Int(engine.pendingMutations()) }
+    func failedChanges() -> Int { Int(engine.failedMutations()) }
+
+    /// Off the caller's thread: the core reads every queued row, a
+    /// queued send with its attachments, and each row's thread.
+    func outbox() async -> [QueuedChange] {
+        let engine = engine
+        return await Task.detached(priority: .userInitiated) {
+            engine.listOutbox().map {
+                QueuedChange(id: $0.id, accountId: $0.accountId, kind: $0.kind, summary: $0.summary,
+                             attempts: Int($0.attempts), failed: $0.failed, lastError: $0.lastError)
+            }
+        }.value
+    }
+
+    func retryOutbox(id: Int64) async throws { try await engine.retryOutbox(id: id) }
+    func discardOutbox(id: Int64) async throws { try await engine.discardOutbox(id: id) }
 
     func createLabel(accountId: String, name: String) async throws -> MailLabelItem {
         let l = try await engine.createLabel(accountId: accountId, name: name)
@@ -637,5 +655,14 @@ private extension MailAction {
 extension AnalysisProgress {
     init(_ p: AnalysisPass) {
         self.init(done: Int(p.done), total: Int(p.total), isRunning: p.running)
+    }
+}
+
+/// The core's HTML sanitizer (core/src/sanitize.rs), as the engine applies
+/// it to every body before it is stored. Here for the render tests, which
+/// load what it returns into a real web view.
+enum MailHTML {
+    static func sanitize(_ html: String) -> String {
+        sanitizeHtml(html: html)
     }
 }

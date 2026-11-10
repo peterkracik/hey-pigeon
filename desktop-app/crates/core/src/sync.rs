@@ -1,7 +1,7 @@
 //! Backfill sync: page through recent threads and upsert into the store.
 //! Idempotent — safe to re-run after crash/quit (upserts keyed on native ids).
 
-use crate::domain::{AccountId, Message, ThreadId};
+use crate::domain::{AccountId, Message, Thread, ThreadId};
 use crate::ports::{HistoryChange, MailError, MailProvider, Store, StoreError};
 
 #[derive(Debug, thiserror::Error)]
@@ -365,6 +365,42 @@ fn refresh_thread<S: Store>(store: &S, thread_id: &ThreadId) -> Result<(), Store
     store.upsert_thread(&t)
 }
 
+/// Put one thread back the way the provider has it, after a change to it
+/// that was only ever made here was given up (`Engine::discard_outbox`).
+/// The history feed cannot do this: it reports what changed at the
+/// provider, and that change never got there.
+///
+/// `remote` is the thread as just fetched — `None` when the provider no
+/// longer has it, and then it goes here too. Messages the provider no
+/// longer lists are dropped, stored bodies and the app's own state on the
+/// thread (reminder, labels of its own, bundle) are kept as every upsert
+/// keeps them, and the changes to the thread that are still queued are
+/// applied again on top, so it keeps showing what is on its way.
+pub fn restore_thread<S: Store>(
+    store: &S,
+    thread_id: &ThreadId,
+    remote: Option<(Thread, Vec<Message>)>,
+) -> Result<(), StoreError> {
+    let Some((thread, messages)) = remote else {
+        return store.delete_thread(thread_id);
+    };
+    for stored in store.list_message_meta(thread_id)? {
+        if !messages.iter().any(|m| m.id == stored.id) {
+            store.delete_message(&stored.id)?;
+        }
+    }
+    store.upsert_thread_with_messages(&thread, &messages)?;
+    for row in store.outbox_summaries()? {
+        if row.thread_id.as_ref() != Some(thread_id) {
+            continue;
+        }
+        if let Some(item) = store.outbox_get(row.id)? {
+            store.apply_local(&item.mutation)?;
+        }
+    }
+    Ok(())
+}
+
 /// Who a thread row names and whose avatar it shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListSender {
@@ -426,16 +462,54 @@ fn newer_history_id(candidate: &str, current: &str) -> bool {
     }
 }
 
+/// One mailbox of a From / To header, taken apart: the part that names
+/// the person (as written, quotes and all) and the address.
+///
+/// The address is the last `<…>` that stands outside a quoted string —
+/// where RFC 5322 puts it. Taking the first `<` instead read
+/// `"Support <alerts@bank.com>" <attacker@evil.example>` as the bank's
+/// address: the sender chose which address the app showed, offered to
+/// block, and matched its rules against.
+fn split_mailbox(entry: &str) -> (&str, &str) {
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut open: Option<usize> = None;
+    let mut address: Option<(usize, usize)> = None;
+    for (i, c) in entry.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '<' if !quoted => open = Some(i),
+            '>' if !quoted => {
+                if let Some(start) = open.take() {
+                    address = Some((start, i));
+                }
+            }
+            _ => {}
+        }
+    }
+    match address {
+        Some((start, end)) => (&entry[..start], entry[start + 1..end].trim()),
+        None => ("", entry.trim()),
+    }
+}
+
 /// "Priya Nair <priya@acme.co>" → "Priya Nair" (falls back to the address).
 pub fn display_name(from: &str) -> String {
-    let name = from
-        .split('<')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches('"');
+    let (name, address) = split_mailbox(from);
+    let name = name.trim();
+    let name = match name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+        // A quoted name, without its quotes and escapes.
+        Some(inner) => inner.replace("\\\"", "\"").replace("\\\\", "\\"),
+        None => name.trim_matches('"').to_string(),
+    };
+    let name = name.trim();
     if name.is_empty() {
-        from.trim().to_string()
+        address.to_string()
     } else {
         name.to_string()
     }
@@ -443,12 +517,7 @@ pub fn display_name(from: &str) -> String {
 
 /// "Priya Nair <priya@acme.co>" → "priya@acme.co".
 pub fn bare_addr(from: &str) -> String {
-    from.split('<')
-        .nth(1)
-        .and_then(|s| s.split('>').next())
-        .unwrap_or(from)
-        .trim()
-        .to_string()
+    split_mailbox(from).1.to_string()
 }
 
 #[cfg(test)]
@@ -456,6 +525,74 @@ mod tests {
     use super::*;
     use crate::domain::ThreadFilter;
     use crate::fakes::{FakeProvider, MemStore};
+
+    /// A discarded change is undone by asking the provider: the thread is
+    /// what it is there, minus mail that is gone, plus the changes still
+    /// queued; a thread the provider no longer has goes.
+    #[tokio::test]
+    async fn restore_thread_brings_back_the_providers_state() {
+        use crate::domain::Mutation;
+        let provider = FakeProvider::with_sample_data("a1", 2, 10);
+        let store = MemStore::default();
+        store
+            .upsert_account(&crate::fakes::sample_account("a1"))
+            .unwrap();
+        backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let id = "a1:t0".to_string();
+        // The provider's view of the thread: as synced.
+        let remote = (
+            store.get_thread(&id).unwrap().unwrap(),
+            store.list_messages(&id).unwrap(),
+        );
+        assert!(remote.0.is_inbox && !remote.0.is_read);
+
+        // Archived and read here, queued; and a message only this store
+        // still has.
+        for mutation in [
+            Mutation::Archive {
+                thread_id: id.clone(),
+            },
+            Mutation::MarkRead {
+                thread_id: id.clone(),
+                read: true,
+            },
+        ] {
+            crate::outbox::enqueue(&store, &"a1".to_string(), mutation).unwrap();
+        }
+        store
+            .upsert_message(&Message {
+                id: "a1:t0:stale".into(),
+                date: 1,
+                ..remote.1[0].clone()
+            })
+            .unwrap();
+        let queued = store.outbox_list(10).unwrap();
+        assert_eq!(queued.len(), 2);
+
+        // The archive is discarded; the read change still waits.
+        store.outbox_delete(queued[0].id).unwrap();
+        restore_thread(&store, &id, Some(remote.clone())).unwrap();
+        let restored = store.get_thread(&id).unwrap().unwrap();
+        assert!(
+            restored.is_inbox && !restored.is_archived,
+            "the archive is undone"
+        );
+        assert!(restored.is_read, "the queued change still shows");
+        assert_eq!(store.list_messages(&id).unwrap().len(), remote.1.len());
+
+        // Discarded too: exactly the provider's state.
+        store.outbox_delete(queued[1].id).unwrap();
+        restore_thread(&store, &id, Some(remote.clone())).unwrap();
+        assert_eq!(store.get_thread(&id).unwrap().unwrap(), remote.0);
+
+        // Another thread's queue is none of this thread's business.
+        let other = "a1:t1".to_string();
+        restore_thread(&store, &other, None).unwrap();
+        assert!(store.get_thread(&other).unwrap().is_none());
+        assert!(store.get_thread(&id).unwrap().is_some());
+    }
 
     #[tokio::test]
     async fn backfill_stores_history_id_then_threads() {
@@ -658,6 +795,37 @@ mod tests {
         assert_eq!(bare_addr("Priya Nair <p@acme.co>"), "p@acme.co");
         assert_eq!(bare_addr("p@acme.co"), "p@acme.co");
         assert_eq!(bare_addr("<p@acme.co>"), "p@acme.co");
+        assert_eq!(bare_addr("  Priya <  p@acme.co >  "), "p@acme.co");
+        assert_eq!(bare_addr(""), "");
+    }
+
+    /// The address is the one outside the quotes, whatever the display
+    /// name is made to look like: a sender must not get to pick which
+    /// address the row shows, "Block" offers and the rules match.
+    #[test]
+    fn an_address_inside_the_display_name_is_not_the_address() {
+        let spoof = r#""Support <alerts@bank.com>" <attacker@evil.example>"#;
+        assert_eq!(bare_addr(spoof), "attacker@evil.example");
+        assert_eq!(display_name(spoof), "Support <alerts@bank.com>");
+        // Escaped quotes inside the name do not end it.
+        let escaped = r#""A \"<x@bank.com>\" B" <attacker@evil.example>"#;
+        assert_eq!(bare_addr(escaped), "attacker@evil.example");
+        assert_eq!(display_name(escaped), r#"A "<x@bank.com>" B"#);
+        // Two bare pairs: the last one is where the address goes.
+        assert_eq!(
+            bare_addr("Bank <alerts@bank.com> <attacker@evil.example>"),
+            "attacker@evil.example"
+        );
+        // A quote that never closes hides every bracket after it: the
+        // result is not an address, and matches nobody's.
+        assert_eq!(
+            bare_addr(r#""Support <alerts@bank.com> <attacker@evil.example>"#),
+            r#""Support <alerts@bank.com> <attacker@evil.example>"#
+        );
+        // What the list row is filled from.
+        let m = sender_msg(spoof, "me@example.com", 1, &["INBOX"]);
+        let sender = list_sender(&[m], "me@example.com");
+        assert_eq!(sender.addr, "attacker@evil.example");
     }
 
     fn sender_msg(from: &str, to: &str, date: i64, labels: &[&str]) -> Message {

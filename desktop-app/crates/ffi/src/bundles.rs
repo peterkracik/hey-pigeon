@@ -302,36 +302,30 @@ impl Engine {
 
     /// The bundle view: the row, its key facts and its threads. `None`
     /// for an unknown id (deleted on another device).
-    pub fn bundle_detail(&self, bundle_id: String) -> Result<Option<BundleDetail>, EngineError> {
+    ///
+    /// Reads no mail: a thread's tracking links come from what was found
+    /// in its bodies the last time they were read (kept in the store). A
+    /// thread whose links were never read, or whose mail changed since,
+    /// lists none this time; they are read on a background thread, and
+    /// `on_threads_updated` fires when they are in, so the view that
+    /// reloads on it shows them a moment later.
+    pub fn bundle_detail(
+        self: Arc<Self>,
+        bundle_id: String,
+    ) -> Result<Option<BundleDetail>, EngineError> {
         let Some(b) = self.bundle(&bundle_id)? else {
             return Ok(None);
         };
         let domain_threads = self.store.list_bundle_threads(&bundle_id)?;
-        // Tracking links per thread, from whatever text the store holds.
         let mut links: Vec<BundleLink> = Vec::new();
         let mut thread_links: std::collections::HashMap<String, Vec<String>> = Default::default();
+        let mut unread: Vec<domain::Thread> = Vec::new();
         for t in domain_threads.iter().take(LINK_SCAN_THREADS) {
-            let numbers: Vec<String> = self
-                .store
-                .thread_anchors(&t.id)?
-                .iter()
-                .filter_map(|a| core_bundles::Anchor::parse(a))
-                .filter(|a| a.kind == AnchorKind::Tracking)
-                .map(|a| a.value)
-                .collect();
-            let text: String = self
-                .store
-                .list_messages(&t.id)?
-                .iter()
-                .map(|m| {
-                    m.body_html
-                        .clone()
-                        .or_else(|| m.body_text.clone())
-                        .unwrap_or_default()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let found = core_bundles::tracking_links(&text, &numbers);
+            let numbers = core_bundles::tracking_numbers(&self.store, &t.id)?;
+            let Some(found) = core_bundles::stored_tracking_links(&self.store, t, &numbers)? else {
+                unread.push(t.clone());
+                continue;
+            };
             for url in &found {
                 let host = host_of(url);
                 let seen = links
@@ -348,7 +342,8 @@ impl Engine {
             }
             thread_links.insert(t.id.clone(), found);
         }
-        let facts = core_bundles::bundle_facts(&self.store, &bundle_id)?
+        self.read_links_later(unread);
+        let facts = core_bundles::bundle_facts_of(&self.store, &domain_threads)?
             .into_iter()
             .map(|f| {
                 let url = (f.anchor.kind == AnchorKind::Tracking)
@@ -369,9 +364,10 @@ impl Engine {
                 }
             })
             .collect();
+        let bundle = mail_bundle_row(&b, stats_of(&domain_threads));
         let threads = domain_threads.into_iter().map(Into::into).collect();
         Ok(Some(BundleDetail {
-            bundle: self.mail_bundle(&b)?,
+            bundle,
             facts,
             links,
             threads,
@@ -854,14 +850,63 @@ impl Engine {
 
     fn mail_bundle(&self, b: &domain::Bundle) -> Result<MailBundle, EngineError> {
         let threads = self.store.list_bundle_threads(&b.id)?;
-        Ok(mail_bundle_row(
-            b,
-            domain::BundleStats {
-                thread_count: threads.len() as u32,
-                open_count: threads.iter().filter(|t| is_open(t)).count() as u32,
-                last_activity_at: threads.iter().map(|t| t.last_msg_at).max().unwrap_or(0),
-            },
-        ))
+        Ok(mail_bundle_row(b, stats_of(&threads)))
+    }
+
+    /// Read these threads' bodies for tracking links, away from whoever
+    /// asked: on a thread of its own (a plain call from the shell has no
+    /// runtime to spawn on), each thread once however many views ask
+    /// meanwhile. Tells the shell when there is something new to show.
+    fn read_links_later(self: &Arc<Self>, threads: Vec<domain::Thread>) {
+        let threads: Vec<domain::Thread> = {
+            let mut pending = self.links_pending.lock().unwrap();
+            threads
+                .into_iter()
+                .filter(|t| pending.insert(t.id.clone()))
+                .collect()
+        };
+        if threads.is_empty() {
+            return;
+        }
+        let engine = Arc::clone(self);
+        let work = move || {
+            let mut read = 0;
+            for t in &threads {
+                match engine.refresh_links(t) {
+                    Ok(()) => read += 1,
+                    Err(e) => log::warn!("bundles: links of {} not read: {e}", t.id),
+                }
+                engine.links_pending.lock().unwrap().remove(&t.id);
+            }
+            // Only when something was stored: a failure that repeats must
+            // not turn into a reload loop.
+            if read > 0 {
+                engine.notify_threads_updated();
+            }
+        };
+        if let Err(e) = std::thread::Builder::new()
+            .name("heypigeon-links".into())
+            .spawn(work)
+        {
+            log::warn!("bundles: cannot read links in the background: {e}");
+        }
+    }
+
+    /// Read one thread's tracking links from its stored bodies and keep
+    /// them (`core_bundles::refresh_tracking_links`).
+    pub(crate) fn refresh_links(&self, thread: &domain::Thread) -> Result<(), EngineError> {
+        let numbers = core_bundles::tracking_numbers(&self.store, &thread.id)?;
+        core_bundles::refresh_tracking_links(&self.store, thread, &numbers)?;
+        Ok(())
+    }
+}
+
+/// The counts the Bundles list shows, from a bundle's threads.
+fn stats_of(threads: &[domain::Thread]) -> domain::BundleStats {
+    domain::BundleStats {
+        thread_count: threads.len() as u32,
+        open_count: threads.iter().filter(|t| is_open(t)).count() as u32,
+        last_activity_at: threads.iter().map(|t| t.last_msg_at).max().unwrap_or(0),
     }
 }
 
@@ -963,7 +1008,10 @@ mod tests {
             Some(trip.id.clone())
         );
 
-        let detail = e.bundle_detail(trip.id.clone()).unwrap().unwrap();
+        let detail = Arc::clone(&e)
+            .bundle_detail(trip.id.clone())
+            .unwrap()
+            .unwrap();
         let ids: Vec<&str> = detail.threads.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -1202,11 +1250,57 @@ mod tests {
                 vec!["ship".into()],
             )
             .unwrap();
-        let d = e.bundle_detail(b.id).unwrap().unwrap();
+        // The first look reads no mail: the links are found in the
+        // background and are there when the view reloads.
+        let first = Arc::clone(&e).bundle_detail(b.id.clone()).unwrap().unwrap();
+        assert!(first.links.is_empty());
+        assert_eq!(first.threads.len(), 1);
+        let mut d = first;
+        for _ in 0..200 {
+            if !d.links.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            d = Arc::clone(&e).bundle_detail(b.id.clone()).unwrap().unwrap();
+        }
         assert_eq!(d.links.len(), 1);
         assert_eq!(d.links[0].host, "track.dpd.example");
         assert_eq!(d.links[0].thread_id, "ship");
         assert_eq!(d.links[0].subject, "Your order #112-334 has shipped");
+        // Kept: asking again reads nothing and starts nothing.
+        let again = Arc::clone(&e).bundle_detail(b.id.clone()).unwrap().unwrap();
+        assert_eq!(again.links.len(), 1);
+        assert!(e.links_pending.lock().unwrap().is_empty());
+
+        // New mail in the thread makes what was kept stale: none listed
+        // until the background read has been over the new body too.
+        let mut grown = e.store.get_thread(&"ship".to_string()).unwrap().unwrap();
+        grown.msg_count = 2;
+        e.store.upsert_thread(&grown).unwrap();
+        e.store
+            .upsert_message(&heypigeon_core::domain::Message {
+                id: "ship-m2".into(),
+                thread_id: "ship".into(),
+                account_id: "me@x.com".into(),
+                from_addr: "shop@example.com".into(),
+                date: 2_000,
+                body_html: Some(
+                    r#"<a href="https://post.example/track?id=99">Track with the post</a>"#.into(),
+                ),
+                ..Default::default()
+            })
+            .unwrap();
+        let mut d = Arc::clone(&e).bundle_detail(b.id.clone()).unwrap().unwrap();
+        assert!(d.links.is_empty());
+        for _ in 0..200 {
+            if !d.links.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            d = Arc::clone(&e).bundle_detail(b.id.clone()).unwrap().unwrap();
+        }
+        let hosts: Vec<&str> = d.links.iter().map(|l| l.host.as_str()).collect();
+        assert_eq!(hosts, vec!["track.dpd.example", "post.example"]);
     }
 
     #[test]

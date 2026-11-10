@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -441,16 +441,269 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE messages ADD COLUMN reply_to_addrs TEXT NOT NULL DEFAULT '[]';
     UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;
     ",
+    // v28 — why a queued change has not gone out: the last drain's error,
+    // in words, for the outbox view. NULL until a drain fails on the row.
+    "ALTER TABLE outbox ADD COLUMN last_error TEXT;",
+    // v29 — the tracking links of a thread, as last read from its bodies
+    // (`bundles::refresh_tracking_links`). The bundle view lists them for
+    // up to fifteen threads, and used to load every one of those threads'
+    // HTML bodies to find them, each time it opened, on the thread that
+    // drew it. `sig` is the state they were read in (message count,
+    // bodies stored, tracking numbers): a row with another signature is
+    // stale and read again in the background. A cache — nothing to
+    // backfill, and it goes with its thread.
+    "
+    CREATE TABLE thread_links (
+        thread_id TEXT PRIMARY KEY,
+        sig       TEXT NOT NULL,
+        links     TEXT NOT NULL
+    ) WITHOUT ROWID;
+    CREATE TRIGGER threads_links_ad AFTER DELETE ON threads BEGIN
+        DELETE FROM thread_links WHERE thread_id = old.id;
+    END;
+    ",
+    // v30 — a second search index, `mail_fts`, that the first one is
+    // replaced by. It differs in two ways.
+    //
+    // It indexes Cc: its recipients column is To and Cc together, so a
+    // name that is only in Cc is found.
+    //
+    // And it can always take back what it put in. An external-content
+    // index must be given, to remove an entry, exactly the text the entry
+    // was made from. The first index took the subject from the thread
+    // row at that moment — so once a subject changed (a draft edited,
+    // most often) every later update of the thread's messages removed
+    // the wrong words, and FTS5 calls the index malformed. Here the
+    // subject a message was indexed under is kept on the message
+    // (`fts_subject`), the index's content view reads only the message
+    // row, and a thread whose subject changes says so to its messages
+    // (the two `threads_fts_subject` triggers), each of which re-indexes
+    // itself with its own old values. `fts_subject` NULL means "not in
+    // this index": the view leaves such rows out, so the index and its
+    // content agree at every moment, also half-way through what follows.
+    //
+    // Nothing here reads the mail: the step is the same few statements
+    // on an empty store and on one with a million messages (ADD COLUMN
+    // does not rewrite rows). Putting Cc into the first index in place,
+    // inside a step, was tried and never released: 18 s on half a million
+    // messages, on the thread that opens the store at launch — long
+    // enough for a phone to kill the app, roll the step back and meet it
+    // again at every launch — and it removed entries by the thread's
+    // current subject, the very thing that malforms that index. New mail goes into the new index as it is
+    // stored. The mail already there is moved over after the store is
+    // open, by `SqliteStore::reindex_step`, a few hundred messages per
+    // transaction, picking up where it was after a kill — only ever
+    // adding entries, so the old index's condition does not matter. The
+    // old index keeps answering searches until the new one holds
+    // everything, and is then dropped. (Until then a search for a name
+    // that is only in Cc misses older mail; `cc:` does not, it reads the
+    // messages themselves.)
+    "
+    ALTER TABLE messages ADD COLUMN fts_subject TEXT;
+    CREATE VIEW mail_fts_content AS
+      SELECT m.rowid AS rowid,
+             m.fts_subject AS subject,
+             m.from_addr AS from_addr,
+             CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END AS recipients,
+             COALESCE(m.body_text, m.snippet, '') AS body_text
+        FROM messages m WHERE m.fts_subject IS NOT NULL;
+    CREATE VIRTUAL TABLE mail_fts USING fts5(
+        subject, from_addr, recipients, body_text,
+        content='mail_fts_content',
+        tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER mail_fts_ai AFTER INSERT ON messages
+    WHEN new.fts_subject IS NOT NULL
+    BEGIN
+        INSERT INTO mail_fts(rowid, subject, from_addr, recipients, body_text)
+        VALUES (new.rowid, new.fts_subject, new.from_addr,
+               CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+               COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER mail_fts_au AFTER UPDATE ON messages
+    WHEN old.fts_subject IS NOT new.fts_subject
+      OR (new.fts_subject IS NOT NULL
+          AND (old.from_addr IS NOT new.from_addr
+            OR old.to_addrs IS NOT new.to_addrs
+            OR old.cc_addrs IS NOT new.cc_addrs
+            OR COALESCE(old.body_text, old.snippet, '')
+               IS NOT COALESCE(new.body_text, new.snippet, '')))
+    BEGIN
+        INSERT INTO mail_fts(mail_fts, rowid, subject, from_addr, recipients, body_text)
+        SELECT 'delete', old.rowid, old.fts_subject, old.from_addr,
+               CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+               COALESCE(old.body_text, old.snippet, '')
+         WHERE old.fts_subject IS NOT NULL;
+        INSERT INTO mail_fts(rowid, subject, from_addr, recipients, body_text)
+        SELECT new.rowid, new.fts_subject, new.from_addr,
+               CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+               COALESCE(new.body_text, new.snippet, '')
+         WHERE new.fts_subject IS NOT NULL;
+    END;
+    CREATE TRIGGER mail_fts_ad AFTER DELETE ON messages
+    WHEN old.fts_subject IS NOT NULL
+    BEGIN
+        INSERT INTO mail_fts(mail_fts, rowid, subject, from_addr, recipients, body_text)
+        VALUES ('delete', old.rowid, old.fts_subject, old.from_addr,
+               CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+               COALESCE(old.body_text, old.snippet, ''));
+    END;
+    CREATE TRIGGER threads_fts_subject_ai AFTER INSERT ON threads BEGIN
+        UPDATE messages SET fts_subject = new.subject
+         WHERE thread_id = new.id
+           AND fts_subject IS NOT NULL AND fts_subject IS NOT new.subject;
+    END;
+    CREATE TRIGGER threads_fts_subject_au AFTER UPDATE OF subject ON threads
+    WHEN old.subject IS NOT new.subject
+    BEGIN
+        UPDATE messages SET fts_subject = new.subject
+         WHERE thread_id = new.id
+           AND fts_subject IS NOT NULL AND fts_subject IS NOT new.subject;
+    END;
+    ",
+    // v31 — what the mute and block rules last acted on, per thread
+    // (`rules::apply`): the date of the newest mail from someone else the
+    // thread held then. A rule acts again only when there is newer mail,
+    // so a thread the user took back out of Spam, or moved back to the
+    // inbox, stays where they put it. This device's own memory: it is not
+    // synced, and it goes with its thread.
+    "
+    CREATE TABLE rule_marks (
+        thread_id TEXT NOT NULL,
+        rule      TEXT NOT NULL,
+        acted_at  INTEGER NOT NULL,
+        PRIMARY KEY (thread_id, rule)
+    ) WITHOUT ROWID;
+    CREATE TRIGGER threads_rule_marks_ad AFTER DELETE ON threads BEGIN
+        DELETE FROM rule_marks WHERE thread_id = old.id;
+    END;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
 const HEAL_LIST_SENDERS_AT: usize = 17;
+/// Schema version that brings the second search index (`mail_fts`).
+const FTS_MOVE_AT: usize = 30;
+
+fn old_index_exists(c: &Connection) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'messages_fts')",
+        [],
+        |r| r.get(0),
+    )
+}
+
+/// One step of giving the retired index's storage back
+/// (`SqliteStore::reindex_step`). Its segment rows and per-message rows
+/// are deleted in small batches; the two rows FTS5 reads to open the
+/// table (ids 1 and 10 of `_data`: averages and structure) stay until the
+/// table itself is dropped, which is then a table with nothing in it.
+fn retire_old_index(c: &Connection) -> rusqlite::Result<Reindex> {
+    if !old_index_exists(c)? {
+        return Ok(Reindex::Done);
+    }
+    let tx = c.unchecked_transaction()?;
+    let mut freed = 0;
+    for delete in [
+        "DELETE FROM messages_fts_data WHERE id IN
+           (SELECT id FROM messages_fts_data WHERE id > 10 LIMIT ?1)",
+        "DELETE FROM messages_fts_idx WHERE (segid, term) IN
+           (SELECT segid, term FROM messages_fts_idx LIMIT ?1)",
+        "DELETE FROM messages_fts_docsize WHERE id IN
+           (SELECT id FROM messages_fts_docsize LIMIT ?1)",
+    ] {
+        freed = tx.execute(delete, params![OLD_INDEX_ROWS_PER_STEP])?;
+        if freed > 0 {
+            break;
+        }
+    }
+    if freed == 0 {
+        tx.execute_batch("DROP TABLE messages_fts;")?;
+    }
+    tx.commit()?;
+    Ok(if freed == 0 {
+        Reindex::Done
+    } else {
+        Reindex::Retiring
+    })
+}
+
+/// Re-derive the list sender of the threads that have, among the messages
+/// with rowids in `(after, through]`, one whose From carries a bracket
+/// inside a quoted display name: `"Bank <a@bank.com>" <b@evil.example>`
+/// used to be read as the bank's address (`sync::bare_addr`), and
+/// `last_from_addr` is filled at upsert time, so those rows named the
+/// wrong sender until something touched them.
+fn heal_quoted_senders(conn: &Connection, after: i64, through: i64) -> rusqlite::Result<()> {
+    let threads: Vec<(String, String)> = conn
+        .prepare_cached(
+            "SELECT DISTINCT thread_id, account_id FROM messages
+              WHERE rowid > ?1 AND rowid <= ?2
+                AND instr(from_addr, '\"') > 0 AND from_addr LIKE '%<%<%'",
+        )?
+        .query_map(params![after, through], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (thread_id, account_id) in threads {
+        let own_email: String = conn
+            .query_row(
+                "SELECT email FROM accounts WHERE id = ?1",
+                params![account_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| account_id.clone());
+        let messages: Vec<Message> = conn
+            .prepare_cached(
+                "SELECT from_addr, to_addrs, label_ids FROM messages
+                  WHERE thread_id = ?1 ORDER BY date",
+            )?
+            .query_map(params![thread_id], |r| {
+                let to_addrs: String = r.get(1)?;
+                let label_ids: String = r.get(2)?;
+                Ok(Message {
+                    from_addr: r.get(0)?,
+                    to_addrs: serde_json::from_str(&to_addrs).unwrap_or_default(),
+                    label_ids: serde_json::from_str(&label_ids).unwrap_or_default(),
+                    ..Default::default()
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let sender = heypigeon_core::sync::list_sender(&messages, &own_email);
+        conn.execute(
+            "UPDATE threads SET from_summary = ?1, last_from_addr = ?2 WHERE id = ?3",
+            params![sender.name, sender.addr, thread_id],
+        )?;
+    }
+    Ok(())
+}
 
 /// How long a connection waits for a lock SQLite holds elsewhere (a
 /// checkpoint, the other connection's write) before giving up.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Reader connections for a database file.
 const READERS: usize = 3;
+/// `sync_meta` keys (under account '') of the search index's move from
+/// `messages_fts` to `mail_fts` (schema v30, `SqliteStore::reindex_step`).
+/// The rowid up to which stored mail is in the new index:
+const META_FTS_CURSOR: &str = "fts.cursor";
+/// "1" once the new index holds everything and answers searches:
+const META_FTS_READY: &str = "fts.ready";
+/// Rows of the old index's storage freed per step once it is retired.
+const OLD_INDEX_ROWS_PER_STEP: u32 = 512;
+
+/// Where the move of the search index stands (`SqliteStore::reindex_step`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reindex {
+    /// Stored mail is still being added to the new index; so far every
+    /// message up to this rowid.
+    Indexing { through: i64 },
+    /// The new index answers searches; the old one's storage is being
+    /// given back.
+    Retiring,
+    /// Nothing left to do.
+    Done,
+}
+
 /// Prepared statements each connection keeps. The same few dozen queries
 /// run over and over; parsing and planning one cost more than running it.
 const STATEMENT_CACHE: usize = 64;
@@ -624,6 +877,9 @@ pub struct SqliteStore {
     readers: Vec<Mutex<Connection>>,
     /// Which reader a read waits for when all are busy (round robin).
     next_reader: AtomicUsize,
+    /// Whether `mail_fts` answers searches yet (`META_FTS_READY`); until
+    /// then `messages_fts` does.
+    fts_ready: AtomicBool,
 }
 
 fn err(e: impl std::fmt::Display) -> StoreError {
@@ -759,11 +1015,271 @@ impl SqliteStore {
                 .map_err(err)?;
             tx.commit().map_err(err)?;
         }
-        Ok(Self {
+        let store = Self {
             conn: Mutex::new(conn),
             readers: Vec::new(),
             next_reader: AtomicUsize::new(0),
+            fts_ready: AtomicBool::new(false),
+        };
+        if target >= FTS_MOVE_AT {
+            store.load_reindex_state()?;
+        }
+        Ok(store)
+    }
+
+    /// Read where the search index's move stands. A store with no mail has
+    /// nothing to move: the new index takes over at once (a few
+    /// statements on empty tables), which is every new install.
+    fn load_reindex_state(&self) -> Result<(), StoreError> {
+        let ready = self.meta("", META_FTS_READY)?.as_deref() == Some("1");
+        self.fts_ready.store(ready, Ordering::SeqCst);
+        if !ready {
+            let empty = self.with(|c| {
+                c.query_row("SELECT NOT EXISTS (SELECT 1 FROM messages)", [], |r| {
+                    r.get::<_, bool>(0)
+                })
+            })?;
+            if empty {
+                while self.reindex_step(1)? != Reindex::Done {}
+            }
+        }
+        Ok(())
+    }
+
+    /// `Store::search` against one of the two indexes (`reindex_step`).
+    fn search_in(
+        &self,
+        fts: &str,
+        q: &SearchQuery,
+        limit: u32,
+        now_ms: i64,
+        not_junk: &str,
+    ) -> Result<Vec<SearchResult>, StoreError> {
+        self.read(|c| {
+            if let Some(fts_match) = &q.fts_match {
+                // bm25()/snippet() must run in a direct full-text query, so
+                // a MATERIALIZED CTE (flattening it back into the join would
+                // break that context) scores each matching message; the outer
+                // query joins, groups per thread, and keeps the best message.
+                // GROUP BY + single min() aggregate: SQLite guarantees bare
+                // columns (f.rowid in the snippet subquery) come from the
+                // min-bm25 row.
+                // Work is bounded: the CTE keeps only the top-?10 rows by
+                // bm25 (cheap — no re-tokenization), and snippet() (expensive)
+                // runs per surviving row via a rowid-constrained MATCH, never
+                // over the whole match set. The cap trades exact recency
+                // blending on huge result sets for bounded per-keystroke cost.
+                let mut stmt = c.prepare_cached(&format!(
+                    "WITH f AS MATERIALIZED (
+                        SELECT rowid,
+                               bm25({fts}, 8.0, 4.0, 2.0, 1.0) AS score
+                        FROM {fts} WHERE {fts} MATCH ?1
+                        ORDER BY score LIMIT ?10)
+                     SELECT {cols},
+                            (SELECT snippet({fts}, -1, ?2, ?3, '…', 12)
+                             FROM {fts}
+                             WHERE {fts} MATCH ?1 AND rowid = f.rowid) AS snip,
+                            min(f.score)
+                              + ((?4 - t.last_msg_at) / 86400000.0) * 0.05 AS rank
+                     FROM f
+                     JOIN messages m ON m.rowid = f.rowid
+                     JOIN threads t ON t.id = m.thread_id
+                     WHERE (?5 IS NULL OR instr(lower(m.from_addr), ?5) > 0)
+                       AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
+                       AND (?11 IS NULL OR instr(lower(m.cc_addrs), ?11) > 0)
+                       AND (?7 = 0 OR t.is_read = 0)
+                       AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
+                       AND {not_junk}
+                     GROUP BY t.id
+                     ORDER BY rank
+                     LIMIT ?9",
+                    cols = thread_cols("t.")
+                ))?;
+                let candidate_cap = (limit as i64).saturating_mul(10).max(200);
+                let rows = stmt.query_map(
+                    params![
+                        fts_match,
+                        SNIPPET_START.to_string(),
+                        SNIPPET_END.to_string(),
+                        now_ms,
+                        q.from_contains,
+                        q.to_contains,
+                        q.unread_only,
+                        q.account_contains,
+                        limit,
+                        candidate_cap,
+                        q.cc_contains
+                    ],
+                    |r| {
+                        Ok(SearchResult {
+                            thread: row_to_thread(r)?,
+                            // THREAD_COLS width, not a magic number — `snip` is
+                            // selected right after all thread_cols().
+                            snippet: r.get(THREAD_COLS.split(", ").count())?,
+                        })
+                    },
+                )?;
+                rows.collect()
+            } else {
+                let mut stmt = c.prepare_cached(&format!(
+                    "SELECT {} FROM threads t
+                     WHERE (?1 = 0 OR t.is_read = 0)
+                       AND (?2 IS NULL OR instr(lower(t.account_id), ?2) > 0)
+                       AND (?3 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.from_addr), ?3) > 0))
+                       AND (?4 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.to_addrs), ?4) > 0))
+                       AND (?6 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.cc_addrs), ?6) > 0))
+                       AND {not_junk}
+                     ORDER BY t.last_msg_at DESC
+                     LIMIT ?5",
+                    thread_cols("t.")
+                ))?;
+                let rows = stmt.query_map(
+                    params![
+                        q.unread_only,
+                        q.account_contains,
+                        q.from_contains,
+                        q.to_contains,
+                        limit,
+                        q.cc_contains
+                    ],
+                    |r| {
+                        let thread = row_to_thread(r)?;
+                        let snippet = thread.snippet.clone();
+                        Ok(SearchResult { thread, snippet })
+                    },
+                )?;
+                rows.collect()
+            }
         })
+    }
+
+    fn meta(&self, account_id: &str, key: &str) -> Result<Option<String>, StoreError> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT value FROM sync_meta WHERE account_id = ?1 AND key = ?2",
+                params![account_id, key],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+    }
+
+    /// 32 random bytes this install keeps under `name`, made the first
+    /// time they are asked for (by SQLite's own generator, like the device
+    /// id). They stay on the device: not synced, not part of any request.
+    pub fn install_secret(&self, name: &str) -> Result<[u8; 32], StoreError> {
+        let secret: Vec<u8> = self.with(|c| {
+            c.execute(
+                "INSERT OR IGNORE INTO sync_meta (account_id, key, value)
+                 VALUES ('', ?1, lower(hex(randomblob(32))))",
+                params![name],
+            )?;
+            c.query_row(
+                "SELECT unhex(value) FROM sync_meta WHERE account_id = '' AND key = ?1",
+                params![name],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .map(Option::unwrap_or_default)
+        })?;
+        <[u8; 32]>::try_from(secret)
+            .map_err(|_| StoreError(format!("the stored secret {name} is not 32 bytes")))
+    }
+
+    /// Whether the search index is still being moved (`reindex_step` has
+    /// work to do).
+    pub fn reindex_pending(&self) -> Result<bool, StoreError> {
+        if !self.fts_ready.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
+        self.with(old_index_exists)
+    }
+
+    /// One step of the search index's move (schema v30), in one short
+    /// write transaction; call it until it says `Done`. Made to run in
+    /// the background while the app is in use:
+    ///
+    /// - **Indexing.** The next `rows` stored messages (by rowid) are
+    ///   added to `mail_fts` — by setting their `fts_subject`, which is
+    ///   what puts a message in that index — and the cursor moves past
+    ///   them, in the same transaction. A kill between steps costs
+    ///   nothing; one inside a step rolls that step back. Entries are
+    ///   only ever added, so it does not matter what state the old index
+    ///   is in. Threads in the batch whose list sender was read from a
+    ///   quoted display name (`sync::bare_addr`'s old reading) get it
+    ///   derived again on the way.
+    /// - When no stored mail is left, the new index takes over
+    ///   (`META_FTS_READY`) and the old one's triggers and view go: one
+    ///   transaction of a few statements.
+    /// - **Retiring.** The old index's storage is deleted a few hundred
+    ///   rows at a time (dropping a large table in one go holds the write
+    ///   lock for as long as it takes to walk it), then the emptied table
+    ///   is dropped.
+    pub fn reindex_step(&self, rows: u32) -> Result<Reindex, StoreError> {
+        if self.fts_ready.load(Ordering::SeqCst) {
+            return self.with(retire_old_index);
+        }
+        let state = self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            let cursor: i64 = tx
+                .query_row(
+                    "SELECT value FROM sync_meta WHERE account_id = '' AND key = ?1",
+                    params![META_FTS_CURSOR],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let through: Option<i64> = tx.query_row(
+                "SELECT MAX(rowid) FROM
+                   (SELECT rowid FROM messages WHERE rowid > ?1 ORDER BY rowid LIMIT ?2)",
+                params![cursor, rows.max(1)],
+                |r| r.get(0),
+            )?;
+            let set_meta = |key: &str, value: &str| {
+                tx.execute(
+                    "INSERT INTO sync_meta (account_id, key, value) VALUES ('', ?1, ?2)
+                     ON CONFLICT(account_id, key) DO UPDATE SET value = excluded.value",
+                    params![key, value],
+                )
+            };
+            let state = match through {
+                Some(through) => {
+                    tx.execute(
+                        "UPDATE messages
+                            SET fts_subject = COALESCE(
+                                  (SELECT subject FROM threads t WHERE t.id = messages.thread_id),
+                                  '')
+                          WHERE rowid > ?1 AND rowid <= ?2 AND fts_subject IS NULL",
+                        params![cursor, through],
+                    )?;
+                    heal_quoted_senders(&tx, cursor, through)?;
+                    set_meta(META_FTS_CURSOR, &through.to_string())?;
+                    Reindex::Indexing { through }
+                }
+                None => {
+                    tx.execute_batch(
+                        "DROP TRIGGER IF EXISTS messages_fts_ai;
+                         DROP TRIGGER IF EXISTS messages_fts_au;
+                         DROP TRIGGER IF EXISTS messages_fts_ad;
+                         DROP VIEW IF EXISTS messages_fts_content;",
+                    )?;
+                    set_meta(META_FTS_READY, "1")?;
+                    Reindex::Retiring
+                }
+            };
+            tx.commit()?;
+            Ok(state)
+        })?;
+        if state == Reindex::Retiring {
+            self.fts_ready.store(true, Ordering::SeqCst);
+        }
+        Ok(state)
     }
 
     /// The writer connection: every write, and the background passes' reads.
@@ -1030,16 +1546,27 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     })
 }
 
+/// The outbox columns, in `row_to_outbox_item`'s order.
+const OUTBOX_COLS: &str = "id, account_id, mutation, attempts, created_at, last_error";
+
 fn row_to_outbox_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxItem> {
-    let payload: String = r.get(2)?;
+    let conversion = |e: Box<dyn std::error::Error + Send + Sync>| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, e)
+    };
+    // Parsed straight from SQLite's own buffer: a queued send's JSON holds
+    // its attachments, and copying it into a String first was one more
+    // copy of every one of them.
+    let payload = r
+        .get_ref(2)?
+        .as_str()
+        .map_err(|e| conversion(Box::new(e)))?;
     Ok(OutboxItem {
         id: r.get(0)?,
         account_id: r.get(1)?,
-        mutation: serde_json::from_str(&payload).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
-        })?,
+        mutation: serde_json::from_str(payload).map_err(|e| conversion(Box::new(e)))?,
         attempts: r.get(3)?,
         created_at: r.get(4)?,
+        last_error: r.get(5)?,
     })
 }
 
@@ -1128,8 +1655,14 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
            (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
             body_html, body_text, label_ids, is_read, cc_addrs, message_id_header,
             references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched,
-            reply_to_addrs)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            reply_to_addrs, fts_subject)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                 -- new mail goes into the search index (`mail_fts`) under
+                 -- its thread's subject, which the row keeps; a thread
+                 -- that arrives after its message brings the subject then
+                 -- (`threads_fts_subject_ai`). Not touched on conflict: a
+                 -- row waiting for `reindex_step` stays NULL until its turn.
+                 COALESCE((SELECT subject FROM threads WHERE id = ?2), ''))
          ON CONFLICT(id) DO UPDATE SET
            snippet = excluded.snippet,
            -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
@@ -1869,8 +2402,82 @@ impl Store for SqliteStore {
         })
     }
 
-    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+    fn rule_mark(&self, rule: &str, thread_id: &ThreadId) -> Result<Option<i64>, StoreError> {
         self.with(|c| {
+            c.prepare_cached("SELECT acted_at FROM rule_marks WHERE rule = ?1 AND thread_id = ?2")?
+                .query_row(params![rule, thread_id], |r| r.get(0))
+                .optional()
+        })
+    }
+
+    fn set_rule_mark(&self, rule: &str, thread_id: &ThreadId, at: i64) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO rule_marks (rule, thread_id, acted_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(thread_id, rule) DO UPDATE SET acted_at = excluded.acted_at",
+                params![rule, thread_id, at],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn retain_rule_marks(&self, rule: &str, keep: &[ThreadId]) -> Result<(), StoreError> {
+        let keep = serde_json::to_string(keep).map_err(err)?;
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM rule_marks
+                  WHERE rule = ?1 AND thread_id NOT IN (SELECT value FROM json_each(?2))",
+                params![rule, keep],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn thread_links(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<(String, Vec<String>)>, StoreError> {
+        let row: Option<(String, String)> = self.read(|c| {
+            c.prepare_cached("SELECT sig, links FROM thread_links WHERE thread_id = ?1")?
+                .query_row(params![thread_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()
+        })?;
+        Ok(row.map(|(sig, links)| (sig, serde_json::from_str(&links).unwrap_or_default())))
+    }
+
+    fn set_thread_links(
+        &self,
+        thread_id: &ThreadId,
+        signature: &str,
+        links: &[String],
+    ) -> Result<(), StoreError> {
+        let links = serde_json::to_string(links).map_err(err)?;
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO thread_links (thread_id, sig, links) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(thread_id) DO UPDATE SET sig = excluded.sig, links = excluded.links",
+                params![thread_id, signature, links],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Counted from each row's header: a NULL check does not read the
+    /// body it is about.
+    fn thread_body_count(&self, thread_id: &ThreadId) -> Result<i64, StoreError> {
+        self.read(|c| {
+            c.prepare_cached(
+                "SELECT COUNT(*) FROM messages
+                  WHERE thread_id = ?1 AND (body_html IS NOT NULL OR body_text IS NOT NULL)",
+            )?
+            .query_row(params![thread_id], |r| r.get(0))
+        })
+    }
+
+    /// (On a reader: the bundle view asks this for every thread it shows,
+    /// and must not wait for a sync page to commit.)
+    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+        self.read(|c| {
             let mut stmt = c.prepare_cached(
                 "SELECT anchor FROM thread_anchors WHERE thread_id = ?1 ORDER BY anchor",
             )?;
@@ -2095,102 +2702,23 @@ impl Store for SqliteStore {
         // Backfill deliberately ingests the whole spam/trash corpus (the
         // Trash/Spam folders list locally) — but search must not surface it.
         let not_junk = not_junk_sql("t.labels");
-        self.read(|c| {
-            if let Some(fts) = &q.fts_match {
-                // bm25()/snippet() must run in a direct full-text query, so
-                // a MATERIALIZED CTE (flattening it back into the join would
-                // break that context) scores each matching message; the outer
-                // query joins, groups per thread, and keeps the best message.
-                // GROUP BY + single min() aggregate: SQLite guarantees bare
-                // columns (f.rowid in the snippet subquery) come from the
-                // min-bm25 row.
-                // Work is bounded: the CTE keeps only the top-?10 rows by
-                // bm25 (cheap — no re-tokenization), and snippet() (expensive)
-                // runs per surviving row via a rowid-constrained MATCH, never
-                // over the whole match set. The cap trades exact recency
-                // blending on huge result sets for bounded per-keystroke cost.
-                let mut stmt = c.prepare_cached(&format!(
-                    "WITH f AS MATERIALIZED (
-                        SELECT rowid,
-                               bm25(messages_fts, 8.0, 4.0, 2.0, 1.0) AS score
-                        FROM messages_fts WHERE messages_fts MATCH ?1
-                        ORDER BY score LIMIT ?10)
-                     SELECT {},
-                            (SELECT snippet(messages_fts, -1, ?2, ?3, '…', 12)
-                             FROM messages_fts
-                             WHERE messages_fts MATCH ?1 AND rowid = f.rowid) AS snip,
-                            min(f.score)
-                              + ((?4 - t.last_msg_at) / 86400000.0) * 0.05 AS rank
-                     FROM f
-                     JOIN messages m ON m.rowid = f.rowid
-                     JOIN threads t ON t.id = m.thread_id
-                     WHERE (?5 IS NULL OR instr(lower(m.from_addr), ?5) > 0)
-                       AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
-                       AND (?7 = 0 OR t.is_read = 0)
-                       AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
-                       AND {not_junk}
-                     GROUP BY t.id
-                     ORDER BY rank
-                     LIMIT ?9",
-                    thread_cols("t.")
-                ))?;
-                let candidate_cap = (limit as i64).saturating_mul(10).max(200);
-                let rows = stmt.query_map(
-                    params![
-                        fts,
-                        SNIPPET_START.to_string(),
-                        SNIPPET_END.to_string(),
-                        now_ms,
-                        q.from_contains,
-                        q.to_contains,
-                        q.unread_only,
-                        q.account_contains,
-                        limit,
-                        candidate_cap
-                    ],
-                    |r| {
-                        Ok(SearchResult {
-                            thread: row_to_thread(r)?,
-                            // THREAD_COLS width, not a magic number — `snip` is
-                            // selected right after all thread_cols().
-                            snippet: r.get(THREAD_COLS.split(", ").count())?,
-                        })
-                    },
-                )?;
-                rows.collect()
+        // The index that answers: the new one once it holds all the mail
+        // (`reindex_step`), the one it replaces until then. Same columns
+        // in the same order, so the weights and the snippet apply to both.
+        let index = || {
+            if self.fts_ready.load(Ordering::SeqCst) {
+                "mail_fts"
             } else {
-                let mut stmt = c.prepare_cached(&format!(
-                    "SELECT {} FROM threads t
-                     WHERE (?1 = 0 OR t.is_read = 0)
-                       AND (?2 IS NULL OR instr(lower(t.account_id), ?2) > 0)
-                       AND (?3 IS NULL OR EXISTS (
-                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
-                               AND instr(lower(m.from_addr), ?3) > 0))
-                       AND (?4 IS NULL OR EXISTS (
-                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
-                               AND instr(lower(m.to_addrs), ?4) > 0))
-                       AND {not_junk}
-                     ORDER BY t.last_msg_at DESC
-                     LIMIT ?5",
-                    thread_cols("t.")
-                ))?;
-                let rows = stmt.query_map(
-                    params![
-                        q.unread_only,
-                        q.account_contains,
-                        q.from_contains,
-                        q.to_contains,
-                        limit
-                    ],
-                    |r| {
-                        let thread = row_to_thread(r)?;
-                        let snippet = thread.snippet.clone();
-                        Ok(SearchResult { thread, snippet })
-                    },
-                )?;
-                rows.collect()
+                "messages_fts"
             }
-        })
+        };
+        let run = |fts: &str| self.search_in(fts, q, limit, now_ms, &not_junk);
+        let fts = index();
+        match run(fts) {
+            // The old index was retired between the choice and the query.
+            Err(_) if fts != index() => run(index()),
+            result => result,
+        }
     }
 
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError> {
@@ -2275,7 +2803,17 @@ impl Store for SqliteStore {
     }
 
     fn outbox_push(&self, account_id: &AccountId, mutation: &Mutation) -> Result<i64, StoreError> {
-        let payload = serde_json::to_string(mutation).map_err(err)?;
+        // Sized up front: a send's attachments make this megabytes, and a
+        // buffer that grows by doubling copies them several times over.
+        let attached: usize = match mutation {
+            Mutation::Send { attachments, .. } | Mutation::SaveDraft { attachments, .. } => {
+                attachments.iter().map(|a| a.data_b64.len() + 256).sum()
+            }
+            _ => 0,
+        };
+        let mut payload = Vec::with_capacity(attached + 1024);
+        serde_json::to_writer(&mut payload, mutation).map_err(err)?;
+        let payload = String::from_utf8(payload).map_err(err)?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -2292,28 +2830,110 @@ impl Store for SqliteStore {
 
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError> {
         self.with(|c| {
-            let mut stmt = c.prepare_cached(
-                "SELECT id, account_id, mutation, attempts, created_at
-                 FROM outbox ORDER BY id LIMIT ?1",
-            )?;
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {OUTBOX_COLS} FROM outbox ORDER BY id LIMIT ?1"
+            ))?;
             let rows = stmt.query_map(params![limit], row_to_outbox_item)?;
             rows.collect()
         })
     }
 
-    fn outbox_list_due(
+    fn outbox_due(
         &self,
         after_id: i64,
         limit: u32,
         max_attempts: i64,
-    ) -> Result<Vec<OutboxItem>, StoreError> {
+    ) -> Result<Vec<(i64, AccountId)>, StoreError> {
         self.with(|c| {
             let mut stmt = c.prepare_cached(
-                "SELECT id, account_id, mutation, attempts, created_at
-                 FROM outbox WHERE id > ?1 AND attempts < ?3 ORDER BY id LIMIT ?2",
+                "SELECT id, account_id FROM outbox
+                  WHERE id > ?1 AND attempts < ?3 ORDER BY id LIMIT ?2",
             )?;
-            let rows =
-                stmt.query_map(params![after_id, limit, max_attempts], row_to_outbox_item)?;
+            let rows = stmt.query_map(params![after_id, limit, max_attempts], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+            rows.collect()
+        })
+    }
+
+    fn outbox_get(&self, id: i64) -> Result<Option<OutboxItem>, StoreError> {
+        self.with(|c| {
+            c.prepare_cached(&format!("SELECT {OUTBOX_COLS} FROM outbox WHERE id = ?1"))?
+                .query_row(params![id], row_to_outbox_item)
+                .optional()
+        })
+    }
+
+    fn outbox_set_error(&self, id: i64, error: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE outbox SET last_error = ?2 WHERE id = ?1",
+                params![id, error],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn outbox_reset(&self, id: i64) -> Result<bool, StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE outbox SET attempts = 0, last_error = NULL WHERE id = ?1",
+                params![id],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// The fields a list needs, picked out of each row's JSON by SQLite:
+    /// the row itself (for a queued send, megabytes of attachments) never
+    /// reaches this side.
+    fn outbox_summaries(&self) -> Result<Vec<OutboxSummary>, StoreError> {
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT id, account_id, mutation ->> '$.kind', mutation ->> '$.thread_id',
+                        mutation -> '$.to', mutation ->> '$.subject', attempts, last_error
+                   FROM outbox ORDER BY id",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                let kind: Option<String> = r.get(2)?;
+                let to: Option<String> = r.get(4)?;
+                Ok(OutboxSummary {
+                    id: r.get(0)?,
+                    account_id: r.get(1)?,
+                    kind: Mutation::kind_name_of_tag(kind.as_deref().unwrap_or_default())
+                        .to_string(),
+                    thread_id: r.get(3)?,
+                    to: to
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default(),
+                    subject: r.get(5)?,
+                    attempts: r.get(6)?,
+                    last_error: r.get(7)?,
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
+    /// `idx_threads_list` narrows this to the inbox; the sender list is
+    /// short.
+    fn inbox_threads_from(
+        &self,
+        account_id: &AccountId,
+        senders: &[String],
+    ) -> Result<Vec<Thread>, StoreError> {
+        if senders.is_empty() {
+            return Ok(Vec::new());
+        }
+        let senders = serde_json::to_string(senders).map_err(err)?;
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                  WHERE is_inbox = 1 AND is_archived = 0 AND account_id = ?1
+                    AND lower(last_from_addr) IN (SELECT value FROM json_each(?2))
+                  ORDER BY last_msg_at DESC"
+            ))?;
+            let rows = stmt.query_map(params![account_id, senders], row_to_thread)?;
             rows.collect()
         })
     }
@@ -4996,7 +5616,7 @@ mod tests {
     fn fts_bytes(s: &SqliteStore) -> i64 {
         s.with(|c| {
             c.query_row(
-                "SELECT COALESCE(SUM(LENGTH(block)), 0) + COUNT(*) FROM messages_fts_data",
+                "SELECT COALESCE(SUM(LENGTH(block)), 0) + COUNT(*) FROM mail_fts_data",
                 [],
                 |r| r.get(0),
             )
@@ -5133,20 +5753,19 @@ mod tests {
         }
 
         // `first` reached the cap of 3: kept, not due.
-        let due: Vec<i64> = s
-            .outbox_list_due(0, 10, 3)
-            .unwrap()
-            .into_iter()
-            .map(|i| i.id)
-            .collect();
-        assert_eq!(due, vec![second, third]);
-        let next: Vec<i64> = s
-            .outbox_list_due(second, 10, 3)
-            .unwrap()
-            .into_iter()
-            .map(|i| i.id)
-            .collect();
-        assert_eq!(next, vec![third]);
+        assert_eq!(
+            s.outbox_due(0, 10, 3).unwrap(),
+            vec![(second, a1.clone()), (third, a1.clone())]
+        );
+        assert_eq!(
+            s.outbox_due(second, 10, 3).unwrap(),
+            vec![(third, a1.clone())]
+        );
+        assert_eq!(s.outbox_due(0, 1, 3).unwrap().len(), 1);
+        let row = s.outbox_get(third).unwrap().unwrap();
+        assert_eq!((row.id, row.attempts), (third, 0));
+        assert!(matches!(row.mutation, Mutation::Archive { ref thread_id } if thread_id == "t3"));
+        assert!(s.outbox_get(9_999).unwrap().is_none());
         assert_eq!(s.outbox_counts(3).unwrap(), (2, 1));
         assert_eq!(s.outbox_list(10).unwrap().len(), 3);
         assert!(s.outbox_contains(first).unwrap());
@@ -5363,5 +5982,953 @@ mod tests {
         s.upsert_message(&meta).unwrap();
         assert_eq!(by_id("m1").body_html.as_deref(), Some("<p>hi</p>"));
         assert!(by_id("m1").body_fetched && by_id("m1").is_read);
+    }
+
+    // ---- v28: the outbox as a list, with each row's last error
+
+    /// A queued row from before the column existed is still there, reads
+    /// without an error, and can take one.
+    #[test]
+    fn v28_upgrade_keeps_queued_rows() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v28-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v27.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 27).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO outbox (account_id, mutation, attempts, created_at)
+                     VALUES ('a1', '{\"kind\":\"archive\",\"thread_id\":\"t1\"}', 2, 1)",
+                    [],
+                )
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v28
+        let rows = s.outbox_list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].attempts, rows[0].last_error.clone()), (2, None));
+        s.outbox_set_error(rows[0].id, "provider: 404 Not Found")
+            .unwrap();
+        assert_eq!(
+            s.outbox_get(rows[0].id)
+                .unwrap()
+                .unwrap()
+                .last_error
+                .as_deref(),
+            Some("provider: 404 Not Found")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn outbox_summaries_say_what_each_row_is_without_reading_it_whole() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        let a1 = "a1".to_string();
+        let send = |to: &[&str], subject: &str| Mutation::Send {
+            to: to.iter().map(|s| s.to_string()).collect(),
+            cc: vec![],
+            bcc: vec![],
+            subject: subject.to_string(),
+            body_text: "b".to_string(),
+            body_html: None,
+            attachments: vec![OutAttachment {
+                filename: "a.bin".to_string(),
+                mime_type: "application/octet-stream".to_string(),
+                data_b64: "QUJD".repeat(1000),
+            }],
+            reply_to_thread: None,
+            from_addr: None,
+            in_reply_to: None,
+            references: None,
+        };
+        let rows = [
+            send(&["ana@x.com", "bo@x.com"], "Hello \"there\" & more"),
+            Mutation::SaveDraft {
+                key: "k1".to_string(),
+                to: vec![],
+                cc: vec![],
+                bcc: vec![],
+                subject: String::new(),
+                body_text: String::new(),
+                body_html: None,
+                attachments: vec![],
+                reply_to_thread: None,
+                from_addr: None,
+                in_reply_to: None,
+                references: None,
+            },
+            Mutation::DeleteDraft {
+                key: "k1".to_string(),
+            },
+            Mutation::Archive {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::Unarchive {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::MarkRead {
+                thread_id: "t1".to_string(),
+                read: true,
+            },
+            Mutation::Trash {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::Untrash {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::Star {
+                thread_id: "t1".to_string(),
+                starred: true,
+            },
+            Mutation::ModifyLabel {
+                thread_id: "t1".to_string(),
+                label_id: "Label_1".to_string(),
+                add: true,
+            },
+            Mutation::MarkSpam {
+                thread_id: "t1".to_string(),
+                spam: true,
+            },
+        ];
+        let mut ids = Vec::new();
+        for m in &rows {
+            ids.push(s.outbox_push(&a1, m).unwrap());
+        }
+        s.outbox_bump_attempts(ids[3]).unwrap();
+        s.outbox_set_error(ids[3], "provider: 404 Not Found")
+            .unwrap();
+
+        let summaries = s.outbox_summaries().unwrap();
+        // Exactly what reading each row whole would say.
+        let whole: Vec<OutboxSummary> = s
+            .outbox_list(100)
+            .unwrap()
+            .iter()
+            .map(OutboxSummary::of)
+            .collect();
+        assert_eq!(summaries, whole);
+        let kinds: Vec<&str> = summaries.iter().map(|r| r.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "send",
+                "draft",
+                "delete_draft",
+                "archive",
+                "unarchive",
+                "read",
+                "trash",
+                "untrash",
+                "star",
+                "label",
+                "spam"
+            ]
+        );
+        assert_eq!(summaries[0].to, vec!["ana@x.com", "bo@x.com"]);
+        assert_eq!(
+            summaries[0].subject.as_deref(),
+            Some("Hello \"there\" & more")
+        );
+        assert_eq!(summaries[3].thread_id.as_deref(), Some("t1"));
+        assert_eq!(
+            (summaries[3].attempts, summaries[3].last_error.as_deref()),
+            (1, Some("provider: 404 Not Found"))
+        );
+
+        // A fresh start for one row; the others are as they were.
+        assert!(s.outbox_reset(ids[3]).unwrap());
+        assert!(!s.outbox_reset(9_999).unwrap());
+        let after = s.outbox_get(ids[3]).unwrap().unwrap();
+        assert_eq!((after.attempts, after.last_error), (0, None));
+        // The row with attachments comes back whole when it is its turn.
+        assert_eq!(s.outbox_get(ids[0]).unwrap().unwrap().mutation, rows[0]);
+    }
+
+    #[test]
+    fn inbox_threads_from_finds_the_block_rules_candidates() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        s.upsert_account(&sample_account("a2")).unwrap();
+        let seed = |id: &str, account: &str, from: &str, inbox: bool| {
+            s.upsert_thread(&Thread {
+                id: id.to_string(),
+                account_id: account.to_string(),
+                subject: id.to_string(),
+                last_msg_at: 1,
+                is_inbox: inbox,
+                is_archived: !inbox,
+                msg_count: 1,
+                last_from_addr: from.to_string(),
+                labels: if inbox {
+                    vec!["INBOX".to_string()]
+                } else {
+                    vec![]
+                },
+                ..Thread::default()
+            })
+            .unwrap();
+        };
+        seed("t1", "a1", "Spammer@Evil.example", true);
+        seed("t2", "a1", "friend@x.com", true);
+        seed("t3", "a1", "spammer@evil.example", false);
+        seed("t4", "a2", "spammer@evil.example", true);
+        s.set_needs_reply(&"t1".to_string(), true).unwrap();
+
+        let blocked = vec!["spammer@evil.example".to_string()];
+        let found: Vec<String> = s
+            .inbox_threads_from(&"a1".to_string(), &blocked)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(found, vec!["t1"]);
+        assert!(s
+            .inbox_threads_from(&"a1".to_string(), &[])
+            .unwrap()
+            .is_empty());
+    }
+
+    // ---- Cc in search
+
+    /// FTS5's own check of an external-content index against its content
+    /// (the view): fails if any entry was added or removed with values
+    /// other than the ones the view gives.
+    fn index_is_whole(s: &SqliteStore, index: &str) -> bool {
+        s.with(|c| {
+            c.execute(
+                &format!("INSERT INTO {index}({index}, rank) VALUES ('integrity-check', 1)"),
+                [],
+            )
+        })
+        .is_ok()
+    }
+
+    fn fts_is_consistent(s: &SqliteStore) -> bool {
+        index_is_whole(s, "mail_fts")
+    }
+
+    fn found(s: &SqliteStore, q: &str) -> Vec<String> {
+        let mut ids: Vec<String> = search(s, q).into_iter().map(|r| r.thread.id).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn search_finds_the_cc_line_and_cc_is_an_operator() {
+        let s = store();
+        seed_thread(
+            &s,
+            "t1",
+            "Budget",
+            "Priya <priya@x.com>",
+            "numbers",
+            1000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Lunch",
+            "Priya <priya@x.com>",
+            "friday",
+            2000,
+            false,
+        );
+        let t1 = "t1".to_string();
+        // Cc arrives with the message (or, for old mail, its full fetch).
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        m.cc_addrs = vec!["Samira Okafor <samira@partner.example>".to_string()];
+        s.upsert_message(&m).unwrap();
+
+        // A name or an address that is only in Cc is found…
+        assert_eq!(found(&s, "samira"), vec!["t1"]);
+        assert_eq!(found(&s, "okafor budget"), vec!["t1"]);
+        assert_eq!(found(&s, "partner.example"), vec!["t1"]);
+        // …and `cc:` narrows by it, like `to:` (which does not see Cc).
+        assert_eq!(found(&s, "cc:samira"), vec!["t1"]);
+        assert_eq!(found(&s, "cc:Partner.Example numbers"), vec!["t1"]);
+        assert!(found(&s, "cc:priya").is_empty());
+        assert!(found(&s, "to:samira").is_empty());
+        assert!(found(&s, "cc:samira friday").is_empty());
+        assert!(fts_is_consistent(&s));
+
+        // The index follows the message: Cc changed, then the mail gone.
+        m.cc_addrs = vec!["lee@x.com".to_string()];
+        s.upsert_message(&m).unwrap();
+        assert!(found(&s, "samira").is_empty());
+        assert_eq!(found(&s, "cc:lee"), vec!["t1"]);
+        s.delete_thread(&t1).unwrap();
+        assert!(found(&s, "lee").is_empty());
+        assert!(fts_is_consistent(&s));
+    }
+
+    // ---- v30: the search index moves to `mail_fts`, after open
+
+    /// Rows of the messages table that are in the new index.
+    fn moved(s: &SqliteStore) -> i64 {
+        s.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM messages WHERE fts_subject IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap()
+    }
+
+    fn old_index_objects(s: &SqliteStore) -> i64 {
+        s.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'messages_fts%'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap()
+    }
+
+    /// A message row as a store before v30 wrote it (the upsert of today
+    /// names a column those did not have). `version` is the schema the
+    /// store is at: from v27 a row has its Reply-To.
+    fn old_message(s: &SqliteStore, version: usize, m: &Message) {
+        if version >= 27 {
+            // A plain insert of today's columns but the index's.
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO messages
+                       (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                        body_html, body_text, label_ids, is_read, cc_addrs, body_fetched,
+                        reply_to_addrs)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    params![
+                        m.id,
+                        m.thread_id,
+                        m.account_id,
+                        m.from_addr,
+                        serde_json::to_string(&m.to_addrs).unwrap(),
+                        m.date,
+                        m.snippet,
+                        m.body_html,
+                        m.body_text,
+                        serde_json::to_string(&m.label_ids).unwrap(),
+                        m.is_read,
+                        serde_json::to_string(&m.cc_addrs).unwrap(),
+                        m.body_fetched,
+                        serde_json::to_string(&m.reply_to_addrs).unwrap()
+                    ],
+                )
+            })
+            .unwrap();
+            return;
+        }
+        s.with(|c| {
+            c.execute(
+                "INSERT INTO messages
+                   (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                    body_html, body_text, label_ids, is_read, cc_addrs, body_fetched)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    m.id,
+                    m.thread_id,
+                    m.account_id,
+                    m.from_addr,
+                    serde_json::to_string(&m.to_addrs).unwrap(),
+                    m.date,
+                    m.snippet,
+                    m.body_html,
+                    m.body_text,
+                    serde_json::to_string(&m.label_ids).unwrap(),
+                    m.is_read,
+                    serde_json::to_string(&m.cc_addrs).unwrap(),
+                    m.body_fetched
+                ],
+            )
+        })
+        .unwrap();
+    }
+
+    fn old_thread(s: &SqliteStore, id: &str, subject: &str, from: &str) {
+        s.upsert_thread(&Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: subject.to_string(),
+            last_msg_at: 1000,
+            is_inbox: true,
+            msg_count: 1,
+            from_summary: from.to_string(),
+            last_from_addr: from.to_string(),
+            labels: vec!["INBOX".to_string()],
+            ..Default::default()
+        })
+        .unwrap();
+    }
+
+    fn rename(s: &SqliteStore, id: &str, subject: &str) {
+        let mut t = s.get_thread(&id.to_string()).unwrap().unwrap();
+        t.subject = subject.to_string();
+        s.upsert_thread(&t).unwrap();
+    }
+
+    fn rewrite_body(s: &SqliteStore, thread_id: &str, body: &str) {
+        let mut m = s.list_messages(&thread_id.to_string()).unwrap().remove(0);
+        m.body_text = Some(body.to_string());
+        s.upsert_message(&m).unwrap();
+    }
+
+    const SPOOFED_FROM: &str = r#""Bank <alerts@bank.example>" <attacker@evil.example>"#;
+
+    /// A mailbox as an older build left it, on disk: thirty threads
+    /// `t00`…`t29` of one message each (subject `topicNN`, body `bodyNN`),
+    /// every third with a Cc. Thread 6's subject changed after it was
+    /// indexed and its message was written again since — the drift that
+    /// leaves the old index malformed. Thread 7 is from an address hidden
+    /// behind a quoted display name, with the list sender the old reading
+    /// gave it. Every fifth thread was opened, so its message was fetched
+    /// in full.
+    ///
+    /// `version` is the schema the store is at, which is one of the two a
+    /// device can have: 26 (the release before Reply-To) or 27 (main's
+    /// step ran: an opened message was fetched again since and has its
+    /// Reply-To).
+    fn old_mailbox(name: &str, version: usize) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v30-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let conn = Connection::open(&path).unwrap();
+        let s = SqliteStore::init_to(conn, version).unwrap();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        for n in 0..30 {
+            let id = format!("t{n:02}");
+            let from = if n == 7 {
+                SPOOFED_FROM.to_string()
+            } else {
+                format!("sender{n:02}@x.com")
+            };
+            old_thread(&s, &id, &format!("topic{n:02}"), &from);
+            if n == 7 {
+                s.with(|c| {
+                    c.execute(
+                        "UPDATE threads SET last_from_addr = 'alerts@bank.example' WHERE id = 't07'",
+                        [],
+                    )
+                })
+                .unwrap();
+            }
+            let opened = n % 5 == 0;
+            old_message(
+                &s,
+                version,
+                &Message {
+                    id: format!("{id}-m1"),
+                    thread_id: id.clone(),
+                    account_id: "a1".to_string(),
+                    from_addr: from,
+                    to_addrs: vec!["me@heypigeon.app".to_string()],
+                    date: 1000 + n,
+                    body_text: Some(format!("body{n:02}")),
+                    label_ids: vec!["INBOX".to_string()],
+                    cc_addrs: if n % 3 == 0 {
+                        vec!["Samira Okafor <samira@partner.example>".to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                    body_fetched: opened,
+                    reply_to_addrs: if opened && version >= 27 {
+                        vec![format!("Desk <frontdesk{n:02}@hotel.example>")]
+                    } else {
+                        Vec::new()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+        // The drift: the subject changes under an indexed message, and the
+        // message is then taken out of the old index under the new subject.
+        rename(&s, "t06", "renamed06");
+        s.with(|c| {
+            c.execute(
+                "UPDATE messages SET body_text = 'drifted06' WHERE thread_id = 't06'",
+                [],
+            )
+        })
+        .unwrap();
+        assert!(
+            !index_is_whole(&s, "messages_fts"),
+            "the fixture's old index is malformed"
+        );
+        path
+    }
+
+    /// The full fetch main's v27 asks for (it lowers `body_fetched` on
+    /// opened mail): the message comes back as it was, with its Reply-To.
+    fn refetch_with_reply_to(s: &SqliteStore, thread_id: &str, reply_to: &str) {
+        let mut m = s.list_messages(&thread_id.to_string()).unwrap().remove(0);
+        m.reply_to_addrs = vec![reply_to.to_string()];
+        m.body_fetched = true;
+        s.upsert_message(&m).unwrap();
+        let stored = s.list_messages(&thread_id.to_string()).unwrap().remove(0);
+        assert_eq!(stored.reply_to_addrs, vec![reply_to]);
+        assert!(stored.body_fetched);
+    }
+
+    /// The proof for v30. An old mailbox whose index has drifted is
+    /// opened; the move is run a few steps, with mail arriving, changing
+    /// and going meanwhile; the app is killed (once between steps, once
+    /// inside one); the move is picked up and finished. At every stop the
+    /// new index agrees with its content (FTS5's integrity-check), at the
+    /// end it holds everything, Cc included, and the old index is gone.
+    fn the_index_moves(name: &str, version: usize) {
+        let path = old_mailbox(name, version);
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(s.reindex_pending().unwrap());
+        assert_eq!(moved(&s), 0, "opening moved nothing");
+        // Meanwhile the old index answers.
+        assert_eq!(found(&s, "body17"), vec!["t17"]);
+        // Main's v27 ran before the index steps, here or on the device:
+        // opened mail is to be fetched again unless it already was.
+        let opened = s.list_messages(&"t25".to_string()).unwrap().remove(0);
+        assert_eq!(opened.body_fetched, version >= 27);
+        assert_eq!(opened.reply_to_addrs.is_empty(), version < 27);
+        // That fetch, for a message the move has not reached: the row is
+        // written, and still waits its turn for the new index.
+        refetch_with_reply_to(&s, "t25", "Desk <frontdesk25@hotel.example>");
+        assert_eq!(moved(&s), 0);
+        assert_eq!(found(&s, "body25"), vec!["t25"]);
+
+        for through in [4, 8, 12] {
+            assert_eq!(s.reindex_step(4).unwrap(), Reindex::Indexing { through });
+            assert!(fts_is_consistent(&s), "after {through}");
+        }
+        assert_eq!(moved(&s), 12);
+
+        // Mail does not wait for the move. New mail:
+        seed_thread(&s, "t-new", "arrival", "new@x.com", "newmail", 5000, false);
+        assert_eq!(found(&s, "newmail"), vec!["t-new"]);
+        // a subject changes, on a thread already moved and one not yet:
+        rename(&s, "t02", "midway02");
+        rename(&s, "t20", "late20");
+        // a body arrives, likewise:
+        rewrite_body(&s, "t01", "fetched01");
+        rewrite_body(&s, "t22", "fetched22");
+        // and mail goes, likewise.
+        s.delete_thread(&"t03".to_string()).unwrap();
+        s.delete_thread(&"t21".to_string()).unwrap();
+        assert!(fts_is_consistent(&s));
+        assert_eq!(moved(&s), 12 - 1 + 1);
+
+        // Killed between two steps…
+        drop(s);
+        // …and killed inside one: what it did never commits.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "BEGIN;
+                 UPDATE messages SET fts_subject = 'half' WHERE fts_subject IS NULL;
+                 UPDATE sync_meta SET value = '99' WHERE key = 'fts.cursor';",
+            )
+            .unwrap();
+        }
+
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(s.reindex_pending().unwrap());
+        assert_eq!(moved(&s), 12, "the half step left nothing");
+        assert!(fts_is_consistent(&s));
+        // It goes on where it was.
+        assert_eq!(
+            s.reindex_step(4).unwrap(),
+            Reindex::Indexing { through: 16 }
+        );
+        let mut steps = 0;
+        while s.reindex_step(4).unwrap() != Reindex::Done {
+            steps += 1;
+            assert!(steps < 100, "the move ends");
+        }
+
+        assert!(!s.reindex_pending().unwrap());
+        assert_eq!(old_index_objects(&s), 0, "the old index is gone");
+        assert!(fts_is_consistent(&s));
+        let stored: i64 = s
+            .with(|c| c.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!((stored, moved(&s)), (29, 29));
+
+        // Everything is found, under what it says now.
+        for n in (0..30).filter(|n| ![1, 3, 6, 21, 22].contains(n)) {
+            assert_eq!(found(&s, &format!("body{n:02}")), vec![format!("t{n:02}")]);
+        }
+        for n in (0..30).filter(|n| ![2, 3, 6, 20, 21].contains(n)) {
+            assert_eq!(found(&s, &format!("topic{n:02}")), vec![format!("t{n:02}")]);
+        }
+        assert_eq!(found(&s, "renamed06"), vec!["t06"]);
+        assert_eq!(found(&s, "drifted06"), vec!["t06"]);
+        assert_eq!(found(&s, "midway02"), vec!["t02"]);
+        assert_eq!(found(&s, "late20"), vec!["t20"]);
+        assert_eq!(found(&s, "fetched01"), vec!["t01"]);
+        assert_eq!(found(&s, "fetched22"), vec!["t22"]);
+        assert_eq!(found(&s, "newmail"), vec!["t-new"]);
+        for gone in [
+            "topic06", "body06", "topic02", "topic20", "body01", "body22",
+        ] {
+            assert!(found(&s, gone).is_empty(), "{gone}");
+        }
+        // Cc that was stored all along is searchable now.
+        let cc: Vec<String> = (0..30)
+            .filter(|n| n % 3 == 0 && ![3, 21].contains(n))
+            .map(|n| format!("t{n:02}"))
+            .collect();
+        assert_eq!(found(&s, "samira"), cc);
+        assert_eq!(found(&s, "okafor renamed06"), vec!["t06"]);
+        // The same fetch for a message that has moved: nothing the index
+        // holds changed, so nothing is indexed again — and Reply-To is
+        // not part of the index.
+        let before = fts_bytes(&s);
+        refetch_with_reply_to(&s, "t10", "Desk <frontdesk10@hotel.example>");
+        assert_eq!(fts_bytes(&s), before, "no re-index for a Reply-To");
+        for reply_to in ["frontdesk10", "frontdesk25", "hotel.example"] {
+            assert!(found(&s, reply_to).is_empty(), "{reply_to}");
+        }
+        assert!(fts_is_consistent(&s));
+        // The sender behind the quoted name is the one the list shows.
+        let spoofed = s.get_thread(&"t07".to_string()).unwrap().unwrap();
+        assert_eq!(spoofed.last_from_addr, "attacker@evil.example");
+        let plain = s.get_thread(&"t08".to_string()).unwrap().unwrap();
+        assert_eq!(plain.last_from_addr, "sender08@x.com");
+
+        // And it stays whole: the writes that malformed the old index.
+        rename(&s, "t06", "again06");
+        rewrite_body(&s, "t06", "third06");
+        rename(&s, "t09", "moved09");
+        s.delete_thread(&"t09".to_string()).unwrap();
+        assert_eq!(found(&s, "again06 third06"), vec!["t06"]);
+        assert!(found(&s, "renamed06").is_empty());
+        assert!(found(&s, "moved09").is_empty());
+        assert!(fts_is_consistent(&s));
+        assert_eq!(s.reindex_step(4).unwrap(), Reindex::Done);
+
+        drop(s);
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(!s.reindex_pending().unwrap());
+        assert_eq!(found(&s, "again06"), vec!["t06"]);
+        assert!(fts_is_consistent(&s));
+        drop(s);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// From the release before Reply-To: main's v27 runs, then every
+    /// step of this branch.
+    #[test]
+    fn v30_the_index_moves_after_open_through_drift_and_a_kill() {
+        the_index_moves("v26.db", 26);
+    }
+
+    /// From main's v27, where devices are once it ships: every step after
+    /// it runs, to the end.
+    #[test]
+    fn v30_the_index_moves_on_a_store_at_mains_v27() {
+        the_index_moves("v27.db", 27);
+    }
+
+    /// The steps in the order devices meet them: main's Reply-To step is
+    /// the 27th, as it shipped, and this branch's follow it.
+    #[test]
+    fn the_steps_after_v26_are_mains_then_this_branchs() {
+        assert_eq!(MIGRATIONS.len(), 31);
+        for (version, names) in [
+            (27, "reply_to_addrs"),
+            (28, "last_error"),
+            (29, "thread_links"),
+            (30, "mail_fts"),
+            (31, "rule_marks"),
+        ] {
+            assert!(MIGRATIONS[version - 1].contains(names), "v{version}");
+            assert!(!MIGRATIONS[version - 2].contains(names), "v{version}");
+        }
+        assert_eq!(FTS_MOVE_AT, 30);
+        // A store at 26 and one at 27 end with the same schema.
+        let schema = |version: usize| {
+            let conn = Connection::open_in_memory().unwrap();
+            let s = SqliteStore::init_to(conn, version).unwrap();
+            // What `open` does to a store it finds at `version`.
+            let s = SqliteStore::init(s.conn.into_inner().unwrap()).unwrap();
+            let listed: Vec<String> = s
+                .with(|c| {
+                    c.prepare(
+                        "SELECT type || ' ' || name || ' ' || COALESCE(sql, '')
+                           FROM sqlite_master ORDER BY type, name",
+                    )?
+                    .query_map([], |r| r.get(0))?
+                    .collect()
+                })
+                .unwrap();
+            let version: i64 = s
+                .with(|c| c.pragma_query_value(None, "user_version", |r| r.get(0)))
+                .unwrap();
+            (version, listed)
+        };
+        let fresh = schema(0);
+        assert_eq!(fresh.0, 31);
+        for from in [26, 27, 28, 29, 30] {
+            assert_eq!(schema(from), fresh, "from v{from}");
+        }
+    }
+
+    /// A new install has nothing to move: it is on the new index from the
+    /// first write, and the old one is not kept around.
+    #[test]
+    fn a_new_store_starts_on_the_new_index() {
+        let s = store();
+        assert!(!s.reindex_pending().unwrap());
+        assert_eq!(s.reindex_step(100).unwrap(), Reindex::Done);
+        assert_eq!(old_index_objects(&s), 0);
+        seed_thread(&s, "t1", "Budget", "priya@x.com", "numbers", 1000, false);
+        assert_eq!(found(&s, "budget numbers"), vec!["t1"]);
+        // A message that is stored before its thread is indexed without a
+        // subject, and gets it when the thread arrives.
+        s.upsert_message(&Message {
+            id: "t2-m1".to_string(),
+            thread_id: "t2".to_string(),
+            account_id: "a1".to_string(),
+            body_text: Some("orphan".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(moved(&s), 2);
+        assert!(found(&s, "lunch").is_empty());
+        old_thread(&s, "t2", "Lunch", "sam@x.com");
+        assert_eq!(found(&s, "lunch orphan"), vec!["t2"]);
+        assert!(fts_is_consistent(&s));
+    }
+
+    /// Opening a big old mailbox does not read the mail, and each step of
+    /// the move afterwards is short. The mailbox is one from the release
+    /// before Reply-To (v26), with `HP_OPENED` percent of its mail opened
+    /// (fetched in full, with an HTML body); main's v27 is timed on its
+    /// own, then the open from there, which is this branch's steps. Run by
+    /// hand:
+    /// `HP_BIG=500000 HP_OPENED=10 cargo test -p heypigeon-adapter-sqlite \
+    ///    --release -- --ignored --nocapture opening_a_big_old_mailbox`
+    #[test]
+    #[ignore]
+    fn opening_a_big_old_mailbox_is_quick() {
+        use std::time::{Duration, Instant};
+        let n: i64 = std::env::var("HP_BIG")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100_000);
+        let opened_percent: i64 = std::env::var("HP_OPENED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        let html = "<p>Some words of a newsletter, as they come.</p>\n".repeat(400);
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 26).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            let built = Instant::now();
+            s.with(|c| {
+                let tx = c.unchecked_transaction()?;
+                {
+                    let mut thread = tx.prepare(
+                        "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at,
+                                              is_read, is_inbox, is_archived, msg_count,
+                                              from_summary, last_from_addr, labels)
+                         VALUES (?1, 'a1', ?2, '', ?3, 1, 0, 1, 3, 'x', 'x@x.com', '[]')",
+                    )?;
+                    let mut message = tx.prepare(
+                        "INSERT INTO messages (id, thread_id, account_id, from_addr, to_addrs,
+                                               date, snippet, body_text, label_ids, is_read,
+                                               cc_addrs, body_html, body_fetched)
+                         VALUES (?1, ?2, 'a1', ?3, '[\"me@heypigeon.app\"]', ?4, '', ?5, '[]', 1,
+                                 ?6, ?7, ?8)",
+                    )?;
+                    for i in 0..n {
+                        let thread_id = format!("t{}", i / 3);
+                        if i % 3 == 0 {
+                            thread.execute(params![thread_id, format!("subject {}", i / 3), i])?;
+                        }
+                        // ~1 KB of text from a vocabulary of a few thousand
+                        // words, as mail is.
+                        let body: String = (0..150)
+                            .map(|w| format!("word{} ", (i * 31 + w * 17) % 5000))
+                            .collect();
+                        let cc = if i % 3 == 0 {
+                            "[\"Samira Okafor <samira@partner.example>\"]"
+                        } else {
+                            "[]"
+                        };
+                        message.execute(params![
+                            format!("m{i}"),
+                            thread_id,
+                            format!("Sender {} <s{}@x.com>", i % 900, i % 900),
+                            i,
+                            body,
+                            cc,
+                            (i % 100 < opened_percent).then_some(html.as_str()),
+                            i % 100 < opened_percent
+                        ])?;
+                    }
+                }
+                tx.commit()
+            })
+            .unwrap();
+            eprintln!("built {n} messages in {:?}", built.elapsed());
+        }
+        let size = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) >> 20;
+        eprintln!("file: {} MiB", size(&path));
+
+        // Main's step, where a device that ships main meets it.
+        let conn = Connection::open(&path).unwrap();
+        let opening = Instant::now();
+        drop(SqliteStore::init_to(conn, 27).unwrap());
+        eprintln!(
+            "open (v26 -> v27, main's Reply-To step, {opened_percent}% opened): {:?}",
+            opening.elapsed()
+        );
+
+        let opening = Instant::now();
+        let s = SqliteStore::open(&path).unwrap();
+        let opened = opening.elapsed();
+        eprintln!("open (v27 -> v{}): {opened:?}", MIGRATIONS.len());
+        assert!(opened < Duration::from_secs(1), "{opened:?}");
+        assert!(s.reindex_pending().unwrap());
+
+        let all = Instant::now();
+        let (mut steps, mut longest, mut longest_retiring) = (0, Duration::ZERO, Duration::ZERO);
+        let mut indexing = Duration::ZERO;
+        loop {
+            let step = Instant::now();
+            let state = s.reindex_step(200).unwrap();
+            let took = step.elapsed();
+            steps += 1;
+            match state {
+                Reindex::Indexing { .. } => {
+                    longest = longest.max(took);
+                    indexing = all.elapsed();
+                }
+                Reindex::Retiring => longest_retiring = longest_retiring.max(took),
+                Reindex::Done => break,
+            }
+        }
+        eprintln!(
+            "move: {steps} steps of 200 in {:?} (indexing {indexing:?}); longest indexing step \
+             {longest:?}, longest retiring step {longest_retiring:?}",
+            all.elapsed()
+        );
+        let checking = Instant::now();
+        assert!(fts_is_consistent(&s));
+        eprintln!("integrity-check: {:?}", checking.elapsed());
+        assert_eq!(search(&s, "okafor").len(), 50, "Cc is found (a page of it)");
+        eprintln!("file after: {} MiB", size(&path));
+        drop(s);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_install_secret_is_made_once_and_kept() {
+        let s = store();
+        let key = s.install_secret("sanitize_key").unwrap();
+        assert_ne!(key, [0u8; 32]);
+        assert_eq!(s.install_secret("sanitize_key").unwrap(), key);
+        assert_ne!(s.install_secret("another").unwrap(), key);
+        assert_ne!(store().install_secret("sanitize_key").unwrap(), key);
+        // It does not go with an account's bookkeeping.
+        s.delete_account("a1").unwrap();
+        assert_eq!(s.install_secret("sanitize_key").unwrap(), key);
+    }
+
+    // ---- v31: what the rules last acted on
+
+    #[test]
+    fn rule_marks_are_kept_per_rule_and_go_with_the_thread() {
+        let s = store();
+        for id in ["t1", "t2", "t3"] {
+            seed_thread(&s, id, "Hello", "sam@x.com", "hi", 1000, false);
+        }
+        let (t1, t2, t3) = ("t1".to_string(), "t2".to_string(), "t3".to_string());
+        assert_eq!(s.rule_mark("mute", &t1).unwrap(), None);
+        s.set_rule_mark("mute", &t1, 10).unwrap();
+        s.set_rule_mark("mute", &t1, 20).unwrap();
+        s.set_rule_mark("mute", &t2, 30).unwrap();
+        s.set_rule_mark("mute", &t3, 40).unwrap();
+        s.set_rule_mark("block", &t1, 50).unwrap();
+        assert_eq!(s.rule_mark("mute", &t1).unwrap(), Some(20));
+        assert_eq!(s.rule_mark("block", &t1).unwrap(), Some(50));
+        assert_eq!(s.rule_mark("block", &t2).unwrap(), None);
+
+        // Only the named rule's marks are thinned out.
+        s.retain_rule_marks("mute", &[t1.clone(), t3.clone()])
+            .unwrap();
+        assert_eq!(s.rule_mark("mute", &t2).unwrap(), None);
+        assert_eq!(s.rule_mark("mute", &t3).unwrap(), Some(40));
+        assert_eq!(s.rule_mark("block", &t1).unwrap(), Some(50));
+        s.delete_thread(&t1).unwrap();
+        assert_eq!(s.rule_mark("mute", &t1).unwrap(), None);
+        assert_eq!(s.rule_mark("block", &t1).unwrap(), None);
+        s.retain_rule_marks("mute", &[]).unwrap();
+        assert_eq!(s.rule_mark("mute", &t3).unwrap(), None);
+    }
+
+    // ---- v29: tracking links kept per thread
+
+    #[test]
+    fn thread_links_are_kept_with_their_signature_and_go_with_the_thread() {
+        let s = store();
+        seed_thread(&s, "t1", "Shipped", "shop@x.com", "on its way", 1000, false);
+        let t1 = "t1".to_string();
+        assert_eq!(s.thread_links(&t1).unwrap(), None);
+        // One message, with a body (seed_thread stores its text).
+        assert_eq!(s.thread_body_count(&t1).unwrap(), 1);
+        assert_eq!(s.thread_body_count(&"nope".to_string()).unwrap(), 0);
+
+        let links = vec!["https://track.example/a?x=1&y=2".to_string()];
+        s.set_thread_links(&t1, "1|1|", &links).unwrap();
+        assert_eq!(
+            s.thread_links(&t1).unwrap(),
+            Some(("1|1|".to_string(), links))
+        );
+        // Read again in another state: the row is replaced.
+        s.set_thread_links(&t1, "2|2|TRACK1", &[]).unwrap();
+        assert_eq!(
+            s.thread_links(&t1).unwrap(),
+            Some(("2|2|TRACK1".to_string(), vec![]))
+        );
+
+        // What the bundle view goes through, on the stored state.
+        let thread = s.get_thread(&t1).unwrap().unwrap();
+        assert_eq!(
+            heypigeon_core::bundles::stored_tracking_links(&s, &thread, &[]).unwrap(),
+            None,
+            "kept for another state"
+        );
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        m.body_html = Some(r#"<a href="https://track.example/p/1">Track</a>"#.to_string());
+        s.upsert_message(&m).unwrap();
+        let read = heypigeon_core::bundles::refresh_tracking_links(&s, &thread, &[]).unwrap();
+        assert_eq!(read, vec!["https://track.example/p/1"]);
+        assert_eq!(
+            heypigeon_core::bundles::stored_tracking_links(&s, &thread, &[]).unwrap(),
+            Some(read)
+        );
+        // Other tracking numbers are another state.
+        assert_eq!(
+            heypigeon_core::bundles::stored_tracking_links(&s, &thread, &["Z9".to_string()])
+                .unwrap(),
+            None
+        );
+
+        s.delete_thread(&t1).unwrap();
+        assert_eq!(s.thread_links(&t1).unwrap(), None);
     }
 }

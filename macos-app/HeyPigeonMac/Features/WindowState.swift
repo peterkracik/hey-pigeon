@@ -478,7 +478,9 @@ final class WindowState: Equatable {
             chordArmedAt = Date()
             return .handled
         case .run(let command):
-            run(command, in: model)
+            // For Instruments: the key, and what handling it cost.
+            Trace.event("key")
+            Trace.interval("key") { run(command, in: model) }
             return .handled
         }
     }

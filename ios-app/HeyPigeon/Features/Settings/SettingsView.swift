@@ -41,6 +41,9 @@ struct SettingsView: View {
     @State private var ownPath: [SettingsRoute] = []
     private var path: Binding<[SettingsRoute]> { hostPath ?? $ownPath }
     @State private var removing: MailAccount?
+    /// The crash and hang reports on this device, read as Settings opens
+    /// (DiagnosticsSection shows nothing when there are none).
+    @State private var diagnosticReports: [DiagnosticsCollector.Report] = []
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
     #if os(macOS)
     /// The menu bar extra (macos-app HeyPigeonMacApp reads the same key).
@@ -122,6 +125,8 @@ struct SettingsView: View {
                     Text(Self.swipeFooter)
                 }
                 .menuCard()
+                OutboxSection()
+                RulesSection()
                 Section("Appearance") {
                     Picker("Appearance", selection: $appearance) {
                         ForEach(Appearance.allCases) { a in Text(a.title).tag(a.rawValue) }
@@ -130,6 +135,7 @@ struct SettingsView: View {
                     menuBarToggle
                 }
                 .menuCard()
+                DiagnosticsSection(reports: $diagnosticReports)
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")
                     Link("heypigeon.app", destination: URL(string: "https://heypigeon.app")!)
@@ -149,6 +155,9 @@ struct SettingsView: View {
             .navigationDestination(for: SettingsRoute.self) { route in
                 page(route).backInWindowToolbar()
             }
+            // The "not sent" line over the list opens Settings here.
+            .navigationDestination(isPresented: $model.showOutbox) { OutboxView() }
+            .onAppear { diagnosticReports = DiagnosticsCollector.reports() }
             .sheetCloseButton { Keyboard.dismiss(); dismiss() }
             .dismissKeyboardOnScroll(.interactively)
             .confirmationDialog("Remove \(removing?.email ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
@@ -161,6 +170,8 @@ struct SettingsView: View {
             }
         }
         .menuSheet()
+        // Closed while on the Outbox page: the next visit starts at the top.
+        .onDisappear { model.showOutbox = false }
     }
 
     /// Appearance › "Show in the menu bar", on the Mac; nothing on the

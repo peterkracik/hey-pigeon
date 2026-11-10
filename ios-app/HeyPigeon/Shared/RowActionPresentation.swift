@@ -64,8 +64,7 @@ extension RowAction {
     }
 
     /// The bare key that runs it: the Mac's key map, its shortcuts sheet
-    /// and tooltips, and the iPad's list with a hardware keyboard
-    /// (Features/Inbox/ListKeys.swift).
+    /// and tooltips.
     var key: String {
         switch self {
         case .done: "E"

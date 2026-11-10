@@ -72,6 +72,8 @@ struct EmailAddressTests {
     @Test func parsesHeaderText() {
         #expect(EmailAddress.address(in: "\"Ana Novak\" <ana@acme.test>") == "ana@acme.test")
         #expect(EmailAddress.address(in: "  ana@acme.test ") == "ana@acme.test")
+        // A name that holds an address of its own does not choose the sender.
+        #expect(EmailAddress.address(in: "\"Support <alerts@bank.test>\" <someone@else.test>") == "someone@else.test")
         #expect(EmailAddress.displayName(in: "\"Ana Novak\" <ana@acme.test>") == "Ana Novak")
         #expect(EmailAddress.displayName(in: "<ana@acme.test>") == "ana@acme.test")
         #expect(EmailAddress.displayName(in: "ana@acme.test") == "ana@acme.test")
@@ -459,29 +461,7 @@ struct ReadableLayoutTests {
     }
 }
 
-struct ListCursorTests {
-    /// The iPad's j / k: the Mac's rules.
-    @Test func theCursorMovesAndClamps() {
-        let ids = ["a", "b", "c"]
-        #expect(ListCursor.moved(from: nil, by: 1, in: ids) == "a")
-        #expect(ListCursor.moved(from: nil, by: -1, in: ids) == "c")
-        #expect(ListCursor.moved(from: "a", by: 1, in: ids) == "b")
-        #expect(ListCursor.moved(from: "c", by: 1, in: ids) == "c")
-        #expect(ListCursor.moved(from: "a", by: -1, in: ids) == "a")
-        // A cursor on a row that has left starts over.
-        #expect(ListCursor.moved(from: "gone", by: 1, in: ids) == "a")
-        #expect(ListCursor.moved(from: "a", by: 1, in: []) == nil)
-    }
-
-    /// Done or Delete on the cursor's row: its neighbour takes the cursor.
-    @Test func theNeighbourTakesTheCursor() {
-        let ids = ["a", "b", "c"]
-        #expect(ListCursor.after(removing: "a", in: ids) == "b")
-        #expect(ListCursor.after(removing: "c", in: ids) == "b")
-        #expect(ListCursor.after(removing: "a", in: ["a"]) == nil)
-        #expect(ListCursor.after(removing: "gone", in: ids) == nil)
-    }
-
+struct RowActionKeyTests {
     /// The letters are the Mac's (`RowAction.key`).
     @Test func rowKeysAreOneMap() {
         #expect(RowAction.allCases.map(\.key) == ["E", "#", "H", "N", "S", "U"])

@@ -3,12 +3,36 @@
 // as the main screens, sections on white cards, close in the nav bar.
 // Each label has a pin; once any is pinned, the card shows only those,
 // with ••• for the rest (AppModel.sidebarLabels, shared with the Mac).
+// The list itself is `SidebarList`: the sheet shows it on the phone, and
+// the iPad's split layout as its sidebar column (Features/Pad).
 
 import SwiftUI
 
 struct SidebarSheet: View {
-    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SidebarList { dismiss() }
+                .toolbarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .barTrailing) {
+                        Button(role: .close) { dismiss() }
+                    }
+                }
+        }
+        .menuSheet()
+    }
+}
+
+/// The sidebar's rows. `onPick` runs after a row was chosen (the sheet
+/// closes itself; a column stays). As a column it also lists Search —
+/// the split layout has no tab bar to hold it — and marks the place
+/// shown among Remind me, Need reply and Search.
+struct SidebarList: View {
+    private let isColumn: Bool
+    private let onPick: () -> Void
+    @Environment(AppModel.self) private var model
     /// ••• in the labels card: the unpinned labels too. Per device.
     @AppStorage("sidebarAllLabels") private var allLabels = false
     /// "N more" in the bundles card: every active bundle, hidden ones too.
@@ -22,21 +46,19 @@ struct SidebarSheet: View {
         AppModel.visibleLabels(model.labels, accountId: model.selectedAccountId)
     }
 
-    var body: some View {
-        NavigationStack {
-            list
-                .toolbarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .barTrailing) {
-                        Button(role: .close) { dismiss() }
-                    }
-                }
-        }
-        .menuSheet()
+    init(isColumn: Bool = false, onPick: @escaping () -> Void = {}) {
+        self.isColumn = isColumn
+        self.onPick = onPick
     }
 
-    private var list: some View {
+    var body: some View {
         List {
+            if isColumn {
+                Section {
+                    tabRow(.search, count: 0)
+                }
+                .menuCard()
+            }
             Section {
                 folderRow(.inbox)
             }
@@ -116,10 +138,10 @@ struct SidebarSheet: View {
                 Button {
                     Task {
                         await model.addAccount()
-                        dismiss()
+                        onPick()
                     }
                 } label: { Label("Add Google account", systemImage: "plus.circle") }
-                Button { dismiss(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                Button { onPick(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
             .menuCard()
         }
@@ -131,7 +153,7 @@ struct SidebarSheet: View {
     private func go(_ folder: MailView) {
         model.navigate(to: .inbox, folder: folder)
         Haptics.light()
-        dismiss()
+        onPick()
     }
 
     private func folderRow(_ view: MailView, title: String? = nil, count: Int? = nil) -> some View {
@@ -240,11 +262,16 @@ struct SidebarSheet: View {
     }
 
     private func tabRow(_ tab: MainTab, count: Int) -> some View {
-        Button { model.tab = tab; dismiss() } label: {
+        Button { model.tab = tab; onPick() } label: {
             HStack {
                 Label(tab.title, systemImage: tab.systemImage)
                 Spacer()
                 if count > 0 { Text("\(count)").font(.subheadline).foregroundStyle(Theme.textTertiary) }
+                // Beside the list there is no tab bar to say which place
+                // is shown; the sheet has one behind it.
+                if isColumn && model.tab == tab {
+                    Image(systemName: "checkmark").font(.footnote.weight(.semibold))
+                }
             }
         }
     }
@@ -253,7 +280,7 @@ struct SidebarSheet: View {
         Button {
             model.selectedAccountId = id
             Haptics.light()
-            dismiss()
+            onPick()
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 1) {

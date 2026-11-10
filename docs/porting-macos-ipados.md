@@ -14,8 +14,8 @@ Models and widget work — reached the Mac.
 | --- | --- | --- |
 | Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on every push to `main` (the `mac-latest` release, with the Sparkle appcast installed apps update from) and on `mac-v*` tags |
 | Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
-| Layout | The phone's `TabView` + `NavigationStack`, full screen | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
-| Keyboard | `j` `k` `↩` `e` `h` `n` `s` `u` `⌘⌫` in the list, `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
+| Layout | At regular width three columns (`Features/Pad/PadSplitView`: the sidebar's list · the thread list · the open thread); the phone's `TabView` + `NavigationStack` in a narrow window | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
+| Keyboard | `j` `k` and the arrows walk the list and open, `e` `h` `n` `s` `⌘⌫` on the open thread (its own buttons), `#` `u` `a` `f` `c` `/` `z` `Esc` (`PadKeys`), `r` on the reply pill, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
 | Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` from the same `build-rust.sh` when `PLATFORM_NAME=macosx` (macOS 27 is Apple Silicon only; `ARCHS` can still add `x86_64`) |
 
@@ -52,22 +52,20 @@ few places that draw (the notification avatar, the attachment downscale).
 
 ## iPadOS: next steps
 
-Done first: the list and the thread keep to a readable column on a
-regular width (`readableColumn` in Platform.swift), so the phone's layout
-no longer stretches edge to edge. The Search tab's results and the
-thread's bottom bars still span the screen.
+Done: the **split view** (`RootView` shows `PadSplitView` on an iPad at
+regular width: `SidebarList` — the sheet's own list, with a Search row —
+· the phone's `ThreadList` · `ThreadView`; the open thread is the
+highlighted row and lives in `PadState`, one per scene) and the **list
+keyboard** (`PadKeys`; the next thread opens when the open one leaves the
+list, as on the Mac; the keys are key equivalents on hidden buttons, so
+no view has to hold the focus). Not checked on a device yet: `#` on a
+non-US keyboard, the arrows while the list has the system's focus, and
+the search field taking the caret on `/`.
 
-1. **Split view.** Specified, not built:
-   [specs/ipad-split-view.md](specs/ipad-split-view.md). It needs a device
-   to get right (view identity across a window resize, where the bars and
-   the tab bar go), so it was written down instead of guessed at.
-2. **List keyboard.** Done: `j`/`k`, Return and the row keys
-   (`Features/Inbox/ListKeys.swift`, `RowAction.key`). `/` for search is
-   left: the Search tab's field is the system's.
-3. **Multiple windows.** `AppModel` is one per process (`AppModel.current`);
+1. **Multiple windows.** `AppModel` is one per process (`AppModel.current`);
    per-window state (open thread, sheets) would move into a scene-scoped
    object before `UIApplicationSupportsMultipleScenes` is turned on.
-4. **Pointer.** `SwipeableRow`'s drag tiers work with a trackpad swipe; a
+2. **Pointer.** `SwipeableRow`'s drag tiers work with a trackpad swipe; a
    hover action bar like the desktop's would be the iPad-native addition.
 
 ## macOS: how the native target is built

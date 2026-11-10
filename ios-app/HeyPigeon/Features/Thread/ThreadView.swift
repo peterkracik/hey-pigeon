@@ -230,6 +230,8 @@ struct ThreadView: View {
                 .accessibilityLabel("More")
             }
         }
+        // Above the bars, where a browser has its status line.
+        .hoveredLinkStatus()
         .safeAreaInset(edge: .bottom) { bottomBars }
         .confirmationDialog("Delete this draft?", isPresented: Binding(get: { deletingDraft != nil }, set: { if !$0 { deletingDraft = nil } }),
                             titleVisibility: .visible, presenting: deletingDraft) { d in
@@ -253,6 +255,9 @@ struct ThreadView: View {
             // and nothing at all without a network.
             let id = row.id
             let hadBodies: Bool
+            // Two signposts: asked for → something to read, and → Gmail's copy.
+            let opening = Trace.begin("thread.open")
+            let fetching = Trace.begin("thread.fetch")
             if detail == nil, let local = try? await model.engine.readInBackground({ try $0.threadLocal(id: id) }),
                !local.mail.isEmpty, !Task.isCancelled {
                 detail = local
@@ -260,8 +265,12 @@ struct ThreadView: View {
             } else {
                 hadBodies = false
             }
+            let shownFromStore = detail != nil
+            if shownFromStore { Trace.end("thread.open", opening) }
             do {
                 let fresh = try await model.engine.thread(id: row.id)
+                Trace.end("thread.fetch", fetching)
+                if !shownFromStore { Trace.end("thread.open", opening) }
                 if fresh != detail { detail = fresh }
                 // The first open stores the bodies: the index can now carry them.
                 if !hadBodies { SpotlightIndexer.invalidate(threadId: row.id) }
@@ -270,6 +279,8 @@ struct ThreadView: View {
                     model.summarizeThread(current, messages: d.mail)
                 }
             } catch {
+                Trace.end("thread.fetch", fetching)
+                if !shownFromStore { Trace.end("thread.open", opening) }
                 // Offline with the stored copy on screen: keep reading it.
                 if detail == nil { failed = error.localizedDescription }
             }

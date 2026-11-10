@@ -47,3 +47,5 @@ keyring = { version = "3", features = ["apple-native"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
+# Only to put a test's database into a state an older build left it in.
+rusqlite = { version = "0.37", features = ["bundled"] }

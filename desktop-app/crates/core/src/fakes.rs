@@ -58,6 +58,8 @@ struct MemStoreInner {
     bundle_exclusions: std::collections::HashSet<(String, ThreadId)>,
     thread_anchors: HashMap<ThreadId, Vec<String>>,
     anchor_versions: HashMap<ThreadId, i64>,
+    thread_links: HashMap<ThreadId, (String, Vec<String>)>,
+    rule_marks: HashMap<(String, ThreadId), i64>,
     bundling_versions: HashMap<ThreadId, i64>,
 }
 
@@ -556,6 +558,54 @@ impl Store for MemStore {
         Ok(g.thread_anchors.get(thread_id).cloned().unwrap_or_default())
     }
 
+    fn rule_mark(&self, rule: &str, thread_id: &ThreadId) -> Result<Option<i64>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.rule_marks
+            .get(&(rule.to_string(), thread_id.clone()))
+            .copied())
+    }
+
+    fn set_rule_mark(&self, rule: &str, thread_id: &ThreadId, at: i64) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.rule_marks
+            .insert((rule.to_string(), thread_id.clone()), at);
+        Ok(())
+    }
+
+    fn retain_rule_marks(&self, rule: &str, keep: &[ThreadId]) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.rule_marks
+            .retain(|(r, thread), _| r != rule || keep.contains(thread));
+        Ok(())
+    }
+
+    fn thread_links(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<(String, Vec<String>)>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .thread_links
+            .get(thread_id)
+            .cloned())
+    }
+
+    fn set_thread_links(
+        &self,
+        thread_id: &ThreadId,
+        signature: &str,
+        links: &[String],
+    ) -> Result<(), StoreError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .thread_links
+            .insert(thread_id.clone(), (signature.to_string(), links.to_vec()));
+        Ok(())
+    }
+
     fn threads_with_anchors(
         &self,
         anchors: &[String],
@@ -756,8 +806,29 @@ impl Store for MemStore {
             mutation: mutation.clone(),
             attempts: 0,
             created_at: 0,
+            last_error: None,
         });
         Ok(id)
+    }
+
+    fn outbox_set_error(&self, id: i64, error: &str) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(item) = g.outbox.iter_mut().find(|i| i.id == id) {
+            item.last_error = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn outbox_reset(&self, id: i64) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        Ok(match g.outbox.iter_mut().find(|i| i.id == id) {
+            Some(item) => {
+                item.attempts = 0;
+                item.last_error = None;
+                true
+            }
+            None => false,
+        })
     }
 
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError> {

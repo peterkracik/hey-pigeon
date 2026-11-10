@@ -1,5 +1,6 @@
 import CoreSpotlight
 import SwiftUI
+import UIKit
 
 @main
 struct HeyPigeonApp: App {
@@ -72,14 +73,44 @@ struct HeyPigeonApp: App {
 }
 
 /// Root navigation: the four-tab bar (Inbox · Scheduled · Need reply ·
-/// Search — the desktop rail) plus the app-wide sheets and the toast.
+/// Search — the desktop rail) plus the app-wide sheets and the toast. An
+/// iPad at regular width shows three columns instead (PadSplitView); the
+/// sheets and the toast are the same over either.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
+    /// What the columns show. Kept here, not in PadSplitView: resizing an
+    /// iPad window across the width where the layouts swap rebuilds the
+    /// one shown, and the open thread must not close with it.
+    @State private var pad = PadState()
+
+    /// The split layout: an iPad wide enough for columns. Never a phone —
+    /// the large ones are "regular" in landscape too — and not an iPad in
+    /// Slide Over or a narrow split, which get the phone's layout.
+    private var showsColumns: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
+    }
 
     var body: some View {
+        withSheets(Group {
+            if showsColumns {
+                PadSplitView(state: pad)
+            } else {
+                tabs
+            }
+        })
+        // Narrowed to the tabs with a thread open: the stack pushes it
+        // (the same request a notification makes).
+        .onChange(of: showsColumns) { _, columns in
+            if !columns, let open = pad.openRow { model.openThread(id: open.id) }
+        }
+    }
+
+    /// The phone's four tabs (an iPad in a narrow window has them too).
+    private var tabs: some View {
         @Bindable var model = model
-        TabView(selection: $model.tab) {
+        return TabView(selection: $model.tab) {
             Tab(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage, value: MainTab.inbox) {
                 MailListScreen(tab: .inbox)
             }
@@ -101,6 +132,14 @@ struct RootView: View {
         }
         // Liquid Glass tab bar shrinks away while reading, back on scroll up.
         .tabBarMinimizeBehavior(.onScrollDown)
+    }
+}
+
+extension RootView {
+    /// The app-wide sheets and the toast, over the tabs or the columns.
+    private func withSheets<Content: View>(_ content: Content) -> some View {
+        @Bindable var model = model
+        return content
             .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
             .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss(); model.settingsClosed() }) { SettingsView() }

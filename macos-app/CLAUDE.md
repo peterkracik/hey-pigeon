@@ -188,6 +188,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   instead of pushing it, when the content is at least
   `MacLayout.paneMinWidth` wide; `WindowState.readingPane` tells `expand`
   to open the thread there. Nothing else knows the difference.
+- **Undo is a stack.** Every action that offers an Undo pushes it
+  (`AppModel.show(_:undo:)`); `z` and Edit › Undo pop the newest, again for
+  the one before (`undoLast`, twenty deep, two minutes). A toast's own
+  button goes through `AppModel.undo(toast:)`, which takes its entry off
+  the stack: never call the toast's closure directly, or `z` runs it again.
+- **Measure before the next speedup.** `Trace` (Shared/Trace.swift) puts
+  signposts on reload, thread open, search, sync and each key of the map;
+  record them in Instruments (os_signpost, subsystem `app.heypigeon`).
 - **Sync is the timer.** No BGTaskScheduler on the Mac; `MacSyncLoop` runs
   a quiet round every 30 s (`AppModel.sync(quiet:)`: no reload, no
   reminder pass, no Spotlight pass when the round brought nothing), every

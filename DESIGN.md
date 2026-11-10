@@ -200,7 +200,7 @@ labels     (id, account_id, name, type)
 attachments(id, message_id, account_id, filename, mime_type, size,
             gmail_attachment_id, local_path)   -- metadata always; bytes on demand
 outbox     (id, account_id, kind, payload, attempts, created_at)
-messages_fts (FTS5: subject, from, to, body_text)  -- instant local search
+mail_fts   (FTS5: subject, from, recipients, body_text)  -- instant local search
 ```
 
 IDs are Gmail's native IDs, prefixed with account id internally. All writes are
@@ -211,9 +211,14 @@ idempotent upserts keyed on (account_id, gmail_id).
 No external search engine — **FTS5 is the search engine**: embedded, BM25-ranked,
 millions of rows at millisecond latency, works on iOS, zero moving parts.
 
-- **Index**: `messages_fts(subject, from_addr, to_addrs, body_text)` — contentless
-  table synced by triggers on `messages`. `unicode61` tokenizer with
-  `remove_diacritics 2` (Péter matches Peter).
+- **Index**: `mail_fts(subject, from_addr, recipients, body_text)` — contentless
+  table synced by triggers on `messages`; `recipients` is To and Cc. `unicode61`
+  tokenizer with `remove_diacritics 2` (Péter matches Peter). Each message keeps
+  the subject it was indexed under (`messages.fts_subject`), so an entry is
+  removed with the text it was added with even after the thread's subject
+  changed. A store from before schema v30 moves to this index after it opens, in
+  short background steps (`SqliteStore::reindex_step`); the old index answers
+  until the move is done, so opening never waits for it.
 - **Search-as-you-type**: last term gets `*` (prefix query); results re-query on
   every keystroke — local, so it's instant. Debounce is unnecessary.
 - **Ranking**: `bm25()` with column weights (subject > from > body), blended with

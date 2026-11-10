@@ -1,6 +1,8 @@
 //! Search query parsing: Gmail-style operators → structured filters, bare
 //! text → an FTS5 MATCH expression (last term gets a `*` prefix query so
 //! search-as-you-type matches while the word is still being typed).
+//! `from:`, `to:` and `cc:` narrow by a message's sender and recipients;
+//! bare text also finds a name or address in any of the three.
 // ponytail: label:/has: operators skipped — labels/attachments tables don't
 // exist yet (M3); add them when the data does.
 
@@ -20,6 +22,8 @@ pub struct SearchQuery {
     pub from_contains: Option<String>,
     /// `to:` — substring match on recipient addresses (lowercased).
     pub to_contains: Option<String>,
+    /// `cc:` — substring match on the Cc'd addresses (lowercased).
+    pub cc_contains: Option<String>,
     /// `is:unread`.
     pub unread_only: bool,
     /// `account:` — substring match on the account id/email (lowercased).
@@ -31,6 +35,7 @@ impl SearchQuery {
         self.fts_match.is_none()
             && self.from_contains.is_none()
             && self.to_contains.is_none()
+            && self.cc_contains.is_none()
             && !self.unread_only
             && self.account_contains.is_none()
     }
@@ -50,6 +55,11 @@ pub fn parse(raw: &str) -> SearchQuery {
         } else if let Some(v) = token.strip_prefix("to:") {
             if !v.is_empty() {
                 q.to_contains = Some(v.to_lowercase());
+                continue;
+            }
+        } else if let Some(v) = token.strip_prefix("cc:") {
+            if !v.is_empty() {
+                q.cc_contains = Some(v.to_lowercase());
                 continue;
             }
         } else if let Some(v) = token.strip_prefix("account:") {
@@ -102,7 +112,8 @@ mod tests {
 
     #[test]
     fn operators_are_extracted() {
-        let q = parse("from:Priya@x.com is:unread account:Work to:me@y.com budget");
+        let q = parse("from:Priya@x.com is:unread account:Work to:me@y.com cc:Sam budget");
+        assert_eq!(q.cc_contains.as_deref(), Some("sam"));
         assert_eq!(q.from_contains.as_deref(), Some("priya@x.com"));
         assert_eq!(q.to_contains.as_deref(), Some("me@y.com"));
         assert_eq!(q.account_contains.as_deref(), Some("work"));

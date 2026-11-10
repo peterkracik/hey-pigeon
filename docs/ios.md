@@ -425,17 +425,11 @@ only when formatting was applied.
 
 ### iPad and hardware keyboards
 
-With a hardware keyboard the list has the Mac's keys (`ListKeys`):
-`j`/`k` move a cursor, Return opens its row, `e` `h` `n` `s` `u` and ⌘⌫
-act on it as the swipes do; a thread has `e` `h` `n` `s` `r` ⌘⌫ on its
-bar. Touch never shows the cursor. The split view is specified in
-[specs/ipad-split-view.md](specs/ipad-split-view.md), not built.
-On a regular-width iPad the list and the thread keep to a readable
-column (`readableColumn`, 760 pt, centred; the scroll view still spans the
-screen). `NavigationSplitView` gives the sidebar · list · thread layout for free on
-iPad, and SwiftUI's `.keyboardShortcut` brings the desktop keyboard map
-back 1:1 when a keyboard is attached: `j`/`k`/`e`/`u`/`h`/`n`/`/`/`⌘K`.
-Not an M1 goal, but the structure above does not have to change for it.
+At regular width an iPad shows three columns (`Features/Pad/PadSplitView`:
+the sidebar's list, the thread list, the open thread) with the list's
+keys (`PadKeys`); see `porting-macos-ipados.md`. In a narrow window it is
+the phone's tabs. The open thread keeps to a readable column
+(`readableColumn`, 760 pt, centred) when its column is wider than that.
 
 ## Platform constraints and how we handle them
 

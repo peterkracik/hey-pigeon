@@ -1975,9 +1975,11 @@ name = "heypigeon-core"
 version = "0.1.0"
 dependencies = [
  "ammonia",
+ "getrandom 0.3.4",
  "log",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -1998,6 +2000,7 @@ dependencies = [
  "heypigeon-core",
  "keyring",
  "log",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

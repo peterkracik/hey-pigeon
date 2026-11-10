@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -433,77 +433,15 @@ const MIGRATIONS: &[&str] = &[
     // v27 — why a queued change has not gone out: the last drain's error,
     // in words, for the outbox view. NULL until a drain fails on the row.
     "ALTER TABLE outbox ADD COLUMN last_error TEXT;",
-    // v28 — search finds who was Cc'd. The index's recipients column now
-    // holds To and Cc together (bare text matches a name in either;
-    // `cc:` itself reads the `cc_addrs` column, as `to:` reads `to_addrs`),
-    // so the index keeps its shape and nothing is rebuilt: only the
-    // messages that have a Cc are taken out — with exactly the values
-    // they went in with, which an external-content index insists on —
-    // and put back with it. The view and the triggers say the same thing
-    // from here on; a message without Cc is indexed as before, to the
-    // byte, so its entry needs no touching.
-    "
-    INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
-    SELECT 'delete', m.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
-                m.from_addr,
-                m.to_addrs,
-                COALESCE(m.body_text, m.snippet, '')
-      FROM messages m WHERE m.cc_addrs <> '[]';
-    DROP VIEW messages_fts_content;
-    CREATE VIEW messages_fts_content AS
-      SELECT m.rowid AS rowid,
-             COALESCE((SELECT subject FROM threads t WHERE t.id = m.thread_id), '') AS subject,
-             m.from_addr AS from_addr,
-             CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END AS to_addrs,
-             COALESCE(m.body_text, m.snippet, '') AS body_text
-      FROM messages m;
-    DROP TRIGGER messages_fts_ai;
-    DROP TRIGGER messages_fts_au;
-    DROP TRIGGER messages_fts_ad;
-    CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
-        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
-        VALUES (new.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
-                new.from_addr,
-                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
-                COALESCE(new.body_text, new.snippet, ''));
-    END;
-    CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages
-    WHEN old.from_addr IS NOT new.from_addr
-      OR old.to_addrs IS NOT new.to_addrs
-      OR old.cc_addrs IS NOT new.cc_addrs
-      OR COALESCE(old.body_text, old.snippet, '') IS NOT COALESCE(new.body_text, new.snippet, '')
-    BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
-        VALUES ('delete', old.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
-                old.from_addr,
-                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
-                COALESCE(old.body_text, old.snippet, ''));
-        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
-        VALUES (new.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
-                new.from_addr,
-                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
-                COALESCE(new.body_text, new.snippet, ''));
-    END;
-    CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
-        VALUES ('delete', old.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
-                old.from_addr,
-                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
-                COALESCE(old.body_text, old.snippet, ''));
-    END;
-    INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
-    SELECT m.rowid,
-                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
-                m.from_addr,
-                CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END,
-                COALESCE(m.body_text, m.snippet, '')
-      FROM messages m WHERE m.cc_addrs <> '[]';
-    ",
+    // v28 — a marker. This step once re-indexed every message that has a
+    // Cc, in place, inside this transaction: 18 s on a mailbox of half a
+    // million messages, on the thread that opens the store at launch —
+    // long enough for a phone to kill the app, roll the step back and
+    // meet it again at every launch. It also took entries out of the
+    // index with the thread's current subject, which corrupts the index
+    // wherever a subject changed after it was indexed. Search over Cc is
+    // v30's, and no step may walk the mail: see there.
+    "SELECT 1;",
     // v29 — the tracking links of a thread, as last read from its bodies
     // (`bundles::refresh_tracking_links`). The bundle view lists them for
     // up to fifteen threads, and used to load every one of those threads'
@@ -522,16 +460,243 @@ const MIGRATIONS: &[&str] = &[
         DELETE FROM thread_links WHERE thread_id = old.id;
     END;
     ",
+    // v30 — a second search index, `mail_fts`, that the first one is
+    // replaced by. It differs in two ways.
+    //
+    // It indexes Cc: its recipients column is To and Cc together, so a
+    // name that is only in Cc is found.
+    //
+    // And it can always take back what it put in. An external-content
+    // index must be given, to remove an entry, exactly the text the entry
+    // was made from. The first index took the subject from the thread
+    // row at that moment — so once a subject changed (a draft edited,
+    // most often) every later update of the thread's messages removed
+    // the wrong words, and FTS5 calls the index malformed. Here the
+    // subject a message was indexed under is kept on the message
+    // (`fts_subject`), the index's content view reads only the message
+    // row, and a thread whose subject changes says so to its messages
+    // (the two `threads_fts_subject` triggers), each of which re-indexes
+    // itself with its own old values. `fts_subject` NULL means "not in
+    // this index": the view leaves such rows out, so the index and its
+    // content agree at every moment, also half-way through what follows.
+    //
+    // Nothing here reads the mail: the step is the same few statements
+    // on an empty store and on one with a million messages (ADD COLUMN
+    // does not rewrite rows). New mail goes into the new index as it is
+    // stored. The mail already there is moved over after the store is
+    // open, by `SqliteStore::reindex_step`, a few hundred messages per
+    // transaction, picking up where it was after a kill — only ever
+    // adding entries, so the old index's condition does not matter. The
+    // old index keeps answering searches until the new one holds
+    // everything, and is then dropped. (Until then a search for a name
+    // that is only in Cc misses older mail; `cc:` does not, it reads the
+    // messages themselves.)
+    "
+    ALTER TABLE messages ADD COLUMN fts_subject TEXT;
+    CREATE VIEW mail_fts_content AS
+      SELECT m.rowid AS rowid,
+             m.fts_subject AS subject,
+             m.from_addr AS from_addr,
+             CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END AS recipients,
+             COALESCE(m.body_text, m.snippet, '') AS body_text
+        FROM messages m WHERE m.fts_subject IS NOT NULL;
+    CREATE VIRTUAL TABLE mail_fts USING fts5(
+        subject, from_addr, recipients, body_text,
+        content='mail_fts_content',
+        tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER mail_fts_ai AFTER INSERT ON messages
+    WHEN new.fts_subject IS NOT NULL
+    BEGIN
+        INSERT INTO mail_fts(rowid, subject, from_addr, recipients, body_text)
+        VALUES (new.rowid, new.fts_subject, new.from_addr,
+               CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+               COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER mail_fts_au AFTER UPDATE ON messages
+    WHEN old.fts_subject IS NOT new.fts_subject
+      OR (new.fts_subject IS NOT NULL
+          AND (old.from_addr IS NOT new.from_addr
+            OR old.to_addrs IS NOT new.to_addrs
+            OR old.cc_addrs IS NOT new.cc_addrs
+            OR COALESCE(old.body_text, old.snippet, '')
+               IS NOT COALESCE(new.body_text, new.snippet, '')))
+    BEGIN
+        INSERT INTO mail_fts(mail_fts, rowid, subject, from_addr, recipients, body_text)
+        SELECT 'delete', old.rowid, old.fts_subject, old.from_addr,
+               CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+               COALESCE(old.body_text, old.snippet, '')
+         WHERE old.fts_subject IS NOT NULL;
+        INSERT INTO mail_fts(rowid, subject, from_addr, recipients, body_text)
+        SELECT new.rowid, new.fts_subject, new.from_addr,
+               CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+               COALESCE(new.body_text, new.snippet, '')
+         WHERE new.fts_subject IS NOT NULL;
+    END;
+    CREATE TRIGGER mail_fts_ad AFTER DELETE ON messages
+    WHEN old.fts_subject IS NOT NULL
+    BEGIN
+        INSERT INTO mail_fts(mail_fts, rowid, subject, from_addr, recipients, body_text)
+        VALUES ('delete', old.rowid, old.fts_subject, old.from_addr,
+               CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+               COALESCE(old.body_text, old.snippet, ''));
+    END;
+    CREATE TRIGGER threads_fts_subject_ai AFTER INSERT ON threads BEGIN
+        UPDATE messages SET fts_subject = new.subject
+         WHERE thread_id = new.id
+           AND fts_subject IS NOT NULL AND fts_subject IS NOT new.subject;
+    END;
+    CREATE TRIGGER threads_fts_subject_au AFTER UPDATE OF subject ON threads
+    WHEN old.subject IS NOT new.subject
+    BEGIN
+        UPDATE messages SET fts_subject = new.subject
+         WHERE thread_id = new.id
+           AND fts_subject IS NOT NULL AND fts_subject IS NOT new.subject;
+    END;
+    ",
+    // v31 — what the mute and block rules last acted on, per thread
+    // (`rules::apply`): the date of the newest mail from someone else the
+    // thread held then. A rule acts again only when there is newer mail,
+    // so a thread the user took back out of Spam, or moved back to the
+    // inbox, stays where they put it. This device's own memory: it is not
+    // synced, and it goes with its thread.
+    "
+    CREATE TABLE rule_marks (
+        thread_id TEXT NOT NULL,
+        rule      TEXT NOT NULL,
+        acted_at  INTEGER NOT NULL,
+        PRIMARY KEY (thread_id, rule)
+    ) WITHOUT ROWID;
+    CREATE TRIGGER threads_rule_marks_ad AFTER DELETE ON threads BEGIN
+        DELETE FROM rule_marks WHERE thread_id = old.id;
+    END;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
 const HEAL_LIST_SENDERS_AT: usize = 17;
+/// Schema version that brings the second search index (`mail_fts`).
+const FTS_MOVE_AT: usize = 30;
+
+fn old_index_exists(c: &Connection) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'messages_fts')",
+        [],
+        |r| r.get(0),
+    )
+}
+
+/// One step of giving the retired index's storage back
+/// (`SqliteStore::reindex_step`). Its segment rows and per-message rows
+/// are deleted in small batches; the two rows FTS5 reads to open the
+/// table (ids 1 and 10 of `_data`: averages and structure) stay until the
+/// table itself is dropped, which is then a table with nothing in it.
+fn retire_old_index(c: &Connection) -> rusqlite::Result<Reindex> {
+    if !old_index_exists(c)? {
+        return Ok(Reindex::Done);
+    }
+    let tx = c.unchecked_transaction()?;
+    let mut freed = 0;
+    for delete in [
+        "DELETE FROM messages_fts_data WHERE id IN
+           (SELECT id FROM messages_fts_data WHERE id > 10 LIMIT ?1)",
+        "DELETE FROM messages_fts_idx WHERE (segid, term) IN
+           (SELECT segid, term FROM messages_fts_idx LIMIT ?1)",
+        "DELETE FROM messages_fts_docsize WHERE id IN
+           (SELECT id FROM messages_fts_docsize LIMIT ?1)",
+    ] {
+        freed = tx.execute(delete, params![OLD_INDEX_ROWS_PER_STEP])?;
+        if freed > 0 {
+            break;
+        }
+    }
+    if freed == 0 {
+        tx.execute_batch("DROP TABLE messages_fts;")?;
+    }
+    tx.commit()?;
+    Ok(if freed == 0 {
+        Reindex::Done
+    } else {
+        Reindex::Retiring
+    })
+}
+
+/// Re-derive the list sender of the threads that have, among the messages
+/// with rowids in `(after, through]`, one whose From carries a bracket
+/// inside a quoted display name: `"Bank <a@bank.com>" <b@evil.example>`
+/// used to be read as the bank's address (`sync::bare_addr`), and
+/// `last_from_addr` is filled at upsert time, so those rows named the
+/// wrong sender until something touched them.
+fn heal_quoted_senders(conn: &Connection, after: i64, through: i64) -> rusqlite::Result<()> {
+    let threads: Vec<(String, String)> = conn
+        .prepare_cached(
+            "SELECT DISTINCT thread_id, account_id FROM messages
+              WHERE rowid > ?1 AND rowid <= ?2
+                AND instr(from_addr, '\"') > 0 AND from_addr LIKE '%<%<%'",
+        )?
+        .query_map(params![after, through], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (thread_id, account_id) in threads {
+        let own_email: String = conn
+            .query_row(
+                "SELECT email FROM accounts WHERE id = ?1",
+                params![account_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| account_id.clone());
+        let messages: Vec<Message> = conn
+            .prepare_cached(
+                "SELECT from_addr, to_addrs, label_ids FROM messages
+                  WHERE thread_id = ?1 ORDER BY date",
+            )?
+            .query_map(params![thread_id], |r| {
+                let to_addrs: String = r.get(1)?;
+                let label_ids: String = r.get(2)?;
+                Ok(Message {
+                    from_addr: r.get(0)?,
+                    to_addrs: serde_json::from_str(&to_addrs).unwrap_or_default(),
+                    label_ids: serde_json::from_str(&label_ids).unwrap_or_default(),
+                    ..Default::default()
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let sender = heypigeon_core::sync::list_sender(&messages, &own_email);
+        conn.execute(
+            "UPDATE threads SET from_summary = ?1, last_from_addr = ?2 WHERE id = ?3",
+            params![sender.name, sender.addr, thread_id],
+        )?;
+    }
+    Ok(())
+}
 
 /// How long a connection waits for a lock SQLite holds elsewhere (a
 /// checkpoint, the other connection's write) before giving up.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Reader connections for a database file.
 const READERS: usize = 3;
+/// `sync_meta` keys (under account '') of the search index's move from
+/// `messages_fts` to `mail_fts` (schema v30, `SqliteStore::reindex_step`).
+/// The rowid up to which stored mail is in the new index:
+const META_FTS_CURSOR: &str = "fts.cursor";
+/// "1" once the new index holds everything and answers searches:
+const META_FTS_READY: &str = "fts.ready";
+/// Rows of the old index's storage freed per step once it is retired.
+const OLD_INDEX_ROWS_PER_STEP: u32 = 512;
+
+/// Where the move of the search index stands (`SqliteStore::reindex_step`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reindex {
+    /// Stored mail is still being added to the new index; so far every
+    /// message up to this rowid.
+    Indexing { through: i64 },
+    /// The new index answers searches; the old one's storage is being
+    /// given back.
+    Retiring,
+    /// Nothing left to do.
+    Done,
+}
+
 /// Prepared statements each connection keeps. The same few dozen queries
 /// run over and over; parsing and planning one cost more than running it.
 const STATEMENT_CACHE: usize = 64;
@@ -705,6 +870,9 @@ pub struct SqliteStore {
     readers: Vec<Mutex<Connection>>,
     /// Which reader a read waits for when all are busy (round robin).
     next_reader: AtomicUsize,
+    /// Whether `mail_fts` answers searches yet (`META_FTS_READY`); until
+    /// then `messages_fts` does.
+    fts_ready: AtomicBool,
 }
 
 fn err(e: impl std::fmt::Display) -> StoreError {
@@ -840,11 +1008,271 @@ impl SqliteStore {
                 .map_err(err)?;
             tx.commit().map_err(err)?;
         }
-        Ok(Self {
+        let store = Self {
             conn: Mutex::new(conn),
             readers: Vec::new(),
             next_reader: AtomicUsize::new(0),
+            fts_ready: AtomicBool::new(false),
+        };
+        if target >= FTS_MOVE_AT {
+            store.load_reindex_state()?;
+        }
+        Ok(store)
+    }
+
+    /// Read where the search index's move stands. A store with no mail has
+    /// nothing to move: the new index takes over at once (a few
+    /// statements on empty tables), which is every new install.
+    fn load_reindex_state(&self) -> Result<(), StoreError> {
+        let ready = self.meta("", META_FTS_READY)?.as_deref() == Some("1");
+        self.fts_ready.store(ready, Ordering::SeqCst);
+        if !ready {
+            let empty = self.with(|c| {
+                c.query_row("SELECT NOT EXISTS (SELECT 1 FROM messages)", [], |r| {
+                    r.get::<_, bool>(0)
+                })
+            })?;
+            if empty {
+                while self.reindex_step(1)? != Reindex::Done {}
+            }
+        }
+        Ok(())
+    }
+
+    /// `Store::search` against one of the two indexes (`reindex_step`).
+    fn search_in(
+        &self,
+        fts: &str,
+        q: &SearchQuery,
+        limit: u32,
+        now_ms: i64,
+        not_junk: &str,
+    ) -> Result<Vec<SearchResult>, StoreError> {
+        self.read(|c| {
+            if let Some(fts_match) = &q.fts_match {
+                // bm25()/snippet() must run in a direct full-text query, so
+                // a MATERIALIZED CTE (flattening it back into the join would
+                // break that context) scores each matching message; the outer
+                // query joins, groups per thread, and keeps the best message.
+                // GROUP BY + single min() aggregate: SQLite guarantees bare
+                // columns (f.rowid in the snippet subquery) come from the
+                // min-bm25 row.
+                // Work is bounded: the CTE keeps only the top-?10 rows by
+                // bm25 (cheap — no re-tokenization), and snippet() (expensive)
+                // runs per surviving row via a rowid-constrained MATCH, never
+                // over the whole match set. The cap trades exact recency
+                // blending on huge result sets for bounded per-keystroke cost.
+                let mut stmt = c.prepare_cached(&format!(
+                    "WITH f AS MATERIALIZED (
+                        SELECT rowid,
+                               bm25({fts}, 8.0, 4.0, 2.0, 1.0) AS score
+                        FROM {fts} WHERE {fts} MATCH ?1
+                        ORDER BY score LIMIT ?10)
+                     SELECT {cols},
+                            (SELECT snippet({fts}, -1, ?2, ?3, '…', 12)
+                             FROM {fts}
+                             WHERE {fts} MATCH ?1 AND rowid = f.rowid) AS snip,
+                            min(f.score)
+                              + ((?4 - t.last_msg_at) / 86400000.0) * 0.05 AS rank
+                     FROM f
+                     JOIN messages m ON m.rowid = f.rowid
+                     JOIN threads t ON t.id = m.thread_id
+                     WHERE (?5 IS NULL OR instr(lower(m.from_addr), ?5) > 0)
+                       AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
+                       AND (?11 IS NULL OR instr(lower(m.cc_addrs), ?11) > 0)
+                       AND (?7 = 0 OR t.is_read = 0)
+                       AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
+                       AND {not_junk}
+                     GROUP BY t.id
+                     ORDER BY rank
+                     LIMIT ?9",
+                    cols = thread_cols("t.")
+                ))?;
+                let candidate_cap = (limit as i64).saturating_mul(10).max(200);
+                let rows = stmt.query_map(
+                    params![
+                        fts_match,
+                        SNIPPET_START.to_string(),
+                        SNIPPET_END.to_string(),
+                        now_ms,
+                        q.from_contains,
+                        q.to_contains,
+                        q.unread_only,
+                        q.account_contains,
+                        limit,
+                        candidate_cap,
+                        q.cc_contains
+                    ],
+                    |r| {
+                        Ok(SearchResult {
+                            thread: row_to_thread(r)?,
+                            // THREAD_COLS width, not a magic number — `snip` is
+                            // selected right after all thread_cols().
+                            snippet: r.get(THREAD_COLS.split(", ").count())?,
+                        })
+                    },
+                )?;
+                rows.collect()
+            } else {
+                let mut stmt = c.prepare_cached(&format!(
+                    "SELECT {} FROM threads t
+                     WHERE (?1 = 0 OR t.is_read = 0)
+                       AND (?2 IS NULL OR instr(lower(t.account_id), ?2) > 0)
+                       AND (?3 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.from_addr), ?3) > 0))
+                       AND (?4 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.to_addrs), ?4) > 0))
+                       AND (?6 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.cc_addrs), ?6) > 0))
+                       AND {not_junk}
+                     ORDER BY t.last_msg_at DESC
+                     LIMIT ?5",
+                    thread_cols("t.")
+                ))?;
+                let rows = stmt.query_map(
+                    params![
+                        q.unread_only,
+                        q.account_contains,
+                        q.from_contains,
+                        q.to_contains,
+                        limit,
+                        q.cc_contains
+                    ],
+                    |r| {
+                        let thread = row_to_thread(r)?;
+                        let snippet = thread.snippet.clone();
+                        Ok(SearchResult { thread, snippet })
+                    },
+                )?;
+                rows.collect()
+            }
         })
+    }
+
+    fn meta(&self, account_id: &str, key: &str) -> Result<Option<String>, StoreError> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT value FROM sync_meta WHERE account_id = ?1 AND key = ?2",
+                params![account_id, key],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+    }
+
+    /// 32 random bytes this install keeps under `name`, made the first
+    /// time they are asked for (by SQLite's own generator, like the device
+    /// id). They stay on the device: not synced, not part of any request.
+    pub fn install_secret(&self, name: &str) -> Result<[u8; 32], StoreError> {
+        let secret: Vec<u8> = self.with(|c| {
+            c.execute(
+                "INSERT OR IGNORE INTO sync_meta (account_id, key, value)
+                 VALUES ('', ?1, lower(hex(randomblob(32))))",
+                params![name],
+            )?;
+            c.query_row(
+                "SELECT unhex(value) FROM sync_meta WHERE account_id = '' AND key = ?1",
+                params![name],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .map(Option::unwrap_or_default)
+        })?;
+        <[u8; 32]>::try_from(secret)
+            .map_err(|_| StoreError(format!("the stored secret {name} is not 32 bytes")))
+    }
+
+    /// Whether the search index is still being moved (`reindex_step` has
+    /// work to do).
+    pub fn reindex_pending(&self) -> Result<bool, StoreError> {
+        if !self.fts_ready.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
+        self.with(old_index_exists)
+    }
+
+    /// One step of the search index's move (schema v30), in one short
+    /// write transaction; call it until it says `Done`. Made to run in
+    /// the background while the app is in use:
+    ///
+    /// - **Indexing.** The next `rows` stored messages (by rowid) are
+    ///   added to `mail_fts` — by setting their `fts_subject`, which is
+    ///   what puts a message in that index — and the cursor moves past
+    ///   them, in the same transaction. A kill between steps costs
+    ///   nothing; one inside a step rolls that step back. Entries are
+    ///   only ever added, so it does not matter what state the old index
+    ///   is in. Threads in the batch whose list sender was read from a
+    ///   quoted display name (`sync::bare_addr`'s old reading) get it
+    ///   derived again on the way.
+    /// - When no stored mail is left, the new index takes over
+    ///   (`META_FTS_READY`) and the old one's triggers and view go: one
+    ///   transaction of a few statements.
+    /// - **Retiring.** The old index's storage is deleted a few hundred
+    ///   rows at a time (dropping a large table in one go holds the write
+    ///   lock for as long as it takes to walk it), then the emptied table
+    ///   is dropped.
+    pub fn reindex_step(&self, rows: u32) -> Result<Reindex, StoreError> {
+        if self.fts_ready.load(Ordering::SeqCst) {
+            return self.with(retire_old_index);
+        }
+        let state = self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            let cursor: i64 = tx
+                .query_row(
+                    "SELECT value FROM sync_meta WHERE account_id = '' AND key = ?1",
+                    params![META_FTS_CURSOR],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let through: Option<i64> = tx.query_row(
+                "SELECT MAX(rowid) FROM
+                   (SELECT rowid FROM messages WHERE rowid > ?1 ORDER BY rowid LIMIT ?2)",
+                params![cursor, rows.max(1)],
+                |r| r.get(0),
+            )?;
+            let set_meta = |key: &str, value: &str| {
+                tx.execute(
+                    "INSERT INTO sync_meta (account_id, key, value) VALUES ('', ?1, ?2)
+                     ON CONFLICT(account_id, key) DO UPDATE SET value = excluded.value",
+                    params![key, value],
+                )
+            };
+            let state = match through {
+                Some(through) => {
+                    tx.execute(
+                        "UPDATE messages
+                            SET fts_subject = COALESCE(
+                                  (SELECT subject FROM threads t WHERE t.id = messages.thread_id),
+                                  '')
+                          WHERE rowid > ?1 AND rowid <= ?2 AND fts_subject IS NULL",
+                        params![cursor, through],
+                    )?;
+                    heal_quoted_senders(&tx, cursor, through)?;
+                    set_meta(META_FTS_CURSOR, &through.to_string())?;
+                    Reindex::Indexing { through }
+                }
+                None => {
+                    tx.execute_batch(
+                        "DROP TRIGGER IF EXISTS messages_fts_ai;
+                         DROP TRIGGER IF EXISTS messages_fts_au;
+                         DROP TRIGGER IF EXISTS messages_fts_ad;
+                         DROP VIEW IF EXISTS messages_fts_content;",
+                    )?;
+                    set_meta(META_FTS_READY, "1")?;
+                    Reindex::Retiring
+                }
+            };
+            tx.commit()?;
+            Ok(state)
+        })?;
+        if state == Reindex::Retiring {
+            self.fts_ready.store(true, Ordering::SeqCst);
+        }
+        Ok(state)
     }
 
     /// The writer connection: every write, and the background passes' reads.
@@ -1214,8 +1642,15 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
         "INSERT INTO messages
            (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
             body_html, body_text, label_ids, is_read, cc_addrs, message_id_header,
-            references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched,
+            fts_subject)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                 -- new mail goes into the search index (`mail_fts`) under
+                 -- its thread's subject, which the row keeps; a thread
+                 -- that arrives after its message brings the subject then
+                 -- (`threads_fts_subject_ai`). Not touched on conflict: a
+                 -- row waiting for `reindex_step` stays NULL until its turn.
+                 COALESCE((SELECT subject FROM threads WHERE id = ?2), ''))
          ON CONFLICT(id) DO UPDATE SET
            snippet = excluded.snippet,
            -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
@@ -1952,6 +2387,37 @@ impl Store for SqliteStore {
         })
     }
 
+    fn rule_mark(&self, rule: &str, thread_id: &ThreadId) -> Result<Option<i64>, StoreError> {
+        self.with(|c| {
+            c.prepare_cached("SELECT acted_at FROM rule_marks WHERE rule = ?1 AND thread_id = ?2")?
+                .query_row(params![rule, thread_id], |r| r.get(0))
+                .optional()
+        })
+    }
+
+    fn set_rule_mark(&self, rule: &str, thread_id: &ThreadId, at: i64) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO rule_marks (rule, thread_id, acted_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(thread_id, rule) DO UPDATE SET acted_at = excluded.acted_at",
+                params![rule, thread_id, at],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn retain_rule_marks(&self, rule: &str, keep: &[ThreadId]) -> Result<(), StoreError> {
+        let keep = serde_json::to_string(keep).map_err(err)?;
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM rule_marks
+                  WHERE rule = ?1 AND thread_id NOT IN (SELECT value FROM json_each(?2))",
+                params![rule, keep],
+            )
+            .map(|_| ())
+        })
+    }
+
     fn thread_links(
         &self,
         thread_id: &ThreadId,
@@ -2221,108 +2687,23 @@ impl Store for SqliteStore {
         // Backfill deliberately ingests the whole spam/trash corpus (the
         // Trash/Spam folders list locally) — but search must not surface it.
         let not_junk = not_junk_sql("t.labels");
-        self.read(|c| {
-            if let Some(fts) = &q.fts_match {
-                // bm25()/snippet() must run in a direct full-text query, so
-                // a MATERIALIZED CTE (flattening it back into the join would
-                // break that context) scores each matching message; the outer
-                // query joins, groups per thread, and keeps the best message.
-                // GROUP BY + single min() aggregate: SQLite guarantees bare
-                // columns (f.rowid in the snippet subquery) come from the
-                // min-bm25 row.
-                // Work is bounded: the CTE keeps only the top-?10 rows by
-                // bm25 (cheap — no re-tokenization), and snippet() (expensive)
-                // runs per surviving row via a rowid-constrained MATCH, never
-                // over the whole match set. The cap trades exact recency
-                // blending on huge result sets for bounded per-keystroke cost.
-                let mut stmt = c.prepare_cached(&format!(
-                    "WITH f AS MATERIALIZED (
-                        SELECT rowid,
-                               bm25(messages_fts, 8.0, 4.0, 2.0, 1.0) AS score
-                        FROM messages_fts WHERE messages_fts MATCH ?1
-                        ORDER BY score LIMIT ?10)
-                     SELECT {},
-                            (SELECT snippet(messages_fts, -1, ?2, ?3, '…', 12)
-                             FROM messages_fts
-                             WHERE messages_fts MATCH ?1 AND rowid = f.rowid) AS snip,
-                            min(f.score)
-                              + ((?4 - t.last_msg_at) / 86400000.0) * 0.05 AS rank
-                     FROM f
-                     JOIN messages m ON m.rowid = f.rowid
-                     JOIN threads t ON t.id = m.thread_id
-                     WHERE (?5 IS NULL OR instr(lower(m.from_addr), ?5) > 0)
-                       AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
-                       AND (?11 IS NULL OR instr(lower(m.cc_addrs), ?11) > 0)
-                       AND (?7 = 0 OR t.is_read = 0)
-                       AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
-                       AND {not_junk}
-                     GROUP BY t.id
-                     ORDER BY rank
-                     LIMIT ?9",
-                    thread_cols("t.")
-                ))?;
-                let candidate_cap = (limit as i64).saturating_mul(10).max(200);
-                let rows = stmt.query_map(
-                    params![
-                        fts,
-                        SNIPPET_START.to_string(),
-                        SNIPPET_END.to_string(),
-                        now_ms,
-                        q.from_contains,
-                        q.to_contains,
-                        q.unread_only,
-                        q.account_contains,
-                        limit,
-                        candidate_cap,
-                        q.cc_contains
-                    ],
-                    |r| {
-                        Ok(SearchResult {
-                            thread: row_to_thread(r)?,
-                            // THREAD_COLS width, not a magic number — `snip` is
-                            // selected right after all thread_cols().
-                            snippet: r.get(THREAD_COLS.split(", ").count())?,
-                        })
-                    },
-                )?;
-                rows.collect()
+        // The index that answers: the new one once it holds all the mail
+        // (`reindex_step`), the one it replaces until then. Same columns
+        // in the same order, so the weights and the snippet apply to both.
+        let index = || {
+            if self.fts_ready.load(Ordering::SeqCst) {
+                "mail_fts"
             } else {
-                let mut stmt = c.prepare_cached(&format!(
-                    "SELECT {} FROM threads t
-                     WHERE (?1 = 0 OR t.is_read = 0)
-                       AND (?2 IS NULL OR instr(lower(t.account_id), ?2) > 0)
-                       AND (?3 IS NULL OR EXISTS (
-                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
-                               AND instr(lower(m.from_addr), ?3) > 0))
-                       AND (?4 IS NULL OR EXISTS (
-                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
-                               AND instr(lower(m.to_addrs), ?4) > 0))
-                       AND (?6 IS NULL OR EXISTS (
-                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
-                               AND instr(lower(m.cc_addrs), ?6) > 0))
-                       AND {not_junk}
-                     ORDER BY t.last_msg_at DESC
-                     LIMIT ?5",
-                    thread_cols("t.")
-                ))?;
-                let rows = stmt.query_map(
-                    params![
-                        q.unread_only,
-                        q.account_contains,
-                        q.from_contains,
-                        q.to_contains,
-                        limit,
-                        q.cc_contains
-                    ],
-                    |r| {
-                        let thread = row_to_thread(r)?;
-                        let snippet = thread.snippet.clone();
-                        Ok(SearchResult { thread, snippet })
-                    },
-                )?;
-                rows.collect()
+                "messages_fts"
             }
-        })
+        };
+        let run = |fts: &str| self.search_in(fts, q, limit, now_ms, &not_junk);
+        let fts = index();
+        match run(fts) {
+            // The old index was retired between the choice and the query.
+            Err(_) if fts != index() => run(index()),
+            result => result,
+        }
     }
 
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError> {
@@ -5220,7 +5601,7 @@ mod tests {
     fn fts_bytes(s: &SqliteStore) -> i64 {
         s.with(|c| {
             c.query_row(
-                "SELECT COALESCE(SUM(LENGTH(block)), 0) + COUNT(*) FROM messages_fts_data",
+                "SELECT COALESCE(SUM(LENGTH(block)), 0) + COUNT(*) FROM mail_fts_data",
                 [],
                 |r| r.get(0),
             )
@@ -5453,17 +5834,19 @@ mod tests {
             let s = SqliteStore::init_to(conn, 25).unwrap();
             s.upsert_account(&sample_account("a1")).unwrap();
             for (id, fetched) in [("m-raw", true), ("m-old", false)] {
-                s.upsert_message(&Message {
-                    id: id.to_string(),
-                    thread_id: "t1".to_string(),
-                    account_id: "a1".to_string(),
-                    body_html: Some(RAW_BODY.to_string()),
-                    body_text: Some("hi".to_string()),
-                    cc_addrs: vec!["lee@x.com".to_string()],
-                    body_fetched: fetched,
-                    ..Default::default()
-                })
-                .unwrap();
+                old_message(
+                    &s,
+                    &Message {
+                        id: id.to_string(),
+                        thread_id: "t1".to_string(),
+                        account_id: "a1".to_string(),
+                        body_html: Some(RAW_BODY.to_string()),
+                        body_text: Some("hi".to_string()),
+                        cc_addrs: vec!["lee@x.com".to_string()],
+                        body_fetched: fetched,
+                        ..Default::default()
+                    },
+                );
             }
         }
         let s = SqliteStore::open(&path).unwrap(); // runs v26
@@ -5755,19 +6138,23 @@ mod tests {
             .is_empty());
     }
 
-    // ---- v28: Cc in search
+    // ---- Cc in search
 
-    fn fts_is_consistent(s: &SqliteStore) -> bool {
-        // FTS5's own check of an external-content index against its
-        // content (the view): fails if any entry was added or removed
-        // with values other than the ones the view gives.
+    /// FTS5's own check of an external-content index against its content
+    /// (the view): fails if any entry was added or removed with values
+    /// other than the ones the view gives.
+    fn index_is_whole(s: &SqliteStore, index: &str) -> bool {
         s.with(|c| {
             c.execute(
-                "INSERT INTO messages_fts(messages_fts, rank) VALUES ('integrity-check', 1)",
+                &format!("INSERT INTO {index}({index}, rank) VALUES ('integrity-check', 1)"),
                 [],
             )
         })
         .is_ok()
+    }
+
+    fn fts_is_consistent(s: &SqliteStore) -> bool {
+        index_is_whole(s, "mail_fts")
     }
 
     fn found(s: &SqliteStore, q: &str) -> Vec<String> {
@@ -5825,60 +6212,552 @@ mod tests {
         assert!(fts_is_consistent(&s));
     }
 
-    /// The upgrade re-indexes exactly the messages that have a Cc; the
-    /// rest of the index is left as it is, and it is whole afterwards.
-    #[test]
-    fn v28_upgrade_indexes_the_cc_already_stored() {
-        let dir = std::env::temp_dir().join(format!("heypigeon-test-v28-{}", std::process::id()));
+    /// v28 as it first went out, to test builds: it re-indexed the mail
+    /// that has a Cc in place (see the marker that step is now). A
+    /// database that ran it has the old index's view and triggers in this
+    /// shape.
+    const V28_AS_FIRST_SHIPPED: &str =
+    "
+    INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+    SELECT 'delete', m.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
+                m.from_addr,
+                m.to_addrs,
+                COALESCE(m.body_text, m.snippet, '')
+      FROM messages m WHERE m.cc_addrs <> '[]';
+    DROP VIEW messages_fts_content;
+    CREATE VIEW messages_fts_content AS
+      SELECT m.rowid AS rowid,
+             COALESCE((SELECT subject FROM threads t WHERE t.id = m.thread_id), '') AS subject,
+             m.from_addr AS from_addr,
+             CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END AS to_addrs,
+             COALESCE(m.body_text, m.snippet, '') AS body_text
+      FROM messages m;
+    DROP TRIGGER messages_fts_ai;
+    DROP TRIGGER messages_fts_au;
+    DROP TRIGGER messages_fts_ad;
+    CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+        VALUES (new.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
+                new.from_addr,
+                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+                COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages
+    WHEN old.from_addr IS NOT new.from_addr
+      OR old.to_addrs IS NOT new.to_addrs
+      OR old.cc_addrs IS NOT new.cc_addrs
+      OR COALESCE(old.body_text, old.snippet, '') IS NOT COALESCE(new.body_text, new.snippet, '')
+    BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+        VALUES ('delete', old.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
+                old.from_addr,
+                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+                COALESCE(old.body_text, old.snippet, ''));
+        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+        VALUES (new.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
+                new.from_addr,
+                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+                COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+        VALUES ('delete', old.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
+                old.from_addr,
+                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+                COALESCE(old.body_text, old.snippet, ''));
+    END;
+    INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+    SELECT m.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
+                m.from_addr,
+                CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END,
+                COALESCE(m.body_text, m.snippet, '')
+      FROM messages m WHERE m.cc_addrs <> '[]';
+    ";
+
+    // ---- v30: the search index moves to `mail_fts`, after open
+
+    /// Rows of the messages table that are in the new index.
+    fn moved(s: &SqliteStore) -> i64 {
+        s.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM messages WHERE fts_subject IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap()
+    }
+
+    fn old_index_objects(s: &SqliteStore) -> i64 {
+        s.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'messages_fts%'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap()
+    }
+
+    /// A message row as a store before v30 wrote it (the upsert of today
+    /// names a column those did not have).
+    fn old_message(s: &SqliteStore, m: &Message) {
+        s.with(|c| {
+            c.execute(
+                "INSERT INTO messages
+                   (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                    body_html, body_text, label_ids, is_read, cc_addrs, body_fetched)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    m.id,
+                    m.thread_id,
+                    m.account_id,
+                    m.from_addr,
+                    serde_json::to_string(&m.to_addrs).unwrap(),
+                    m.date,
+                    m.snippet,
+                    m.body_html,
+                    m.body_text,
+                    serde_json::to_string(&m.label_ids).unwrap(),
+                    m.is_read,
+                    serde_json::to_string(&m.cc_addrs).unwrap(),
+                    m.body_fetched
+                ],
+            )
+        })
+        .unwrap();
+    }
+
+    fn old_thread(s: &SqliteStore, id: &str, subject: &str, from: &str) {
+        s.upsert_thread(&Thread {
+            id: id.to_string(),
+            account_id: "a1".to_string(),
+            subject: subject.to_string(),
+            last_msg_at: 1000,
+            is_inbox: true,
+            msg_count: 1,
+            from_summary: from.to_string(),
+            last_from_addr: from.to_string(),
+            labels: vec!["INBOX".to_string()],
+            ..Default::default()
+        })
+        .unwrap();
+    }
+
+    fn rename(s: &SqliteStore, id: &str, subject: &str) {
+        let mut t = s.get_thread(&id.to_string()).unwrap().unwrap();
+        t.subject = subject.to_string();
+        s.upsert_thread(&t).unwrap();
+    }
+
+    fn rewrite_body(s: &SqliteStore, thread_id: &str, body: &str) {
+        let mut m = s.list_messages(&thread_id.to_string()).unwrap().remove(0);
+        m.body_text = Some(body.to_string());
+        s.upsert_message(&m).unwrap();
+    }
+
+    const SPOOFED_FROM: &str = r#""Bank <alerts@bank.example>" <attacker@evil.example>"#;
+
+    /// A mailbox as an older build left it, on disk: thirty threads
+    /// `t00`…`t29` of one message each (subject `topicNN`, body `bodyNN`),
+    /// every third with a Cc. Thread 6's subject changed after it was
+    /// indexed and its message was written again since — the drift that
+    /// leaves the old index malformed. Thread 7 is from an address hidden
+    /// behind a quoted display name, with the list sender the old reading
+    /// gave it.
+    ///
+    /// `ran_v28`: the database also ran v28 as it first shipped (the old
+    /// index's view and triggers carry Cc, the version is 29).
+    fn old_mailbox(name: &str, ran_v28: bool) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v30-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("v27.db");
+        let path = dir.join(name);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let conn = Connection::open(&path).unwrap();
+        let s = SqliteStore::init_to(conn, if ran_v28 { 27 } else { 26 }).unwrap();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        for n in 0..30 {
+            let id = format!("t{n:02}");
+            let from = if n == 7 {
+                SPOOFED_FROM.to_string()
+            } else {
+                format!("sender{n:02}@x.com")
+            };
+            old_thread(&s, &id, &format!("topic{n:02}"), &from);
+            if n == 7 {
+                s.with(|c| {
+                    c.execute(
+                        "UPDATE threads SET last_from_addr = 'alerts@bank.example' WHERE id = 't07'",
+                        [],
+                    )
+                })
+                .unwrap();
+            }
+            old_message(
+                &s,
+                &Message {
+                    id: format!("{id}-m1"),
+                    thread_id: id.clone(),
+                    account_id: "a1".to_string(),
+                    from_addr: from,
+                    to_addrs: vec!["me@heypigeon.app".to_string()],
+                    date: 1000 + n,
+                    body_text: Some(format!("body{n:02}")),
+                    label_ids: vec!["INBOX".to_string()],
+                    cc_addrs: if n % 3 == 0 {
+                        vec!["Samira Okafor <samira@partner.example>".to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+        // The drift: the subject changes under an indexed message, and the
+        // message is then taken out of the old index under the new subject.
+        rename(&s, "t06", "renamed06");
+        s.with(|c| {
+            c.execute(
+                "UPDATE messages SET body_text = 'drifted06' WHERE thread_id = 't06'",
+                [],
+            )
+        })
+        .unwrap();
+        assert!(
+            !index_is_whole(&s, "messages_fts"),
+            "the fixture's old index is malformed"
+        );
+        if ran_v28 {
+            s.with(|c| {
+                c.execute_batch(V28_AS_FIRST_SHIPPED)?;
+                c.execute_batch(MIGRATIONS[28])?;
+                c.pragma_update(None, "user_version", 29)
+            })
+            .unwrap();
+        }
+        path
+    }
+
+    /// The proof for v30. An old mailbox whose index has drifted is
+    /// opened; the move is run a few steps, with mail arriving, changing
+    /// and going meanwhile; the app is killed (once between steps, once
+    /// inside one); the move is picked up and finished. At every stop the
+    /// new index agrees with its content (FTS5's integrity-check), at the
+    /// end it holds everything, Cc included, and the old index is gone.
+    fn the_index_moves(name: &str, ran_v28: bool) {
+        let path = old_mailbox(name, ran_v28);
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(s.reindex_pending().unwrap());
+        assert_eq!(moved(&s), 0, "opening moved nothing");
+        // Meanwhile the old index answers.
+        assert_eq!(found(&s, "body17"), vec!["t17"]);
+
+        for through in [4, 8, 12] {
+            assert_eq!(s.reindex_step(4).unwrap(), Reindex::Indexing { through });
+            assert!(fts_is_consistent(&s), "after {through}");
+        }
+        assert_eq!(moved(&s), 12);
+
+        // Mail does not wait for the move. New mail:
+        seed_thread(&s, "t-new", "arrival", "new@x.com", "newmail", 5000, false);
+        assert_eq!(found(&s, "newmail"), vec!["t-new"]);
+        // a subject changes, on a thread already moved and one not yet:
+        rename(&s, "t02", "midway02");
+        rename(&s, "t20", "late20");
+        // a body arrives, likewise:
+        rewrite_body(&s, "t01", "fetched01");
+        rewrite_body(&s, "t22", "fetched22");
+        // and mail goes, likewise.
+        s.delete_thread(&"t03".to_string()).unwrap();
+        s.delete_thread(&"t21".to_string()).unwrap();
+        assert!(fts_is_consistent(&s));
+        assert_eq!(moved(&s), 12 - 1 + 1);
+
+        // Killed between two steps…
+        drop(s);
+        // …and killed inside one: what it did never commits.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "BEGIN;
+                 UPDATE messages SET fts_subject = 'half' WHERE fts_subject IS NULL;
+                 UPDATE sync_meta SET value = '99' WHERE key = 'fts.cursor';",
+            )
+            .unwrap();
+        }
+
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(s.reindex_pending().unwrap());
+        assert_eq!(moved(&s), 12, "the half step left nothing");
+        assert!(fts_is_consistent(&s));
+        // It goes on where it was.
+        assert_eq!(
+            s.reindex_step(4).unwrap(),
+            Reindex::Indexing { through: 16 }
+        );
+        let mut steps = 0;
+        while s.reindex_step(4).unwrap() != Reindex::Done {
+            steps += 1;
+            assert!(steps < 100, "the move ends");
+        }
+
+        assert!(!s.reindex_pending().unwrap());
+        assert_eq!(old_index_objects(&s), 0, "the old index is gone");
+        assert!(fts_is_consistent(&s));
+        let stored: i64 = s
+            .with(|c| c.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!((stored, moved(&s)), (29, 29));
+
+        // Everything is found, under what it says now.
+        for n in (0..30).filter(|n| ![1, 3, 6, 21, 22].contains(n)) {
+            assert_eq!(found(&s, &format!("body{n:02}")), vec![format!("t{n:02}")]);
+        }
+        for n in (0..30).filter(|n| ![2, 3, 6, 20, 21].contains(n)) {
+            assert_eq!(found(&s, &format!("topic{n:02}")), vec![format!("t{n:02}")]);
+        }
+        assert_eq!(found(&s, "renamed06"), vec!["t06"]);
+        assert_eq!(found(&s, "drifted06"), vec!["t06"]);
+        assert_eq!(found(&s, "midway02"), vec!["t02"]);
+        assert_eq!(found(&s, "late20"), vec!["t20"]);
+        assert_eq!(found(&s, "fetched01"), vec!["t01"]);
+        assert_eq!(found(&s, "fetched22"), vec!["t22"]);
+        assert_eq!(found(&s, "newmail"), vec!["t-new"]);
+        for gone in [
+            "topic06", "body06", "topic02", "topic20", "body01", "body22",
+        ] {
+            assert!(found(&s, gone).is_empty(), "{gone}");
+        }
+        // Cc that was stored all along is searchable now.
+        let cc: Vec<String> = (0..30)
+            .filter(|n| n % 3 == 0 && ![3, 21].contains(n))
+            .map(|n| format!("t{n:02}"))
+            .collect();
+        assert_eq!(found(&s, "samira"), cc);
+        assert_eq!(found(&s, "okafor renamed06"), vec!["t06"]);
+        // The sender behind the quoted name is the one the list shows.
+        let spoofed = s.get_thread(&"t07".to_string()).unwrap().unwrap();
+        assert_eq!(spoofed.last_from_addr, "attacker@evil.example");
+        let plain = s.get_thread(&"t08".to_string()).unwrap().unwrap();
+        assert_eq!(plain.last_from_addr, "sender08@x.com");
+
+        // And it stays whole: the writes that malformed the old index.
+        rename(&s, "t06", "again06");
+        rewrite_body(&s, "t06", "third06");
+        rename(&s, "t09", "moved09");
+        s.delete_thread(&"t09".to_string()).unwrap();
+        assert_eq!(found(&s, "again06 third06"), vec!["t06"]);
+        assert!(found(&s, "renamed06").is_empty());
+        assert!(found(&s, "moved09").is_empty());
+        assert!(fts_is_consistent(&s));
+        assert_eq!(s.reindex_step(4).unwrap(), Reindex::Done);
+
+        drop(s);
+        let s = SqliteStore::open(&path).unwrap();
+        assert!(!s.reindex_pending().unwrap());
+        assert_eq!(found(&s, "again06"), vec!["t06"]);
+        assert!(fts_is_consistent(&s));
+        drop(s);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn v30_the_index_moves_after_open_through_drift_and_a_kill() {
+        the_index_moves("v26.db", false);
+    }
+
+    /// The same for a database that ran v28 as test builds first had it.
+    #[test]
+    fn v30_the_index_moves_on_a_store_that_ran_the_first_v28() {
+        the_index_moves("v29.db", true);
+    }
+
+    /// A new install has nothing to move: it is on the new index from the
+    /// first write, and the old one is not kept around.
+    #[test]
+    fn a_new_store_starts_on_the_new_index() {
+        let s = store();
+        assert!(!s.reindex_pending().unwrap());
+        assert_eq!(s.reindex_step(100).unwrap(), Reindex::Done);
+        assert_eq!(old_index_objects(&s), 0);
+        seed_thread(&s, "t1", "Budget", "priya@x.com", "numbers", 1000, false);
+        assert_eq!(found(&s, "budget numbers"), vec!["t1"]);
+        // A message that is stored before its thread is indexed without a
+        // subject, and gets it when the thread arrives.
+        s.upsert_message(&Message {
+            id: "t2-m1".to_string(),
+            thread_id: "t2".to_string(),
+            account_id: "a1".to_string(),
+            body_text: Some("orphan".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(moved(&s), 2);
+        assert!(found(&s, "lunch").is_empty());
+        old_thread(&s, "t2", "Lunch", "sam@x.com");
+        assert_eq!(found(&s, "lunch orphan"), vec!["t2"]);
+        assert!(fts_is_consistent(&s));
+    }
+
+    /// Opening a big old mailbox does not read the mail, and each step of
+    /// the move afterwards is short. Run by hand:
+    /// `HP_BIG=500000 cargo test -p heypigeon-adapter-sqlite --release \
+    ///    -- --ignored --nocapture opening_a_big_old_mailbox`
+    #[test]
+    #[ignore]
+    fn opening_a_big_old_mailbox_is_quick() {
+        use std::time::{Duration, Instant};
+        let n: i64 = std::env::var("HP_BIG")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100_000);
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.db");
         let _ = std::fs::remove_file(&path);
         {
             let conn = Connection::open(&path).unwrap();
-            let s = SqliteStore::init_to(conn, 27).unwrap();
+            let s = SqliteStore::init_to(conn, 26).unwrap();
             s.upsert_account(&sample_account("a1")).unwrap();
-            seed_thread(
-                &s,
-                "t1",
-                "Budget",
-                "Priya <priya@x.com>",
-                "numbers",
-                1000,
-                false,
-            );
-            seed_thread(
-                &s,
-                "t2",
-                "Lunch",
-                "Priya <priya@x.com>",
-                "friday",
-                2000,
-                false,
-            );
-            let mut m = s.list_messages(&"t1".to_string()).unwrap().remove(0);
-            m.cc_addrs = vec!["Samira Okafor <samira@partner.example>".to_string()];
-            s.upsert_message(&m).unwrap();
-            // Before: stored, not searchable.
-            assert!(search(&s, "samira").is_empty());
-            assert_eq!(search(&s, "numbers").len(), 1);
+            let built = Instant::now();
+            s.with(|c| {
+                let tx = c.unchecked_transaction()?;
+                {
+                    let mut thread = tx.prepare(
+                        "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at,
+                                              is_read, is_inbox, is_archived, msg_count,
+                                              from_summary, last_from_addr, labels)
+                         VALUES (?1, 'a1', ?2, '', ?3, 1, 0, 1, 3, 'x', 'x@x.com', '[]')",
+                    )?;
+                    let mut message = tx.prepare(
+                        "INSERT INTO messages (id, thread_id, account_id, from_addr, to_addrs,
+                                               date, snippet, body_text, label_ids, is_read,
+                                               cc_addrs)
+                         VALUES (?1, ?2, 'a1', ?3, '[\"me@heypigeon.app\"]', ?4, '', ?5, '[]', 1,
+                                 ?6)",
+                    )?;
+                    for i in 0..n {
+                        let thread_id = format!("t{}", i / 3);
+                        if i % 3 == 0 {
+                            thread.execute(params![thread_id, format!("subject {}", i / 3), i])?;
+                        }
+                        // ~1 KB of text from a vocabulary of a few thousand
+                        // words, as mail is.
+                        let body: String = (0..150)
+                            .map(|w| format!("word{} ", (i * 31 + w * 17) % 5000))
+                            .collect();
+                        let cc = if i % 3 == 0 {
+                            "[\"Samira Okafor <samira@partner.example>\"]"
+                        } else {
+                            "[]"
+                        };
+                        message.execute(params![
+                            format!("m{i}"),
+                            thread_id,
+                            format!("Sender {} <s{}@x.com>", i % 900, i % 900),
+                            i,
+                            body,
+                            cc
+                        ])?;
+                    }
+                }
+                tx.commit()
+            })
+            .unwrap();
+            eprintln!("built {n} messages in {:?}", built.elapsed());
         }
-        let s = SqliteStore::open(&path).unwrap(); // runs v28
-        assert_eq!(found(&s, "samira"), vec!["t1"]);
-        assert_eq!(found(&s, "cc:samira"), vec!["t1"]);
-        assert_eq!(found(&s, "numbers"), vec!["t1"]);
-        assert_eq!(found(&s, "friday"), vec!["t2"]);
-        assert_eq!(found(&s, "priya"), vec!["t1", "t2"]);
+        let size = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) >> 20;
+        eprintln!("file: {} MiB", size(&path));
+
+        let opening = Instant::now();
+        let s = SqliteStore::open(&path).unwrap();
+        let opened = opening.elapsed();
+        eprintln!("open (v26 -> v{}): {opened:?}", MIGRATIONS.len());
+        assert!(opened < Duration::from_secs(1), "{opened:?}");
+        assert!(s.reindex_pending().unwrap());
+
+        let all = Instant::now();
+        let (mut steps, mut longest, mut longest_retiring) = (0, Duration::ZERO, Duration::ZERO);
+        let mut indexing = Duration::ZERO;
+        loop {
+            let step = Instant::now();
+            let state = s.reindex_step(200).unwrap();
+            let took = step.elapsed();
+            steps += 1;
+            match state {
+                Reindex::Indexing { .. } => {
+                    longest = longest.max(took);
+                    indexing = all.elapsed();
+                }
+                Reindex::Retiring => longest_retiring = longest_retiring.max(took),
+                Reindex::Done => break,
+            }
+        }
+        eprintln!(
+            "move: {steps} steps of 200 in {:?} (indexing {indexing:?}); longest indexing step \
+             {longest:?}, longest retiring step {longest_retiring:?}",
+            all.elapsed()
+        );
+        let checking = Instant::now();
         assert!(fts_is_consistent(&s));
-        // And it stays whole through the writes that follow.
-        let mut m = s.list_messages(&"t2".to_string()).unwrap().remove(0);
-        m.cc_addrs = vec!["lee@x.com".to_string()];
-        m.body_text = Some("saturday".to_string());
-        s.upsert_message(&m).unwrap();
-        s.delete_thread(&"t1".to_string()).unwrap();
-        assert_eq!(found(&s, "lee saturday"), vec!["t2"]);
-        assert!(found(&s, "samira").is_empty());
-        assert!(fts_is_consistent(&s));
+        eprintln!("integrity-check: {:?}", checking.elapsed());
+        assert_eq!(search(&s, "okafor").len(), 50, "Cc is found (a page of it)");
+        eprintln!("file after: {} MiB", size(&path));
+        drop(s);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_install_secret_is_made_once_and_kept() {
+        let s = store();
+        let key = s.install_secret("sanitize_key").unwrap();
+        assert_ne!(key, [0u8; 32]);
+        assert_eq!(s.install_secret("sanitize_key").unwrap(), key);
+        assert_ne!(s.install_secret("another").unwrap(), key);
+        assert_ne!(store().install_secret("sanitize_key").unwrap(), key);
+        // It does not go with an account's bookkeeping.
+        s.delete_account("a1").unwrap();
+        assert_eq!(s.install_secret("sanitize_key").unwrap(), key);
+    }
+
+    // ---- v31: what the rules last acted on
+
+    #[test]
+    fn rule_marks_are_kept_per_rule_and_go_with_the_thread() {
+        let s = store();
+        for id in ["t1", "t2", "t3"] {
+            seed_thread(&s, id, "Hello", "sam@x.com", "hi", 1000, false);
+        }
+        let (t1, t2, t3) = ("t1".to_string(), "t2".to_string(), "t3".to_string());
+        assert_eq!(s.rule_mark("mute", &t1).unwrap(), None);
+        s.set_rule_mark("mute", &t1, 10).unwrap();
+        s.set_rule_mark("mute", &t1, 20).unwrap();
+        s.set_rule_mark("mute", &t2, 30).unwrap();
+        s.set_rule_mark("mute", &t3, 40).unwrap();
+        s.set_rule_mark("block", &t1, 50).unwrap();
+        assert_eq!(s.rule_mark("mute", &t1).unwrap(), Some(20));
+        assert_eq!(s.rule_mark("block", &t1).unwrap(), Some(50));
+        assert_eq!(s.rule_mark("block", &t2).unwrap(), None);
+
+        // Only the named rule's marks are thinned out.
+        s.retain_rule_marks("mute", &[t1.clone(), t3.clone()])
+            .unwrap();
+        assert_eq!(s.rule_mark("mute", &t2).unwrap(), None);
+        assert_eq!(s.rule_mark("mute", &t3).unwrap(), Some(40));
+        assert_eq!(s.rule_mark("block", &t1).unwrap(), Some(50));
+        s.delete_thread(&t1).unwrap();
+        assert_eq!(s.rule_mark("mute", &t1).unwrap(), None);
+        assert_eq!(s.rule_mark("block", &t1).unwrap(), None);
+        s.retain_rule_marks("mute", &[]).unwrap();
+        assert_eq!(s.rule_mark("mute", &t3).unwrap(), None);
     }
 
     // ---- v29: tracking links kept per thread

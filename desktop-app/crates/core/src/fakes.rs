@@ -59,6 +59,7 @@ struct MemStoreInner {
     thread_anchors: HashMap<ThreadId, Vec<String>>,
     anchor_versions: HashMap<ThreadId, i64>,
     thread_links: HashMap<ThreadId, (String, Vec<String>)>,
+    rule_marks: HashMap<(String, ThreadId), i64>,
     bundling_versions: HashMap<ThreadId, i64>,
 }
 
@@ -552,6 +553,27 @@ impl Store for MemStore {
     fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
         let g = self.inner.lock().unwrap();
         Ok(g.thread_anchors.get(thread_id).cloned().unwrap_or_default())
+    }
+
+    fn rule_mark(&self, rule: &str, thread_id: &ThreadId) -> Result<Option<i64>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.rule_marks
+            .get(&(rule.to_string(), thread_id.clone()))
+            .copied())
+    }
+
+    fn set_rule_mark(&self, rule: &str, thread_id: &ThreadId, at: i64) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.rule_marks
+            .insert((rule.to_string(), thread_id.clone()), at);
+        Ok(())
+    }
+
+    fn retain_rule_marks(&self, rule: &str, keep: &[ThreadId]) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        g.rule_marks
+            .retain(|(r, thread), _| r != rule || keep.contains(thread));
+        Ok(())
     }
 
     fn thread_links(

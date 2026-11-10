@@ -176,11 +176,20 @@ pub struct MailMessage {
     /// attributes mail leans on (`width`, `height`, `align`, `valign`,
     /// `bgcolor`, `border`, `cellpadding`, `cellspacing`, `colspan`,
     /// `rowspan`, `background`), `<font>`, `<center>`, `class` and `id`
-    /// unprefixed (`gmail_quote`), inline `style` (minus `position` and
+    /// unprefixed (`gmail_quote`) — except names beginning `hp-`, which
+    /// are the app's and which mail loses — inline `style` (minus
+    /// `position` and
     /// anything that could run script) and `<style>` blocks (minus
     /// `@import`; `url(…)` stays, so remote pictures in CSS load or not
     /// by the view's content security policy). A full document comes as
     /// its content, the `<body>`'s attributes on a `<div>` around it.
+    ///
+    /// A tracking pixel is replaced by
+    /// `<span class="hp-tracker" style="display:none"></span>`, exactly
+    /// that text and only ever written by the sanitizer: count it for
+    /// "n trackers blocked". A body that has one ends in a comment,
+    /// `<!--hp-seal:…-->`, by which the sanitizer knows its own output
+    /// again; it shows nothing and needs no handling.
     ///
     /// This is one layer of two. The shell's view is the other: the
     /// mail's JavaScript off, a content security policy, remote images

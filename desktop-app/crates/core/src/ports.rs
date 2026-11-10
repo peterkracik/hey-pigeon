@@ -710,6 +710,25 @@ pub trait Store {
         Ok(found)
     }
 
+    /// When a rule (`rules::apply`) last acted on a thread: the date (epoch
+    /// ms) of the newest mail from someone else that the thread held then.
+    /// Kept on this device only. Default: nothing is remembered.
+    fn rule_mark(&self, rule: &str, thread_id: &ThreadId) -> Result<Option<i64>, StoreError> {
+        let _ = (rule, thread_id);
+        Ok(None)
+    }
+
+    fn set_rule_mark(&self, rule: &str, thread_id: &ThreadId, at: i64) -> Result<(), StoreError> {
+        let _ = (rule, thread_id, at);
+        Ok(())
+    }
+
+    /// Forget a rule's marks for every thread that is not in `keep`.
+    fn retain_rule_marks(&self, rule: &str, keep: &[ThreadId]) -> Result<(), StoreError> {
+        let _ = (rule, keep);
+        Ok(())
+    }
+
     /// Thread counts per bundle id, for the Bundles list. A bundle with no
     /// threads may be missing from the map. The default reads every
     /// bundle's threads; the SQLite adapter counts them in one query.

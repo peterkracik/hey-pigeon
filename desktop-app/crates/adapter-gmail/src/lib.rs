@@ -2273,15 +2273,10 @@ fn header_addresses(value: &str) -> Vec<String> {
     parts.push(cur);
     parts
         .iter()
-        .filter_map(|p| {
-            let p = p.trim();
-            let addr = match (p.rfind('<'), p.rfind('>')) {
-                (Some(a), Some(b)) if a < b => &p[a + 1..b],
-                _ => p,
-            };
-            let addr = addr.trim();
-            (!addr.is_empty()).then(|| addr.to_string())
-        })
+        // The core's reading of one mailbox: the address outside the
+        // quotes, wherever the display name puts a bracket.
+        .map(|p| heypigeon_core::sync::bare_addr(p))
+        .filter(|addr| !addr.is_empty())
         .collect()
 }
 
@@ -2512,6 +2507,12 @@ mod tests {
             vec!["Jane@x.com", "bob@y.com", "a@z.org"]
         );
         assert!(header_addresses("").is_empty());
+        assert_eq!(
+            header_addresses(
+                r#""Support <alerts@bank.com>" <attacker@evil.example>, "x" <real@a.b> "<fake@c.d>""#
+            ),
+            vec!["attacker@evil.example", "real@a.b"]
+        );
     }
 
     #[test]

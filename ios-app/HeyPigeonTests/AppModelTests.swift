@@ -198,6 +198,25 @@ struct AppModelTests {
         #expect(model.composeDraft == nil)
     }
 
+    /// "Marked done" used to replace "Sending · Undo": the send then had
+    /// nothing left to stop it.
+    @Test func aSendKeepsItsUndoWhileOtherToastsShow() throws {
+        var draft = SendDraft()
+        draft.to = ["ana@acme.test"]
+        model.send(draft, from: "me@work.test")
+        model.markDone(try #require(model.rows.first { $0.id == "t3" }))
+        #expect(model.toast?.text == "Sending · to ana@acme.test")
+        #expect(model.sideToast?.text == "Marked done")
+        #expect(model.toasts.map(\.text) == ["Marked done", "Sending · to ana@acme.test"])
+        model.toast?.undo?()
+        #expect(model.composeDraft != nil)
+        // Without a send in its window a toast replaces the last, as before.
+        model.dismissToast(try #require(model.toast?.id))
+        model.show("One")
+        model.show("Two")
+        #expect(model.toast?.text == "Two")
+    }
+
     @Test func reminderListIsCachedForTheBadgeAndTheWidgets() async throws {
         #expect(model.scheduledAcrossAccounts.isEmpty && model.dueCount == 0)
         try engine.setReminder(threadId: "t2", at: Date().addingTimeInterval(-60), onlyIfNoReply: false)

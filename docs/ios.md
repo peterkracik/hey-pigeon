@@ -289,6 +289,12 @@ Gmail draft — created on the first save, updated after that, skipped while
 nothing changed — and the trash next to Send discards it, deleting that
 draft. A send deletes it too once it commits.
 
+A reply shows the conversation it answers under the editor
+(`ComposeThreadHistory`): the latest message open, earlier ones a line
+each, tap to open. Replies go out without a quote — Gmail threads them —
+unless **Quote in reply** puts the latest message into the text as "> "
+lines, to be answered between them.
+
 ### Scheduled, Need reply, Labels
 
 Scheduled (its own tab) groups by due date: Overdue · Today · Tomorrow ·

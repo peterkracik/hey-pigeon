@@ -140,6 +140,10 @@ struct ThreadModelTests {
         #expect(QuotedText.ownText("Yes.\n\nOn Mon, 3 Nov 2026, Ana wrote:\nLunch?") == "Yes.")
         #expect(QuotedText.ownText("From: the top\nnothing else") == "From: the top\nnothing else")
         #expect(QuotedText.ownText("> only a quote") == "> only a quote")
+        // "Quote in reply" writes the shape the fold reads back.
+        let reply = "Yes.\n\n" + QuotedText.quote("Lunch?\n\nAt one.\n", from: "Ana", address: "ana@acme.test", date: "Mon, 3 Nov 2026")
+        #expect(reply == "Yes.\n\nOn Mon, 3 Nov 2026, Ana <ana@acme.test> wrote:\n> Lunch?\n>\n> At one.")
+        #expect(QuotedText.split(reply)?.main == "Yes.")
         // Over budget: the newest messages stay, the oldest are counted out.
         let long = String(repeating: "x", count: 5_000)
         let many = (1...5).map { makeMessage("\($0)", from: "Ana", text: long) }
@@ -184,6 +188,16 @@ struct ThreadModelTests {
         #expect(d.to.isEmpty)
         #expect(d.bodyText.contains("From: Ana <ana@acme.test>") && d.bodyText.hasSuffix("The deck."))
         #expect(SendDraft.forward(of: m, in: makeRow(subject: "fwd: Deck")).subject == "fwd: Deck")
+        // The signature goes over the quote, not under the forwarded text.
+        let signed = SendDraft.forward(of: m, in: makeRow(subject: "Deck"), signature: "Peter")
+        #expect(signed.bodyText.hasPrefix("\n\nPeter\n\n---------- Forwarded message ----------\n"))
+        #expect(signed.bodyText.contains("\nSubject: Deck\n"))
+    }
+
+    @Test func textStillInARecipientFieldCountsOnceItIsAnAddress() {
+        #expect(EmailAddress.pending(" Boss@X.com,") == "boss@x.com")
+        #expect(EmailAddress.pending("ana@") == nil)
+        #expect(EmailAddress.pending("") == nil)
     }
 }
 

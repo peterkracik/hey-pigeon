@@ -7,8 +7,8 @@
 // or leaving the app saves it as a Gmail draft; Discard deletes that draft.
 //
 // The body editor and the AI are per platform, in the two extensions at
-// the end: the phone's rich TextEditor over an AttributedString and the
-// AIEditSheet, as they ship; the Mac's HTML editor, the thread above a
+// the end: the phone's rich TextEditor over an AttributedString, the
+// thread under a reply and the AIEditSheet; the Mac's HTML editor, the thread above a
 // reply, the floating toolbar and the AI panel (ComposeMac.swift). The
 // struct itself holds what both share: the fields, the attachments, the
 // footer and the draft's lifecycle.
@@ -26,6 +26,10 @@ struct ComposeView: View {
     @State private var to: [String]
     @State private var cc: [String]
     @State private var bcc: [String]
+    /// The text typed into each recipient field and not a chip yet.
+    @State private var typedTo = ""
+    @State private var typedCc = ""
+    @State private var typedBcc = ""
     @State private var showCc: Bool
     @State private var body_: AttributedString
     @State private var selection = AttributedTextSelection()
@@ -109,9 +113,19 @@ struct ComposeView: View {
     }
 
     private var snapshot: Snapshot {
-        Snapshot(to: to, cc: cc, bcc: bcc, subject: draft.subject, body: plainBody,
+        Snapshot(to: allTo, cc: allCc, bcc: allBcc, subject: draft.subject, body: plainBody,
                  html: bodyHTML, attachments: attachments.map(\.id))
     }
+
+    /// A field's chips and the address still being typed into it: what is
+    /// sent and saved (RecipientField.text).
+    private func all(_ chips: [String], _ typed: String) -> [String] {
+        guard let a = EmailAddress.pending(typed), !chips.contains(a) else { return chips }
+        return chips + [a]
+    }
+    private var allTo: [String] { all(to, typedTo) }
+    private var allCc: [String] { all(cc, typedCc) }
+    private var allBcc: [String] { all(bcc, typedBcc) }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
     /// An account's other addresses to send from: its aliases, without
@@ -123,7 +137,7 @@ struct ComposeView: View {
     private var showsFromRow: Bool {
         model.accounts.count > 1 || model.accounts.contains { !aliases(of: $0).isEmpty }
     }
-    private var canSend: Bool { !(to.isEmpty && cc.isEmpty && bcc.isEmpty) && !sending && !fromId.isEmpty }
+    private var canSend: Bool { !(allTo.isEmpty && allCc.isEmpty && allBcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
         #if os(macOS)
@@ -146,6 +160,10 @@ struct ComposeView: View {
                     headerFields
                     bodyEditor
                     if !attachments.isEmpty { attachmentChips }
+                    // The Mac's reply has its thread above (headerFields).
+                    #if os(iOS)
+                    replyHistory
+                    #endif
                 }
                 .padding(.bottom, 24)
             }
@@ -165,7 +183,7 @@ struct ComposeView: View {
     /// way out, the model's copy for Siri, the pickers and the link alert.
     private func withLifecycle<Content: View>(_ content: Content) -> some View {
         content
-            .task { people = model.searchPeople() }
+            .task { people = await model.searchPeople() }
             .onAppear {
                 model.loadSendAliases()
                 if fromId.isEmpty {
@@ -453,9 +471,9 @@ struct ComposeView: View {
     /// The draft as the editor holds it now.
     private var composed: SendDraft {
         var d = draft
-        d.to = to
-        d.cc = cc
-        d.bcc = bcc
+        d.to = allTo
+        d.cc = allCc
+        d.bcc = allBcc
         d.bodyText = plainBody
         d.bodyHTML = bodyHTML
         d.bodyRich = bodyRich
@@ -502,6 +520,9 @@ struct ComposeView: View {
         to = d.to
         cc = d.cc
         bcc = d.bcc
+        typedTo = ""
+        typedCc = ""
+        typedBcc = ""
         showCc = showCc || !d.cc.isEmpty || !d.bcc.isEmpty
         adoptBody(of: d)
         attachments = d.attachments
@@ -587,19 +608,40 @@ extension ComposeView {
     private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
     private var footerBackground: Color { Theme.canvas }
 
+    /// Under a reply's text: the conversation it answers, the latest
+    /// message open. The sheet covers the thread, and a reply used to be
+    /// written without the mail it answers anywhere in sight.
+    @ViewBuilder private var replyHistory: some View {
+        if let threadId = draft.replyToThreadId {
+            Divider().padding(.top, 16)
+            ComposeThreadHistory(threadId: threadId, showsSubject: false, onQuote: { quote($0) }) { _ in }
+        }
+    }
+
+    /// "Quote in reply": the message goes under the text as "> " lines
+    /// (once), to be answered between them; the reply then carries it.
+    private func quote(_ m: MessageItem) {
+        let quoted = QuotedText.quote(m.bodyText ?? m.snippet, from: m.fromName, address: m.fromAddress,
+                                      date: Formatters.fullDate(m.date))
+        guard !plainBody.contains(quoted) else { return }
+        body_.transform(updating: &selection) { $0.append(AttributedString("\n\n" + quoted)) }
+        pristine = false
+        focus = .body
+    }
+
     /// The From chip and the To / Cc / Bcc / Subject rows.
     @ViewBuilder private var headerFields: some View {
         if showsFromRow { fromRow }
         fieldRow("To") {
-            RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
+            RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
             if !showCc {
                 Button("Cc/Bcc") { showCc = true; focus = .cc }
                     .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
             }
         }
         if showCc {
-            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
-            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
+            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
+            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
         }
         fieldRow("Subject") {
             TextField("", text: $draft.subject).focused($focus, equals: .subject)
@@ -612,7 +654,8 @@ extension ComposeView {
             .foregroundStyle(Theme.textPrimary)
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
-            .frame(minHeight: 280)
+            // A reply leaves room for the conversation under it.
+            .frame(minHeight: draft.replyToThreadId == nil ? 280 : 140)
             .padding(.horizontal, 12)
             .padding(.top, 6)
             .focused($focus, equals: .body)
@@ -746,7 +789,7 @@ extension ComposeView {
         if showFields {
             if showsFromRow { fromRow }
             fieldRow("To") {
-                RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
+                RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
                 if !showCc {
                     Button("Cc/Bcc") { showCc = true; focus = .cc }
                         .buttonStyle(.plain)
@@ -754,8 +797,8 @@ extension ComposeView {
                 }
             }
             if showCc {
-                fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
-                fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
+                fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
+                fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
             }
             fieldRow("Subject") {
                 TextField("", text: $draft.subject)

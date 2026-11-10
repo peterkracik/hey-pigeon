@@ -5,7 +5,8 @@
 // Composer.svelte): paragraphs with air between them, bullet and numbered
 // lists, ⌘B · ⌘I · ⌘U · ⇧⌘X · ⌘K and ⇧⌘7 / ⇧⌘8 while typing, ⌘J for the
 // AI, ⌘↩ to send. A reply shows the thread's messages above the draft, so
-// the draft reads as the end of the conversation (Superhuman's shape); a
+// the draft reads as the end of the conversation (Superhuman's shape;
+// ComposeThreadHistory.swift, which the phone shows under its editor); a
 // selection gets a floating toolbar; the footer's Aa opens a format bar
 // with the same tools; and the AI is a panel under the text instead of a
 // sheet — a line to describe the change, the presets as chips, the result
@@ -1032,97 +1033,5 @@ struct MacAIPanel: View {
 private enum AIPanelError: LocalizedError {
     case nothingToWrite
     var errorDescription: String? { "Say what the email should say first." }
-}
-
-// MARK: - The thread above a reply
-
-/// The conversation a reply continues, above the draft: the subject, then
-/// each message as the thread view shows it — one line collapsed, the
-/// latest open — so the reply reads as the end of the thread. Loads what
-/// the store has at once and the full thread after.
-struct ComposeThreadHistory: View {
-    let threadId: String
-    /// The thread once it is here (the composer names recipients from it).
-    let onLoad: (ThreadDetail) -> Void
-    @Environment(AppModel.self) private var model
-    @State private var detail: ThreadDetail?
-    @State private var expanded: Set<String> = []
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let detail {
-                let subject = detail.thread.subject
-                Text(subject.isEmpty ? "(no subject)" : subject)
-                    .font(Theme.display(20, relativeTo: .title2))
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
-                let mail = detail.mail
-                VStack(spacing: 1) {
-                    ForEach(Array(mail.enumerated()), id: \.element.id) { index, m in
-                        HistoryMessageRow(message: m, expanded: expanded.contains(m.id) || index == mail.count - 1) {
-                            if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
-                        }
-                    }
-                }
-                .background(Theme.separator.opacity(0.6))
-            } else {
-                ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 24)
-            }
-        }
-        .task(id: threadId) {
-            if let local = try? model.engine.threadLocal(id: threadId), !local.mail.isEmpty {
-                detail = local
-                onLoad(local)
-            }
-            if let fresh = try? await model.engine.thread(id: threadId) {
-                detail = fresh
-                onLoad(fresh)
-            }
-        }
-    }
-}
-
-/// One message of the history: sender · time and a snippet line; open, the
-/// recipients and the body. The thread view's row without its actions.
-private struct HistoryMessageRow: View {
-    let message: MessageItem
-    let expanded: Bool
-    let onToggle: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: onToggle) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(message.isMine ? "Me" : message.fromName)
-                            .font(Theme.sender(!message.isRead))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
-                            .font(.footnote)
-                            .foregroundStyle(Theme.textTertiary)
-                            .monospacedDigit()
-                    }
-                    if expanded {
-                        Text("to \(message.to.joined(separator: ", "))")
-                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    } else {
-                        Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if expanded {
-                MessageBodyView(html: message.bodyHTML, text: message.bodyText ?? message.snippet,
-                                senderAddress: message.fromAddress)
-                    .padding(.top, 12)
-            }
-        }
-        .padding(.horizontal, 16).padding(.vertical, expanded ? 12 : 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(expanded ? Theme.card : Theme.canvas)
-    }
 }
 #endif

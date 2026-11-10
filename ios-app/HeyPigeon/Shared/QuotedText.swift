@@ -2,7 +2,8 @@
 // `split` is the message view's fold (the desktop's EmailBody.svelte
 // rules, "> " lines under an "On … wrote:" line), `ownText` the AI's
 // reading of the same message, which also knows Outlook's header block
-// and "Original Message" dividers. Pure Foundation, tested in ModelTests.
+// and "Original Message" dividers; `quote` writes the first shape, for the composer's
+// "Quote in reply". Pure Foundation, tested in ModelTests.
 
 import Foundation
 
@@ -27,6 +28,14 @@ enum QuotedText {
         let main = lines[..<i].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !main.isEmpty else { return nil }
         return (main, lines[i...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// A message as a reply quotes it: an "On … wrote:" line, then every
+    /// line behind "> " — the shape `split` folds on the other side.
+    nonisolated static func quote(_ text: String, from name: String, address: String, date: String) -> String {
+        let who = name.isEmpty || name == address ? address : "\(name) <\(address)>"
+        let lines = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        return "On \(date), \(who) wrote:\n" + lines.map { $0.isEmpty ? ">" : "> \($0)" }.joined(separator: "\n")
     }
 
     /// What the author wrote: the text up to the trailing history, however

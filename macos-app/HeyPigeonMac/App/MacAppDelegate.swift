@@ -59,7 +59,7 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
 
     @objc private func syncFromDock() {
         guard let model = AppModel.current else { return }
-        Task { await model.sync() }
+        Task { await model.sync(manual: true) }
     }
 
     // MARK: Notification taps → the thread

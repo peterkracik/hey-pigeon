@@ -202,7 +202,7 @@ final class WindowState: Equatable {
 
     /// The list's ids in display order.
     func flatIds(_ model: AppModel) -> [String] {
-        model.groupedRows.flatMap { $0.rows.map(\.id) }
+        model.flatRowIds
     }
 
     /// The one highlighted thread, from the list or the store.
@@ -217,7 +217,7 @@ final class WindowState: Equatable {
 
     func select(_ id: String?, in model: AppModel) {
         selection = id.map { [$0] } ?? []
-        lastIndex = id.flatMap { flatIds(model).firstIndex(of: $0) } ?? lastIndex
+        lastIndex = id.flatMap { model.listIndex(of: $0) } ?? lastIndex
         scrollTarget = id
     }
 
@@ -226,7 +226,7 @@ final class WindowState: Equatable {
     func move(by delta: Int, in model: AppModel) {
         let ids = flatIds(model)
         guard !ids.isEmpty else { return }
-        let current = selection.count == 1 ? selection.first.flatMap { ids.firstIndex(of: $0) } : nil
+        let current = selection.count == 1 ? selection.first.flatMap { model.listIndex(of: $0) } : nil
         let next: Int
         if let current {
             next = min(max(current + delta, 0), ids.count - 1)
@@ -239,13 +239,13 @@ final class WindowState: Equatable {
     /// ⌘-click: the row joins or leaves the selection.
     func toggle(_ id: String, in model: AppModel) {
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-        lastIndex = flatIds(model).firstIndex(of: id) ?? lastIndex
+        lastIndex = model.listIndex(of: id) ?? lastIndex
     }
 
     /// ⇧-click: every row between the cursor and this one.
     func extend(to id: String, in model: AppModel) {
         let ids = flatIds(model)
-        guard let to = ids.firstIndex(of: id) else { return }
+        guard let to = model.listIndex(of: id) else { return }
         let from = lastIndex ?? to
         selection.formUnion(ids[min(from, to)...max(from, to)])
     }
@@ -337,7 +337,7 @@ final class WindowState: Equatable {
     /// row left the list, else the list comes back.
     func closeOpen(in model: AppModel) {
         guard let open = path.last else { return }
-        if flatIds(model).contains(open.id) { close() } else { advanceOpen(in: model) }
+        if model.listIndex(of: open.id) != nil { close() } else { advanceOpen(in: model) }
     }
 
     /// The palette is about to move the thread on (a folder chosen): in the
@@ -588,7 +588,7 @@ final class WindowState: Equatable {
         case .triage:
             showTriage = true
         case .syncNow:
-            Task { await model.sync() }
+            Task { await model.sync(manual: true) }
         }
     }
 

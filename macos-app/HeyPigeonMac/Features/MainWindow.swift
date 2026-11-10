@@ -21,9 +21,6 @@ struct MainWindow: View {
     /// The window's size, for the composer's full-screen sheet.
     @State private var windowSize = CGSize(width: 1000, height: 760)
 
-    /// A Spotlight panel (the search, the palette) floats over the window.
-    private var overlaid: Bool { state.searching || state.showPalette }
-
     /// The composer's sheet: a new message, a forward, a reply pulled out
     /// into a window, or a reply to a thread no window shows. A reply to
     /// the open thread (or to one in a thread window) is written under it
@@ -86,7 +83,6 @@ struct MainWindow: View {
             .accessibilityLabel(state.sidebarVisible ? "Hide the sidebar" : "Show the sidebar")
             .padding(12)
         }
-        .blur(radius: overlaid ? 12 : 0)
         .overlay {
             if state.searching {
                 SearchSpotlight(state: state)

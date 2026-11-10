@@ -11,7 +11,8 @@ struct MenuBarExtraLabel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let unread = model.engineUnread(accountId: nil)
+        // The model's snapshot (observed): the label follows every reload.
+        let unread = model.inboxUnreadAllAccounts
         let due = AppModel.due(model.scheduledAcrossAccounts).count
         if unread + due > 0 {
             Label("\(unread + due)", systemImage: due > 0 ? "envelope.badge.clock" : "envelope.badge")
@@ -30,13 +31,13 @@ struct MenuBarExtraView: View {
         AppModel.due(model.scheduledAcrossAccounts).sorted { ($0.scheduledAt ?? .distantPast) < ($1.scheduledAt ?? .distantPast) }
     }
 
-    private var needReply: [ThreadRow] {
-        (try? model.engine.threads(in: .needReply, accountId: nil, before: nil, limit: 5)) ?? []
-    }
+    /// From the last reload's snapshot, like the widgets.
+    private var needReply: [ThreadRow] { Array(model.needReplyAcrossAccounts.prefix(5)) }
 
-    private var unread: [ThreadRow] {
-        ((try? model.engine.threads(in: .inbox, accountId: nil, before: nil, limit: 20)) ?? []).filter { !$0.isRead }
-    }
+    /// The newest unread inbox threads across accounts, read off the main
+    /// actor each time a reload lands (the three lists used to be five
+    /// store queries on the main thread on every render of the window).
+    @State private var unread: [ThreadRow] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -62,7 +63,7 @@ struct MenuBarExtraView: View {
             Divider()
             HStack(spacing: 8) {
                 Button { open(); model.compose(SendDraft()) } label: { Label("New message", systemImage: "square.and.pencil") }
-                Button { Task { await model.sync() } } label: { Label("Check", systemImage: "arrow.clockwise") }
+                Button { Task { await model.sync(manual: true) } } label: { Label("Check", systemImage: "arrow.clockwise") }
                 Spacer()
                 Button("Open Hey Pigeon") { open() }
             }
@@ -72,6 +73,12 @@ struct MenuBarExtraView: View {
         .padding(14)
         .frame(width: 360)
         .background(Theme.canvas)
+        .task(id: model.reloadCount) {
+            let rows = try? await model.engine.readInBackground { store in
+                try store.threads(in: .inbox, accountId: nil, before: nil, limit: 20).filter { !$0.isRead }
+            }
+            if let rows, !Task.isCancelled, rows != unread { unread = rows }
+        }
     }
 
     @ViewBuilder
@@ -82,7 +89,7 @@ struct MenuBarExtraView: View {
                 ForEach(rows) { row in
                     Button { open(thread: row.id) } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            if let a = model.accounts.first(where: { $0.id == row.accountId }), model.accounts.count > 1 {
+                            if let a = model.account(for: row), model.accountsById.count > 1 {
                                 Circle().fill(Theme.tagForeground(a.color)).frame(width: 6, height: 6)
                             }
                             VStack(alignment: .leading, spacing: 1) {

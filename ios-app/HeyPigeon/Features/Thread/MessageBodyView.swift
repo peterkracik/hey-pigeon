@@ -50,6 +50,8 @@ struct MessageBodyView: View {
     /// ••• button, like the desktop's quote pill.
     @State private var showQuoted = false
     @State private var hasQuote = false
+    /// What a render needs to know about the HTML, worked out once per body.
+    @State private var facts = BodyFacts()
     @Environment(\.colorScheme) private var scheme
     @Environment(AppModel.self) private var model
 
@@ -64,7 +66,8 @@ struct MessageBodyView: View {
                 // far slower on long newsletters, on every render.
                 // Only remote pictures are held back: inline (cid:) ones are
                 // part of the message and show without asking.
-                if !imagesAllowed && InlineImages.hasRemoteImages(html) {
+                let known = facts.of(html)
+                if !imagesAllowed && known.hasRemoteImages {
                     HStack(spacing: 6) {
                         Text("Images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
                         Spacer()
@@ -79,7 +82,7 @@ struct MessageBodyView: View {
                          onSelection: { select($0, in: .html) })
                     .frame(height: height)
                     .translatable(.html, selection: selection, translation: $translation, enabled: offersTranslation)
-                    .task(id: InlineImages.taskKey(html: html, images: inlineImages)) { await inlinePictures(html) }
+                    .task(id: InlineImages.taskKey(hash: known.hash, images: inlineImages)) { await inlinePictures(html) }
                 if hasQuote && !showQuoted { quoteButton }
             } else if let split = Self.splitQuoted(text) {
                 SelectableText(text: Self.linkified(split.main), onLink: { url in open(url) },
@@ -195,6 +198,26 @@ struct MessageBodyView: View {
             out.addAttribute(.link, value: url, range: match.range)
         }
         return out
+    }
+}
+
+/// Whether a body shows web pictures, and its hash for the inline-picture
+/// task: both scan the whole HTML, and a body renders many times (a
+/// selection moving, a picture arriving, the thread reloading) without
+/// its HTML changing. Kept in view state, by reference: reading it is not
+/// a change the view observes.
+@MainActor
+private final class BodyFacts {
+    private var html: String?
+    private var value: (hasRemoteImages: Bool, hash: Int) = (false, 0)
+
+    func of(_ html: String) -> (hasRemoteImages: Bool, hash: Int) {
+        // String equality answers at once for the same storage.
+        if self.html != html {
+            self.html = html
+            value = (InlineImages.hasRemoteImages(html), html.hashValue)
+        }
+        return value
     }
 }
 
@@ -498,8 +521,8 @@ enum InlineImages {
     }
 
     /// Re-run the fetch when the body or its parts change, not on every render.
-    static func taskKey(html: String, images: [AttachmentItem]) -> String {
-        "\(html.hashValue)|" + images.map(\.id).joined(separator: ",")
+    static func taskKey(hash: Int, images: [AttachmentItem]) -> String {
+        "\(hash)|" + images.map(\.id).joined(separator: ",")
     }
 
     /// Whether the body shows this part inline, so its chip is redundant.
@@ -532,6 +555,8 @@ private struct HTMLView {
 
     /// The message handler the selection script posts to.
     fileprivate static let selectionHandler = "pigeonSelection"
+    /// The message handler the height script posts to.
+    fileprivate static let heightHandler = "pigeonHeight"
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -551,6 +576,9 @@ private struct HTMLView {
         config.userContentController.add(coordinator, name: Self.selectionHandler)
         config.userContentController.addUserScript(
             WKUserScript(source: Coordinator.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController.add(coordinator, name: Self.heightHandler)
+        config.userContentController.addUserScript(
+            WKUserScript(source: Coordinator.heightScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         return config
     }
 
@@ -558,15 +586,28 @@ private struct HTMLView {
     /// let it go with the view.
     fileprivate static func tearDown(_ web: WKWebView) {
         web.configuration.userContentController.removeScriptMessageHandler(forName: selectionHandler)
+        web.configuration.userContentController.removeScriptMessageHandler(forName: heightHandler)
     }
 
     /// Load the wrapped document when something it depends on changed.
     fileprivate func update(_ web: WKWebView, coordinator: Coordinator) {
         coordinator.parent = self
-        let key = "\(allowRemoteImages)-\(dark)-\(showQuoted)-\(html.hashValue)"
-        guard coordinator.loadedKey != key else { return }
-        let reload = coordinator.loadedKey != nil
-        coordinator.loadedKey = key
+        // Compared as strings (the same storage answers at once): the key
+        // used to hash the whole HTML on every update of the view.
+        let loaded = coordinator.loaded
+        if let loaded, loaded.images == allowRemoteImages, loaded.dark == dark, loaded.html == html {
+            // Only the quote's fold moved: shown or hidden in the page that
+            // is already there (a reload redrew the message and lost the
+            // selection); the height script reports the new height.
+            if coordinator.quoteShown != showQuoted {
+                coordinator.quoteShown = showQuoted
+                web.evaluateJavaScript(Coordinator.quoteToggleScript(show: showQuoted), completionHandler: nil)
+            }
+            return
+        }
+        let reload = loaded != nil
+        coordinator.loaded = (html, allowRemoteImages, dark)
+        coordinator.quoteShown = showQuoted
         web.loadHTMLString(wrapped, baseURL: nil)
         // A reloaded document has no selection, and its script only reports
         // changes, so say so here. Deferred: the callback writes view state,
@@ -601,14 +642,94 @@ private struct HTMLView {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: HTMLView
-        var loadedKey: String?
+        /// What the page on screen was loaded from.
+        var loaded: (html: String, images: Bool, dark: Bool)?
+        /// Whether that page shows its trailing quote.
+        var quoteShown = false
         init(_ parent: HTMLView) { self.parent = parent }
 
-        /// The selection script's report: a dictionary while something is
-        /// selected, null once nothing is.
+        /// The selection script's report (a dictionary while something is
+        /// selected, null once nothing is), or the height script's: how
+        /// tall the view must be to show the whole message.
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == HTMLView.selectionHandler else { return }
-            parent.onSelection?(BodySelection(message: message.body as? [String: Any]))
+            switch message.name {
+            case HTMLView.selectionHandler:
+                parent.onSelection?(BodySelection(message: message.body as? [String: Any]))
+            case HTMLView.heightHandler:
+                guard let value = message.body as? NSNumber else { return }
+                let height = CGFloat(truncating: value)
+                guard height > 0, abs(height - parent.height) >= 1 else { return }
+                // Deferred: the callback writes view state.
+                DispatchQueue.main.async { self.parent.height = height }
+            default:
+                break
+            }
+        }
+
+        /// Reports how tall the message is whenever that changes: when the
+        /// view gets wider or narrower (a Mac window resized, the sidebar
+        /// shown, an iPad turned), when a picture arrives, when the quote
+        /// is unfolded. The height used to be read once, when the page had
+        /// finished loading: until its last picture was in, a message sat
+        /// in a strip 80 points tall, and after a resize it was cut off or
+        /// left a blank under itself. `window.__pigeonFrameHeight` is the
+        /// same measure for `didFinish`. The fit is `fitScript`'s, run
+        /// again before each measure.
+        static let heightScript = #"""
+        (function () {
+          var d = document.documentElement, b = document.body;
+          if (!b || window.__pigeonFrameHeight) return;
+          var w = window.webkit, h = w && w.messageHandlers && w.messageHandlers.pigeonHeight;
+          var PAD = 4;
+          // A zero-height mark after the body, outside it: where the content ends,
+          // whatever the body's zoom, and unlike scrollHeight not at least as tall
+          // as the view, so a message can get shorter when the view gets wider.
+          var end = document.createElement("div");
+          end.style.cssText = "height:0;margin:0;padding:0;border:0;clear:both";
+          d.appendChild(end);
+          var width = -1, need = 0;
+          function fit() {
+            b.style.zoom = "";
+            var cw = d.clientWidth, sw = Math.max(b.scrollWidth, d.scrollWidth);
+            if (cw > 0 && sw > cw + 1) b.style.zoom = String(Math.max(cw / sw, 0.25));
+          }
+          window.__pigeonFrameHeight = function () {
+            if (d.clientWidth !== width) { width = d.clientWidth; need = 0; }
+            fit();
+            var view = d.clientHeight, mark = Math.ceil(end.getBoundingClientRect().top + window.scrollY);
+            // Content that overflows the view: scrollHeight is its real extent.
+            if (d.scrollHeight > view + 1) need = Math.max(need, d.scrollHeight);
+            // A body as tall as the view (height: 100%) follows the view: keep it.
+            if (need <= view && Math.abs(mark - view) <= 1) return view;
+            return Math.max(mark, need) + PAD;
+          };
+          if (!h) return;
+          var last = -1, pending = false, sent = 0, sentWidth = -1;
+          function report() {
+            pending = false;
+            var v = window.__pigeonFrameHeight();
+            if (d.clientWidth !== sentWidth) { sentWidth = d.clientWidth; sent = 0; }
+            if (v <= 0 || Math.abs(v - last) < 1 || sent >= 12) return;
+            last = v; sent++;
+            h.postMessage(v);
+          }
+          function schedule() { if (!pending) { pending = true; setTimeout(report, 30); } }
+          if (window.ResizeObserver) new ResizeObserver(schedule).observe(b);
+          window.addEventListener("resize", schedule);
+          window.addEventListener("load", function () { sent = 0; schedule(); });
+          schedule();
+        })();
+        """#
+
+        /// Show or hide what `quoteScript` folded, in place.
+        static func quoteToggleScript(show: Bool) -> String {
+            let display = show ? "" : "none"
+            return #"""
+            (function () {
+              var list = window.__pigeonFolded || [];
+              for (var i = 0; i < list.length; i++) list[i].style.display = "\#(display)";
+            })();
+            """#
         }
 
         /// Posts the selection (its text, rect and the end of its last line,
@@ -682,12 +803,14 @@ private struct HTMLView {
             // app-injected one still runs. Linkify, fold the quote, shrink a
             // too-wide layout to fit, then measure.
             let script = Self.linkifyScript + Self.quoteScript(hide: !parent.showQuoted) + Self.fitScript
-                + "[document.documentElement.scrollHeight, window.__pigeonQuote === true]"
+                + "[window.__pigeonFrameHeight ? window.__pigeonFrameHeight() : document.documentElement.scrollHeight + 4,"
+                + " window.__pigeonQuote === true]"
             webView.evaluateJavaScript(script) { [weak self] result, _ in
-                guard let self, let r = result as? [Any], let h = r.first as? CGFloat, h > 0 else { return }
+                guard let self, let r = result as? [Any], let h = (r.first as? NSNumber).map({ CGFloat(truncating: $0) }), h > 0
+                else { return }
                 let quote = r.last as? Bool ?? false
                 DispatchQueue.main.async {
-                    self.parent.height = h + 4
+                    self.parent.height = h
                     if quote { self.parent.hasQuote = true }
                 }
             }
@@ -746,8 +869,11 @@ private struct HTMLView {
               var qt = q.innerText.trim(), bt = body.innerText.trim();
               if (!qt || bt.length <= qt.length) return;
               window.__pigeonQuote = true;
-              if (!\#(hide ? "true" : "false")) return;
-              q.style.display = "none";
+              // What folds, kept so the fold can be undone in place
+              // (quoteToggleScript) instead of by loading the page again.
+              var folded = window.__pigeonFolded = [q];
+              var hide = \#(hide ? "true" : "false");
+              if (hide) q.style.display = "none";
               // The "On … wrote:" line just before the quote (.gmail_attr, a
               // <div>, or bare text with <br>s) folds with it.
               for (var p = q.previousSibling; p; p = p.previousSibling) {
@@ -755,8 +881,10 @@ private struct HTMLView {
                 if (p.nodeType === 1 && /^br$/i.test(p.tagName)) continue;
                 if (!t) continue;
                 if (t.length < 400 && /wrote:$|napísal\(a\):$|napísal:$|schrieb:$|a écrit :$/i.test(t)) {
-                  if (p.nodeType === 1) p.style.display = "none";
-                  else { var s = document.createElement("span"); s.style.display = "none"; p.parentNode.replaceChild(s, p); s.appendChild(p); }
+                  var line = p;
+                  if (p.nodeType !== 1) { line = document.createElement("span"); p.parentNode.replaceChild(line, p); line.appendChild(p); }
+                  if (hide) line.style.display = "none";
+                  folded.push(line);
                 }
                 break;
               }

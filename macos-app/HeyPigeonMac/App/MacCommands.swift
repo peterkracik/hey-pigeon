@@ -38,7 +38,7 @@ struct MacCommands: Commands {
         CommandGroup(before: .newItem) {
             Button("New Message") { model.compose(SendDraft()) }
                 .keyboardShortcut("n", modifiers: .command)
-            Button("Check for Mail") { Task { await model.sync() } }
+            Button("Check for Mail") { Task { await model.sync(manual: true) } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
         }

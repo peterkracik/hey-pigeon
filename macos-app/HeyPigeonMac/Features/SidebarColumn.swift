@@ -352,9 +352,12 @@ private struct AccountFooter: View {
 }
 
 extension AppModel {
-    /// The unified or one account's unread inbox count, read from the store
-    /// (the sidebar's per-account numbers; `counts` is the selected scope's).
+    /// The unified or one account's unread inbox count, from the last
+    /// reload's snapshot (the sidebar's per-account numbers; `counts` is
+    /// the selected scope's). It used to ask the store from inside a view
+    /// body — a query on the main thread per render, and a number no
+    /// reload redrew, since nothing observed it.
     func engineUnread(accountId: String?) -> Int {
-        (try? engine.unreadCounts(accountId: accountId))?["inbox"] ?? 0
+        accountId.map { inboxUnread(accountId: $0) } ?? inboxUnreadAllAccounts
     }
 }

@@ -146,8 +146,9 @@ struct MailRow: View {
     /// Unread: a dot on the left edge, in the account's colour when the
     /// list mixes accounts. Read rows keep a faint account dot there.
     @ViewBuilder private var marker: some View {
-        let account = model.selectedAccountId == nil && model.accounts.count > 1
-            ? model.accounts.first(where: { $0.id == row.accountId }) : nil
+        // Through the model's map, which changes only when an account does:
+        // every row used to scan the accounts on every render.
+        let account = model.selectedAccountId == nil && model.accountsById.count > 1 ? model.account(for: row) : nil
         Circle()
             .fill(account.map { Theme.tagForeground($0.color) } ?? Theme.unreadBar)
             .frame(width: 6, height: 6)
@@ -333,11 +334,20 @@ struct MailPreview: View {
         // The same margin on both sides of the message and its buttons.
         .padding(.horizontal, 20).padding(.vertical, 14)
         .task(id: row.id) {
+            // The stored copy first (whole when the thread was opened or
+            // prefetched, else its snippet), then Gmail's: the card used
+            // to spin until the network had answered.
+            let id = row.id
+            if detail == nil, let local = try? await model.engine.readInBackground({ try $0.threadLocal(id: id) }),
+               !local.mail.isEmpty, !Task.isCancelled {
+                detail = local
+            }
             do {
-                detail = try await model.engine.thread(id: row.id)
+                let fresh = try await model.engine.thread(id: row.id)
+                if fresh != detail { detail = fresh }
                 if detail == nil { failed = "This thread is no longer available." }
             } catch {
-                failed = error.localizedDescription
+                if detail == nil { failed = error.localizedDescription }
             }
         }
     }

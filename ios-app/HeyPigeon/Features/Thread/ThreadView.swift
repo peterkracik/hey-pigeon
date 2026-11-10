@@ -236,15 +236,32 @@ struct ThreadView: View {
         .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
         .task(id: row.id) {
+            // What the store already holds is on screen at once (a thread
+            // opened before, or prefetched, whole; another as its snippets):
+            // the thread used to show a spinner until Gmail had answered,
+            // and nothing at all without a network.
+            let id = row.id
+            let hadBodies: Bool
+            if detail == nil, let local = try? await model.engine.readInBackground({ try $0.threadLocal(id: id) }),
+               !local.mail.isEmpty, !Task.isCancelled {
+                detail = local
+                hadBodies = local.mail.allSatisfy { $0.bodyHTML != nil || $0.bodyText != nil }
+            } else {
+                hadBodies = false
+            }
             do {
-                detail = try await model.engine.thread(id: row.id)
+                let fresh = try await model.engine.thread(id: row.id)
+                if fresh != detail { detail = fresh }
                 // The first open stores the bodies: the index can now carry them.
-                SpotlightIndexer.invalidate(threadId: row.id)
+                if !hadBodies { SpotlightIndexer.invalidate(threadId: row.id) }
                 if detail == nil { failed = "This thread is no longer available." }
                 else if model.autoSummarize && model.aiConfigured, let d = detail {
                     model.summarizeThread(current, messages: d.mail)
                 }
-            } catch { failed = error.localizedDescription }
+            } catch {
+                // Offline with the stored copy on screen: keep reading it.
+                if detail == nil { failed = error.localizedDescription }
+            }
             await loadAttachments()
         }
         // A draft was saved, edited or deleted and is now in the store.

@@ -223,6 +223,18 @@ final class AppModel {
     @ObservationIgnored private var reloadLoop: Task<Void, Never>?
     @ObservationIgnored private var lastBackfillRefresh = Date.distantPast
     private(set) var isSyncing = false
+    /// The sync is worth showing: the user asked for it, or it has been
+    /// running for longer than `syncActivityDelay`. The Mac syncs every 30
+    /// seconds, and a spinner for each round made the toolbar twitch.
+    private(set) var showsSyncActivity = false
+    static let syncActivityDelay: Duration = .milliseconds(1200)
+    /// A list nothing touched is still re-read this often (its "Today"
+    /// group moves with the clock).
+    static let idleReloadInterval: TimeInterval = 600
+    /// When the last snapshot landed, and the reload count the reminders
+    /// and the Spotlight index were last brought up to date at.
+    @ObservationIgnored private var lastAppliedAt = Date.distantPast
+    @ObservationIgnored private var postSyncReloadCount = -1
     private var isBackfillingOlder = false
     /// The background analysis pass (auto-triage): the inbox's progress bar,
     /// Settings › Triage and the Live Activity read it.
@@ -321,16 +333,19 @@ final class AppModel {
     /// 30-second tick, the icon badge and the widget snapshot read it
     /// instead of asking the store again: reminders come due with time,
     /// and every change to the list itself goes through `reload`.
-    @ObservationIgnored private(set) var scheduledAcrossAccounts: [ThreadRow] = []
+    private(set) var scheduledAcrossAccounts: [ThreadRow] = []
     /// Every Need reply thread across accounts as of the last reload: the
     /// widgets' list; `needReplyCount` narrows it to the account shown.
-    @ObservationIgnored private(set) var needReplyAcrossAccounts: [ThreadRow] = []
+    private(set) var needReplyAcrossAccounts: [ThreadRow] = []
     /// Unread per folder across accounts and per account, as of the last
     /// reload: the app badge, the reminder notifications and the widgets
     /// read these instead of asking the store again (they used to, on the
-    /// main thread, after every reload).
-    @ObservationIgnored private(set) var unifiedCounts: [String: Int] = [:]
-    @ObservationIgnored private(set) var countsByAccount: [String: [String: Int]] = [:]
+    /// main thread, after every reload). Observed, and assigned only when
+    /// they moved: the Mac's toolbar tabs, its sidebar's account menu and
+    /// the menu bar extra draw their unread numbers from them (they used
+    /// to query the store inside a view body, which no reload redrew).
+    private(set) var unifiedCounts: [String: Int] = [:]
+    private(set) var countsByAccount: [String: [String: Int]] = [:]
     /// Unread in the unified inbox: the app badge's first half.
     var inboxUnreadAllAccounts: Int { unifiedCounts["inbox"] ?? 0 }
     /// Unread in one account's inbox, for the widgets' account rows.
@@ -838,6 +853,7 @@ final class AppModel {
     /// redraw the whole list.
     private func apply(_ snapshot: ListSnapshot) {
         reloadCount &+= 1
+        lastAppliedAt = Date()
         // The list moved on while this was read (a tab or folder switch
         // reloaded the new one on the main actor): nothing of this applies.
         guard snapshot.request.view == view, snapshot.request.accountId == selectedAccountId else { return }
@@ -849,10 +865,10 @@ final class AppModel {
         if more != hasMore { hasMore = more }
         if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved { regroup() }
         if snapshot.counts != counts { counts = snapshot.counts }
-        unifiedCounts = snapshot.unifiedCounts
-        countsByAccount = snapshot.countsByAccount
-        scheduledAcrossAccounts = snapshot.scheduledAcrossAccounts
-        needReplyAcrossAccounts = snapshot.needReplyAcrossAccounts
+        if snapshot.unifiedCounts != unifiedCounts { unifiedCounts = snapshot.unifiedCounts }
+        if snapshot.countsByAccount != countsByAccount { countsByAccount = snapshot.countsByAccount }
+        if snapshot.scheduledAcrossAccounts != scheduledAcrossAccounts { scheduledAcrossAccounts = snapshot.scheduledAcrossAccounts }
+        if snapshot.needReplyAcrossAccounts != needReplyAcrossAccounts { needReplyAcrossAccounts = snapshot.needReplyAcrossAccounts }
         let scheduled = Self.scoped(snapshot.scheduledAcrossAccounts, to: selectedAccountId)
         if scheduled.count != scheduledCount { scheduledCount = scheduled.count }
         let due = Self.due(scheduled).count
@@ -1013,6 +1029,16 @@ final class AppModel {
     /// label filter or the pin setting change, instead of on every render
     /// of every view that reads it (the list, the empty state, the title).
     private(set) var groupedRows: [RowGroup] = []
+    /// The list's thread ids in display order, and a counter bumped when
+    /// that order changes. The Mac's cursor (j / k, auto-advance, ⇧-click)
+    /// walks them: it used to flatten the groups again on every key press,
+    /// and the list compared a fresh array of every id on every render.
+    @ObservationIgnored private(set) var flatRowIds: [String] = []
+    @ObservationIgnored private var flatRowIndex: [String: Int] = [:]
+    private(set) var rowOrderRevision = 0
+
+    /// Where a thread sits in the list on screen, nil when it is not in it.
+    func listIndex(of id: String) -> Int? { flatRowIndex[id] }
 
     private func regroup() {
         groupedRows = Self.group(
@@ -1022,6 +1048,11 @@ final class AppModel {
             pinList: pinListEnabled,
             bundles: Self.foldsOnThisPlatform && foldBundlesEnabled ? bundles : []
         )
+        let ids = groupedRows.flatMap { $0.rows.map(\.id) }
+        guard ids != flatRowIds else { return }
+        flatRowIds = ids
+        flatRowIndex = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        rowOrderRevision &+= 1
     }
 
     /// The phone and the iPad fold; the Mac's list keeps one row per thread
@@ -1111,28 +1142,56 @@ final class AppModel {
 
     // MARK: Sync
 
-    func sync() async {
-        guard !isSyncing else { return }
+    /// `manual`: the user asked (Check for Mail, the palette, the Dock):
+    /// the spinner shows at once. A round the timer started shows it only
+    /// once it has run for a moment (`showsSyncActivity`). `quiet`: the
+    /// Mac's 30-second round, which leaves the list, the reminders and the
+    /// index alone when the round brought nothing.
+    func sync(manual: Bool = false, quiet: Bool = false) async {
+        guard !isSyncing else {
+            if manual { showsSyncActivity = true }
+            return
+        }
         isSyncing = true
-        defer { isSyncing = false }
+        if manual { showsSyncActivity = true }
+        let slow = Task { [weak self] in
+            try? await Task.sleep(for: Self.syncActivityDelay)
+            guard !Task.isCancelled, let self, self.isSyncing else { return }
+            self.showsSyncActivity = true
+        }
+        defer {
+            slow.cancel()
+            isSyncing = false
+            if showsSyncActivity { showsSyncActivity = false }
+        }
         // Which models this device can run follows the network and the
         // Apple Intelligence switch; re-register before the round so the
         // triage at its end picks the right one.
         engine.refreshAIProviders()
         do {
-            _ = try await engine.syncAll()
+            let changed = try await engine.syncAll()
             lastSyncAt = Date()
             reloadAccounts()
             // The round's change notices are already waiting (reloadSoon);
             // this joins them, so the list is current when the pull-to-
             // refresh spinner goes, and before the reminders and the index
-            // read the counts.
-            reloadSoon()
+            // read the counts. A quiet round that brought nothing (most of
+            // the Mac's, every 30 seconds) asks for no reload of its own:
+            // the engine's notices still reload when another device moved
+            // something, and the list is re-read anyway once it is old
+            // enough for its day groups to have moved.
+            if !quiet || changed || Date().timeIntervalSince(lastAppliedAt) > Self.idleReloadInterval { reloadSoon() }
             await settleReloads()
-            await rescheduleReminders()
-            // What Siri and Spotlight know follows the store, same cadence
-            // as the reminder notifications.
-            await SpotlightIndexer.refresh(self)
+            // The reminders and the index follow the store: a quiet round
+            // has nothing to do when no reload landed since they were last
+            // brought up to date (and the index has no backlog left).
+            if !quiet || reloadCount != postSyncReloadCount || SpotlightIndexer.needsRefresh {
+                await rescheduleReminders()
+                // What Siri and Spotlight know follows the store, same
+                // cadence as the reminder notifications.
+                await SpotlightIndexer.refresh(self)
+                postSyncReloadCount = reloadCount
+            }
         } catch {
             show("Sync failed: \(error.localizedDescription)")
         }
@@ -1224,6 +1283,43 @@ final class AppModel {
         guard now.timeIntervalSince(lastBackfillRefresh) >= Self.backfillRefreshInterval else { return }
         lastBackfillRefresh = now
         reloadSoon()
+    }
+
+    // MARK: Prefetch
+
+    /// How many rows from the top of the inbox have their bodies brought
+    /// in ahead of a click.
+    static let prefetchDepth = 8
+    /// Threads whose bodies were already asked for, with the message count
+    /// they had then: a new message asks again.
+    @ObservationIgnored private var prefetched: [String: Int] = [:]
+    @ObservationIgnored private var prefetchQueue: [String] = []
+    @ObservationIgnored private var prefetchTask: Task<Void, Never>?
+
+    /// Bring these threads' bodies into the store, one at a time, so that
+    /// opening one shows the message at once instead of a spinner while
+    /// Gmail answers. The engine fetches only what the store lacks; a
+    /// thread already whole costs one local read. Not in Low Power Mode.
+    func prefetchBodies(_ rows: [ThreadRow]) {
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+        for row in rows where prefetched[row.id] != row.messageCount {
+            prefetched[row.id] = row.messageCount
+            if !prefetchQueue.contains(row.id) { prefetchQueue.append(row.id) }
+        }
+        guard prefetchTask == nil, !prefetchQueue.isEmpty else { return }
+        prefetchTask = Task { [weak self] in
+            while let model = self, let id = model.prefetchQueue.first {
+                model.prefetchQueue.removeFirst()
+                _ = try? await model.engine.thread(id: id)
+            }
+            self?.prefetchTask = nil
+        }
+    }
+
+    /// The top of the inbox, when that is the list on screen.
+    func prefetchTopOfInbox() {
+        guard view == .inbox, !isSearching else { return }
+        prefetchBodies(Array(rows.prefix(Self.prefetchDepth)))
     }
 
     /// Deep link from a notification (reminder or new mail): the inbox tab
@@ -1640,6 +1736,30 @@ final class AppModel {
 
     func show(_ text: String, undo: (() -> Void)? = nil) {
         toast = Toast(text: text, undo: undo)
+        if let undo { lastUndo = (undo, Date()) }
+    }
+
+    /// The last action's Undo, kept after its toast has gone: the Mac's
+    /// `z` and Edit › Undo run it for a while longer than the five seconds
+    /// the toast shows.
+    @ObservationIgnored private var lastUndo: (run: () -> Void, at: Date)?
+    static let undoLifetime: TimeInterval = 120
+
+    /// Whether `undoLast` has something to take back.
+    var canUndoLast: Bool {
+        guard let last = lastUndo else { return false }
+        return Date().timeIntervalSince(last.at) < Self.undoLifetime
+    }
+
+    /// Take back the last action that offered an Undo. False when there
+    /// is none (or it is too old to be what the user means).
+    @discardableResult
+    func undoLast() -> Bool {
+        guard canUndoLast, let last = lastUndo else { return false }
+        lastUndo = nil
+        if toast?.undo != nil { toast = nil }
+        last.run()
+        return true
     }
 
     // MARK: Bundles (docs/bundles.md)

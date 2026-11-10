@@ -63,6 +63,20 @@ extension RowAction {
         }
     }
 
+    /// The bare key that runs it: the Mac's key map, its shortcuts sheet
+    /// and tooltips, and the iPad's list with a hardware keyboard
+    /// (Features/Inbox/ListKeys.swift).
+    var key: String {
+        switch self {
+        case .done: "E"
+        case .delete: "#"
+        case .remind: "H"
+        case .needReply: "N"
+        case .pin: "S"
+        case .read: "U"
+        }
+    }
+
     /// The item that opens the Remind sheet (the long-press menu, the
     /// thread's bar and its More menu), where a set reminder is changed,
     /// not removed.

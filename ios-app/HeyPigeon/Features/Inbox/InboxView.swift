@@ -14,6 +14,18 @@ struct MailListScreen: View {
 
     private var isActive: Bool { model.tab == tab }
 
+    /// The row under the keyboard cursor (ListKeys); nil until a key
+    /// moves it, so touch alone never shows one.
+    @State private var cursor: String?
+
+    /// A sheet or a cover is over the list: its keys must not act on a
+    /// row behind it.
+    private var modalIsUp: Bool {
+        model.showSidebar || model.showSettings || model.showBundles || model.composeDraft != nil
+            || model.pendingRemind != nil || model.pendingBundlePick != nil
+            || model.summarySheet != nil || model.askSheet != nil
+    }
+
     /// What the top bar shows for the AI: nothing, one circle, or the
     /// sparkle menu holding both.
     enum AIBarItem: Equatable {
@@ -49,11 +61,24 @@ struct MailListScreen: View {
                 } else if isActive && model.groupedRows.isEmpty {
                     EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: connect)
                 } else if isActive {
-                    ThreadList(path: $path)
+                    ThreadList(path: $path, cursor: cursor)
                 } else {
                     Color.clear
                 }
             }
+            // A hardware keyboard: j / k and the row keys (ListKeys).
+            .background {
+                // Not under the "Account disconnected" alert either: Return
+                // there answers the alert, not the list.
+                ListKeys(cursor: $cursor,
+                         isOn: isActive && path.isEmpty && !modalIsUp && model.disconnectedAccountId == nil) { row in
+                    if model.view == .drafts { model.openDraft(row); return }
+                    model.markRead(row)
+                    path.append(row)
+                }
+            }
+            // Another folder's rows are not this cursor's.
+            .onChange(of: model.view) { _, _ in cursor = nil }
             // On a wide iPad the rows keep to a readable column.
             .readableColumn()
             // Pull to refresh on the list only. Applied after the bottom
@@ -277,9 +302,22 @@ struct TriageSplitBar: View {
 /// (Pinned · Today · Last 7 days · Older; due buckets in Scheduled).
 struct ThreadList: View {
     @Binding var path: [ThreadRow]
+    /// The row under the keyboard cursor, when a hardware keyboard has
+    /// moved one (ListKeys); the Search tab has none.
+    var cursor: String? = nil
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        // The reader only serves the keyboard cursor: the row it moves to
+        // is brought into view.
+        ScrollViewReader { proxy in
+            list.onChange(of: cursor) { _, id in
+                if let id { proxy.scrollTo(id) }
+            }
+        }
+    }
+
+    private var list: some View {
         List {
             ForEach(model.groupedRows) { group in
                 Section {
@@ -325,6 +363,10 @@ struct ThreadList: View {
         // the second one" and "archive everything from Lufthansa
         // here" resolve against what is on screen.
         .siriEntity(MailThreadEntity.identifier(row.id))
+        // The keyboard cursor's wash; it takes no touches.
+        .overlay {
+            if cursor == row.id { Theme.cursor.allowsHitTesting(false) }
+        }
         .padding(.bottom, 1) // the gap between rows, canvas showing through
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         .listRowBackground(Color.clear)

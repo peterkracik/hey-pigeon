@@ -11,9 +11,35 @@
 import AppIntents
 import SwiftUI
 
+/// A page pushed from Settings' root.
+enum SettingsRoute: Hashable {
+    /// The provider, its key and model, what to do when it cannot answer.
+    case ai
+    /// The classifier, auto-triage and the triage labels.
+    case triage
+    /// "Triage my inbox": the run, its rules and the journal.
+    case siriTriage
+
+    /// The page's name: its navigation title, and the Mac window's.
+    var title: String {
+        switch self {
+        case .ai: "AI"
+        case .triage: "Triage"
+        case .siriTriage: "Siri triage"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// The pages pushed over the root, when the host keeps them: the
+    /// Mac's window does (`WindowState.settingsPath`), so its own Back,
+    /// Esc and title follow a pushed page. The phone's sheet keeps its
+    /// own (`ownPath`).
+    private let hostPath: Binding<[SettingsRoute]>?
+    @State private var ownPath: [SettingsRoute] = []
+    private var path: Binding<[SettingsRoute]> { hostPath ?? $ownPath }
     @State private var removing: MailAccount?
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
     #if os(macOS)
@@ -23,36 +49,29 @@ struct SettingsView: View {
     @AppStorage("menuBarExtra") private var menuBarExtra = true
     #endif
 
+    init(path: Binding<[SettingsRoute]>? = nil) {
+        hostPath = path
+    }
+
     var body: some View {
         @Bindable var model = model
-        NavigationStack {
+        NavigationStack(path: path) {
             SettingsList {
                 accountsSection
-                if SettingsLayout.pushesPages {
-                    // The phone: AI and Triage are a page each. On one
-                    // scroll their pickers, keys and privacy footers stood
-                    // between the top and everything else in Settings.
-                    Section {
-                        NavigationLink {
-                            SettingsPage(title: "AI") { AISection() }
-                        } label: {
-                            pageLabel("AI", "Who summarizes, drafts and edits", systemImage: "sparkles")
-                        }
-                        NavigationLink {
-                            SettingsPage(title: "Triage") { TriageSection() }
-                        } label: {
-                            pageLabel("Triage", "Sorting new mail into your labels", systemImage: "tray.2")
-                        }
+                // AI and Triage are a page each, on the phone and on the
+                // Mac. On one scroll their pickers, keys and privacy
+                // footers stood between the top and everything else.
+                Section {
+                    NavigationLink(value: SettingsRoute.ai) {
+                        pageLabel("AI", "Who summarizes, drafts and edits", systemImage: "sparkles")
                     }
-                    .menuCard()
-                    SiriSection()
-                    DefaultAppSection()
-                } else {
-                    AISection()
-                    SiriSection()
-                    DefaultAppSection()
-                    TriageSection()
+                    NavigationLink(value: SettingsRoute.triage) {
+                        pageLabel("Triage", "Sorting new mail into your labels", systemImage: "tray.2")
+                    }
                 }
+                .menuCard()
+                SiriSection()
+                DefaultAppSection()
                 NotificationsSection()
                 ComposeSection()
                 #if os(macOS)
@@ -124,6 +143,12 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .toolbarTitleDisplayMode(.inline)
+            // The pages, by route. On the Mac their Back is the window's
+            // (`backInWindowToolbar`): the stack's sat beside the traffic
+            // lights, as a thread's did.
+            .navigationDestination(for: SettingsRoute.self) { route in
+                page(route).backInWindowToolbar()
+            }
             .sheetCloseButton { Keyboard.dismiss(); dismiss() }
             .dismissKeyboardOnScroll(.interactively)
             .confirmationDialog("Remove \(removing?.email ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
@@ -151,6 +176,14 @@ struct SettingsView: View {
             }
         }
         #endif
+    }
+
+    @ViewBuilder private func page(_ route: SettingsRoute) -> some View {
+        switch route {
+        case .ai: SettingsPage(title: route.title) { AISection() }
+        case .triage: SettingsPage(title: route.title) { TriageSection() }
+        case .siriTriage: TriageJournalView()
+        }
     }
 
     /// A row that opens one of Settings' pages: its name and, under it,
@@ -219,8 +252,8 @@ struct SettingsView: View {
     }()
 }
 
-/// A page pushed from Settings' root (the phone's AI and Triage): the same
-/// list look, the page's name in the bar.
+/// A page pushed from Settings' root (AI, Triage): the same list look,
+/// the page's name in the bar.
 private struct SettingsPage<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
@@ -910,7 +943,7 @@ private struct TriageSection: View {
             // rules and the journal of what it did are one page
             // (TriageJournalView).
             if onDevice {
-                NavigationLink { TriageJournalView() } label: {
+                NavigationLink(value: SettingsRoute.siriTriage) {
                     Label(model.triageAgent.map { "Siri triage · \($0.phase.title)" } ?? "Siri triage and journal",
                           systemImage: "list.bullet.rectangle")
                 }

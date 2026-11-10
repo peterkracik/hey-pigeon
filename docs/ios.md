@@ -335,10 +335,11 @@ label management (rename, colour, delete) stays in Settings.
 
 ### Settings
 
-The desktop's sections, same wording. On the phone and the iPad the root
-is short: **AI** and **Triage** are a page each, pushed from two rows
-under Accounts (`SettingsLayout.pushesPages`); the Mac keeps one grouped
-form, as System Settings' panes are.
+The desktop's sections, same wording. The root is short: **AI** and
+**Triage** are a page each, pushed from two rows under Accounts
+(`SettingsRoute`), on the phone, the iPad and the Mac. On the Mac
+Settings is a page of the window, and the window's own Back, Esc and
+title follow a pushed page (`WindowState.settingsPath`).
 
 - **Accounts** — avatar, name, email, connection state; Name, Color (the
   five tags), Sync (reminder sync over the account's Drive app folder),
@@ -424,6 +425,11 @@ only when formatting was applied.
 
 ### iPad and hardware keyboards
 
+With a hardware keyboard the list has the Mac's keys (`ListKeys`):
+`j`/`k` move a cursor, Return opens its row, `e` `h` `n` `s` `u` and ⌘⌫
+act on it as the swipes do; a thread has `e` `h` `n` `s` `r` ⌘⌫ on its
+bar. Touch never shows the cursor. The split view is specified in
+[specs/ipad-split-view.md](specs/ipad-split-view.md), not built.
 On a regular-width iPad the list and the thread keep to a readable
 column (`readableColumn`, 760 pt, centred; the scroll view still spans the
 screen). `NavigationSplitView` gives the sidebar · list · thread layout for free on

@@ -15,7 +15,7 @@ Models and widget work — reached the Mac.
 | Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on every push to `main` (the `mac-latest` release, with the Sparkle appcast installed apps update from) and on `mac-v*` tags |
 | Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
 | Layout | The phone's `TabView` + `NavigationStack`, full screen | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
-| Keyboard | `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
+| Keyboard | `j` `k` `↩` `e` `h` `n` `s` `u` `⌘⌫` in the list, `e` `h` `n` `s` `r` `⌘⌫` on a thread, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
 | Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` from the same `build-rust.sh` when `PLATFORM_NAME=macosx` (macOS 27 is Apple Silicon only; `ARCHS` can still add `x86_64`) |
 
@@ -57,14 +57,13 @@ regular width (`readableColumn` in Platform.swift), so the phone's layout
 no longer stretches edge to edge. The Search tab's results and the
 thread's bottom bars still span the screen.
 
-1. **Split view.** Replace the per-tab `NavigationStack` in
-   `Features/Inbox/InboxView.swift` (`MailListScreen`) with a
-   `NavigationSplitView` when `horizontalSizeClass == .regular`: sidebar
-   (`SidebarSheet`'s list as a column) · thread list · `ThreadView`.
-   `MailListScreen.path` becomes the detail selection; the compact layout
-   keeps the stack. Nothing in `Features/` reads the size class yet.
-2. **List keyboard.** `j`/`k` selection and `/` for search need a selected
-   row in `ThreadList` (the split view's selection gives one).
+1. **Split view.** Specified, not built:
+   [specs/ipad-split-view.md](specs/ipad-split-view.md). It needs a device
+   to get right (view identity across a window resize, where the bars and
+   the tab bar go), so it was written down instead of guessed at.
+2. **List keyboard.** Done: `j`/`k`, Return and the row keys
+   (`Features/Inbox/ListKeys.swift`, `RowAction.key`). `/` for search is
+   left: the Search tab's field is the system's.
 3. **Multiple windows.** `AppModel` is one per process (`AppModel.current`);
    per-window state (open thread, sheets) would move into a scene-scoped
    object before `UIApplicationSupportsMultipleScenes` is turned on.

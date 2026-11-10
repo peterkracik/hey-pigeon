@@ -67,7 +67,10 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   `ToolbarSpacer` (`.primaryAction` puts items at the *leading* end on
   the Mac). No Settings gear and no sidebar button there: Settings is in
   the app menu (⌘,) and the palette and opens as a page of the window
-  (`WindowState.showSettings`, a grouped form through `SettingsList`);
+  (`WindowState.showSettings`, a grouped form through `SettingsList`;
+  its AI and Triage pages are pushed in the shared view's stack over
+  `WindowState.settingsPath`, so the window's Back, Esc and title walk
+  them like a thread);
   the sidebar starts hidden and its button is a glass circle in the
   window's bottom-left corner. Bundles are a page of the window too
   (`BundlesPage`: the shared `BundlesStack` — the list, a bundle, an

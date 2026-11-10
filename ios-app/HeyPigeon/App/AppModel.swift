@@ -18,6 +18,9 @@ struct Toast: Identifiable, Equatable {
     var undo: (() -> Void)?
     /// How long it stays: five seconds, or a send's undo window.
     var duration: Duration = .seconds(5)
+    /// A send's "Sending · Undo": it keeps its place for its whole window,
+    /// and what is said meanwhile shows beside it (`AppModel.sideToast`).
+    var holds = false
     static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
 }
 
@@ -168,6 +171,9 @@ final class AppModel {
     var tab: MainTab = .inbox {
         didSet {
             Keyboard.dismiss()
+            // Into or out of the Search tab the list changes its source
+            // (results or rows) without either having moved.
+            if tab != oldValue { regroup() }
             reloadUnlessHeld()
         }
     }
@@ -183,7 +189,7 @@ final class AppModel {
     @ObservationIgnored private var holdReload = false
 
     private func reloadUnlessHeld() {
-        if !holdReload { reload() }
+        if !holdReload { reloadForNavigation() }
     }
 
     /// Switch tab (and, for the Inbox tab, the folder) with one reload;
@@ -193,10 +199,17 @@ final class AppModel {
         self.tab = tab
         if let folder, self.folder != folder { self.folder = folder }
         holdReload = false
-        reload()
+        reloadForNavigation()
     }
     /// Jev label the list is narrowed to (the bottom pill). nil = all.
-    var triageFilterId: String? { didSet { regroup() } }
+    var triageFilterId: String? {
+        didSet {
+            regroup()
+            // The filter only sees the rows loaded: with few matches among
+            // them it read "All clear" over mail that was a page away.
+            if triageFilterId != nil, tab == .inbox, hasMore, flatRowIds.count < Self.filterFill { appendNextPage() }
+        }
+    }
 
     /// What the list currently shows, derived from tab + folder.
     var view: MailView {
@@ -293,6 +306,9 @@ final class AppModel {
     private(set) var openThread: ThreadRow?
 
     var toast: Toast?
+    /// A toast shown beside a send's while that one holds its place
+    /// (`Toast.holds`, `show`).
+    var sideToast: Toast?
     var pendingRemind: ThreadRow?
     var composeDraft: SendDraft? {
         // A new draft starts where its platform puts it (the Mac: under
@@ -784,6 +800,23 @@ final class AppModel {
         apply(Self.readList(MainActorStoreReader(engine: engine), listRequest))
     }
 
+    /// A tab, folder or account switch: the new list's rows now, on the
+    /// main actor, and the rest as the model last read it — the counts,
+    /// the bundles and the cross-account lists do not change because the
+    /// user looked elsewhere, and reading them cost a dozen store queries
+    /// under the tap. A reload off the main actor follows for what did
+    /// move meanwhile (and the drafts count of another account).
+    private func reloadForNavigation() {
+        guard hasLoadedOnce else { return reload() }
+        let request = listRequest
+        let rows = Self.unique((try? engine.threads(in: request.view, accountId: request.accountId, before: nil, limit: request.limit)) ?? [])
+        let counts = request.accountId.map { id in countsByAccount[id] ?? ((try? engine.unreadCounts(accountId: id)) ?? [:]) } ?? unifiedCounts
+        apply(ListSnapshot(request: request, bundles: bundles, rows: rows, counts: counts, unifiedCounts: unifiedCounts,
+                           countsByAccount: countsByAccount, scheduledAcrossAccounts: scheduledAcrossAccounts,
+                           needReplyAcrossAccounts: needReplyAcrossAccounts, draftsCount: draftsCount))
+        reloadSoon()
+    }
+
     /// A change notice from the engine: one reload a moment later, read off
     /// the main actor. A sync round notifies several times in a row (the
     /// delta, the bundle links, the triage, the proposals, the cross-device
@@ -894,7 +927,10 @@ final class AppModel {
         let queued = engine.pendingChanges()
         if queued != queuedChanges { queuedChanges = queued }
         refreshOpenThread()
-        if isSearching { runSearch() }
+        // Only while the results are on screen: on the phone the query
+        // stays in the Search tab, and every reload used to search again
+        // and regroup the inbox for it. Coming back to the tab reloads.
+        if showsSearchResults { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }
         refreshStoreSurfaces()
     }
@@ -917,15 +953,39 @@ final class AppModel {
         }
     }
 
+    /// A row came on screen: load the next page when it is the last one.
+    /// The last one shown counts as well as the last one loaded: that one
+    /// may be folded into a bundle or hidden by the label filter, its cell
+    /// never appears, and the list used to end there.
     func loadMoreIfNeeded(current row: ThreadRow) {
-        guard hasMore, row.id == rows.last?.id else { return }
+        guard hasMore, !showsSearchResults, row.id == rows.last?.id || row.id == flatRowIds.last else { return }
         appendNextPage()
+    }
+
+    /// Pages one pull may read while none of them adds a row to the list
+    /// on screen (all folded, or none with the label).
+    static let pagesPerPull = 10
+    /// Rows a label filter shows before it stops reading further back by
+    /// itself.
+    static let filterFill = 15
+
+    /// The next page — and the ones after it while a page puts nothing new
+    /// on screen: without a new row there is nothing whose appearing would
+    /// ask for more.
+    private func appendNextPage() {
+        var pulls = 0
+        repeat {
+            let shown = flatRowIds.count
+            appendOnePage()
+            pulls += 1
+            if flatRowIds.count > shown { return }
+        } while hasMore && pulls < Self.pagesPerPull
     }
 
     /// The page after the last loaded row. The cursor is a timestamp, so a
     /// thread already on screen is dropped from the page rather than listed
     /// twice (see `rows`).
-    private func appendNextPage() {
+    private func appendOnePage() {
         guard view.isPaged, let last = rows.last else { hasMore = false; return }
         let page = (try? engine.threads(in: view, accountId: selectedAccountId, before: last.lastMessageAt, limit: Self.pageSize)) ?? []
         hasMore = page.count == Self.pageSize
@@ -948,13 +1008,13 @@ final class AppModel {
         searchTask?.cancel()
         searchTask = nil
         guard isSearching else {
-            searchResults = []
+            if !searchResults.isEmpty { searchResults = [] }
             isSearchPending = false
             return
         }
         let query = (searchFilters.operators + [searchText]).joined(separator: " ")
         if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-            searchResults = Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? [])
+            landSearch(Self.unique((try? engine.search(query, limit: Self.searchLimit)) ?? []))
             isSearchPending = false
             return
         }
@@ -964,9 +1024,15 @@ final class AppModel {
             guard !Task.isCancelled, let engine = self?.engine else { return }
             let rows = await engine.searchInBackground(query, limit: Self.searchLimit)
             guard !Task.isCancelled, let self else { return }
-            searchResults = Self.unique(rows)
+            landSearch(Self.unique(rows))
             isSearchPending = false
         }
+    }
+
+    /// Results are assigned only when they moved: equal ones still regroup
+    /// the list and rebuild every row's highlight.
+    private func landSearch(_ found: [ThreadRow]) {
+        if found != searchResults { searchResults = found }
     }
 
     // MARK: Search — recent searches and the From / To people
@@ -1008,10 +1074,12 @@ final class AppModel {
     /// People for the From / To pickers: who the mail comes from, across
     /// every account, most frequent first (ties: most recent). The user's
     /// own addresses are left out. `accountId` is where they last wrote.
-    func searchPeople() -> [PersonSuggestion] {
+    /// Read off the main actor: 500 rows used to be read on it while the
+    /// composer's sheet slid in.
+    func searchPeople() async -> [PersonSuggestion] {
         let mine = Set(accounts.map { $0.email.lowercased() })
-        let source = (try? engine.threads(in: .all, accountId: nil, before: nil, limit: 500)) ?? rows
-        return Self.people(from: source, excluding: mine)
+        let stored = try? await engine.readInBackground { try $0.threads(in: .all, accountId: nil, before: nil, limit: 500) }
+        return Self.people(from: stored ?? rows, excluding: mine)
     }
 
     /// `searchPeople` without the store: senders of `rows` (newest first)
@@ -1381,6 +1449,9 @@ final class AppModel {
     /// Deep link from a notification (reminder or new mail): the inbox tab
     /// pushes the thread when it sees `pendingThreadId`.
     func openThread(id: String) {
+        // Sheets close, as for `show(_:)`: the thread used to open under them.
+        showSidebar = false
+        showSettings = false
         navigate(to: .inbox)
         pendingThreadId = id
     }
@@ -1419,7 +1490,34 @@ final class AppModel {
     func openForward(of row: ThreadRow) async throws {
         let detail = try await engine.thread(id: row.id)
         guard let detail, let last = detail.mail.last else { throw IntentError.noSuchThread }
-        compose(SendDraft.forward(of: last, in: detail.thread))
+        compose(await forwardDraft(of: last, in: detail.thread))
+    }
+
+    /// A forward of `m` with what the message carried: the account's
+    /// signature over the quoted text and the message's files. A forward
+    /// used to go out as bare text — the PDF it was forwarded for stayed
+    /// behind. The files are fetched from Gmail first (a toast says so),
+    /// up to the size one message may carry; pictures the body shows
+    /// inline are part of the HTML, which a forward does not keep.
+    func forwardDraft(of m: MessageItem, in thread: ThreadRow) async -> SendDraft {
+        var draft = SendDraft.forward(of: m, in: thread, signature: account(for: thread)?.signature ?? "")
+        guard thread.hasAttachment, let all = try? await engine.attachments(threadId: thread.id) else { return draft }
+        let files = all.filter { $0.messageId == m.id && !InlineImages.isShownInline($0, in: m.bodyHTML) }
+        guard !files.isEmpty else { return draft }
+        let notice = show("Fetching \(files.count == 1 ? "the attachment" : "\(files.count) attachments")…", duration: .seconds(30))
+        var total = 0
+        var left = 0
+        for file in files {
+            guard let url = try? await engine.attachmentFile(file),
+                  let data = await Task.detached(operation: { try? Data(contentsOf: url) }).value,
+                  total + data.count <= MailLimits.maxAttachmentBytes else { left += 1; continue }
+            total += data.count
+            draft.attachments.append(DraftAttachment(filename: file.filename, mimeType: file.mimeType, size: data.count,
+                                                     dataBase64: data.base64EncodedString()))
+        }
+        dismissToast(notice)
+        if left > 0 { show(left == 1 ? "One attachment could not be added" : "\(left) attachments could not be added") }
+        return draft
     }
 
     /// Change the open composer's draft from outside it (Siri's "update
@@ -1551,7 +1649,12 @@ final class AppModel {
     /// Desktop `#`.
     func delete(_ row: ThreadRow) {
         Haptics.warning()
-        perform(.trash(threadId: row.id), on: row, toast: "Deleted")
+        // Undo, like Mark done: a slip of the swipe used to mean a trip
+        // to Trash.
+        perform(.trash(threadId: row.id), on: row, toast: "Deleted") { [weak self] in
+            self?.perform(.untrash(threadId: row.id), on: row)
+            self?.restoreFlags(row)
+        }
     }
 
     func toggleNeedsReply(_ row: ThreadRow) {
@@ -1855,6 +1958,8 @@ final class AppModel {
         let draft: SendDraft
         let accountId: String
         var task: Task<Void, Never>?
+        /// Its "Sending · Undo" toast, taken off when the send commits.
+        var toastId: UUID?
     }
     private var pendingSends: [UUID: PendingSend] = [:]
 
@@ -1873,7 +1978,7 @@ final class AppModel {
         }
         let n = d.to.count + d.cc.count + d.bcc.count
         let first = d.to.first ?? d.cc.first ?? d.bcc.first ?? ""
-        show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")", duration: sendUndoWindow) { [weak self] in
+        pendingSends[id]?.toastId = show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")", duration: sendUndoWindow, holds: true) { [weak self] in
             // A send that already committed must not reopen the composer
             // (that is how duplicates get sent).
             guard let self, let pending = self.pendingSends.removeValue(forKey: id) else { return }
@@ -1885,6 +1990,7 @@ final class AppModel {
 
     private func commitSend(_ id: UUID) async {
         guard let pending = pendingSends.removeValue(forKey: id) else { return } // undone
+        if let shown = pending.toastId { dismissToast(shown) }
         do {
             try await engine.perform(.send(pending.draft), accountId: pending.accountId)
             Haptics.success()
@@ -1984,12 +2090,33 @@ final class AppModel {
                 reload()
             }
         }
+        // Dealt with here: its banner has nothing left to say.
+        switch action {
+        case .archive, .trash, .markRead(_, true), .markSpam(_, true): NewMailNotifier.clearDelivered(row.id)
+        default: break
+        }
         if let text { show(text, undo: undo) }
     }
 
-    func show(_ text: String, duration: Duration = .seconds(5), undo: (() -> Void)? = nil) {
-        toast = Toast(text: text, undo: undo, duration: duration)
+    /// Show a toast; its id comes back for the caller that ends it early.
+    /// While a send waits in its undo window the new toast goes beside
+    /// it: "Marked done" used to replace "Sending · Undo", and the mail
+    /// then went out with nothing left to stop it.
+    @discardableResult
+    func show(_ text: String, duration: Duration = .seconds(5), holds: Bool = false, undo: (() -> Void)? = nil) -> UUID {
+        let next = Toast(text: text, undo: undo, duration: duration, holds: holds)
+        if !holds, toast?.holds == true { sideToast = next } else { toast = next }
         if let undo { lastUndo = (undo, Date()) }
+        return next.id
+    }
+
+    /// The toasts on screen, top to bottom.
+    var toasts: [Toast] { [sideToast, toast].compactMap { $0 } }
+
+    /// Take a toast off (its time is up, or its Undo ran), if it still shows.
+    func dismissToast(_ id: UUID) {
+        if toast?.id == id { toast = nil }
+        if sideToast?.id == id { sideToast = nil }
     }
 
     /// The last action's Undo, kept after its toast has gone: the Mac's

@@ -292,7 +292,7 @@ struct PersonPicker: View {
             }
         }
         .sheetSize(.mediumOrLarge, dragIndicator: false)
-        .task { people = model.searchPeople() }
+        .task { people = await model.searchPeople() }
     }
 
     private func row(_ item: PersonSuggestion) -> some View {

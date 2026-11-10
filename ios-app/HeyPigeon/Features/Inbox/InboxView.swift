@@ -80,6 +80,9 @@ struct MailListScreen: View {
             .onChange(of: model.pendingThreadId, initial: true) { _, id in
                 guard tab == .inbox, let id, let row = model.row(forThreadId: id) else { return }
                 model.pendingThreadId = nil
+                // Read, as a tap on its row makes it: opened from a banner,
+                // a widget or Spotlight it used to stay bold and counted.
+                model.markRead(row)
                 path = [row]
             }
         }

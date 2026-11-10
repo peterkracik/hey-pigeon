@@ -187,23 +187,28 @@ struct ToastView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let toast = model.toast {
-            HStack(spacing: 12) {
-                Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(2)
-                if let undo = toast.undo {
-                    Button("Undo") { undo(); model.toast = nil }
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Theme.accent)
+        // Two at most: a send's Undo keeps its place, and what is said
+        // during its window shows above it (AppModel.show).
+        VStack(spacing: 8) {
+            ForEach(model.toasts) { toast in
+                HStack(spacing: 12) {
+                    Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(2)
+                    if let undo = toast.undo {
+                        Button("Undo") { undo(); model.dismissToast(toast.id) }
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task(id: toast.id) {
+                    try? await Task.sleep(for: toast.duration)
+                    guard !Task.isCancelled else { return }
+                    withAnimation { model.dismissToast(toast.id) }
                 }
             }
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .padding(.bottom, 72) // clears the floating tab bar
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .task(id: toast.id) {
-                try? await Task.sleep(for: toast.duration)
-                if model.toast?.id == toast.id { withAnimation { model.toast = nil } }
-            }
         }
+        .padding(.bottom, 72) // clears the floating tab bar
     }
 }

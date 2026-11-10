@@ -188,6 +188,16 @@ struct ThreadModelTests {
         #expect(d.to.isEmpty)
         #expect(d.bodyText.contains("From: Ana <ana@acme.test>") && d.bodyText.hasSuffix("The deck."))
         #expect(SendDraft.forward(of: m, in: makeRow(subject: "fwd: Deck")).subject == "fwd: Deck")
+        // The signature goes over the quote, not under the forwarded text.
+        let signed = SendDraft.forward(of: m, in: makeRow(subject: "Deck"), signature: "Peter")
+        #expect(signed.bodyText.hasPrefix("\n\nPeter\n\n---------- Forwarded message ----------\n"))
+        #expect(signed.bodyText.contains("\nSubject: Deck\n"))
+    }
+
+    @Test func textStillInARecipientFieldCountsOnceItIsAnAddress() {
+        #expect(EmailAddress.pending(" Boss@X.com,") == "boss@x.com")
+        #expect(EmailAddress.pending("ana@") == nil)
+        #expect(EmailAddress.pending("") == nil)
     }
 }
 

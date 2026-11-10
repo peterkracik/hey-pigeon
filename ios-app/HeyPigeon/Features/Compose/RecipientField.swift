@@ -11,7 +11,10 @@ struct RecipientField<Field: Hashable>: View {
     let field: Field
     /// Known people to complete from, most frequent first.
     var people: [PersonSuggestion] = []
-    @State private var text = ""
+    /// What is typed and not a chip yet. The composer's, not the field's:
+    /// Send and the draft save count an address still in it, which used
+    /// to be dropped — a tap on Send does not end the field's editing.
+    @Binding var text: String
     /// What the engine knows for the typed letters: everyone the stored
     /// mail was exchanged with, then the account's Google contacts
     /// (`MailEngine.searchContacts`). `people` only has who wrote lately.
@@ -117,9 +120,8 @@ struct RecipientField<Field: Hashable>: View {
     /// that does not ("ana@", a name with no match) stays in the field for
     /// the user to finish, instead of vanishing or becoming a bad chip.
     private func commit() {
-        let a = text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;")).lowercased()
-        guard !a.isEmpty else { text = ""; return }
-        guard EmailAddress.isPlausible(a) else { return }
+        guard !text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;")).isEmpty else { text = ""; return }
+        guard let a = EmailAddress.pending(text) else { return }
         text = ""
         guard !addresses.contains(a) else { return }
         addresses.append(a)

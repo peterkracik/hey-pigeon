@@ -205,6 +205,13 @@ struct ThreadDetail: Hashable, Sendable {
 /// RFC 5322-ish address handling for what the core hands over as header
 /// text (`"Ana Novak" <ana@acme.test>`, or a bare address).
 enum EmailAddress {
+    /// The address that text still being typed into a recipient field
+    /// stands for, nil while it is not one yet ("ana@", a name).
+    static func pending(_ text: String) -> String? {
+        let a = text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;")).lowercased()
+        return isPlausible(a) ? a : nil
+    }
+
     /// The address between the angle brackets, or the trimmed text itself.
     static func address(in header: String) -> String {
         if let open = header.firstIndex(of: "<"), let close = header[open...].firstIndex(of: ">") {
@@ -811,11 +818,18 @@ struct SendDraft: Hashable {
     var externalRevision = 0
 
     /// A forward of one message: the subject with one "Fwd:", the message
-    /// quoted under a header, recipients left to the user.
-    static func forward(of m: MessageItem, in thread: ThreadRow) -> SendDraft {
+    /// quoted under a header (Gmail's: From, Date, Subject, To), recipients
+    /// left to the user. The signature goes over the quote: the composer
+    /// adds one only to an empty body, so a forward never had it.
+    /// `AppModel.forwardDraft` adds the message's files.
+    static func forward(of m: MessageItem, in thread: ThreadRow, signature: String = "") -> SendDraft {
         var d = SendDraft()
         d.subject = thread.subject.lowercased().hasPrefix("fwd:") ? thread.subject : "Fwd: \(thread.subject)"
-        d.bodyText = "\n\n---------- Forwarded message ----------\nFrom: \(m.fromName) <\(m.fromAddress)>\nDate: \(Formatters.fullDate(m.date))\n\n\(m.bodyText ?? m.snippet)"
+        var header = "From: \(m.fromName) <\(m.fromAddress)>\nDate: \(Formatters.fullDate(m.date))\nSubject: \(thread.subject)"
+        let to = m.to.filter { $0 != "me" && !$0.isEmpty }
+        if !to.isEmpty { header += "\nTo: \(to.joined(separator: ", "))" }
+        d.bodyText = "\n\n" + (signature.isEmpty ? "" : "\(signature)\n\n")
+            + "---------- Forwarded message ----------\n\(header)\n\n\(m.bodyText ?? m.snippet)"
         d.fromAccountId = thread.accountId
         return d
     }

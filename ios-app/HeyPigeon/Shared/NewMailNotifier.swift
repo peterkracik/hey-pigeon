@@ -22,6 +22,12 @@ import UserNotifications
 
 enum NewMailNotifier {
     private static let prefix = "newmail."
+
+    /// Take a thread's banner out of Notification Center once the user
+    /// has read or filed it here: they used to pile up for mail long done.
+    static func clearDelivered(_ threadId: String) {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [prefix + threadId])
+    }
     /// iOS gives a background fetch about 30 s; leave headroom for the
     /// completion handler.
     private static let budget: Duration = .seconds(25)

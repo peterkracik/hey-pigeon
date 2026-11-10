@@ -613,7 +613,8 @@ struct ThreadView: View {
     }
 
     private func forward(_ m: MessageItem) {
-        model.composeDraft = SendDraft.forward(of: m, in: current)
+        let thread = current
+        Task { model.composeDraft = await model.forwardDraft(of: m, in: thread) }
     }
 
     /// Desktop "Draft with AI" in the inline reply: writes the reply body,

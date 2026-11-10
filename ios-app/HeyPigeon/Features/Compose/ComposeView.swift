@@ -26,6 +26,10 @@ struct ComposeView: View {
     @State private var to: [String]
     @State private var cc: [String]
     @State private var bcc: [String]
+    /// The text typed into each recipient field and not a chip yet.
+    @State private var typedTo = ""
+    @State private var typedCc = ""
+    @State private var typedBcc = ""
     @State private var showCc: Bool
     @State private var body_: AttributedString
     @State private var selection = AttributedTextSelection()
@@ -109,9 +113,19 @@ struct ComposeView: View {
     }
 
     private var snapshot: Snapshot {
-        Snapshot(to: to, cc: cc, bcc: bcc, subject: draft.subject, body: plainBody,
+        Snapshot(to: allTo, cc: allCc, bcc: allBcc, subject: draft.subject, body: plainBody,
                  html: bodyHTML, attachments: attachments.map(\.id))
     }
+
+    /// A field's chips and the address still being typed into it: what is
+    /// sent and saved (RecipientField.text).
+    private func all(_ chips: [String], _ typed: String) -> [String] {
+        guard let a = EmailAddress.pending(typed), !chips.contains(a) else { return chips }
+        return chips + [a]
+    }
+    private var allTo: [String] { all(to, typedTo) }
+    private var allCc: [String] { all(cc, typedCc) }
+    private var allBcc: [String] { all(bcc, typedBcc) }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
     /// An account's other addresses to send from: its aliases, without
@@ -123,7 +137,7 @@ struct ComposeView: View {
     private var showsFromRow: Bool {
         model.accounts.count > 1 || model.accounts.contains { !aliases(of: $0).isEmpty }
     }
-    private var canSend: Bool { !(to.isEmpty && cc.isEmpty && bcc.isEmpty) && !sending && !fromId.isEmpty }
+    private var canSend: Bool { !(allTo.isEmpty && allCc.isEmpty && allBcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
         #if os(macOS)
@@ -169,7 +183,7 @@ struct ComposeView: View {
     /// way out, the model's copy for Siri, the pickers and the link alert.
     private func withLifecycle<Content: View>(_ content: Content) -> some View {
         content
-            .task { people = model.searchPeople() }
+            .task { people = await model.searchPeople() }
             .onAppear {
                 model.loadSendAliases()
                 if fromId.isEmpty {
@@ -457,9 +471,9 @@ struct ComposeView: View {
     /// The draft as the editor holds it now.
     private var composed: SendDraft {
         var d = draft
-        d.to = to
-        d.cc = cc
-        d.bcc = bcc
+        d.to = allTo
+        d.cc = allCc
+        d.bcc = allBcc
         d.bodyText = plainBody
         d.bodyHTML = bodyHTML
         d.bodyRich = bodyRich
@@ -506,6 +520,9 @@ struct ComposeView: View {
         to = d.to
         cc = d.cc
         bcc = d.bcc
+        typedTo = ""
+        typedCc = ""
+        typedBcc = ""
         showCc = showCc || !d.cc.isEmpty || !d.bcc.isEmpty
         adoptBody(of: d)
         attachments = d.attachments
@@ -616,15 +633,15 @@ extension ComposeView {
     @ViewBuilder private var headerFields: some View {
         if showsFromRow { fromRow }
         fieldRow("To") {
-            RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
+            RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
             if !showCc {
                 Button("Cc/Bcc") { showCc = true; focus = .cc }
                     .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
             }
         }
         if showCc {
-            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
-            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
+            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
+            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
         }
         fieldRow("Subject") {
             TextField("", text: $draft.subject).focused($focus, equals: .subject)
@@ -772,7 +789,7 @@ extension ComposeView {
         if showFields {
             if showsFromRow { fromRow }
             fieldRow("To") {
-                RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
+                RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
                 if !showCc {
                     Button("Cc/Bcc") { showCc = true; focus = .cc }
                         .buttonStyle(.plain)
@@ -780,8 +797,8 @@ extension ComposeView {
                 }
             }
             if showCc {
-                fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people) }
-                fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people) }
+                fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
+                fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
             }
             fieldRow("Subject") {
                 TextField("", text: $draft.subject)

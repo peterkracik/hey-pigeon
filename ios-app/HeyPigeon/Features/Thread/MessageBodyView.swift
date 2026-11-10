@@ -3,9 +3,9 @@
 // one message or always for the sender (or turns on Settings › Load
 // remote images), inline `cid:`
 // pictures fetched from Gmail and inlined as data: URIs, every web link handed to the default browser and every
-// mailto: link to the app's own composer. The HTML arrives as the sender wrote it — the
-// core stores it as received and does not sanitize it — so this view is the safety layer,
-// not a second one.
+// mailto: link to the app's own composer. The HTML arrives sanitized by the core
+// (desktop-app/crates/core/src/sanitize.rs: scripts, handlers, forms and frames removed;
+// links, pictures and layout kept); this view is the second layer.
 //
 // Two native views back it: the plain-text body is a selectable text view
 // (UITextView on iOS, NSTextView on the Mac) and the HTML a WKWebView, each

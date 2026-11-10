@@ -14,6 +14,7 @@ use heypigeon_core::domain::*;
 use heypigeon_core::ports::{
     HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage, WatchState,
 };
+use heypigeon_core::sanitize;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -433,6 +434,10 @@ impl GmailProvider {
                 .iter()
                 .map(|w| {
                     let mut m = to_message(account_id, thread_id, w);
+                    // Sanitized here, once, on the way into the store:
+                    // `body_fetched` on a message means its HTML is safe
+                    // to hand to a view as it is.
+                    m.body_html = m.body_html.as_deref().map(sanitize::html);
                     m.body_fetched = true;
                     m
                 })
@@ -2165,7 +2170,10 @@ fn header_addresses(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// Headers and bodies of a draft message (attachments are fetched by the caller).
+/// Headers and bodies of a draft message (attachments are fetched by the
+/// caller). The HTML body is sanitized like any mail's: a draft may have
+/// been written anywhere (another client, a message saved as a draft),
+/// and the composer loads it into a page of its own.
 fn to_draft(w: &WireMessage) -> DraftContent {
     let payload = w.payload.as_ref();
     let list = |name: &str| {
@@ -2185,7 +2193,7 @@ fn to_draft(w: &WireMessage) -> DraftContent {
             .unwrap_or("")
             .to_string(),
         body_text: m.body_text,
-        body_html: m.body_html,
+        body_html: m.body_html.as_deref().map(sanitize::html),
         attachments: Vec::new(),
     }
 }
@@ -3261,5 +3269,70 @@ mod tests {
                 },
             ]
         );
+    }
+
+    // ---- bodies are sanitized where they enter the core
+
+    /// base64url of `text`, the way Gmail carries a part's body.
+    fn part_data(text: &str) -> String {
+        base64::engine::general_purpose::URL_SAFE.encode(text)
+    }
+
+    const RAW_HTML: &str = concat!(
+        "<html><head><title>Hidden title</title></head><body>",
+        "<p onclick=\"steal()\">Hello <a href=\"https://example.com/?a=1&b=2#f\" ",
+        "onmouseover=\"x()\">link</a></p><script>alert(1)</script>",
+        "<img src=\"cid:logo@x\"></body></html>",
+    );
+    const CLEAN_HTML: &str = concat!(
+        "<p>Hello <a href=\"https://example.com/?a=1&amp;b=2#f\" ",
+        "rel=\"noopener noreferrer\">link</a></p><img src=\"cid:logo@x\">",
+    );
+
+    fn html_message() -> serde_json::Value {
+        serde_json::json!({
+            "id": "m1", "labelIds": ["INBOX"], "internalDate": "1",
+            "payload": {"mimeType": "multipart/alternative", "headers": [
+                {"name": "To", "value": "a@x.com"},
+                {"name": "Subject", "value": "Hi"}
+            ], "parts": [
+                {"mimeType": "text/plain", "headers": [],
+                 "body": {"data": part_data("Hello <b>link</b> & more")}},
+                {"mimeType": "text/html", "headers": [], "body": {"data": part_data(RAW_HTML)}}
+            ]}
+        })
+    }
+
+    /// The full fetch is where a body enters the store: its HTML comes out
+    /// sanitized, link and inline picture intact, and the message says so
+    /// (`body_fetched`). The plain text is left exactly as received.
+    #[test]
+    fn full_fetch_sanitizes_html_bodies_once() {
+        let wire: WireMessage = serde_json::from_value(html_message()).unwrap();
+        let p = provider();
+        let full = p.full_fetch(
+            &"acc".to_string(),
+            &"t1".to_string(),
+            std::slice::from_ref(&wire),
+            true,
+        );
+        let m = &full.messages[0];
+        assert!(m.body_fetched);
+        assert_eq!(m.body_html.as_deref(), Some(CLEAN_HTML));
+        assert_eq!(m.body_text.as_deref(), Some("Hello <b>link</b> & more"));
+        // The list tier (and anything else that maps a message) does not
+        // sanitize and does not claim to have.
+        let listed = to_message(&"acc".to_string(), "t1", &wire);
+        assert!(!listed.body_fetched);
+        assert_eq!(listed.body_html.as_deref(), Some(RAW_HTML));
+    }
+
+    #[test]
+    fn a_draft_reaches_the_composer_sanitized() {
+        let wire: WireMessage = serde_json::from_value(html_message()).unwrap();
+        let draft = to_draft(&wire);
+        assert_eq!(draft.body_html.as_deref(), Some(CLEAN_HTML));
+        assert_eq!(draft.body_text.as_deref(), Some("Hello <b>link</b> & more"));
+        assert_eq!(draft.subject, "Hi");
     }
 }

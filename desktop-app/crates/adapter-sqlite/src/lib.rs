@@ -420,6 +420,16 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_threads_triage_stale ON threads (last_msg_at DESC)
         WHERE triage_msg_count IS NULL OR triage_msg_count != msg_count;
     ",
+    // v26 — HTML bodies are sanitized as they are stored
+    // (`heypigeon_core::sanitize`), and `body_fetched = 1` is what says so:
+    // such a body goes to a view as it is. A build between v22 and this
+    // one set the flag on bodies it stored as received. No release did,
+    // but a mailbox that ran one would hand those out uncleaned for good,
+    // so the flag starts over: every body stored before this step counts
+    // as "not sanitized" — cleaned on its way out, and replaced by the
+    // thread's next full fetch (one more refetch per thread opened in
+    // that window, none for anyone else).
+    "UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1106,8 +1116,15 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
          ON CONFLICT(id) DO UPDATE SET
            snippet = excluded.snippet,
            -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
-           -- delta thread refetch) must not wipe them
-           body_html = COALESCE(excluded.body_html, body_html),
+           -- delta thread refetch) must not wipe them. The first full
+           -- fetch (the flag going 0 to 1) is the exception for the HTML:
+           -- it replaces what is there even with nothing, because what is
+           -- there was stored before bodies were sanitized and the flag
+           -- is about to say it is clean. (A later write of the row read
+           -- without its bodies has the flag at 1 on both sides.)
+           body_html = CASE WHEN excluded.body_fetched = 1 AND body_fetched = 0
+                            THEN excluded.body_html
+                            ELSE COALESCE(excluded.body_html, body_html) END,
            body_text = COALESCE(excluded.body_text, body_text),
            label_ids = excluded.label_ids,
            is_read = excluded.is_read,
@@ -5172,5 +5189,117 @@ mod tests {
         assert_eq!(rows[1].to_addrs, vec!["Sam <sam@x.com>"]);
         assert_eq!(rows[1].cc_addrs, vec!["lee@x.com"]);
         assert!(rows[1].sent);
+    }
+
+    // ---- v26: `body_fetched` also means "stored sanitized"
+
+    const RAW_BODY: &str = "<p onclick=\"x()\">hi</p><script>alert(1)</script>";
+
+    /// A database at v25 may hold bodies stored as received with the flag
+    /// already set. The upgrade lowers the flag and keeps the body: it
+    /// then counts as an old raw one (cleaned on the way out, refetched
+    /// once).
+    #[test]
+    fn v26_upgrade_treats_every_stored_body_as_unsanitized() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v26-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v25.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 25).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            for (id, fetched) in [("m-raw", true), ("m-old", false)] {
+                s.upsert_message(&Message {
+                    id: id.to_string(),
+                    thread_id: "t1".to_string(),
+                    account_id: "a1".to_string(),
+                    body_html: Some(RAW_BODY.to_string()),
+                    body_text: Some("hi".to_string()),
+                    cc_addrs: vec!["lee@x.com".to_string()],
+                    body_fetched: fetched,
+                    ..Default::default()
+                })
+                .unwrap();
+            }
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v26
+        let stored = s.list_messages(&"t1".to_string()).unwrap();
+        assert_eq!(stored.len(), 2);
+        for m in &stored {
+            assert!(!m.body_fetched, "{}", m.id);
+            assert_eq!(m.body_html.as_deref(), Some(RAW_BODY));
+            assert_eq!(m.cc_addrs, vec!["lee@x.com"]);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The first full fetch of a message replaces its stored HTML, even
+    /// with none: what was there predates sanitation, and the flag now
+    /// vouches for the row. Later writes of the row read without its
+    /// bodies leave the stored HTML alone.
+    #[test]
+    fn the_first_full_fetch_replaces_an_old_raw_body() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        let t1 = "t1".to_string();
+        let old = |id: &str| Message {
+            id: id.to_string(),
+            thread_id: t1.clone(),
+            account_id: "a1".to_string(),
+            body_html: Some(RAW_BODY.to_string()),
+            body_text: Some("hi".to_string()),
+            ..Default::default()
+        };
+        s.upsert_message(&old("m1")).unwrap();
+        s.upsert_message(&old("m2")).unwrap();
+        // A metadata-tier re-upsert keeps what is there, flag down.
+        s.upsert_message(&Message {
+            body_html: None,
+            body_text: None,
+            ..old("m1")
+        })
+        .unwrap();
+        let by_id = |id: &str| {
+            s.list_messages(&t1)
+                .unwrap()
+                .into_iter()
+                .find(|m| m.id == id)
+                .unwrap()
+        };
+        assert_eq!(by_id("m1").body_html.as_deref(), Some(RAW_BODY));
+
+        // Full fetch with a (sanitized) body: it takes the raw one's place.
+        s.upsert_message(&Message {
+            body_html: Some("<p>hi</p>".to_string()),
+            body_fetched: true,
+            ..old("m1")
+        })
+        .unwrap();
+        // Full fetch that found no HTML part at all: the raw one must not
+        // stay behind under a flag that says "clean".
+        s.upsert_message(&Message {
+            body_html: None,
+            body_text: None,
+            body_fetched: true,
+            ..old("m2")
+        })
+        .unwrap();
+        assert_eq!(by_id("m1").body_html.as_deref(), Some("<p>hi</p>"));
+        assert!(by_id("m2").body_html.is_none() && by_id("m2").body_fetched);
+        assert_eq!(by_id("m2").body_text.as_deref(), Some("hi"), "text is kept");
+
+        // The sync loop's write-back (row read without bodies, flag up)
+        // keeps the sanitized body.
+        let mut meta = s
+            .list_message_meta(&t1)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == "m1")
+            .unwrap();
+        meta.is_read = true;
+        s.upsert_message(&meta).unwrap();
+        assert_eq!(by_id("m1").body_html.as_deref(), Some("<p>hi</p>"));
+        assert!(by_id("m1").body_fetched && by_id("m1").is_read);
     }
 }

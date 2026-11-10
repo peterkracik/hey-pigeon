@@ -119,9 +119,9 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     let to: [String]
     let date: Date
     let snippet: String
-    /// As the sender wrote it (the core does not sanitize): only ever
-    /// rendered with scripts off, under a CSP, remote images blocked
-    /// (MessageBodyView).
+    /// Sanitized by the core (scripts, handlers, forms and frames gone;
+    /// links and layout kept); still only rendered with scripts off,
+    /// under a CSP, remote images blocked (MessageBodyView).
     let bodyHTML: String?
     let bodyText: String?
     let isRead: Bool

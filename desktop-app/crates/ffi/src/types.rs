@@ -158,11 +158,35 @@ pub struct MailMessage {
     /// Epoch milliseconds.
     pub date: i64,
     pub snippet: String,
-    /// The HTML body exactly as the sender wrote it: the core stores and
-    /// returns it as received and does NOT sanitize it. The shell's web
-    /// view is the safety layer — JavaScript off, a content security
-    /// policy, remote images blocked until the user allows them. Never
-    /// put this string anywhere that runs scripts or loads its resources.
+    /// The HTML body, sanitized by the core (`heypigeon_core::sanitize`,
+    /// an allowlist over a real HTML parse) before it gets here — when it
+    /// is stored, or on the way out for a body an older build stored as
+    /// received.
+    ///
+    /// Gone: `<script>`, every `on…` handler, forms and their controls,
+    /// frames, `<object>` / `<embed>` / `<applet>`, `<link>`, `<meta>`,
+    /// `<base>`, the `<title>` and its text, SVG and MathML, comments,
+    /// and any URL that is not `http`, `https`, `mailto` or `tel` on a
+    /// link (`javascript:` and the rest) or `http`, `https`, `cid:` or
+    /// `data:image/…` on a picture.
+    ///
+    /// Kept, as the sender wrote them: links (`<a href>` with its full
+    /// URL, plus `rel="noopener noreferrer"`; `target` is dropped),
+    /// pictures (`src="cid:…"` byte for byte), tables and the layout
+    /// attributes mail leans on (`width`, `height`, `align`, `valign`,
+    /// `bgcolor`, `border`, `cellpadding`, `cellspacing`, `colspan`,
+    /// `rowspan`, `background`), `<font>`, `<center>`, `class` and `id`
+    /// unprefixed (`gmail_quote`), inline `style` (minus `position` and
+    /// anything that could run script) and `<style>` blocks (minus
+    /// `@import`; `url(…)` stays, so remote pictures in CSS load or not
+    /// by the view's content security policy). A full document comes as
+    /// its content, the `<body>`'s attributes on a `<div>` around it.
+    ///
+    /// This is one layer of two. The shell's view is the other: the
+    /// mail's JavaScript off, a content security policy, remote images
+    /// blocked until the user allows them, navigation handed out. Keep
+    /// both — still never put this string in a page that runs scripts
+    /// without that policy.
     pub body_html: Option<String>,
     pub body_text: Option<String>,
     pub label_ids: Vec<String>,
@@ -177,6 +201,16 @@ pub struct MailMessage {
 
 impl From<domain::Message> for MailMessage {
     fn from(m: domain::Message) -> Self {
+        // A body with the flag was sanitized when it was stored. One
+        // without was stored as received by an older build: it is cleaned
+        // here, each time, until the thread's next full fetch stores it
+        // clean (the first `get_thread` does that; `get_thread_local`
+        // alone never fetches).
+        let body_html = if m.body_fetched {
+            m.body_html
+        } else {
+            m.body_html.as_deref().map(heypigeon_core::sanitize::html)
+        };
         Self {
             id: m.id,
             thread_id: m.thread_id,
@@ -186,7 +220,7 @@ impl From<domain::Message> for MailMessage {
             cc_addrs: m.cc_addrs,
             date: m.date,
             snippet: m.snippet,
-            body_html: m.body_html,
+            body_html,
             body_text: m.body_text,
             label_ids: m.label_ids,
             is_read: m.is_read,
@@ -339,6 +373,9 @@ pub struct DraftContent {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body_text: Option<String>,
+    /// Sanitized like `MailMessage::body_html` (see there): no script, no
+    /// event handlers, links and pictures kept. The composer may load it
+    /// into its own page.
     pub body_html: Option<String>,
     pub attachments: Vec<OutAttachment>,
     /// The thread it replies to; None for a stand-alone draft.

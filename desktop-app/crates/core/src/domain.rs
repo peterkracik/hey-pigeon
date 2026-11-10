@@ -387,6 +387,11 @@ pub struct Message {
     /// Epoch milliseconds.
     pub date: i64,
     pub snippet: String,
+    /// The HTML body. Sanitized (`sanitize::html`) when `body_fetched` is
+    /// set — providers clean it before they hand it over. A row without
+    /// the flag that still has one was stored by a build that kept mail
+    /// as received: it is sanitized on its way to a view, until the
+    /// thread's next full fetch replaces it.
     pub body_html: Option<String>,
     pub body_text: Option<String>,
     pub label_ids: Vec<String>,
@@ -410,7 +415,8 @@ pub struct Message {
     /// True once the provider's full message was fetched. A message with no
     /// text at all (an attachment alone, an empty draft) has no body to
     /// show, so "has a body" cannot stand in for "was fetched": such a
-    /// thread used to be fetched again on every open.
+    /// thread used to be fetched again on every open. It also says the
+    /// stored `body_html` is sanitized (see there).
     #[serde(default)]
     pub body_fetched: bool,
 }

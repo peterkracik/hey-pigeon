@@ -164,7 +164,10 @@ pub trait MailProvider {
     ) -> impl std::future::Future<Output = Result<HistoryPage, MailError>> + Send;
 
     /// Full messages (with bodies) for one thread — fetched lazily when the
-    /// user opens a thread whose bodies are not local yet. This is also the
+    /// user opens a thread whose bodies are not local yet. The HTML bodies
+    /// come back sanitized (`sanitize::html`) and the messages marked
+    /// `body_fetched`: that flag is the store's and the shells' word that a
+    /// stored body needs no further cleaning. This is also the
     /// only sync tier that returns the MIME parts tree (list/backfill only
     /// ever fetch `format=metadata`, which omits `parts` entirely), so it's
     /// the sole place `has_attachment` can be (re)computed accurately; the
@@ -176,7 +179,9 @@ pub trait MailProvider {
     ) -> impl std::future::Future<Output = Result<(bool, Vec<Message>), MailError>> + Send;
 
     /// A saved draft's full content (recipients, subject, bodies,
-    /// attachments) so the composer can reopen it. Default errors, like
+    /// attachments) so the composer can reopen it. Its HTML body comes
+    /// back sanitized (`sanitize::html`): the composer loads it into a
+    /// page of its own. Default errors, like
     /// `update_label`: no silent empty draft.
     fn get_draft(
         &self,

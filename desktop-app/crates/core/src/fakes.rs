@@ -148,7 +148,10 @@ impl Store for MemStore {
         // Same for what only some fetches carry: the full-fetch flag is
         // sticky and a header an upsert lacks keeps its stored value.
         if let Some(old) = g.messages.get(&m.id) {
-            if m.body_html.is_none() {
+            // Match SQLite: the first full fetch replaces the HTML even
+            // with none (what an older build stored was not sanitized).
+            let first_full_fetch = m.body_fetched && !old.body_fetched;
+            if m.body_html.is_none() && !first_full_fetch {
                 m.body_html = old.body_html.clone();
             }
             if m.body_text.is_none() {

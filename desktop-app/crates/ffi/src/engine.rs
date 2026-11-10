@@ -1143,11 +1143,24 @@ impl Engine {
             // at Gmail and the sync has not caught up: there is nothing
             // to fetch for it, and leaving it "not fetched" would send
             // every open of this thread to the network until it does.
-            for m in meta.iter().filter(|m| !m.body_fetched) {
-                if !full.messages.iter().any(|f| f.id == m.id) {
-                    let mut gone = m.clone();
-                    gone.body_fetched = true;
-                    self.store.upsert_message(&gone).map_err(store_err)?;
+            let gone: Vec<&domain::Message> = meta
+                .iter()
+                .filter(|m| !m.body_fetched && !full.messages.iter().any(|f| f.id == m.id))
+                .collect();
+            if !gone.is_empty() {
+                // The flag also says "this body is sanitized", and what
+                // such a row holds was stored as received: clean it now,
+                // so the message stays readable until the sync drops it.
+                let stored = self.store.list_messages(&thread.id).map_err(store_err)?;
+                for m in gone {
+                    let mut kept = m.clone();
+                    kept.body_html = stored
+                        .iter()
+                        .find(|s| s.id == m.id)
+                        .and_then(|s| s.body_html.as_deref())
+                        .map(heypigeon_core::sanitize::html);
+                    kept.body_fetched = true;
+                    self.store.upsert_message(&kept).map_err(store_err)?;
                 }
             }
         }
@@ -1720,6 +1733,86 @@ mod tests {
         .join()
         .unwrap();
         assert_eq!(flavor, tokio::runtime::RuntimeFlavor::MultiThread);
+    }
+
+    /// No HTML leaves the engine unsanitized, and none is sanitized twice.
+    /// A body stored as received by an older build (no `body_fetched`) is
+    /// cleaned on its way out; one stored by the full fetch — sanitized
+    /// there, flag set — is handed over exactly as stored.
+    #[test]
+    fn stored_html_reaches_the_shell_sanitized_exactly_once() {
+        use heypigeon_core::sanitize;
+
+        let dir = temp_dir("sanitized");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        e.store
+            .upsert_account(&domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        e.store
+            .upsert_thread(&sample_thread("t1", "me@x.com"))
+            .unwrap();
+        let raw = concat!(
+            "<html><head><title>Title</title></head><body>",
+            "<p onclick=\"steal()\">Hi <a href=\"https://example.com/?a=1&b=2#f\">link</a></p>",
+            "<script>alert(1)</script><img src=\"cid:logo@x\"></body></html>",
+        );
+        let clean = concat!(
+            "<p>Hi <a href=\"https://example.com/?a=1&amp;b=2#f\" ",
+            "rel=\"noopener noreferrer\">link</a></p><img src=\"cid:logo@x\">",
+        );
+        assert_eq!(sanitize::html(raw), clean);
+        let message = |id: &str, date: i64, html: &str, fetched: bool| domain::Message {
+            id: id.into(),
+            thread_id: "t1".into(),
+            account_id: "me@x.com".into(),
+            from_addr: "priya@example.com".into(),
+            date,
+            body_html: Some(html.into()),
+            body_text: Some("Hi <b>link</b>".into()),
+            body_fetched: fetched,
+            ..Default::default()
+        };
+        // 1: an old row, stored as received.
+        e.store
+            .upsert_message(&message("old", 1, raw, false))
+            .unwrap();
+        // 2: what the full fetch stores (the adapter sanitized it).
+        e.store
+            .upsert_message(&message("new", 2, &sanitize::html(raw), true))
+            .unwrap();
+        // 3: a row with the flag is trusted, not cleaned again. Nothing
+        // stores such a body; it is here to show the boundary leaves a
+        // flagged row alone (a second pass would strip the handler).
+        let untouched = "<p onclick=\"x()\">as stored</p>";
+        e.store
+            .upsert_message(&message("flagged", 3, untouched, true))
+            .unwrap();
+
+        let out = e.get_thread_local("t1".into()).unwrap().unwrap().messages;
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].body_html.as_deref(), Some(clean), "old row, cleaned");
+        assert_eq!(
+            out[1].body_html.as_deref(),
+            Some(clean),
+            "new row, as stored"
+        );
+        assert_eq!(out[2].body_html.as_deref(), Some(untouched));
+        // The store still holds the old row as it was (its refetch
+        // replaces it), and the text is never touched.
+        let stored = e.store.list_messages(&"t1".to_string()).unwrap();
+        assert_eq!(stored[0].body_html.as_deref(), Some(raw));
+        assert!(out
+            .iter()
+            .all(|m| m.body_text.as_deref() == Some("Hi <b>link</b>")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -202,7 +202,7 @@ struct SidebarList: View {
                     .font(.footnote)
                     .foregroundStyle(pinned ? Theme.textPrimary : Theme.textTertiary)
                     .frame(width: 32, height: 28)
-                    .contentShape(Rectangle())
+                    .tapArea(horizontal: 6, vertical: 8)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(pinned ? "Unpin \(l.name)" : "Pin \(l.name)")
@@ -258,7 +258,7 @@ struct SidebarList: View {
                         .font(.footnote)
                         .foregroundStyle(hidden ? Theme.textTertiary : Theme.textSecondary)
                         .frame(width: 32, height: 28)
-                        .contentShape(Rectangle())
+                        .tapArea(horizontal: 6, vertical: 8)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(hidden ? "Show \(b.name) in the sidebar" : "Hide \(b.name) from the sidebar")
@@ -308,7 +308,7 @@ struct SidebarList: View {
                         Text(title)
                     }
                     if disconnected {
-                        Text("Disconnected — reconnect in Settings").font(.caption).foregroundStyle(.red)
+                        Text("Disconnected — reconnect in Settings").font(.caption).foregroundStyle(Theme.dangerText)
                     } else if let subtitle {
                         Text(subtitle).font(.caption).foregroundStyle(Theme.textTertiary)
                     }

@@ -36,6 +36,10 @@ should reach UIKit or AppKit:
 | System Settings | `SystemSettings.openAppSettings()` / `.openDefaultApps()` |
 | Toolbar ends | `ToolbarItemPlacement.barLeading` / `.barTrailing` |
 | iOS-only modifiers | `inlineNavigationTitle()`, `plainInput(_:)`, `groupedListStyle()` |
+| Reduce Motion | `Motion.animation(_:)` / `.transition(_:)` / `.isReduced` |
+| VoiceOver | `VoiceOver.isRunning` / `.announce(_:)` |
+| A small control's tap area | `tapArea(horizontal:vertical:)` |
+| The toast's surface and place | `toastSurface()`, `toastButton()`, `ToastMetrics` |
 
 The platform door also hides the modifiers that exist on one platform
 only, so a feature file never writes a bare `#if`: `sheetSize` (detents on
@@ -86,7 +90,7 @@ needed a twin, as it was resolved:
 
 What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
 
-- `MainWindow` — the split view, the sheets, the toast, the disconnected alert.
+- `MainWindow` — the split view, the composer's sheet; the toast, the row sheets and the disconnected alert are the shared `Shared/RootChrome.swift`.
 - `SidebarColumn` — accounts, folders (Scheduled and Need reply among them), labels, Add account · Settings.
 - `InboxPage` — the list (single-line `MailRow`s that open in place, the search in `SearchSpotlight` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
 - `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back and the people, then the shared sparkle and actions menu), its bars on one card at the bottom; `ThreadWindow` for a thread in its own window.

@@ -38,8 +38,12 @@ struct ThreadView: View {
     /// The invitation an .ics attachment of the thread holds, read on the
     /// device once the attachments are listed (InviteCard).
     @State private var invite: CalendarInvite?
-    /// The draft the delete confirmation is asking about.
+    /// The draft the delete confirmation is asking about: one whose
+    /// content could not be read first, so its delete has no Undo.
     @State private var deletingDraft: ThreadDraft?
+    /// Stored drafts being deleted: off the screen at once, while the
+    /// draft is read for the Undo and the delete syncs back.
+    @State private var discardedDrafts: Set<String> = []
     /// The scroll view's height: room under an inline reply, so it can
     /// sit in the middle of the view.
     @State private var viewportHeight: CGFloat = 0
@@ -76,7 +80,7 @@ struct ThreadView: View {
     private var drafts: [ThreadDraft] {
         let local = model.unsyncedDrafts[row.id]
         var out = (detail?.drafts ?? [])
-            .filter { $0.id != local?.draftKey }
+            .filter { $0.id != local?.draftKey && !discardedDrafts.contains($0.id) }
             .map { ThreadDraft(stored: $0, accountId: current.accountId) }
         if let local { out.append(ThreadDraft(unsynced: local, accountId: current.accountId)) }
         return out
@@ -128,7 +132,7 @@ struct ThreadView: View {
                         if !pending.isEmpty {
                             VStack(spacing: 8) {
                                 ForEach(pending) { d in
-                                    DraftRow(draft: d) { edit(d) } onDelete: { deletingDraft = d }
+                                    DraftRow(draft: d) { edit(d) } onDelete: { discard(d) }
                                 }
                             }
                             .padding(.horizontal, 12).padding(.top, 10)
@@ -193,14 +197,11 @@ struct ThreadView: View {
                 }
             }
             ToolbarItem(placement: .barTrailing) {
+                // What the bars do not hold. Pin and Remind me are in the
+                // triage bar (and on s · h), Unsubscribe is the chip under
+                // the subject: each used to be here as well.
                 Menu {
-                    Button { model.togglePin(current) } label: {
-                        Label(current.isPinned ? "Unpin" : "Pin", systemImage: current.isPinned ? "pin.slash" : "pin")
-                    }
                     Button { model.toggleRead(current); onClose() } label: { Label("Mark unread", systemImage: "envelope.badge") }
-                    Button { model.pendingRemind = current } label: {
-                        Label(current.scheduledAt == nil ? "Remind me" : "Change reminder", systemImage: "clock")
-                    }
                     Button { model.pendingBundlePick = current } label: {
                         Label(current.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
                     }
@@ -222,12 +223,11 @@ struct ThreadView: View {
                     Button { if let last = detail?.mail.last { forward(last) } } label: {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
-                    if let offer = unsubscribeOffer {
-                        Button { unsubscribe(offer) } label: { Label("Unsubscribe", systemImage: "hand.raised") }
-                    }
                     Divider()
                     FolderMoveItem(row: current) { onClose() }
-                    Button(role: .destructive) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() } label: { Label("Delete", systemImage: "trash") }
+                    Button(role: .destructive) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() } label: {
+                        Label(RowAction.delete.label(for: current), systemImage: RowAction.delete.glyph(for: current))
+                    }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("More")
             }
@@ -290,7 +290,18 @@ struct ThreadView: View {
         }
         // A draft was saved, edited or deleted and is now in the store.
         .onChange(of: model.draftsRevision) { _, _ in
-            Task { if let fresh = try? await model.engine.thread(id: row.id) { detail = fresh } }
+            Task {
+                if let fresh = try? await model.engine.thread(id: row.id) {
+                    detail = fresh
+                    // A delete that has landed needs no hiding any more;
+                    // left in, it would hide the draft an Undo saved back.
+                    discardedDrafts.formIntersection(fresh.drafts.map(\.id))
+                }
+            }
+        }
+        // Undo saved a discarded draft back: show it again.
+        .onChange(of: model.unsyncedDrafts[row.id]?.draftKey) { _, key in
+            if let key { discardedDrafts.remove(key) }
         }
     }
 
@@ -497,28 +508,29 @@ struct ThreadView: View {
         .accessibilityLabel("Draft a reply with AI")
     }
 
-    /// The five triage buttons. Each toggle shows its state: filled icon
+    /// The five triage buttons, in the row actions' words
+    /// (Shared/RowActionPresentation.swift). Each toggle shows its state: filled icon
     /// in the state's colour. With a hardware keyboard (iPad, the Mac)
     /// the desktop's keys run them: e · h · n · s · ⌘⌫.
     @ViewBuilder private var triageButtons: some View {
-        bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
+        bar(RowAction.done.label(for: current), current.isDone ? "checkmark.circle.fill" : "checkmark",
             tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil, key: "e") {
             if !current.isDone { IntentDonations.archived(current, in: model) }
             model.toggleDone(current); onClose()
         }
-        bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
+        bar(RowAction.remindSheetLabel(for: current), current.scheduledAt == nil ? "clock" : "clock.fill",
             tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone), key: "h") {
             model.pendingRemind = current
         }
-        bar(current.needsReply ? "Clear need reply" : "Need reply",
+        bar(RowAction.needReply.label(for: current),
             current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left",
             tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil, key: "n") {
             model.toggleNeedsReply(current)
         }
-        bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
+        bar(RowAction.pin.label(for: current), current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
             model.togglePin(current)
         }
-        bar("Delete", "trash", tint: Color(hex: 0xB34E2E), key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
+        bar(RowAction.delete.label(for: current), RowAction.delete.glyph(for: current), tint: Theme.danger, key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
     }
 
     /// Superhuman's reply button: the chevron picks Reply · Reply all ·
@@ -651,6 +663,30 @@ struct ThreadView: View {
         if let local = d.unsynced { model.composeDraft = local } else { model.openDraft(current) }
     }
 
+    /// Delete a draft at once, with Undo in the toast
+    /// (AppModel.discardSavedDraft). Undo saves the draft back, so its
+    /// whole content must be in hand first: the composer's own copy, or
+    /// the stored draft read from Gmail. When that cannot be read
+    /// (offline, or the thread's other draft came back), the delete could
+    /// not be undone, so it asks first as it always did.
+    private func discard(_ d: ThreadDraft) {
+        if let local = d.unsynced {
+            model.discardSavedDraft(local, from: d.accountId)
+            return
+        }
+        discardedDrafts.insert(d.id)
+        let threadId = row.id
+        Task {
+            if let full = try? await model.engine.draft(threadId: threadId), full.draftKey == d.id {
+                model.discardSavedDraft(full, from: d.accountId)
+            } else {
+                discardedDrafts.remove(d.id)
+                deletingDraft = d
+            }
+        }
+    }
+
+    /// The confirmed delete of a draft that has no Undo.
     private func deleteDraft(_ d: ThreadDraft) {
         model.deleteDraft(d.id, from: d.accountId)
         if let detail {
@@ -729,7 +765,7 @@ private struct DraftRow: View {
             HStack(spacing: 8) {
                 Button(action: onEdit) { Label("Edit", systemImage: "square.and.pencil") }
                 Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
-                    .tint(Color(hex: 0xB34E2E))
+                    .tint(Theme.danger)
                 Spacer()
             }
             .font(.footnote.weight(.semibold))
@@ -856,7 +892,9 @@ struct MessageRow: View {
             }
         } label: {
             Image(systemName: "ellipsis").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                .frame(width: 28, height: 22).contentShape(Rectangle())
+                .frame(width: 28, height: 22)
+                // 28 × 22 as drawn; 44 × 44 to the finger.
+                .tapArea(horizontal: 8, vertical: 11)
         }
         .labelOnlyMenu()
         .accessibilityLabel("Actions for this message")

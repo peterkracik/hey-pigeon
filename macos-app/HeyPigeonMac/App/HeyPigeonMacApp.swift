@@ -1,8 +1,9 @@
 // Hey Pigeon for the Mac: the iPhone app's model, engine, intents, Spotlight
 // index, widget snapshot and AI layer (ios-app/HeyPigeon, compiled for macOS)
-// under a Mac window in the first desktop client's shape (a top bar, the
-// folders in a sidebar, single-line rows that open in place, a full thread
-// or Settings in the list's place; no title bar, no toolbar), the
+// under a Mac window in the first desktop client's shape (the standard
+// unified toolbar with no title, the folders in a sidebar, single-line
+// rows that open in place, a full thread or Settings in the list's
+// place), the
 // desktop's keyboard map, a menu bar, an optional menu
 // bar extra with the unread count, and a thread in its own window on ⌘↩.
 // The Mac never suspends the app, so sync is a timer while it runs plus

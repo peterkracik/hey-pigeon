@@ -29,7 +29,7 @@ struct MacCommands: Commands {
                 .disabled(!updater.canCheckForUpdates)
         }
 
-        // ⌘, — Settings is a page of the main window (the top bar's gear),
+        // ⌘, — Settings is a page of the main window (also in the palette),
         // the phone's sections in the Mac's grouped form.
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { openSettings() }

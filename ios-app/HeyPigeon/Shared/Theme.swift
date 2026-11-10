@@ -78,6 +78,20 @@ enum Theme {
         }
     }
 
+    /// What deletes or went wrong (the Delete swipe and button, an error
+    /// line): the coral tag's foreground. No new hue.
+    static let danger = tagForeground(.coral)
+    /// An error line as text (a failed sync, a rejected key). `danger` is
+    /// dark enough to carry white text, which makes it too dim to read as
+    /// small text on the dark surfaces: there the same coral, lighter.
+    static let dangerText = Color(light: tagForeground(.coral), dark: Color(hex: 0xE8907A))
+    /// Need reply as a solid colour (its swipe panel, the Mac row's chip):
+    /// the sky tag's foreground.
+    static let needReply = tagForeground(.sky)
+    /// The Pin swipe panel: the amber tag's foreground, dark enough to
+    /// carry white text (`pin` is the lighter amber of the mark itself).
+    static let pinStrong = tagForeground(.amber)
+
     static func priorityColor(_ p: TriageLevel) -> Color {
         switch p {
         case .high: Color(hex: 0xB34E2E)

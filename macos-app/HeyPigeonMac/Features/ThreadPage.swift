@@ -58,7 +58,7 @@ struct ThreadWindow: View {
                     .background(Theme.canvas)
             }
             .frame(minWidth: 540, minHeight: 480)
-            .overlay(alignment: .bottom) { MacToast() }
+            .overlay(alignment: .bottom) { ToastStack() }
             .onAppear { ThreadWindows.open.insert(threadId) }
             .onDisappear { ThreadWindows.open.remove(threadId) }
         } else {

@@ -14,13 +14,40 @@ struct MailListScreen: View {
 
     private var isActive: Bool { model.tab == tab }
 
+    /// What the top bar shows for the AI: nothing, one circle, or the
+    /// sparkle menu holding both.
+    enum AIBarItem: Equatable {
+        case nothing, summarize, ask, menu
+    }
+
+    /// One door needs no menu around it.
+    static func aiBarItem(summarize: Bool, ask: Bool) -> AIBarItem {
+        switch (summarize, ask) {
+        case (true, true): .menu
+        case (true, false): .summarize
+        case (false, true): .ask
+        case (false, false): .nothing
+        }
+    }
+
+    private var aiItem: AIBarItem {
+        Self.aiBarItem(summarize: model.aiConfigured, ask: tab == .inbox && InboxAsk.isAvailable(model))
+    }
+
+    /// With no account there is no mail to be clear of: the empty state
+    /// offers the sign-in instead (the sidebar's "Add Google account").
+    private var connect: (() -> Void)? {
+        guard model.accounts.isEmpty else { return nil }
+        return { Task { await model.addAccount() } }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if !model.hasLoadedOnce {
                     SkeletonList()
                 } else if isActive && model.groupedRows.isEmpty {
-                    EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt)
+                    EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: connect)
                 } else if isActive {
                     ThreadList(path: $path)
                 } else {
@@ -44,14 +71,24 @@ struct MailListScreen: View {
                 // The context the screen was missing: folder, unread count,
                 // and which account — tap to switch account (desktop 0/1/2).
                 ToolbarItem(placement: .principal) { ListTitle(tab: tab) }
-                if model.aiConfigured {
+                // The AI's two doors — the view's summary and "Ask my
+                // inbox" (on-device questions over the Spotlight index) —
+                // behind one sparkle when both are there: with a circle
+                // each the bar held five controls.
+                if aiItem == .menu {
+                    ToolbarItem(placement: .barTrailing) {
+                        Menu {
+                            Button { model.openViewSummary() } label: { Label("Summarize this view", systemImage: "sparkles") }
+                            Button { model.askSheet = AskPresentation() } label: { Label("Ask my inbox", systemImage: "questionmark.bubble") }
+                        } label: { Image(systemName: "sparkles") }
+                        .accessibilityLabel("Summarize or ask")
+                    }
+                } else if aiItem == .summarize {
                     ToolbarItem(placement: .barTrailing) {
                         Button { model.openViewSummary() } label: { Image(systemName: "sparkles") }
                             .accessibilityLabel("Summarize this view")
                     }
-                }
-                // "Ask my inbox": on-device questions over the Spotlight index.
-                if tab == .inbox && InboxAsk.isAvailable(model) {
+                } else if aiItem == .ask {
                     ToolbarItem(placement: .barTrailing) {
                         Button { model.askSheet = AskPresentation() } label: { Image(systemName: "questionmark.bubble") }
                             .accessibilityLabel("Ask my inbox")
@@ -141,13 +178,26 @@ struct ListTitle: View {
     }
 
     var body: some View {
+        let spoken = Self.spoken(title: title, count: count, tab: tab)
         if model.accounts.count > 1 {
             Menu { accountMenu } label: { label }
-                .accessibilityLabel("\(title), \(count) unread. Switch account")
+                .accessibilityLabel("\(spoken). Switch account")
         } else {
             label.accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(title), \(count) unread")
+                .accessibilityLabel(spoken)
                 .accessibilityAddTraits(.isHeader)
+        }
+    }
+
+    /// The title for VoiceOver. The number beside it is unread mail in the
+    /// inbox's folders, but reminders in Remind me and threads in Need
+    /// reply: all three used to be read as "unread".
+    static func spoken(title: String, count: Int, tab: MainTab) -> String {
+        guard count > 0 else { return title }
+        switch tab {
+        case .scheduled: return "\(title), \(count) \(count == 1 ? "reminder" : "reminders")"
+        case .needReply: return "\(title), \(count) waiting for a reply"
+        case .inbox, .search: return "\(title), \(count) unread"
         }
     }
 
@@ -338,29 +388,13 @@ struct ThreadList: View {
 }
 
 /// The swipe tiers from Settings as actions on one row: the inbox list and
-/// the bundle view use the same ones.
+/// the bundle view use the same ones. The words, glyph and colour are the
+/// action's own (Shared/RowActionPresentation.swift), as on the Mac.
 enum RowSwipes {
     @MainActor
     static func action(_ action: RowAction, _ row: ThreadRow, model: AppModel) -> SwipeAction {
-        switch action {
-        case .done:
-            SwipeAction(title: row.isDone ? "Not done" : "Done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark",
-                        tint: Theme.accent) { model.run(.done, on: row) }
-        case .delete:
-            SwipeAction(title: "Delete", systemImage: "trash", tint: Color(hex: 0xB34E2E)) { model.run(.delete, on: row) }
-        case .remind:
-            SwipeAction(title: row.scheduledAt == nil ? "Remind" : "Remove reminder",
-                        systemImage: row.scheduledAt == nil ? "clock" : "clock.badge.xmark",
-                        tint: Theme.navy700) { model.run(.remind, on: row) }
-        case .needReply:
-            SwipeAction(title: row.needsReply ? "No reply needed" : "Need reply", systemImage: "arrowshape.turn.up.left",
-                        tint: Color(hex: 0x2A6BAE)) { model.run(.needReply, on: row) }
-        case .pin:
-            SwipeAction(title: row.isPinned ? "Unpin" : "Pin", systemImage: row.isPinned ? "pin.slash" : "pin",
-                        tint: Color(hex: 0xA9761E)) { model.run(.pin, on: row) }
-        case .read:
-            SwipeAction(title: row.isRead ? "Unread" : "Read", systemImage: row.isRead ? "envelope.badge" : "envelope.open",
-                        tint: Theme.navy500) { model.run(.read, on: row) }
+        SwipeAction(title: action.shortLabel(for: row), systemImage: action.glyph(for: row), tint: action.tint) {
+            model.run(action, on: row)
         }
     }
 }
@@ -369,7 +403,6 @@ enum RowSwipes {
 /// the whole view is the sparkle in the top bar.
 struct GroupHeader: View {
     let group: RowGroup
-    @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack {
@@ -405,10 +438,10 @@ struct RowMenu: View {
             if !row.isDone { IntentDonations.archived(row, in: model) }
             model.toggleDone(row)
         } label: {
-            Label(row.isDone ? "Mark not done" : "Mark done", systemImage: row.isDone ? "arrow.uturn.backward" : "checkmark")
+            Label(RowAction.done.label(for: row), systemImage: RowAction.done.glyph(for: row))
         }
         Button { model.pendingRemind = row } label: {
-            Label(row.scheduledAt == nil ? "Remind me" : "Change reminder", systemImage: "clock")
+            Label(RowAction.remindSheetLabel(for: row), systemImage: "clock")
         }
         Button { model.pendingBundlePick = row } label: {
             Label(row.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
@@ -421,13 +454,13 @@ struct RowMenu: View {
             }
         }
         Button { model.togglePin(row) } label: {
-            Label(row.isPinned ? "Unpin" : "Pin", systemImage: row.isPinned ? "pin.slash" : "pin")
+            Label(RowAction.pin.label(for: row), systemImage: RowAction.pin.glyph(for: row))
         }
         Button { model.toggleNeedsReply(row) } label: {
-            Label(row.needsReply ? "Clear need reply" : "Need reply", systemImage: "arrowshape.turn.up.left")
+            Label(RowAction.needReply.label(for: row), systemImage: RowAction.needReply.glyph(for: row))
         }
         Button { model.toggleRead(row) } label: {
-            Label(row.isRead ? "Mark unread" : "Mark read", systemImage: row.isRead ? "envelope.badge" : "envelope.open")
+            Label(RowAction.read.label(for: row), systemImage: RowAction.read.glyph(for: row))
         }
         if !accountLabels.isEmpty {
             Menu {
@@ -458,7 +491,9 @@ struct RowMenu: View {
         }
         Divider()
         FolderMoveItem(row: row)
-        Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: { Label("Delete", systemImage: "trash") }
+        Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: {
+            Label(RowAction.delete.label(for: row), systemImage: RowAction.delete.glyph(for: row))
+        }
     }
 }
 
@@ -513,24 +548,47 @@ struct SkeletonList: View {
     }
 }
 
-/// The empty inbox is a designed moment, not a shrug.
+/// The empty inbox is a designed moment, not a shrug. With no account
+/// connected it is the way in instead: "All clear" over an inbox that is
+/// not there was the first thing a new install said, and the sign-in was
+/// two taps away in the sidebar.
 struct EmptyState: View {
     let view: MailView
     let searching: Bool
     let lastSyncAt: Date?
+    /// Starts the Google sign-in; set only while no account is connected.
+    var connect: (() -> Void)? = nil
 
     var body: some View {
-        ContentUnavailableView {
-            Label(searching ? "No matches" : (view == .inbox ? "All clear" : "Nothing here"),
-                  systemImage: searching ? "magnifyingglass" : "bird")
-                .font(Theme.display(22, relativeTo: .title2))
-        } description: {
-            if searching {
-                Text("Try other words or remove a filter.")
-            } else if let lastSyncAt {
-                Text("Up to date as of \(Formatters.rowTime(lastSyncAt)).")
-            } else {
-                Text("Pull down to sync.")
+        if let connect, !searching {
+            ContentUnavailableView {
+                Label("Connect your Gmail", systemImage: "bird")
+                    .font(Theme.display(22, relativeTo: .title2))
+            } description: {
+                Text("Sign in with Google to bring your mail to this \(Device.name).")
+            } actions: {
+                Button(action: connect) {
+                    Text("Add Google account")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Theme.onPrimary)
+                        .padding(.horizontal, 6)
+                }
+                .pillButton(prominent: true)
+                .tint(Theme.textPrimary)
+            }
+        } else {
+            ContentUnavailableView {
+                Label(searching ? "No matches" : (view == .inbox ? "All clear" : "Nothing here"),
+                      systemImage: searching ? "magnifyingglass" : "bird")
+                    .font(Theme.display(22, relativeTo: .title2))
+            } description: {
+                if searching {
+                    Text("Try other words or remove a filter.")
+                } else if let lastSyncAt {
+                    Text("Up to date as of \(Formatters.rowTime(lastSyncAt)).")
+                } else {
+                    Text("Pull down to sync.")
+                }
             }
         }
     }

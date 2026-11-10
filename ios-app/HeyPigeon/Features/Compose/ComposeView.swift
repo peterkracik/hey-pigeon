@@ -232,6 +232,8 @@ struct ComposeView: View {
             }
             #if os(iOS)
             .sheet(isPresented: $showAI) {
+                // What it writes is reviewed in the sheet before
+                // `applyAI` / `replaceBody` put it into the message.
                 AIEditSheet(text: selectedText ?? bodyWithoutSignature, hasSelection: selectedText != nil,
                             subject: draft.subject, history: draft.history,
                             onApply: applyAI, onWrite: replaceBody)
@@ -306,8 +308,13 @@ struct ComposeView: View {
                     Image(systemName: "paperclip").font(.caption)
                     Text(a.filename).font(.caption.weight(.medium)).lineLimit(1)
                     Text(Self.size(a.size)).font(.caption2).foregroundStyle(Theme.textTertiary)
-                    Button { attachments.removeAll { $0.id == a.id } } label: { Image(systemName: "xmark").font(.caption2.weight(.bold)) }
-                        .buttonStyle(.plain)
+                    Button { attachments.removeAll { $0.id == a.id } } label: {
+                        Image(systemName: "xmark").font(.caption2.weight(.bold))
+                            // The chip's whole end, not just the glyph.
+                            .tapArea(horizontal: 10, vertical: 9)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(a.filename)")
                 }
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 6)
@@ -553,10 +560,15 @@ struct ComposeView: View {
         leave()
     }
 
-    /// Trash: close and delete the draft, if one was saved.
+    /// Trash: close and delete the draft, if one was saved; the toast's
+    /// Undo opens the composer on it again (AppModel.discardDraft). A
+    /// composer nothing was written in just closes: there is nothing to
+    /// bring back.
     private func discard() {
         finished = true
-        if let from = savedFrom { model.deleteDraft(draft.draftKey, from: from) }
+        if savedFrom != nil || snapshot != savedSnapshot {
+            model.discardDraft(composed, savedFrom: savedFrom)
+        }
         Keyboard.dismiss()
         leave()
     }
@@ -650,6 +662,7 @@ extension ComposeView {
         }
         fieldRow("Subject") {
             TextField("", text: $draft.subject).focused($focus, equals: .subject)
+                .accessibilityLabel("Subject")
         }
     }
 
@@ -809,6 +822,7 @@ extension ComposeView {
                 TextField("", text: $draft.subject)
                     .focused($focus, equals: .subject)
                     .onSubmit { focus = .body }
+                    .accessibilityLabel("Subject")
             }
         }
     }

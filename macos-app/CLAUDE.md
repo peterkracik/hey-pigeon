@@ -146,6 +146,8 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   timeout — not a sheet. `ComposeView` keeps the draft's lifecycle for
   both platforms (`withLifecycle`) and branches only in its two
   per-platform extensions; the phone's branches are what ship there.
+  The panel is a view over the shared `AIAssist` (the presets, the
+  requests, the runner with cancel and timeout), as the phone's sheet is.
   The AI's prompt carries who writes to whom (`AIWriteContext`) and the
   core keeps the draft's language. The list and the thread keep to
   `MacLayout.maxWidth`.
@@ -220,8 +222,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   reads state captured on the main actor beforehand (`OAuthCoordinator`).
 - **Copy says "Mac" through `Device.name`**, and Settings sections that
   differ (Default email app, Notifications, Siri & Search, the swipe
-  titles) branch on `#if os(macOS)` inside `SettingsView` with their own
-  footer strings — the privacy sentence must stay true on both.
+  titles, Appearance's *Show in the menu bar*) branch on `#if os(macOS)`
+  inside `SettingsView` with their own footer strings — the privacy
+  sentence must stay true on both.
+- **A row action has one name, glyph and colour.** `RowAction.label(for:)`,
+  `shortLabel(for:)`, `glyph(for:)` and `tint` are the shared shell's
+  (`../ios-app/HeyPigeon/Shared/RowActionPresentation.swift`): the hover
+  bar, the trackpad swipes, the palette and the phone's swipes and menus
+  read them. Only `command` and `key` are the Mac's (`WindowState.swift`).
 
 ## Building and testing
 

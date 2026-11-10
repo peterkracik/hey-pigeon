@@ -457,8 +457,8 @@ final class MockEngine: MailEngine {
     }
     func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String {
         try? await Task.sleep(for: .milliseconds(500))
-        if instruction.hasPrefix(AIEditSheet.writePrefix) {
-            // Compose from a brief (AIEditSheet's Write mode).
+        if instruction.hasPrefix(AIAssist.writePrefix) {
+            // Compose from a brief (the assistant's Write mode).
             return "Hi,\n\n\(text)\n\nLet me know if [detail] works for you.\n\nThanks"
         }
         if instruction.hasPrefix(Translation.instructionPrefix) {

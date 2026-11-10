@@ -85,6 +85,7 @@ struct AskSheet: View {
                 Image(systemName: "arrow.up").font(.body.weight(.bold)).foregroundStyle(.white)
                     .frame(width: 34, height: 34)
                     .background(Theme.accent.opacity(canAsk ? 0.9 : 0.35), in: Circle())
+                    .tapArea(horizontal: 5, vertical: 5)
             }
             .buttonStyle(.plain)
             .disabled(!canAsk)
@@ -117,7 +118,7 @@ private struct ConversationView: View {
             Text(conversation.question)
                 .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
             if let error = conversation.error {
-                Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+                Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.dangerText)
             } else if conversation.answer.isEmpty {
                 HStack(spacing: 10) {
                     ProgressView()

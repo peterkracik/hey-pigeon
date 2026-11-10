@@ -1,7 +1,7 @@
 // The window's root page, under the window's toolbar (MainToolbar): the
 // list, full width up to a readable maximum, in the first desktop
-// client's shape — single-line rows with a done circle, like a to-do list
-// (MailRow), the day groups between them, a click opening the row's
+// client's shape — single-line rows, like a to-do list, with Done first
+// in the hover bar (MailRow), the day groups between them, a click opening the row's
 // latest message in place as a card with "Open full thread ›". ⌘-click
 // and ⇧-click gather rows for the batch bar. Search results, the From /
 // To / Unread / account filters and the recent searches are the phone's
@@ -23,7 +23,7 @@ struct InboxPage: View {
         VStack(spacing: 0) {
             if model.isSearching {
                 SearchFilterBar(picking: $picking).padding(.top, 8)
-                if model.isSearching { ResultCount(count: model.searchResults.count) }
+                ResultCount(count: model.searchResults.count)
             }
             content
         }
@@ -47,13 +47,20 @@ struct InboxPage: View {
         .onChange(of: state.listFocusRequest) { _, _ in listFocused = true }
     }
 
+    /// With no account the empty list offers the sign-in (the shared
+    /// EmptyState), as the phone's does.
+    private var connect: (() -> Void)? {
+        guard model.accounts.isEmpty else { return nil }
+        return { Task { await model.addAccount() } }
+    }
+
     @ViewBuilder private var content: some View {
         if !model.hasLoadedOnce {
             SkeletonList()
         } else if model.groupedRows.isEmpty && model.isSearching && model.isSearchPending {
             Color.clear
         } else if model.groupedRows.isEmpty {
-            EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt)
+            EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt, connect: connect)
         } else {
             list
         }

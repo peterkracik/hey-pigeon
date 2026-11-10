@@ -261,7 +261,8 @@ messages before the last two stays visible.
 - **Reply pill** works like Superhuman's: tapping it runs the default (Reply
   all when others are on the latest message, else Reply), the chevron picks
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
-  the thread), and the AI draft is its own circle beside it. There are no action
+  the thread; a reply goes to the message's Reply-To when its sender set
+  one, and the account's "Send mail as" addresses count as the user's own), and the AI draft is its own circle beside it. There are no action
   links under the bodies: an open message's ••• or a long press on any
   message's header line replies to or forwards that one (the body is left
   to the long press that starts a text selection).
@@ -287,7 +288,11 @@ at once rather than risk losing the message. The composer has no Cancel:
 its **X** (or a swipe down, or leaving the app) saves the message as a
 Gmail draft — created on the first save, updated after that, skipped while
 nothing changed — and the trash next to Send discards it, deleting that
-draft. A send deletes it too once it commits.
+draft. A send deletes it too once it commits. A saved draft reopens with
+its formatting: the phone reads back bold, italic, underline,
+strikethrough, links and paragraphs; a draft with anything richer (a
+list, Gmail's own blocks) opens as its plain text here, while the Mac's
+HTML editor loads it whole.
 
 A reply shows the conversation it answers under the editor
 (`ComposeThreadHistory`): the latest message open, earlier ones a line

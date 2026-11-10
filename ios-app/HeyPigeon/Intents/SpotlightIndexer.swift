@@ -86,10 +86,14 @@ enum SpotlightIndexer {
         if !plan.droppedThreads.isEmpty { try? await index.deleteAppEntities(identifiedBy: plan.droppedThreads, ofType: MailThreadEntity.self) }
         if !plan.droppedMessages.isEmpty { try? await index.deleteAppEntities(identifiedBy: plan.droppedMessages, ofType: MailMessageEntity.self) }
         // Read again: a thread opened meanwhile dropped its own fingerprint.
-        var map = fingerprints
-        for id in plan.forgotten { map[id] = nil }
-        map.merge(plan.fresh) { _, new in new }
-        fingerprints = map
+        // Only when something moved: assigning an equal map still encoded
+        // and rewrote the whole file after every sync.
+        if !plan.fresh.isEmpty || !plan.forgotten.isEmpty {
+            var map = fingerprints
+            for id in plan.forgotten { map[id] = nil }
+            map.merge(plan.fresh) { _, new in new }
+            fingerprints = map
+        }
         needsRefresh = plan.more
     }
 

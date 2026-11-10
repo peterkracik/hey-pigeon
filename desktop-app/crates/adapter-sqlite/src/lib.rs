@@ -430,6 +430,17 @@ const MIGRATIONS: &[&str] = &[
     // thread's next full fetch (one more refetch per thread opened in
     // that window, none for anyone else).
     "UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;",
+    // v27 — the Reply-To header (JSON array, like `cc_addrs`): a reply
+    // goes there instead of to the sender. As in v22, `body_fetched`
+    // starts over so that mail already opened gets the header: a thread
+    // fetched in full is never fetched again otherwise, and a reply to a
+    // booking confirmation read before the update would keep going to
+    // its no-reply sender. One more full fetch per opened thread, on its
+    // next open; until then its body is cleaned on the way out (v26).
+    "
+    ALTER TABLE messages ADD COLUMN reply_to_addrs TEXT NOT NULL DEFAULT '[]';
+    UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -983,17 +994,20 @@ pub struct Correspondence {
 /// The message columns, in `row_to_message`'s order.
 const MESSAGE_COLS: &str = "id, thread_id, account_id, from_addr, to_addrs, date, snippet, \
      body_html, body_text, label_ids, is_read, cc_addrs, message_id_header, \
-     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched";
+     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched, \
+     reply_to_addrs";
 
 /// `MESSAGE_COLS` without reading the bodies (`Store::list_message_meta`).
 const MESSAGE_META_COLS: &str = "id, thread_id, account_id, from_addr, to_addrs, date, snippet, \
      NULL, NULL, label_ids, is_read, cc_addrs, message_id_header, \
-     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched";
+     references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched, \
+     reply_to_addrs";
 
 fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     let to_addrs: String = r.get(4)?;
     let label_ids: String = r.get(9)?;
     let cc_addrs: String = r.get(11)?;
+    let reply_to_addrs: String = r.get(17)?;
     Ok(Message {
         id: r.get(0)?,
         thread_id: r.get(1)?,
@@ -1012,6 +1026,7 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         list_unsubscribe: r.get(14)?,
         list_unsubscribe_one_click: r.get(15)?,
         body_fetched: r.get(16)?,
+        reply_to_addrs: serde_json::from_str(&reply_to_addrs).unwrap_or_default(),
     })
 }
 
@@ -1106,13 +1121,15 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
     };
     let to_addrs = json(&m.to_addrs)?;
     let cc_addrs = json(&m.cc_addrs)?;
+    let reply_to_addrs = json(&m.reply_to_addrs)?;
     let label_ids = json(&m.label_ids)?;
     c.prepare_cached(
         "INSERT INTO messages
            (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
             body_html, body_text, label_ids, is_read, cc_addrs, message_id_header,
-            references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            references_header, list_unsubscribe, list_unsubscribe_one_click, body_fetched,
+            reply_to_addrs)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
            snippet = excluded.snippet,
            -- bodies fetch lazily; a metadata-tier re-upsert (backfill,
@@ -1132,6 +1149,8 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
            -- carry one (a row read without it and written back) keeps it
            cc_addrs = CASE WHEN excluded.cc_addrs = '[]' THEN cc_addrs
                            ELSE excluded.cc_addrs END,
+           reply_to_addrs = CASE WHEN excluded.reply_to_addrs = '[]' THEN reply_to_addrs
+                                 ELSE excluded.reply_to_addrs END,
            message_id_header = COALESCE(excluded.message_id_header, message_id_header),
            references_header = COALESCE(excluded.references_header, references_header),
            list_unsubscribe = COALESCE(excluded.list_unsubscribe, list_unsubscribe),
@@ -1157,7 +1176,8 @@ fn upsert_message_on(c: &Connection, m: &Message) -> rusqlite::Result<()> {
         m.references_header,
         m.list_unsubscribe,
         m.list_unsubscribe_one_click,
-        m.body_fetched
+        m.body_fetched,
+        reply_to_addrs
     ])?;
     Ok(())
 }
@@ -5002,6 +5022,7 @@ mod tests {
         let t1 = "t1".to_string();
         let mut full = s.list_messages(&t1).unwrap().remove(0);
         full.cc_addrs = vec!["\"Doe, Jane\" <jane@x.com>".to_string()];
+        full.reply_to_addrs = vec!["Support <help@x.com>".to_string()];
         full.message_id_header = Some("<m1@x.com>".to_string());
         full.references_header = Some("<m0@x.com>".to_string());
         full.list_unsubscribe = Some("<https://x.com/u>".to_string());
@@ -5041,6 +5062,7 @@ mod tests {
         assert_eq!(stored.body_text.as_deref(), Some("zanzibar itinerary"));
         assert!(stored.body_fetched && stored.list_unsubscribe_one_click);
         assert_eq!(stored.cc_addrs, full.cc_addrs);
+        assert_eq!(stored.reply_to_addrs, full.reply_to_addrs);
         assert_eq!(stored.message_id_header, full.message_id_header);
         assert_eq!(stored.references_header, full.references_header);
         assert_eq!(stored.list_unsubscribe, full.list_unsubscribe);
@@ -5209,16 +5231,18 @@ mod tests {
             let conn = Connection::open(&path).unwrap();
             let s = SqliteStore::init_to(conn, 25).unwrap();
             s.upsert_account(&sample_account("a1")).unwrap();
+            // Written as a v25 build did: `upsert_message` names columns
+            // (v27's `reply_to_addrs`) this schema does not have yet.
             for (id, fetched) in [("m-raw", true), ("m-old", false)] {
-                s.upsert_message(&Message {
-                    id: id.to_string(),
-                    thread_id: "t1".to_string(),
-                    account_id: "a1".to_string(),
-                    body_html: Some(RAW_BODY.to_string()),
-                    body_text: Some("hi".to_string()),
-                    cc_addrs: vec!["lee@x.com".to_string()],
-                    body_fetched: fetched,
-                    ..Default::default()
+                s.with(|c| {
+                    c.execute(
+                        "INSERT INTO messages
+                           (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                            body_html, body_text, label_ids, is_read, cc_addrs, body_fetched)
+                         VALUES (?1, 't1', 'a1', '', '[]', 0, '', ?2, 'hi', '[]', 1,
+                                 '[\"lee@x.com\"]', ?3)",
+                        params![id, RAW_BODY, fetched],
+                    )
                 })
                 .unwrap();
             }
@@ -5231,6 +5255,44 @@ mod tests {
             assert_eq!(m.body_html.as_deref(), Some(RAW_BODY));
             assert_eq!(m.cc_addrs, vec!["lee@x.com"]);
         }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Mail opened before v27 has no Reply-To and was fetched in full: the
+    /// upgrade asks for that fetch once more, and the fetch fills it.
+    #[test]
+    fn v27_upgrade_refetches_opened_mail_for_its_reply_to() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v27-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v26.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 26).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO messages
+                       (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                        body_text, label_ids, is_read, body_fetched)
+                     VALUES ('m1', 't1', 'a1', 'no-reply@hotel.com', '[]', 0, '', 'hi', '[]', 1, 1)",
+                    [],
+                )
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v27
+        let t1 = "t1".to_string();
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        assert!(m.reply_to_addrs.is_empty());
+        assert!(heypigeon_core::sync::needs_bodies(std::slice::from_ref(&m)));
+        // The full fetch that follows.
+        m.reply_to_addrs = vec!["Front desk <desk@hotel.com>".to_string()];
+        m.body_fetched = true;
+        s.upsert_message(&m).unwrap();
+        let stored = s.list_messages(&t1).unwrap().remove(0);
+        assert_eq!(stored.reply_to_addrs, vec!["Front desk <desk@hotel.com>"]);
+        assert!(stored.body_fetched);
         let _ = std::fs::remove_file(&path);
     }
 

@@ -53,11 +53,13 @@ struct ThreadView: View {
 
     private var participants: String { detail?.participantNames ?? row.fromSummary }
 
-    /// Reply all when someone besides the sender is on the last message,
-    /// else Reply.
+    /// Reply all when it would copy someone, else Reply — asked of the
+    /// draft itself, so the pill and the recipients agree (mail to the
+    /// user's alias alone said "Reply all" and then copied nobody).
     private var defaultReply: ReplyKind {
         guard let last = detail?.mail.last, !last.isMine else { return .reply }
-        return (last.to + last.cc).contains { $0 != "me" && !$0.isEmpty } ? .replyAll : .reply
+        let all = SendDraft.reply(to: last, in: current, all: true, history: nil, mine: model.ownAddresses(of: current.accountId))
+        return all.cc.isEmpty ? .reply : .replyAll
     }
 
     private var replyKind: ReplyKind { replyChoice ?? defaultReply }
@@ -609,7 +611,7 @@ struct ThreadView: View {
     }
 
     private func replyDraft(to m: MessageItem, all: Bool) -> SendDraft {
-        SendDraft.reply(to: m, in: current, all: all, history: transcript)
+        SendDraft.reply(to: m, in: current, all: all, history: transcript, mine: model.ownAddresses(of: current.accountId))
     }
 
     private func forward(_ m: MessageItem) {

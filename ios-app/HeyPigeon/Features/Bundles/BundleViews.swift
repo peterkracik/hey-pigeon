@@ -13,7 +13,11 @@
 // (`BundlesPage`, `WindowState.showBundles`): a sheet there looked like a
 // dialog too, and an email open in it was cut off from the window's keys
 // and composer. An email opens inside the stack and keeps every action
-// (swipes, the long-press menu, the thread view).
+// (swipes, the long-press menu, the thread view). On the Mac the window
+// hands the stack its own Emails page and page switcher
+// (`BundleScreenParts`): the window's list rows on their white card and
+// the toolbar's capsule tabs, where the phone's rows and a default
+// segmented control read as another app's.
 
 import SwiftUI
 
@@ -83,6 +87,17 @@ enum BundleRoute: Hashable {
     case thread(ThreadRow)
 }
 
+/// What a host draws itself in the bundle view, in place of the phone's
+/// pieces. The Mac window gives its own (macos-app `BundleEmails.swift`):
+/// its list is single-line rows on a card with a hover bar, and its
+/// switchers are capsule tabs. The phone and the iPad give none.
+struct BundleScreenParts {
+    /// The Emails · Info switcher, floating over the top of the page.
+    let switcher: (Binding<BundlePage>, BundleContents) -> AnyView
+    /// The Emails page.
+    let emails: (BundleContents) -> AnyView
+}
+
 /// The Bundles stack: active bundles, then archived ones; a bundle opens
 /// its view in the same stack, and an email opens there too. The path is
 /// its host's — the phone's cover (`BundlesSheet`) keeps one of its own,
@@ -93,6 +108,8 @@ struct BundlesStack: View {
     /// What the close item does; without one there is no close item (the
     /// Mac's page closes through the window: Esc, a tab, a folder).
     var close: (() -> Void)? = nil
+    /// The host's own pieces of the bundle view (the Mac window's).
+    var parts: BundleScreenParts? = nil
     @Environment(AppModel.self) private var model
     @State private var creating = false
 
@@ -116,10 +133,19 @@ struct BundlesStack: View {
                 .navigationDestination(for: BundleRoute.self) { route in
                     switch route {
                     case .bundle(let id):
-                        BundleScreen(bundleId: id) { path.append(.thread($0)) }
+                        BundleScreen(bundleId: id, parts: parts) { path.append(.thread($0)) }
+                            // One screen per bundle. The Mac's sidebar swaps
+                            // the bundle at the same depth of the stack, and
+                            // without an identity of its own the screen was
+                            // kept, with the first bundle's contents: they
+                            // are read when it appears.
+                            .id(id)
                             .backInWindowToolbar()
                     case .thread(let row):
                         ThreadView(row: row) { if !path.isEmpty { path.removeLast() } }
+                            // As the window's own thread page: another email
+                            // in the same place is another thread view.
+                            .id(row.id)
                             .backInWindowToolbar()
                     }
                 }
@@ -249,6 +275,8 @@ enum BundlePage: Hashable, CaseIterable {
 /// then tracking links and key facts as plain lists).
 struct BundleScreen: View {
     let bundleId: String
+    /// The host's own switcher and Emails page (the Mac window's).
+    var parts: BundleScreenParts? = nil
     /// Opens an email in the sheet's stack.
     var openThread: (ThreadRow) -> Void = { _ in }
     @Environment(AppModel.self) private var model
@@ -260,22 +288,25 @@ struct BundleScreen: View {
     @State private var confirmDelete = false
 
     /// Up to this many done emails show without a fold.
-    private static let doneShownUnfolded = 3
+    static let doneShownUnfolded = 3
 
     var body: some View {
         Group {
             if let c = contents {
-                VStack(spacing: 0) {
-                    Picker("Page", selection: $page) {
-                        ForEach(BundlePage.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                    SwipePages(selection: $page, pages: BundlePage.allCases) { p in
-                        switch p {
-                        case .emails: emails(c)
-                        case .info: info(c)
+                if let parts {
+                    // The host's switcher floats over the top of the page,
+                    // which scrolls under it as the list does under the
+                    // window's toolbar.
+                    pages(c)
+                        .safeAreaInset(edge: .top, spacing: 0) { parts.switcher($page, c) }
+                } else {
+                    VStack(spacing: 0) {
+                        Picker("Page", selection: $page) {
+                            ForEach(BundlePage.allCases, id: \.self) { Text($0.title).tag($0) }
                         }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                        pages(c)
                     }
                 }
             } else {
@@ -332,6 +363,18 @@ struct BundleScreen: View {
 
     private func load() {
         contents = model.bundleContents(id: bundleId)
+    }
+
+    /// The two pages; Emails is the host's own where it has one.
+    private func pages(_ c: BundleContents) -> some View {
+        SwipePages(selection: $page, pages: BundlePage.allCases) { p in
+            switch p {
+            case .emails:
+                if let parts { parts.emails(c) } else { emails(c) }
+            case .info:
+                info(c)
+            }
+        }
     }
 
     // MARK: Emails

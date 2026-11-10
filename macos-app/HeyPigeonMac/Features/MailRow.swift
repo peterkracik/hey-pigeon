@@ -10,7 +10,10 @@
 // a click opens the row in place: the latest message, whole, Reply ·
 // Reply all · Forward and "Open full thread ›" (MailPreview). ⌘ and ⇧
 // gather rows for the batch bar; the context menu and two-finger trackpad
-// swipes act on the row too.
+// swipes act on the row too. A bundle's Emails page lists its mail with
+// the same row (BundleEmailList, `inBundle`): no bundle chip, since every
+// row there would carry the same one, ⊖ (not part of this bundle) in the
+// hover bar, and no cursor, as the Bundles page has none.
 
 import AppKit
 import SwiftUI
@@ -26,6 +29,11 @@ struct MailRow: View {
     let row: ThreadRow
     @Bindable var state: WindowState
     var position = Position()
+    /// On a bundle's Emails page (the header comment says what differs).
+    var inBundle = false
+    /// A done email in a bundle: there for reference, set back until the
+    /// pointer is on it or it is open.
+    var dimmed = false
     @Environment(AppModel.self) private var model
     @State private var hovering = false
     /// Between a click on Done and the row leaving: the strike runs.
@@ -33,11 +41,14 @@ struct MailRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var expanded: Bool { state.expanded == row.id }
-    private var selected: Bool { state.selection.contains(row.id) }
+    /// The window's cursor is the list's: under the Bundles page it is out
+    /// of sight, and its row may be in the bundle too.
+    private var selected: Bool { !inBundle && state.selection.contains(row.id) }
 
     var body: some View {
         VStack(spacing: 0) {
             line
+                .opacity(dimmed && !expanded && !hovering ? 0.6 : 1)
             if expanded {
                 Hairline()
                 MailPreview(row: row, state: state)
@@ -81,7 +92,8 @@ struct MailRow: View {
             swipe(model.swipeActions[2])
             swipe(model.swipeActions[3])
         }
-        .onAppear { model.loadMoreIfNeeded(current: row) }
+        // The next page of the window's list; a bundle's is whole.
+        .onAppear { if !inBundle { model.loadMoreIfNeeded(current: row) } }
     }
 
     private var background: Color {
@@ -107,7 +119,7 @@ struct MailRow: View {
                         .monospacedDigit()
                 }
             }
-            .frame(width: state.readingPane ? MacLayout.paneSenderWidth : MacLayout.senderWidth, alignment: .leading)
+            .frame(width: state.readingPane && !inBundle ? MacLayout.paneSenderWidth : MacLayout.senderWidth, alignment: .leading)
             HStack(spacing: 10) {
                 Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                     .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
@@ -130,8 +142,9 @@ struct MailRow: View {
         .contentShape(Rectangle())
         // A click opens the row in place (the arrow and Return open the
         // full thread); ⌘ and ⇧ gather rows for the batch bar.
+        // (Not on a bundle's page, which has no batch bar.)
         .onTapGesture {
-            let modifiers = NSEvent.modifierFlags
+            let modifiers: NSEvent.ModifierFlags = inBundle ? [] : NSEvent.modifierFlags
             if modifiers.contains(.command) {
                 state.toggle(row.id, in: model)
             } else if modifiers.contains(.shift) {
@@ -157,6 +170,9 @@ struct MailRow: View {
                 Button(action.label(for: row)) { state.run(action.command, in: model, rows: [row]) }
             }
             Button(expanded ? "Close preview" : "Preview") { state.expand(row, in: model) }
+            if inBundle {
+                Button("Not part of this bundle") { model.removeFromBundle(row) }
+            }
         }
     }
 
@@ -176,7 +192,7 @@ struct MailRow: View {
     @ViewBuilder private var badges: some View {
         // The Mac lists bundle mail row by row (no folding), so the chip
         // is what ties a row to its bundle.
-        if let b = model.bundle(id: row.bundleId) {
+        if !inBundle, let b = model.bundle(id: row.bundleId) {
             RowChip(text: b.name, systemImage: b.category.systemImage, tint: Theme.tagForeground(.sky))
         }
         // The AI's proposal and an unsent reply, as the phone's row shows
@@ -218,7 +234,7 @@ struct MailRow: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .opacity(hovering ? 0 : 1)
-            if hovering { RowActions(row: row, state: state) { complete() } }
+            if hovering { RowActions(row: row, state: state, inBundle: inBundle) { complete() } }
         }
         .frame(minWidth: 64, alignment: .trailing)
     }
@@ -265,10 +281,13 @@ private struct RowChip: View {
 }
 
 /// Under the pointer: Done first, the other swipe actions from Settings,
-/// then the arrow to the full thread.
+/// then the arrow to the full thread. On a bundle's page ⊖ comes before
+/// the arrow: the email is not part of this bundle (the model learns from
+/// it; the context menu's "Not part of …" is the same action).
 private struct RowActions: View {
     let row: ThreadRow
     @Bindable var state: WindowState
+    var inBundle = false
     /// Done, through the row, so its strike-through runs first.
     let onDone: () -> Void
     @Environment(AppModel.self) private var model
@@ -288,7 +307,12 @@ private struct RowActions: View {
                     state.run(action.command, in: model, rows: [row])
                 }
             }
-            IconButton("chevron.right", help: "Open full thread (↩)", size: .small) { state.open(row, in: model) }
+            if inBundle {
+                IconButton("minus.circle", help: "Not part of this bundle", size: .small) { model.removeFromBundle(row) }
+            }
+            IconButton("chevron.right", help: inBundle ? "Open full thread" : "Open full thread (↩)", size: .small) {
+                state.open(row, in: model)
+            }
         }
     }
 }

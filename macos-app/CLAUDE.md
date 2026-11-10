@@ -22,7 +22,8 @@ HeyPigeonMac/
               SearchSpotlight (+ SpotlightPanel),
               MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
               (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), BundlesPage
-              (the shared BundlesStack over the window's path), WindowState,
+              (the shared BundlesStack over the window's path), BundleEmails (a bundle's Emails page
+              and its Emails · Info tabs), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView, ThreadPrinter (⌘P)
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
@@ -79,6 +80,22 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   the sidebar opens it, the toolbar names it, Esc walks its stack back
   and then leaves it, a tab or a folder leaves it, and an email open in
   it is the window's open thread for every key and the inline reply.
+  A bundle's Emails page is the window's list, not the phone's
+  (`BundleEmailList`, handed to the shared screen as `BundleScreenParts`):
+  `MailRow` with `inBundle` on the inbox's white card over the list's
+  background — the open emails untitled, the done ones under the list's
+  group title, set back and folded past three — with ⊖ (not part of this
+  bundle) in the hover bar and the context menu; a click opens a row in
+  place, its arrow opens the thread in the page's stack
+  (`WindowState.open`), and the page still has no cursor. (The phone's
+  three-line rows in a grouped list, a ⊖ button on every row and a bold
+  section header read as another app's here.) Emails · Info is
+  `BundlePageTabs`: the toolbar's tabs (`TabPill`, shared with
+  `ViewTabs`) on a glass capsule floating over the top of the page. A
+  switcher in the window is `TabPill`s, never the system's segmented
+  control, whose selection is the system blue. The stack gives each
+  bundle's screen its own identity (`.id`): the sidebar swaps the bundle
+  at the same depth, and the screen kept the first bundle's contents.
   `AppModel.showBundles` is handed to the window the moment it turns
   on, so the root's sheets (`AppModel.modal(_:inBundles: false)`) serve
   the page. A page over the list (a full thread; a bundle or an email

@@ -102,6 +102,41 @@ struct IconButton: View {
     }
 }
 
+/// One tab of a capsule switcher: the toolbar's Inbox · Remind me · Need
+/// reply (ViewTabs) and a bundle's Emails · Info (BundlePageTabs). The
+/// shown one in bold on a light pill, a count beside the title. The
+/// system's segmented control fills its selection with the system blue,
+/// a hue the app has no other use for.
+struct TabPill: View {
+    let title: String
+    var count: Int? = nil
+    var countColor: Color = Theme.textTertiary
+    let on: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(countColor)
+                        .monospacedDigit()
+                }
+            }
+            .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(on ? MacTheme.selected : .clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
 /// A full-width hairline.
 struct Hairline: View {
     var body: some View {

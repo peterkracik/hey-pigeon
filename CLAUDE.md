@@ -11,6 +11,11 @@ Each part has its own guide; read the one for the folder you work in.
 | `relay/`, `terraform/` | Optional push relay for iOS (sees an address and a change counter, never mail) | `relay/README.md`, `terraform/README.md` |
 | `site/` | heypigeon.app | — |
 
+Agents (`.claude/agents/`): `architect` specifies a feature in `docs/specs/`
+(template in `docs/specs/README.md`), implements it and verifies it; a
+feature behaves the same on iPhone, iPad and Mac unless its spec lists the
+difference. `ux-ui` owns how the apps look, read and behave.
+
 CI: `rust-ci` (crates), `ios-ci` (iOS build + tests on PRs), `macos-ci`
 (native Mac build + tests on PRs), `publish-ios` (main → TestFlight),
 `publish-macos` (main → the notarized `mac-latest` build and its Sparkle

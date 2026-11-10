@@ -11,6 +11,18 @@ Each part has its own guide; read the one for the folder you work in.
 | `relay/`, `terraform/` | Optional push relay for iOS (sees an address and a change counter, never mail) | `relay/README.md`, `terraform/README.md` |
 | `site/` | heypigeon.app | — |
 
+Agents (`.claude/agents/`): `architect` specifies a feature in `docs/specs/`
+(template in `docs/specs/README.md`), implements it and verifies it; a
+feature behaves the same on iPhone, iPad and Mac unless its spec lists the
+difference. `apple-platform` knows what iOS, iPadOS and macOS offer and
+proposes and builds the newest system features that fit. `core` is the
+specialist for the Rust crates: Gmail, sync, the outbox, SQLite, Drive
+sync and the FFI bridge. `security-privacy` reviews what leaves the
+device, secrets, untrusted mail and whether the privacy copy is true.
+`performance`
+reviews code and changes for speed, crash paths and needless complexity.
+`ux-ui` owns how the apps look, read and behave.
+
 CI: `rust-ci` (crates), `ios-ci` (iOS build + tests on PRs), `macos-ci`
 (native Mac build + tests on PRs), `publish-ios` (main → TestFlight),
 `publish-macos` (main → the notarized `mac-latest` build and its Sparkle

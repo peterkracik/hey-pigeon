@@ -31,7 +31,15 @@ serde_json.workspace = true
 thiserror.workspace = true
 log.workspace = true
 uniffi = { version = "0.32", features = ["tokio"] }
+# UniFFI's `async_runtime = "tokio"` runs the exported futures inside
+# async-compat's runtime, which by default is ONE thread: everything the
+# engine spawns, and the wake-up of every network read, queued behind
+# whatever that thread was doing (a sync page's database write). Its
+# `multi-thread` feature (unified into uniffi's copy of the crate) makes
+# that runtime tokio's ordinary worker pool.
+async-compat = { version = "0.2.6", features = ["multi-thread"] }
 async-trait = "0.1"
+futures = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]

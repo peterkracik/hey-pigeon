@@ -10,7 +10,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 log.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# http2: one connection carries a sync page's parallel thread fetches
+# (HTTP/1.1 opened ten). gzip: Gmail's JSON shrinks about five to one.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "gzip"] }
 tokio = { version = "1", features = ["net", "io-util", "sync", "time"] }
 futures = "0.3"
 sha2 = "0.10"

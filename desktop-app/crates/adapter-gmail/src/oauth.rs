@@ -158,7 +158,7 @@ impl AuthRequest {
         if let Some(secret) = &self.client.client_secret {
             form.push(("client_secret", secret));
         }
-        let resp = reqwest::Client::new()
+        let resp = crate::http_client()
             .post(TOKEN_ENDPOINT)
             .form(&form)
             .send()
@@ -218,6 +218,17 @@ pub async fn authorize(
 /// fresh consent flow fixes; `Http`/`Io` are transport failures (offline)
 /// and say nothing about whether the account is still connected.
 pub async fn refresh(client: &ClientConfig, refresh_token: &str) -> Result<TokenSet, OauthError> {
+    refresh_with(&crate::http_client(), client, refresh_token).await
+}
+
+/// `refresh` over the caller's HTTP client: the provider passes its own,
+/// so the hourly refresh reuses a pooled connection instead of opening a
+/// new one (a TLS handshake) every time.
+pub async fn refresh_with(
+    http: &reqwest::Client,
+    client: &ClientConfig,
+    refresh_token: &str,
+) -> Result<TokenSet, OauthError> {
     let mut form: Vec<(&str, &str)> = vec![
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
@@ -226,11 +237,7 @@ pub async fn refresh(client: &ClientConfig, refresh_token: &str) -> Result<Token
     if let Some(secret) = &client.client_secret {
         form.push(("client_secret", secret));
     }
-    let resp = reqwest::Client::new()
-        .post(TOKEN_ENDPOINT)
-        .form(&form)
-        .send()
-        .await?;
+    let resp = http.post(TOKEN_ENDPOINT).form(&form).send().await?;
     parse_token_response(resp).await
 }
 

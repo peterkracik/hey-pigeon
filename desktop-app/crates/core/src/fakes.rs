@@ -145,12 +145,28 @@ impl Store for MemStore {
         let mut m = message.clone();
         // Match SQLite: a metadata-tier re-upsert must not wipe lazily
         // fetched bodies.
+        // Same for what only some fetches carry: the full-fetch flag is
+        // sticky and a header an upsert lacks keeps its stored value.
         if let Some(old) = g.messages.get(&m.id) {
             if m.body_html.is_none() {
                 m.body_html = old.body_html.clone();
             }
             if m.body_text.is_none() {
                 m.body_text = old.body_text.clone();
+            }
+            m.body_fetched |= old.body_fetched;
+            if m.cc_addrs.is_empty() {
+                m.cc_addrs = old.cc_addrs.clone();
+            }
+            if m.message_id_header.is_none() {
+                m.message_id_header = old.message_id_header.clone();
+            }
+            if m.references_header.is_none() {
+                m.references_header = old.references_header.clone();
+            }
+            if m.list_unsubscribe.is_none() {
+                m.list_unsubscribe = old.list_unsubscribe.clone();
+                m.list_unsubscribe_one_click = old.list_unsubscribe_one_click;
             }
         }
         g.messages.insert(m.id.clone(), m);
@@ -205,6 +221,15 @@ impl Store for MemStore {
             .cloned()
             .collect();
         v.sort_by_key(|m| m.date);
+        Ok(v)
+    }
+
+    fn list_message_meta(&self, thread_id: &ThreadId) -> Result<Vec<Message>, StoreError> {
+        let mut v = self.list_messages(thread_id)?;
+        for m in &mut v {
+            m.body_html = None;
+            m.body_text = None;
+        }
         Ok(v)
     }
 
@@ -684,19 +709,28 @@ impl Store for MemStore {
                     t.labels.push(label_id.clone());
                 }
             }
+            // Back in the inbox, out of Trash / Spam.
+            Mutation::Untrash { .. } | Mutation::MarkSpam { spam: false, .. } => {
+                t.is_inbox = true;
+                t.is_archived = false;
+                t.labels.retain(|l| l != "TRASH" && l != "SPAM");
+                if !t.labels.iter().any(|l| l == "INBOX") {
+                    t.labels.push("INBOX".to_string());
+                }
+            }
+            Mutation::MarkSpam { spam: true, .. } => {
+                t.is_inbox = false;
+                t.is_archived = false;
+                t.labels.retain(|l| l != "INBOX");
+                if !t.labels.iter().any(|l| l == "SPAM") {
+                    t.labels.push("SPAM".to_string());
+                }
+            }
             Mutation::Send { .. } | Mutation::SaveDraft { .. } | Mutation::DeleteDraft { .. } => {}
         };
-        let id = match mutation {
-            Mutation::Archive { thread_id }
-            | Mutation::Unarchive { thread_id }
-            | Mutation::MarkRead { thread_id, .. }
-            | Mutation::Star { thread_id, .. }
-            | Mutation::ModifyLabel { thread_id, .. }
-            | Mutation::Trash { thread_id } => thread_id,
-            // Nothing changes locally for outgoing mail (no Sent view in M1).
-            Mutation::Send { .. } | Mutation::SaveDraft { .. } | Mutation::DeleteDraft { .. } => {
-                return Ok(())
-            }
+        // Nothing changes locally for outgoing mail (no Sent view in M1).
+        let Some(id) = mutation.thread_id() else {
+            return Ok(());
         };
         let t = g
             .threads
@@ -706,7 +740,7 @@ impl Store for MemStore {
         Ok(())
     }
 
-    fn outbox_push(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), StoreError> {
+    fn outbox_push(&self, account_id: &AccountId, mutation: &Mutation) -> Result<i64, StoreError> {
         let mut g = self.inner.lock().unwrap();
         g.next_outbox_id += 1;
         let id = g.next_outbox_id;
@@ -717,7 +751,7 @@ impl Store for MemStore {
             attempts: 0,
             created_at: 0,
         });
-        Ok(())
+        Ok(id)
     }
 
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError> {
@@ -976,6 +1010,25 @@ impl SyncTransport for MemTransport {
 
 // ------------------------------------------------------------ FakeProvider
 
+/// Pending once, then ready: a network round trip's worth of "someone else
+/// runs now", without a timer (this crate has no async runtime).
+struct YieldOnce(bool);
+
+impl std::future::Future for YieldOnce {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            return std::task::Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
+    }
+}
+
 /// In-memory `MailProvider` with deterministic sample data and failure toggles.
 pub struct FakeProvider {
     account_id: AccountId,
@@ -983,6 +1036,10 @@ pub struct FakeProvider {
     page_size: usize,
     applied: Mutex<Vec<(AccountId, Mutation)>>,
     fail_applies: Mutex<bool>,
+    /// Thread ids (or draft keys) whose mutations the provider refuses.
+    refused: Mutex<Vec<String>>,
+    /// How many times `apply` yields to the executor before it answers.
+    apply_yields: Mutex<usize>,
     history: Mutex<Vec<HistoryChange>>,
     latest_history_id: Mutex<String>,
     history_expired: Mutex<bool>,
@@ -1038,6 +1095,7 @@ impl FakeProvider {
                     body_text: Some(format!("Body of sample thread {i}.")),
                     label_ids: vec!["INBOX".to_string()],
                     is_read: i % 3 != 0,
+                    ..Default::default()
                 };
                 (thread, vec![message])
             })
@@ -1048,6 +1106,8 @@ impl FakeProvider {
             page_size,
             applied: Mutex::new(Vec::new()),
             fail_applies: Mutex::new(false),
+            refused: Mutex::new(Vec::new()),
+            apply_yields: Mutex::new(0),
             history: Mutex::new(Vec::new()),
             latest_history_id: Mutex::new("hist-1".to_string()),
             history_expired: Mutex::new(false),
@@ -1073,8 +1133,22 @@ impl FakeProvider {
         self.applied.lock().unwrap().clone()
     }
 
+    /// Make every `apply` fail in transport (`MailError::Network`): the
+    /// device is offline.
     pub fn fail_applies(&self, fail: bool) {
         *self.fail_applies.lock().unwrap() = fail;
+    }
+
+    /// Make `apply` refuse mutations on this thread with a provider error
+    /// (Gmail's 404 for a thread deleted elsewhere), whatever the network.
+    pub fn refuse_thread(&self, thread_id: &str) {
+        self.refused.lock().unwrap().push(thread_id.to_string());
+    }
+
+    /// Make `apply` take a while: it yields to the executor `yields` times
+    /// first, so a second caller gets to run in between.
+    pub fn slow_applies(&self, yields: usize) {
+        *self.apply_yields.lock().unwrap() = yields;
     }
 
     /// Expiration (epoch ms) the next `watch` call reports.
@@ -1193,11 +1267,26 @@ impl MailProvider for FakeProvider {
             .threads
             .iter()
             .find(|(t, _)| &t.id == thread_id)
-            .map(|(t, msgs)| (t.has_attachment, msgs.clone()))
+            .map(|(t, msgs)| {
+                let mut msgs = msgs.clone();
+                for m in &mut msgs {
+                    m.body_fetched = true;
+                }
+                (t.has_attachment, msgs)
+            })
             .unwrap_or_default())
     }
 
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
+        let yields = *self.apply_yields.lock().unwrap();
+        for _ in 0..yields {
+            YieldOnce(false).await;
+        }
+        if let Some(id) = mutation.thread_id() {
+            if self.refused.lock().unwrap().contains(id) {
+                return Err(MailError::Provider("404 Not Found: fake".to_string()));
+            }
+        }
         if *self.fail_applies.lock().unwrap() {
             return Err(MailError::Network("fake failure".to_string()));
         }

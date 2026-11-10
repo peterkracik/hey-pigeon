@@ -19,8 +19,10 @@ uniffi::setup_scaffolding!();
 
 mod ai;
 mod bundles;
+mod contacts;
 mod engine;
 mod keyed;
+mod mailbox;
 mod push;
 mod secrets;
 mod settings;

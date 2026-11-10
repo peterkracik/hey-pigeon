@@ -314,7 +314,7 @@ pub fn new_bundle_id() -> String {
 /// snippet (the thread's own snippet is only the newest message).
 fn thread_text<S: Store>(store: &S, thread_id: &ThreadId, subject: &str, snippet: &str) -> String {
     let mut text = format!("{subject} \n {snippet}");
-    if let Ok(messages) = store.list_messages(thread_id) {
+    if let Ok(messages) = store.list_message_meta(thread_id) {
         for m in messages {
             text.push_str(" \n ");
             text.push_str(&m.snippet);
@@ -349,18 +349,28 @@ impl LinkOutcome {
 pub fn link_pass<S: Store>(store: &S, limit: u32) -> Result<LinkOutcome, StoreError> {
     let mut outcome = LinkOutcome::default();
     let stale = store.list_threads_needing_anchors(limit)?;
-    for t in &stale {
-        let text = thread_text(store, &t.id, &t.subject, &t.snippet);
-        let anchors: Vec<String> = extract_anchors(&text)
-            .iter()
-            .map(|a| a.to_string())
-            .collect();
-        store.set_thread_anchors(&t.id, &anchors, t.msg_count)?;
-        outcome.scanned += 1;
+    // Scan first and store every thread's anchors as one write (a batch is
+    // up to `limit` threads, and one commit each held the write lock for
+    // the whole pass), then link: a thread may join through another one
+    // scanned in this same batch.
+    let scanned: Vec<(ThreadId, Vec<String>, i64)> = stale
+        .iter()
+        .map(|t| {
+            let text = thread_text(store, &t.id, &t.subject, &t.snippet);
+            let anchors = extract_anchors(&text)
+                .iter()
+                .map(|a| a.to_string())
+                .collect();
+            (t.id.clone(), anchors, t.msg_count)
+        })
+        .collect();
+    store.set_thread_anchors_batch(&scanned)?;
+    outcome.scanned = scanned.len();
+    for (t, (_, anchors, _)) in stale.iter().zip(&scanned) {
         if t.bundle_id.is_some() || anchors.is_empty() {
             continue;
         }
-        if let Some(bundle_id) = candidate_bundle(store, &t.id, &anchors)? {
+        if let Some(bundle_id) = candidate_bundle(store, &t.id, anchors)? {
             store.set_thread_bundle(&t.id, Some((&bundle_id, BundleSource::Link)))?;
             outcome.linked.push(t.id.clone());
             if reopen(store, &bundle_id)? {

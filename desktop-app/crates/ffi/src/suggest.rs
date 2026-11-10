@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use heypigeon_core::domain::{now_ms, Message, Suggestion, Thread};
-use heypigeon_core::ports::{MailError, MailProvider, Store};
+use heypigeon_core::ports::{MailError, Store};
 
 use crate::ai::AiBackend;
 use crate::engine::Engine;
@@ -144,37 +144,18 @@ impl Engine {
         &self,
         thread: &Thread,
     ) -> Result<Vec<Message>, EngineError> {
-        let messages = self.store.list_messages(&thread.id)?;
-        if !heypigeon_core::sync::needs_bodies(&messages) {
-            return Ok(messages);
-        }
-        let fetched = {
-            let provider = self.provider.read().await;
-            provider.fetch_bodies(&thread.account_id, &thread.id).await
-        };
-        match fetched {
-            Ok((has_attachment, fetched)) => {
-                for m in &fetched {
-                    self.store.upsert_message(m)?;
+        let meta = self.store.list_message_meta(&thread.id)?;
+        if heypigeon_core::sync::needs_bodies(&meta) {
+            match self.fetch_bodies_into_store(thread, &meta).await {
+                Ok(_) => {}
+                Err(MailError::AuthExpired) => {
+                    self.mark_disconnected(&thread.account_id);
+                    return Err(MailError::AuthExpired.into());
                 }
-                // Same as `get_thread`: the metadata tier cannot tell, the
-                // full fetch can.
-                if has_attachment != thread.has_attachment {
-                    let mut t = thread.clone();
-                    t.has_attachment = has_attachment;
-                    self.store.upsert_thread(&t)?;
-                }
-                Ok(self.store.list_messages(&thread.id)?)
-            }
-            Err(MailError::AuthExpired) => {
-                self.mark_disconnected(&thread.account_id);
-                Err(MailError::AuthExpired.into())
-            }
-            Err(e) => {
-                log::warn!("suggest: bodies for {}: {e}", thread.id);
-                Ok(messages)
+                Err(e) => log::warn!("suggest: bodies for {}: {e}", thread.id),
             }
         }
+        Ok(self.store.list_messages(&thread.id)?)
     }
 }
 
@@ -261,6 +242,9 @@ mod tests {
                 body_text: Some(body.into()),
                 label_ids: vec!["INBOX".into(), "UNREAD".into()],
                 is_read: false,
+                // Fetched in full: the pass must not go to the network.
+                body_fetched: true,
+                ..Default::default()
             })
             .unwrap();
     }

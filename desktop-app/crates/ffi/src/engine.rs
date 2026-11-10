@@ -2,13 +2,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use heypigeon_adapter_gmail::oauth::{self, AuthRequest, ClientConfig};
 use heypigeon_adapter_gmail::GmailProvider;
 use heypigeon_adapter_sqlite::SqliteStore;
-use heypigeon_core::domain::{self, now_ms, AccountId};
+use heypigeon_core::domain::{self, now_ms, AccountId, AttachmentRef, ThreadId};
 use heypigeon_core::ports::{
     MailError, MailProvider, SecretStore, Store, SyncError as TransportError,
 };
@@ -33,6 +34,13 @@ const OLDER_PAGES_PER_CALL: usize = 1;
 const OLDER_PAGE_GAP: Duration = Duration::from_secs(20);
 /// How long the walk stays off an account after Gmail rate-limited it.
 const OLDER_RATE_LIMIT_PAUSE: Duration = Duration::from_secs(60);
+/// Outbox rows per page of a drain.
+const DRAIN_BATCH: u32 = 20;
+/// How long a reply waits for Gmail to name the message it answers (its
+/// Message-ID, when the store does not have it) before going out without.
+const REPLY_HEADERS_WAIT: Duration = Duration::from_secs(5);
+/// Threads whose attachment list is remembered (`Engine::attachments`).
+const ATTACHMENT_LISTS_MAX: usize = 200;
 const KEYCHAIN_SERVICE: &str = "app.heypigeon";
 pub(crate) const ACCOUNT_COLORS: &[&str] = &["sky", "lavender", "mint", "amber", "coral"];
 
@@ -100,6 +108,24 @@ pub struct Engine {
     /// ("apple" on-device, "apple-cloud" Private Cloud Compute, …), in
     /// registration order (ai.rs).
     pub(crate) ai_backends: Mutex<Vec<Arc<dyn AiBackend>>>,
+    /// One outbox drain at a time. Two at once read the same rows and
+    /// applied each twice — every `mutate` drained, and so did every sync
+    /// round — which for a queued send meant the mail went out twice.
+    drain_lock: tokio::sync::Mutex<()>,
+    /// A background drain is already waiting for its turn: the mutations
+    /// queued meanwhile are covered by it (a bulk action is one drain, not
+    /// one per thread).
+    drain_queued: AtomicBool,
+    /// Why each outbox row that is still queued failed last time, for the
+    /// caller that waits on a send: (account disconnected, message).
+    drain_failures: Mutex<HashMap<i64, (bool, String)>>,
+    /// thread → (its message count, its attachments), from the full fetch
+    /// that brought its bodies. `list_attachments` used to download the
+    /// whole thread a second time on every open to answer this.
+    attachments: Mutex<HashMap<ThreadId, (i64, Vec<AttachmentRef>)>>,
+    /// The people the stored mail is from and to, ranked, for recipient
+    /// suggestions (contacts.rs).
+    pub(crate) correspondents: Mutex<Option<crate::contacts::Correspondents>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -166,6 +192,11 @@ impl Engine {
             triage_last_error: Mutex::new(None),
             analysis: Mutex::new(AnalysisPass::default()),
             ai_backends: Mutex::new(Vec::new()),
+            drain_lock: tokio::sync::Mutex::new(()),
+            drain_queued: AtomicBool::new(false),
+            drain_failures: Mutex::new(HashMap::new()),
+            attachments: Mutex::new(HashMap::new()),
+            correspondents: Mutex::new(None),
         }))
     }
 
@@ -305,6 +336,9 @@ impl Engine {
 
     /// Thread + messages. Bodies are fetched from Gmail on first open (the
     /// only network read in the UI path) and cached; later opens are local.
+    /// "Fetched" is a per-message flag, so a message with no text at all
+    /// is not fetched again, and a reply that landed in a thread read
+    /// before fetches alone, not the whole thread.
     pub async fn get_thread(
         &self,
         thread_id: String,
@@ -312,31 +346,18 @@ impl Engine {
         let Some(mut thread) = self.store.get_thread(&thread_id)? else {
             return Ok(None);
         };
-        let mut messages = self.store.list_messages(&thread_id)?;
-        if heypigeon_core::sync::needs_bodies(&messages) {
-            let fetched = {
-                let provider = self.provider.read().await;
-                provider.fetch_bodies(&thread.account_id, &thread_id).await
-            };
-            let (has_attachment, fetched) = match fetched {
-                Ok(v) => v,
+        let meta = self.store.list_message_meta(&thread_id)?;
+        if heypigeon_core::sync::needs_bodies(&meta) {
+            match self.fetch_bodies_into_store(&thread, &meta).await {
+                Ok(has_attachment) => thread.has_attachment = has_attachment,
                 Err(MailError::AuthExpired) => {
                     self.mark_disconnected(&thread.account_id);
                     return Err(MailError::AuthExpired.into());
                 }
                 Err(e) => return Err(e.into()),
-            };
-            for m in &fetched {
-                self.store.upsert_message(m)?;
-            }
-            messages = self.store.list_messages(&thread_id)?;
-            // Backfill only sees Gmail's metadata tier, so has_attachment is
-            // first known here — persist it back onto the thread.
-            if has_attachment != thread.has_attachment {
-                thread.has_attachment = has_attachment;
-                self.store.upsert_thread(&thread)?;
             }
         }
+        let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
             messages: messages.into_iter().map(Into::into).collect(),
@@ -361,9 +382,9 @@ impl Engine {
         }))
     }
 
-    /// The thread's attachments (filename, type, size, where to fetch),
-    /// from the provider. One network read; the thread view asks when a
-    /// message with a paperclip is expanded.
+    /// The thread's attachments (filename, type, size, where to fetch).
+    /// Answered from memory when the thread's bodies were fetched this
+    /// session (the same response lists them); one network read otherwise.
     pub async fn list_attachments(
         &self,
         thread_id: String,
@@ -371,19 +392,26 @@ impl Engine {
         let Some(thread) = self.store.get_thread(&thread_id)? else {
             return Ok(Vec::new());
         };
-        let fetched = {
-            let provider = self.provider.read().await;
-            provider
-                .list_attachments(&thread.account_id, &thread_id)
-                .await
-        };
-        let refs = match fetched {
-            Ok(v) => v,
-            Err(MailError::AuthExpired) => {
-                self.mark_disconnected(&thread.account_id);
-                return Err(MailError::AuthExpired.into());
+        let refs = match self.remembered_attachments(&thread_id, thread.msg_count) {
+            Some(refs) => refs,
+            None => {
+                let fetched = {
+                    let provider = self.provider.read().await;
+                    provider
+                        .list_attachments(&thread.account_id, &thread_id)
+                        .await
+                };
+                let refs = match fetched {
+                    Ok(v) => v,
+                    Err(MailError::AuthExpired) => {
+                        self.mark_disconnected(&thread.account_id);
+                        return Err(MailError::AuthExpired.into());
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                self.remember_attachments(&thread_id, thread.msg_count, refs.clone());
+                refs
             }
-            Err(e) => return Err(e.into()),
         };
         Ok(refs
             .into_iter()
@@ -463,7 +491,7 @@ impl Engine {
         let Some(thread) = self.store.get_thread(&thread_id)? else {
             return Ok(None);
         };
-        let messages = self.store.list_messages(&thread_id)?;
+        let messages = self.store.list_message_meta(&thread_id)?;
         let is_draft = |m: &domain::Message| m.label_ids.iter().any(|l| l == "DRAFT");
         let Some(message) = messages.iter().rev().find(|m| is_draft(m)) else {
             return Ok(None);
@@ -501,20 +529,67 @@ impl Engine {
 
     // ------------------------------------------------------------ writes
 
-    /// Apply a mutation locally now (the row changes before this returns),
-    /// queue it for Gmail, and drain the outbox. Failures stay queued and
-    /// retry on the next drain; `AuthExpired` marks the account disconnected.
+    /// Apply a mutation locally now (the row changes before this returns)
+    /// and queue it for Gmail.
+    ///
+    /// A change to a thread (archive, read, trash, star, label, spam…)
+    /// returns here: Gmail hears of it from a background drain, and a
+    /// failure stays queued for the next one (`pending_mutations`).
+    ///
+    /// Outgoing mail and drafts (`Send`, `SaveDraft`, `DeleteDraft`) wait
+    /// for Gmail's answer: `Ok` means Gmail took it. An error means this
+    /// attempt failed — the row stays queued and later drains retry it
+    /// (a send made offline goes out when the network is back), unless
+    /// Gmail itself keeps refusing it (`failed_mutations`).
+    /// `EngineError::AuthExpired` when the account needs reconnecting.
     pub async fn mutate(
         self: Arc<Self>,
         account_id: String,
         mutation: Mutation,
     ) -> Result<(), EngineError> {
+        let mutation: domain::Mutation = mutation.into();
+        let outgoing = mutation.is_outgoing();
+        if outgoing {
+            self.find_reply_headers(&account_id, &mutation).await;
+        }
         // Done/delete also clears the reminder and "needs reply" flag.
-        if outbox::enqueue(&self.store, &account_id, mutation.into())? {
+        let (row, cleared) = outbox::enqueue_item(&self.store, &account_id, mutation)?;
+        if cleared {
             self.push_devsync_later(account_id.clone());
         }
         self.notify_threads_updated();
-        self.drain_outbox().await
+        if !outgoing {
+            self.drain_soon();
+            return Ok(());
+        }
+        self.drain_outbox().await?;
+        if !self.store.outbox_contains(row)? {
+            return Ok(());
+        }
+        Err(match self.drain_failures.lock().unwrap().get(&row) {
+            Some((true, why)) => EngineError::AuthExpired(why.clone()),
+            Some((false, why)) => EngineError::Mail(format!("{why} (queued, will retry)")),
+            None => EngineError::Mail("not sent yet (queued, will retry)".into()),
+        })
+    }
+
+    /// Outbox rows still waiting for Gmail: changes made offline, or that
+    /// failed and will be retried. 0 when everything is through — the
+    /// shell's "changes waiting to sync" indicator.
+    pub fn pending_mutations(&self) -> u32 {
+        self.store
+            .outbox_counts(outbox::MAX_ATTEMPTS)
+            .map(|(waiting, _)| waiting)
+            .unwrap_or(0)
+    }
+
+    /// Outbox rows Gmail refused `outbox::MAX_ATTEMPTS` times (a thread
+    /// deleted elsewhere, a label that is gone): kept, no longer retried.
+    pub fn failed_mutations(&self) -> u32 {
+        self.store
+            .outbox_counts(outbox::MAX_ATTEMPTS)
+            .map(|(_, parked)| parked)
+            .unwrap_or(0)
     }
 
     /// Set/clear the local "remind me" schedule (epoch ms; None clears).
@@ -639,39 +714,25 @@ impl Engine {
     /// an outbox drain. Returns whether anything changed locally. The shell
     /// calls this on launch, on foreground, on pull-to-refresh and from
     /// background refresh; one failing account never blocks another.
-    pub async fn sync_all(&self) -> Result<bool, EngineError> {
-        let accounts = self.store.list_accounts()?;
-        let mut changed = false;
-        for a in accounts {
-            changed |= self.sync_account(&a.id).await;
-        }
-        if let Err(e) = self.drain_outbox().await {
-            log::warn!("outbox drain after sync failed: {e}");
-        }
-        if changed {
-            self.notify_threads_updated();
-        }
-        // Bundles: link new mail by shared booking, order and tracking
-        // numbers. Local and cheap, so before the model passes.
-        self.link_bundles_pending();
-        // Jev triage rides the sync cadence, never its own timer (desktop
-        // does the same at the end of its poll tick).
-        self.classify_pending().await;
-        // Then the "Need reply" / "Remind me" proposals for new unread
-        // mail, on the same cadence (suggest.rs).
-        self.suggest_pending().await;
-        // Then the model groups new mail into bundles (bundles.rs).
-        self.bundle_pending().await;
-        Ok(changed)
+    ///
+    /// The round runs as a task on the engine's runtime, accounts side by
+    /// side, not on the thread that awaits it: its database writes and
+    /// JSON parsing used to occupy one of the caller's (Swift's) few
+    /// cooperative threads. It also finishes if the caller stops waiting.
+    pub async fn sync_all(self: Arc<Self>) -> Result<bool, EngineError> {
+        on_runtime(async move { self.sync_all_round().await }).await?
     }
 
     /// Delta round for one account only (pull-to-refresh in a filtered view).
-    pub async fn sync_now(&self, account_id: String) -> Result<bool, EngineError> {
-        let changed = self.sync_account(&account_id).await;
-        if changed {
-            self.notify_threads_updated();
-        }
-        Ok(changed)
+    pub async fn sync_now(self: Arc<Self>, account_id: String) -> Result<bool, EngineError> {
+        on_runtime(async move {
+            let changed = self.sync_account(&account_id).await;
+            if changed {
+                self.notify_threads_updated();
+            }
+            changed
+        })
+        .await
     }
 
     /// One step of the archive walk: mail older than the backfill window,
@@ -685,7 +746,63 @@ impl Engine {
     /// the shell's loop instead of spinning it. Pages are paced to Gmail's
     /// quota (`OLDER_PAGE_GAP`): the call sleeps until an account is due,
     /// and a rate-limited account is paused, not dropped from the walk.
-    pub async fn backfill_older(&self) -> Result<bool, EngineError> {
+    pub async fn backfill_older(self: Arc<Self>) -> Result<bool, EngineError> {
+        on_runtime(async move { self.backfill_older_step().await }).await?
+    }
+}
+
+/// Run `task` on the engine's runtime and wait for it. An exported async
+/// function is polled by the caller's executor — Swift's cooperative pool,
+/// a handful of threads the whole app shares — so whatever it does between
+/// awaits (database writes, parsing) runs there. The long passes move.
+async fn on_runtime<T: Send + 'static>(
+    task: impl std::future::Future<Output = T> + Send + 'static,
+) -> Result<T, EngineError> {
+    tokio::spawn(task)
+        .await
+        .map_err(|e| EngineError::Store(format!("engine task failed: {e}")))
+}
+
+// Internals — not exported.
+impl Engine {
+    async fn sync_all_round(self: Arc<Self>) -> Result<bool, EngineError> {
+        let accounts = self.store.list_accounts()?;
+        // One task per account: two accounts' rounds are two sets of
+        // network waits, and ran one after the other.
+        let rounds: Vec<_> = accounts
+            .into_iter()
+            .map(|a| {
+                let engine = Arc::clone(&self);
+                tokio::spawn(async move { engine.sync_account(&a.id).await })
+            })
+            .collect();
+        let mut changed = false;
+        for round in rounds {
+            changed |= round.await.unwrap_or(false);
+        }
+        if let Err(e) = self.drain_outbox().await {
+            log::warn!("outbox drain after sync failed: {e}");
+        }
+        if changed {
+            self.notify_threads_updated();
+        }
+        // Bundles: link new mail by shared booking, order and tracking
+        // numbers. Local, but hundreds of threads' worth of reading and
+        // scanning after a backfill: on the blocking pool, not a worker.
+        let engine = Arc::clone(&self);
+        let _ = tokio::task::spawn_blocking(move || engine.link_bundles_pending()).await;
+        // Jev triage rides the sync cadence, never its own timer (desktop
+        // does the same at the end of its poll tick).
+        self.classify_pending().await;
+        // Then the "Need reply" / "Remind me" proposals for new unread
+        // mail, on the same cadence (suggest.rs).
+        self.suggest_pending().await;
+        // Then the model groups new mail into bundles (bundles.rs).
+        self.bundle_pending().await;
+        Ok(changed)
+    }
+
+    async fn backfill_older_step(&self) -> Result<bool, EngineError> {
         // Pace the walk to Gmail's per-minute quota: wait for the first
         // account that is due, then fetch for every account that is.
         let accounts = self.store.list_accounts()?;
@@ -756,7 +873,10 @@ impl Engine {
         }
         Ok(more)
     }
+}
 
+#[uniffi::export(async_runtime = "tokio")]
+impl Engine {
     /// Connection + cross-device sync state for every stored account.
     pub fn account_status(&self) -> Result<Vec<AccountStatus>, EngineError> {
         let disconnected = self.disconnected.lock().unwrap();
@@ -870,6 +990,22 @@ impl Engine {
     }
 }
 
+/// One outbox drain at a time, whoever asks: the caller waits for the
+/// drain in flight and then runs its own over what is left. `queued` is
+/// the "a background drain is waiting" mark (`Engine::drain_soon`),
+/// lowered once the drain holds the lock — a mutation queued after that
+/// point may be missed by this drain's reads and needs its own.
+pub(crate) async fn drain_exclusive<M: MailProvider, S: Store>(
+    lock: &tokio::sync::Mutex<()>,
+    queued: &AtomicBool,
+    provider: &M,
+    store: &S,
+) -> Result<outbox::DrainReport, outbox::OutboxError> {
+    let _one_at_a_time = lock.lock().await;
+    queued.store(false, Ordering::SeqCst);
+    outbox::drain_report(provider, store, DRAIN_BATCH).await
+}
+
 // Internals — not exported.
 impl Engine {
     pub(crate) fn notify_prefs_updated(&self) {
@@ -911,18 +1047,222 @@ impl Engine {
         }
     }
 
+    /// The accounts whose Google grant no longer works.
+    pub(crate) fn disconnected_accounts(&self) -> HashSet<AccountId> {
+        self.disconnected.lock().unwrap().clone()
+    }
+
     /// Clears a stale disconnected mark; true if it was set.
     fn mark_connected(&self, account_id: &AccountId) -> bool {
         self.disconnected.lock().unwrap().remove(account_id)
     }
 
+    /// Drain the outbox, one drain at a time: a second caller waits for
+    /// the one in flight, then drains what is left (usually nothing).
     async fn drain_outbox(&self) -> Result<(), EngineError> {
-        let provider = self.provider.read().await;
-        let (applied, failed) = outbox::drain(&*provider, &self.store, 20).await?;
-        if applied + failed > 0 {
-            log::info!("outbox drain: applied={applied} failed={failed}");
+        let report = {
+            let provider = self.provider.read().await;
+            drain_exclusive(
+                &self.drain_lock,
+                &self.drain_queued,
+                &*provider,
+                &self.store,
+            )
+            .await?
+        };
+        if report.applied + report.failed > 0 {
+            log::info!(
+                "outbox drain: applied={} failed={}",
+                report.applied,
+                report.failed
+            );
+        }
+        let mut failures = self.drain_failures.lock().unwrap();
+        // Rows no longer queued have nothing to report; this also bounds
+        // the map by the outbox.
+        failures.retain(|id, _| self.store.outbox_contains(*id).unwrap_or(false));
+        for (id, e) in report.failures {
+            let auth = matches!(e, MailError::AuthExpired);
+            failures.insert(id, (auth, e.to_string()));
         }
         Ok(())
+    }
+
+    /// Drain in the background, for the mutations whose caller does not
+    /// wait. One waiting drain covers every mutation queued before it
+    /// starts, so a bulk action is one pass over the outbox.
+    fn drain_soon(self: &Arc<Self>) {
+        if self.drain_queued.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            // No runtime to spawn on (never the case for an async export):
+            // the next sync round drains.
+            self.drain_queued.store(false, Ordering::SeqCst);
+            return;
+        };
+        let engine = Arc::clone(self);
+        handle.spawn(async move {
+            let before = engine.pending_mutations();
+            if let Err(e) = engine.drain_outbox().await {
+                log::warn!("background outbox drain failed: {e}");
+            }
+            // The shell shows how many changes wait; tell it when that
+            // moved (it re-reads on this notice).
+            if engine.pending_mutations() != before {
+                engine.notify_threads_updated();
+            }
+        });
+    }
+
+    /// Fetch what `meta` lacks of the thread's bodies and store it. Returns
+    /// the thread's attachment flag as now known (the metadata tier cannot
+    /// tell; a full fetch can), persisted when it changed.
+    pub(crate) async fn fetch_bodies_into_store(
+        &self,
+        thread: &domain::Thread,
+        meta: &[domain::Message],
+    ) -> Result<bool, MailError> {
+        let missing: Vec<String> = meta
+            .iter()
+            .filter(|m| !m.body_fetched)
+            .map(|m| m.id.clone())
+            .collect();
+        let full = {
+            let provider = self.provider.read().await;
+            provider
+                .fetch_full(&thread.account_id, &thread.id, &missing, meta.len())
+                .await?
+        };
+        let store_err = |e: heypigeon_core::ports::StoreError| MailError::Provider(e.to_string());
+        for m in &full.messages {
+            self.store.upsert_message(m).map_err(store_err)?;
+        }
+        if full.whole_thread {
+            // A stored message the whole thread no longer has was deleted
+            // at Gmail and the sync has not caught up: there is nothing
+            // to fetch for it, and leaving it "not fetched" would send
+            // every open of this thread to the network until it does.
+            for m in meta.iter().filter(|m| !m.body_fetched) {
+                if !full.messages.iter().any(|f| f.id == m.id) {
+                    let mut gone = m.clone();
+                    gone.body_fetched = true;
+                    self.store.upsert_message(&gone).map_err(store_err)?;
+                }
+            }
+        }
+        let has_attachment = if full.whole_thread {
+            full.has_attachment
+        } else {
+            thread.has_attachment || full.has_attachment
+        };
+        if has_attachment != thread.has_attachment {
+            let mut t = thread.clone();
+            t.has_attachment = has_attachment;
+            self.store.upsert_thread(&t).map_err(store_err)?;
+        }
+        if full.whole_thread {
+            let count = (full.messages.len() as i64).max(thread.msg_count);
+            self.remember_attachments(&thread.id, count, full.attachments);
+        } else {
+            self.merge_attachments(&thread.id, meta.len(), &missing, full.attachments);
+        }
+        Ok(has_attachment)
+    }
+
+    /// The thread's attachment list, if remembered for this message count
+    /// (a new message makes the list stale).
+    fn remembered_attachments(
+        &self,
+        thread_id: &ThreadId,
+        msg_count: i64,
+    ) -> Option<Vec<AttachmentRef>> {
+        self.attachments
+            .lock()
+            .unwrap()
+            .get(thread_id)
+            .filter(|(count, _)| *count == msg_count)
+            .map(|(_, refs)| refs.clone())
+    }
+
+    fn remember_attachments(&self, thread_id: &ThreadId, msg_count: i64, refs: Vec<AttachmentRef>) {
+        let mut lists = self.attachments.lock().unwrap();
+        if lists.len() >= ATTACHMENT_LISTS_MAX {
+            lists.clear();
+        }
+        lists.insert(thread_id.clone(), (msg_count, refs));
+    }
+
+    /// A partial fetch brought `fetched` for the `missing` messages only:
+    /// the remembered list stays complete if it covered every other
+    /// message, and is dropped otherwise (the next ask fetches it).
+    fn merge_attachments(
+        &self,
+        thread_id: &ThreadId,
+        stored_messages: usize,
+        missing: &[String],
+        fetched: Vec<AttachmentRef>,
+    ) {
+        let mut lists = self.attachments.lock().unwrap();
+        let Some((count, mut refs)) = lists.remove(thread_id) else {
+            return;
+        };
+        if count as usize + missing.len() != stored_messages {
+            return;
+        }
+        refs.retain(|a| !missing.contains(&a.message_id));
+        refs.extend(fetched);
+        lists.insert(thread_id.clone(), (stored_messages as i64, refs));
+    }
+
+    /// A reply needs the Message-ID of the mail it answers. Mail synced
+    /// before the store kept that header has none: ask Gmail for it once
+    /// and keep it, so `outbox::enqueue_item` finds it. Best effort and
+    /// bounded — a reply without it still goes out.
+    async fn find_reply_headers(&self, account_id: &AccountId, mutation: &domain::Mutation) {
+        let (domain::Mutation::Send {
+            reply_to_thread: Some(thread_id),
+            in_reply_to: None,
+            ..
+        }
+        | domain::Mutation::SaveDraft {
+            reply_to_thread: Some(thread_id),
+            in_reply_to: None,
+            ..
+        }) = mutation
+        else {
+            return;
+        };
+        let Ok(meta) = self.store.list_message_meta(thread_id) else {
+            return;
+        };
+        if outbox::reply_headers(&meta).is_some() {
+            return;
+        }
+        let Some(mut parent) = meta
+            .into_iter()
+            .rev()
+            .find(|m| !m.label_ids.iter().any(|l| l == "DRAFT"))
+        else {
+            return;
+        };
+        let asked = tokio::time::timeout(REPLY_HEADERS_WAIT, async {
+            let provider = self.provider.read().await;
+            provider.message_reply_headers(account_id, &parent.id).await
+        })
+        .await;
+        match asked {
+            Ok(Ok((Some(message_id), references))) => {
+                parent.message_id_header = Some(message_id);
+                parent.references_header = references;
+                if let Err(e) = self.store.upsert_message(&parent) {
+                    log::warn!("reply headers for {thread_id} not stored: {e}");
+                }
+            }
+            Ok(Ok((None, _))) => {}
+            Ok(Err(e)) => log::info!("reply headers for {thread_id} unavailable: {e}"),
+            Err(_) => log::info!("reply headers for {thread_id} timed out"),
+        }
     }
 
     /// Delta sync + cross-device round for one account. Returns whether
@@ -1227,6 +1567,9 @@ mod tests {
         assert_eq!(archived.len(), 1);
         assert!(archived[0].is_archived);
         assert_eq!(e.store.outbox_list(10).unwrap().len(), 1);
+        // Waiting, not given up on: the account is signed out, which is
+        // not the change's fault.
+        assert_eq!((e.pending_mutations(), e.failed_mutations()), (1, 0));
         // Done ends the reminder and the "needs reply" flag.
         assert!(archived[0].scheduled_at.is_none() && !archived[0].needs_reply);
         assert!(e.list_scheduled().unwrap().is_empty());
@@ -1258,6 +1601,125 @@ mod tests {
         e.remove_account("a@x.com".into()).await.unwrap();
         assert!(e.list_accounts().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two drains asked for at once (a mutation's and a sync round's):
+    /// every queued change reaches the provider once. Before the lock both
+    /// read the same rows and each applied them.
+    #[tokio::test]
+    async fn concurrent_drains_apply_each_row_once() {
+        use heypigeon_core::fakes::{sample_account, FakeProvider, MemStore};
+
+        let store = MemStore::default();
+        store.upsert_account(&sample_account("a1")).unwrap();
+        let provider = FakeProvider::with_sample_data("a1", 3, 10);
+        sync::backfill(&provider, &store, &"a1".to_string(), 30)
+            .await
+            .unwrap();
+        let threads = store
+            .list_threads(None, &domain::ThreadFilter::Inbox, None, 10)
+            .unwrap();
+        for t in &threads {
+            outbox::enqueue(
+                &store,
+                &"a1".to_string(),
+                domain::Mutation::Archive {
+                    thread_id: t.id.clone(),
+                },
+            )
+            .unwrap();
+        }
+        // Each apply lets the other drain run before it answers.
+        provider.slow_applies(3);
+        let lock = tokio::sync::Mutex::new(());
+        let queued = AtomicBool::new(true);
+
+        let (a, b) = tokio::join!(
+            drain_exclusive(&lock, &queued, &provider, &store),
+            drain_exclusive(&lock, &queued, &provider, &store),
+        );
+
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert_eq!(a.applied + b.applied, 3);
+        assert_eq!(
+            provider.applied_mutations().len(),
+            3,
+            "no row applied twice"
+        );
+        assert!(store.outbox_list(10).unwrap().is_empty());
+        assert!(!queued.load(Ordering::SeqCst));
+
+        // The same two drains without the lock are the bug: both read the
+        // rows before either deletes one.
+        for t in &threads {
+            outbox::enqueue(
+                &store,
+                &"a1".to_string(),
+                domain::Mutation::Unarchive {
+                    thread_id: t.id.clone(),
+                },
+            )
+            .unwrap();
+        }
+        let _ = tokio::join!(
+            outbox::drain_report(&provider, &store, DRAIN_BATCH),
+            outbox::drain_report(&provider, &store, DRAIN_BATCH),
+        );
+        assert_eq!(provider.applied_mutations().len(), 3 + 6);
+    }
+
+    /// The attachment list a full fetch brought answers `list_attachments`
+    /// until the thread grows; a partial fetch extends it only when it
+    /// covered every other message.
+    #[test]
+    fn attachment_lists_are_remembered_per_message_count() {
+        let dir = temp_dir("attachments");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        let part = |message: &str, id: &str| AttachmentRef {
+            message_id: message.to_string(),
+            attachment_id: id.to_string(),
+            filename: "a.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            size: 1,
+            content_id: None,
+        };
+        let t1 = "t1".to_string();
+        assert!(e.remembered_attachments(&t1, 2).is_none());
+        e.remember_attachments(&t1, 2, vec![part("m1", "a")]);
+        assert_eq!(e.remembered_attachments(&t1, 2).unwrap().len(), 1);
+        // A new message arrived: the list is stale until it is fetched.
+        assert!(e.remembered_attachments(&t1, 3).is_none());
+        e.merge_attachments(&t1, 3, &["m3".to_string()], vec![part("m3", "b")]);
+        let ids: Vec<String> = e
+            .remembered_attachments(&t1, 3)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.attachment_id)
+            .collect();
+        assert_eq!(ids, vec!["a", "b"]);
+        // Two new messages but only one fetched: the list cannot be
+        // complete, so it is dropped rather than trusted.
+        e.merge_attachments(&t1, 5, &["m5".to_string()], vec![]);
+        assert!(e.remembered_attachments(&t1, 5).is_none());
+        // No list, no merge.
+        e.merge_attachments(&"t2".to_string(), 1, &["m1".to_string()], vec![]);
+        assert!(e.remembered_attachments(&"t2".to_string(), 1).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The exported async functions run inside async-compat's runtime.
+    /// Its default is a single thread; the `multi-thread` feature this
+    /// crate turns on must reach the copy UniFFI uses.
+    #[test]
+    fn the_engine_runtime_is_multi_threaded() {
+        let flavor = std::thread::spawn(|| {
+            futures::executor::block_on(async_compat::Compat::new(async {
+                tokio::runtime::Handle::current().runtime_flavor()
+            }))
+        })
+        .join()
+        .unwrap();
+        assert_eq!(flavor, tokio::runtime::RuntimeFlavor::MultiThread);
     }
 
     #[test]
@@ -1292,6 +1754,7 @@ mod tests {
                 body_text: Some("hi there, full text".into()),
                 label_ids: vec!["INBOX".into()],
                 is_read: false,
+                ..Default::default()
             })
             .unwrap();
         let t = e.get_thread_local("t1".into()).unwrap().unwrap();

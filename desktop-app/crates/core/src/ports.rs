@@ -131,6 +131,17 @@ pub trait MailProvider {
         async { Err(MailError::Provider("label management not supported".into())) }
     }
 
+    /// Create a user label (Gmail `users.labels.create`), shown in the
+    /// label list and on mail. Default errors — see `update_label`.
+    fn create_label(
+        &self,
+        account_id: &AccountId,
+        name: &str,
+    ) -> impl std::future::Future<Output = Result<Label, MailError>> + Send {
+        let _ = (account_id, name);
+        async { Err(MailError::Provider("label management not supported".into())) }
+    }
+
     /// Delete a user label (Gmail `users.labels.delete`). Default errors —
     /// see `update_label`.
     fn delete_label(
@@ -375,6 +386,15 @@ pub trait Store {
     ) -> Result<Vec<Thread>, StoreError>;
     fn get_thread(&self, thread_id: &ThreadId) -> Result<Option<Thread>, StoreError>;
     fn list_messages(&self, thread_id: &ThreadId) -> Result<Vec<Message>, StoreError>;
+    /// `list_messages` without the bodies (`body_html` / `body_text` are
+    /// None whatever is stored; `body_fetched` says whether they are there).
+    /// For the callers that only read who, when and which labels: the sync
+    /// loop flipping a label, the list-row sender, the bundle scan. They
+    /// used to load every message's HTML to read a snippet. Writing such a
+    /// message back with `upsert_message` keeps the stored bodies.
+    fn list_message_meta(&self, thread_id: &ThreadId) -> Result<Vec<Message>, StoreError> {
+        self.list_messages(thread_id)
+    }
 
     /// Unread thread count for one folder/label filter (sidebar badges).
     /// Default: filters `list_threads` (correct but unindexed) so existing
@@ -660,6 +680,28 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// Thread counts per bundle id, for the Bundles list. A bundle with no
+    /// threads may be missing from the map. The default reads every
+    /// bundle's threads; the SQLite adapter counts them in one query.
+    fn bundle_stats(&self) -> Result<std::collections::HashMap<String, BundleStats>, StoreError> {
+        let mut out = std::collections::HashMap::new();
+        for b in self.list_bundles()? {
+            let threads = self.list_bundle_threads(&b.id)?;
+            out.insert(
+                b.id,
+                BundleStats {
+                    thread_count: threads.len() as u32,
+                    open_count: threads
+                        .iter()
+                        .filter(|t| t.is_inbox && !t.is_archived)
+                        .count() as u32,
+                    last_activity_at: threads.iter().map(|t| t.last_msg_at).max().unwrap_or(0),
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// Threads whose anchors (`bundles::extract_anchors`) are missing or
     /// stale: never scanned, or a message arrived since. Newest first.
     fn list_threads_needing_anchors(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
@@ -676,6 +718,19 @@ pub trait Store {
         msg_count: i64,
     ) -> Result<(), StoreError> {
         let _ = (thread_id, anchors, msg_count);
+        Ok(())
+    }
+
+    /// `set_thread_anchors` for many threads as one write: `(thread,
+    /// anchors, msg_count)` each. The link pass scans hundreds of threads a
+    /// round, and one commit each kept the store's write lock busy.
+    fn set_thread_anchors_batch(
+        &self,
+        items: &[(ThreadId, Vec<String>, i64)],
+    ) -> Result<(), StoreError> {
+        for (thread_id, anchors, msg_count) in items {
+            self.set_thread_anchors(thread_id, anchors, *msg_count)?;
+        }
         Ok(())
     }
 
@@ -756,10 +811,44 @@ pub trait Store {
     /// Apply a mutation locally (the optimistic half).
     fn apply_local(&self, mutation: &Mutation) -> Result<(), StoreError>;
 
-    fn outbox_push(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), StoreError>;
+    /// Queue a mutation for the provider. Returns the new row's id, so the
+    /// caller can tell later whether that very mutation went through.
+    fn outbox_push(&self, account_id: &AccountId, mutation: &Mutation) -> Result<i64, StoreError>;
+    /// The oldest `limit` rows, parked ones included (diagnostics, tests).
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError>;
     fn outbox_delete(&self, id: i64) -> Result<(), StoreError>;
     fn outbox_bump_attempts(&self, id: i64) -> Result<(), StoreError>;
+
+    /// The next page of rows the drain should try: ids above `after_id`,
+    /// oldest first, leaving out rows the provider refused `max_attempts`
+    /// times (parked: kept, never retried on their own). Paging by id is
+    /// what stops rows that cannot go out now from blocking the rest.
+    fn outbox_list_due(
+        &self,
+        after_id: i64,
+        limit: u32,
+        max_attempts: i64,
+    ) -> Result<Vec<OutboxItem>, StoreError> {
+        Ok(self
+            .outbox_list(u32::MAX)?
+            .into_iter()
+            .filter(|i| i.id > after_id && i.attempts < max_attempts)
+            .take(limit as usize)
+            .collect())
+    }
+
+    /// `(waiting, parked)`: rows the drain will still try, and rows that
+    /// reached `max_attempts`.
+    fn outbox_counts(&self, max_attempts: i64) -> Result<(u32, u32), StoreError> {
+        let items = self.outbox_list(u32::MAX)?;
+        let parked = items.iter().filter(|i| i.attempts >= max_attempts).count();
+        Ok(((items.len() - parked) as u32, parked as u32))
+    }
+
+    /// Is this row still queued (not yet accepted by the provider)?
+    fn outbox_contains(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self.outbox_list(u32::MAX)?.iter().any(|i| i.id == id))
+    }
 
     /// Set or clear a thread's "remind me" schedule (epoch ms). Local
     /// metadata, never sent to the mail provider — it travels between the

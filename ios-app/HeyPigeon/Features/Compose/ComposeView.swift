@@ -76,6 +76,10 @@ struct ComposeView: View {
     @State private var editorWidth: CGFloat = 640
     #endif
 
+    /// The field labels' column, growing with the text size ("Subject"
+    /// was cut at larger ones) and still one width for every row.
+    @ScaledMetric(relativeTo: .subheadline) private var labelWidth: CGFloat = 56
+
     private enum Field { case to, cc, bcc, subject, body }
     private static let maxAttachBytes = MailLimits.maxAttachmentBytes
     /// How long typing pauses before the model's copy of the draft (what
@@ -99,7 +103,8 @@ struct ComposeView: View {
         _savedFrom = State(initialValue: draft.draftSaved ? draft.fromAccountId : nil)
         #if os(macOS)
         _editor = State(initialValue: MacComposeEditor(draft: draft))
-        _showFields = State(initialValue: draft.replyToThreadId == nil || draft.to.isEmpty)
+        // A reply the sender redirected (Reply-To) shows where it goes.
+        _showFields = State(initialValue: draft.replyToThreadId == nil || draft.to.isEmpty || draft.repliesElsewhere)
         #endif
     }
 
@@ -284,8 +289,7 @@ struct ComposeView: View {
             HStack(alignment: .top, spacing: 12) {
                 Text(label)
                     .font(.subheadline).foregroundStyle(Theme.textTertiary)
-                    // At least, not exactly: "Subject" was cut at larger text sizes.
-                    .frame(minWidth: 56, alignment: .leading)
+                    .frame(width: labelWidth, alignment: .leading)
                     .padding(.top, 2)
                 content()
             }
@@ -876,7 +880,10 @@ extension ComposeView {
 
     /// The name the thread knows an address by, else the address.
     private func displayName(_ address: String) -> String {
-        thread?.mail.first { EmailAddress.same($0.fromAddress, address) }?.fromName ?? address
+        // A Reply-To address stays an address: the name would be the one
+        // its sender chose for an earlier message of the thread.
+        if draft.repliesElsewhere { return address }
+        return thread?.mail.first { EmailAddress.same($0.fromAddress, address) }?.fromName ?? address
     }
 
     /// Who writes to whom, for the AI's prompt.
@@ -1028,11 +1035,19 @@ enum RichText {
             case "s", "strike", "del": strike += closing ? -1 : 1
             case "a": link = closing ? nil : href(in: tag)
             case "br": out.append(AttributedString("\n"))
+            // The Mac editor's paragraphs (and plain blocks): a blank line
+            // between, as its own text part has. Lists and anything
+            // richer still fall back to the plain text.
+            case "p": if closing { out.append(AttributedString("\n\n")) }
+            case "div": if closing { out.append(AttributedString("\n")) }
             default: return nil
             }
             rest = rest[rest.index(after: close)...]
         }
         append(rest)
+        // No blank lines left over from the last paragraph, or from an
+        // empty one's own <br>.
+        while out.characters.last == "\n" { out.characters.removeLast() }
         return out
     }
 
@@ -1040,7 +1055,11 @@ enum RichText {
         guard let match = tag.range(of: #"href\s*=\s*"[^"]*""#, options: [.regularExpression, .caseInsensitive]),
               let open = tag[match].firstIndex(of: "\"") else { return nil }
         let value = tag[match][tag.index(after: open)...].dropLast()
-        return URL(string: unescape(String(value)))
+        // Web and mail links only, whatever the html says: this is what
+        // goes back out in the sent message.
+        guard let url = URL(string: unescape(String(value))),
+              ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        return url
     }
 
     /// `escape` backwards (and the two entities other editors write).

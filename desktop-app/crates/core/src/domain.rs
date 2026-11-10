@@ -387,7 +387,8 @@ pub struct Message {
     /// The Reply-To header, entry by entry, in the same form. A reply goes
     /// there instead of to the sender (a list, a booking system writing
     /// from a no-reply address). Empty when the sender set none, and for
-    /// mail stored before the header was kept.
+    /// mail stored before the header was kept until its thread is next
+    /// fetched in full (its next open does that once).
     #[serde(default)]
     pub reply_to_addrs: Vec<String>,
     /// Epoch milliseconds.

@@ -178,7 +178,7 @@ struct SearchFilterBar: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(Theme.canvas.opacity(0.7))
                         .padding(.leading, 4).padding(.trailing, 11)
-                        .frame(height: 32)
+                        .frame(minHeight: 32)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Remove \(field.title.lowercased()) filter")

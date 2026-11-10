@@ -156,7 +156,9 @@ pub struct MailMessage {
     /// first `get_thread` after the update does that).
     pub cc_addrs: Vec<String>,
     /// The Reply-To header's entries, in the same form; empty when the
-    /// sender set none. A reply goes there instead of to `from_addr`.
+    /// sender set none (and, like `cc_addrs`, for older mail until its
+    /// thread is next fetched in full). A reply goes there instead of to
+    /// `from_addr`.
     pub reply_to_addrs: Vec<String>,
     /// Epoch milliseconds.
     pub date: i64,

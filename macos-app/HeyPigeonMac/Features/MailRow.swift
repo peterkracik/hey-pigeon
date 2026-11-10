@@ -147,6 +147,9 @@ struct MailRow: View {
         // The hover bar's actions for VoiceOver and Voice Control, which
         // have no pointer to bring it up; the row reads as one element.
         .accessibilityElement(children: .combine)
+        // The state in the words the phone's row uses (ThreadRow.spokenState):
+        // the chips said "Reply" and a bare time, the symbols nothing.
+        .accessibilityValue(row.spokenState(showsDone: false))
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { state.open(row, in: model) }
         .accessibilityActions {
@@ -167,8 +170,7 @@ struct MailRow: View {
             .fill(account.map { Theme.tagForeground($0.color) } ?? Theme.unreadBar)
             .frame(width: 6, height: 6)
             .opacity(row.isRead ? (account == nil ? 0 : 0.3) : 1)
-            .accessibilityHidden(row.isRead)
-            .accessibilityLabel("Unread")
+            .accessibilityHidden(true) // "Unread", in the row's value
     }
 
     @ViewBuilder private var badges: some View {
@@ -179,16 +181,20 @@ struct MailRow: View {
         }
         if row.hasAttachment {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+                .accessibilityHidden(true)
         }
         if row.needsReply {
             RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Color(hex: 0x2A6BAE))
+                .accessibilityHidden(true)
         }
         if let at = row.scheduledAt {
             RowChip(text: Formatters.rowTime(at), systemImage: row.isFollowUp ? "arrow.uturn.left.circle" : "clock",
                  tint: at < Date() ? Theme.accent : Theme.textSecondary)
+                .accessibilityHidden(true)
         }
         if row.isPinned {
             Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(Theme.pin)
+                .accessibilityHidden(true)
         }
     }
 

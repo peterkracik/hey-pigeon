@@ -53,11 +53,13 @@ struct ThreadView: View {
 
     private var participants: String { detail?.participantNames ?? row.fromSummary }
 
-    /// Reply all when someone besides the sender is on the last message,
-    /// else Reply.
+    /// Reply all when it would copy someone, else Reply — asked of the
+    /// draft itself, so the pill and the recipients agree (mail to the
+    /// user's alias alone said "Reply all" and then copied nobody).
     private var defaultReply: ReplyKind {
         guard let last = detail?.mail.last, !last.isMine else { return .reply }
-        return (last.to + last.cc).contains { $0 != "me" && !$0.isEmpty } ? .replyAll : .reply
+        let all = SendDraft.reply(to: last, in: current, all: true, history: nil, mine: model.ownAddresses(of: current.accountId))
+        return all.cc.isEmpty ? .reply : .replyAll
     }
 
     private var replyKind: ReplyKind { replyChoice ?? defaultReply }
@@ -244,11 +246,7 @@ struct ThreadView: View {
             activity.appEntityIdentifier = EntityIdentifier(for: MailThreadEntity(current, account: model.account(for: current)))
             #endif
         }
-        .onAppear {
-            model.showThread(row)
-            // The account's aliases, for a reply's recipients (SendDraft.reply).
-            model.loadSendAliases()
-        }
+        .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
         .task(id: row.id) {
             // What the store already holds is on screen at once (a thread

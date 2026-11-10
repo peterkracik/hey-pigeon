@@ -186,8 +186,16 @@ struct ThreadModelTests {
         var list = makeMessage("1", address: "no-reply@hotel.test", to: ["me", "marek@acme.test", "alias@work.test"])
         list.replyTo = ["desk@hotel.test"]
         #expect(SendDraft.reply(to: list, in: row, all: false, history: nil).to == ["desk@hotel.test"])
+        #expect(SendDraft.reply(to: list, in: row, all: false, history: nil).repliesElsewhere)
         let all = SendDraft.reply(to: list, in: row, all: true, history: nil, mine: ["alias@work.test"])
         #expect(all.to == ["desk@hotel.test"] && all.cc == ["marek@acme.test"])
+        // A Reply-To that is the sender itself redirects nothing.
+        var same = makeMessage("3", address: "ana@acme.test")
+        same.replyTo = ["Ana@acme.test"]
+        #expect(!SendDraft.reply(to: same, in: row, all: false, history: nil).repliesElsewhere)
+        // The row's state, as VoiceOver says it on both apps.
+        #expect(makeRow().spokenState(showsDone: true) == "")
+        #expect(makeRow(read: false, needsReply: true, starred: true).spokenState(showsDone: true) == "Unread, Need reply, Pinned")
         // Mail sent from an alias is the user's own: the reply follows it.
         let sent = makeMessage("2", address: "Alias@work.test", to: ["ana@acme.test"])
         #expect(SendDraft.reply(to: sent, in: row, all: false, history: nil, mine: ["alias@work.test"]).to == ["ana@acme.test"])
@@ -329,7 +337,14 @@ struct TextFormattingTests {
         let rich = try #require(RichText.attributed(html: html))
         #expect(String(rich.characters) == "a < b\nbold it under gone site")
         #expect(RichText.html(rich) == html.replacingOccurrences(of: " rel=\"noopener noreferrer\"", with: ""))
-        #expect(RichText.attributed(html: "<div style=\"color:red\">from Gmail</div>") == nil)
+        // The Mac editor's paragraphs read as blank lines; anything richer
+        // (a list, Gmail's blocks) opens as plain text.
+        let mac = try #require(RichText.attributed(html: "<p>Hi <b>Ana</b>,</p><p><br></p><p>see you</p>"))
+        #expect(String(mac.characters) == "Hi Ana,\n\n\n\n\nsee you")
+        #expect(RichText.attributed(html: "<ul><li>one</li></ul>") == nil)
+        // Only web and mail links come back as links.
+        let odd = try #require(RichText.attributed(html: "<a href=\"javascript:alert(1)\">x</a>"))
+        #expect(odd.runs.allSatisfy { $0.link == nil })
         #endif
         var draft = SendDraft()
         draft.bodyText = "plain"

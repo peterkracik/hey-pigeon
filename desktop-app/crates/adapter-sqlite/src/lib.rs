@@ -431,9 +431,16 @@ const MIGRATIONS: &[&str] = &[
     // that window, none for anyone else).
     "UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;",
     // v27 — the Reply-To header (JSON array, like `cc_addrs`): a reply
-    // goes there instead of to the sender. Mail stored before it has none
-    // until its thread is fetched again.
-    "ALTER TABLE messages ADD COLUMN reply_to_addrs TEXT NOT NULL DEFAULT '[]';",
+    // goes there instead of to the sender. As in v22, `body_fetched`
+    // starts over so that mail already opened gets the header: a thread
+    // fetched in full is never fetched again otherwise, and a reply to a
+    // booking confirmation read before the update would keep going to
+    // its no-reply sender. One more full fetch per opened thread, on its
+    // next open; until then its body is cleaned on the way out (v26).
+    "
+    ALTER TABLE messages ADD COLUMN reply_to_addrs TEXT NOT NULL DEFAULT '[]';
+    UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -5248,6 +5255,44 @@ mod tests {
             assert_eq!(m.body_html.as_deref(), Some(RAW_BODY));
             assert_eq!(m.cc_addrs, vec!["lee@x.com"]);
         }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Mail opened before v27 has no Reply-To and was fetched in full: the
+    /// upgrade asks for that fetch once more, and the fetch fills it.
+    #[test]
+    fn v27_upgrade_refetches_opened_mail_for_its_reply_to() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v27-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v26.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 26).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO messages
+                       (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                        body_text, label_ids, is_read, body_fetched)
+                     VALUES ('m1', 't1', 'a1', 'no-reply@hotel.com', '[]', 0, '', 'hi', '[]', 1, 1)",
+                    [],
+                )
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v27
+        let t1 = "t1".to_string();
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        assert!(m.reply_to_addrs.is_empty());
+        assert!(heypigeon_core::sync::needs_bodies(std::slice::from_ref(&m)));
+        // The full fetch that follows.
+        m.reply_to_addrs = vec!["Front desk <desk@hotel.com>".to_string()];
+        m.body_fetched = true;
+        s.upsert_message(&m).unwrap();
+        let stored = s.list_messages(&t1).unwrap().remove(0);
+        assert_eq!(stored.reply_to_addrs, vec!["Front desk <desk@hotel.com>"]);
+        assert!(stored.body_fetched);
         let _ = std::fs::remove_file(&path);
     }
 

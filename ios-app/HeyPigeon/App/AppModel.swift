@@ -790,6 +790,10 @@ final class AppModel {
         if let f = triageFilterId, !triageLabels.contains(where: { $0.id == f }) {
             triageFilterId = nil
         }
+        // Once per account and launch: a reply built before Gmail had
+        // answered (the Mac's R, a banner's Reply, Siri) copied the user
+        // on their own alias.
+        loadSendAliases()
     }
 
     /// Re-read the current view, the counts and the bounded lists from the

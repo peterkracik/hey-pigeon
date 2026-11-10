@@ -796,6 +796,12 @@ struct MessageRow: View {
                     if expanded {
                         Text("to \(message.to.joined(separator: ", "))")
                             .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        // The sender asked for replies elsewhere: said
+                        // here, not first in the composer's To field.
+                        if !message.repliesGoTo.isEmpty {
+                            Text("replies go to \(message.repliesGoTo.joined(separator: ", "))")
+                                .font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                        }
                     } else {
                         Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }

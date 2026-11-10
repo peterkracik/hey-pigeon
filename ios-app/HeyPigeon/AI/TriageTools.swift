@@ -106,7 +106,7 @@ struct TriagePlan: Equatable, Codable {
                 model.toggleNeedsReply(row)
             case .draft(_, _, let body):
                 guard let detail = try? await model.engine.thread(id: row.id), let last = detail.mail.last else { continue }
-                var d = SendDraft.reply(to: last, in: row, all: false, history: nil)
+                var d = SendDraft.reply(to: last, in: row, all: false, history: nil, mine: model.ownAddresses(of: row.accountId))
                 d.bodyText = body
                 model.saveDraft(d, from: row.accountId)
             }

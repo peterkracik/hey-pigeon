@@ -72,7 +72,7 @@ struct ThreadRowView: View {
                 }
                 if row.hasAttachment {
                     Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)
-                        .accessibilityLabel("Attachment")
+                        .accessibilityHidden(true) // "Has attachment", in the row's value
                 }
             }
             if !row.snippet.isEmpty {
@@ -95,9 +95,10 @@ struct ThreadRowView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        // The unread bar is drawn by the list, outside this view, and
-        // said nothing: unread is the row's value.
-        .accessibilityValue(row.isRead ? "" : "Unread")
+        // Unread is a bar and a font weight, the marks are bare symbols:
+        // none of it was said aloud.
+        .accessibilityValue(row.spokenState(showsDone: model.view != .archive))
+        .accessibilityAddTraits(.isButton)
     }
 
     /// The text with every search word underlined in the accent and lifted
@@ -135,20 +136,16 @@ struct ThreadRowView: View {
     @ViewBuilder
     private var trailingMarks: some View {
         HStack(spacing: 6) {
-            if row.scheduledAt != nil {
-                mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock", row.isFollowUp ? "Follow-up reminder" : "Reminder")
-            }
-            if row.needsReply { mark("arrowshape.turn.up.left", "Need reply") }
-            if row.isPinned { mark("pin.fill", "Pinned") }
-            if row.isDone && model.view != .archive { mark("checkmark", "Done") }
+            if row.scheduledAt != nil { mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
+            if row.needsReply { mark("arrowshape.turn.up.left") }
+            if row.isPinned { mark("pin.fill") }
+            if row.isDone && model.view != .archive { mark("checkmark") }
         }
     }
 
-    /// A state mark; `label` is what VoiceOver says for it (a bare symbol
-    /// was read by its name, or not at all).
-    private func mark(_ name: String, _ label: String) -> some View {
-        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary)
-            .accessibilityLabel(label)
+    private func mark(_ name: String) -> some View {
+        // Said through the row's value (`spokenState`), not as symbol names.
+        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary).accessibilityHidden(true)
     }
 }
 

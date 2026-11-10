@@ -790,6 +790,10 @@ final class AppModel {
         if let f = triageFilterId, !triageLabels.contains(where: { $0.id == f }) {
             triageFilterId = nil
         }
+        // Once per account and launch: a reply built before Gmail had
+        // answered (the Mac's R, a banner's Reply, Siri) copied the user
+        // on their own alias.
+        loadSendAliases()
     }
 
     /// Re-read the current view, the counts and the bounded lists from the
@@ -1481,7 +1485,8 @@ final class AppModel {
     func openReply(to row: ThreadRow, all: Bool, body: String?) async throws {
         let detail = try await engine.thread(id: row.id)
         guard let detail, let last = detail.mail.last else { throw IntentError.noSuchThread }
-        var draft = SendDraft.reply(to: last, in: detail.thread, all: all, history: detail.transcript)
+        var draft = SendDraft.reply(to: last, in: detail.thread, all: all, history: detail.transcript,
+                                    mine: ownAddresses(of: detail.thread.accountId))
         if let body, !body.isEmpty { draft.bodyText = body }
         compose(draft)
     }
@@ -1833,6 +1838,13 @@ final class AppModel {
     private(set) var sendAliases: [String: [SendAlias]] = [:]
     @ObservationIgnored private var aliasesAsked: Set<String> = []
 
+    /// An account's "Send mail as" addresses, lowercased: the user's own
+    /// for a reply's recipients (SendDraft.reply). Empty until Gmail
+    /// answered `loadSendAliases`.
+    func ownAddresses(of accountId: String) -> Set<String> {
+        Set((sendAliases[accountId] ?? []).map { $0.email.lowercased() })
+    }
+
     /// Ask Gmail for every account's aliases, once per launch.
     func loadSendAliases() {
         for account in accounts where !aliasesAsked.contains(account.id) {
@@ -2023,7 +2035,7 @@ final class AppModel {
         Task {
             do { try await engine.perform(.saveDraft(d), accountId: accountId) }
             catch { show("Couldn't save draft: \(error.localizedDescription)") }
-            await syncDrafts()
+            await syncDrafts(accountId)
         }
     }
 
@@ -2044,7 +2056,7 @@ final class AppModel {
         unsyncedDrafts = unsyncedDrafts.filter { $0.value.draftKey != key }
         Task {
             try? await engine.perform(.deleteDraft(key: key), accountId: accountId)
-            await syncDrafts()
+            await syncDrafts(accountId)
         }
     }
 
@@ -2084,10 +2096,22 @@ final class AppModel {
     /// Pull a draft change into the store (Gmail's push only covers the
     /// inbox), then let the open thread reload. A draft saved again while
     /// this ran stays shown until its own sync.
-    private func syncDrafts() async {
-        while isSyncing { try? await Task.sleep(for: .milliseconds(250)) }
+    @ObservationIgnored private var isSyncingDrafts = false
+
+    /// Only the draft's account is synced: closing a composer used to
+    /// run a whole round over every account, reminders and index included.
+    private func syncDrafts(_ accountId: String) async {
+        // Its own flag, not `isSyncing`: with that one set, a Check for
+        // Mail pressed meanwhile was dropped and left the Mac's spinner
+        // on, and a pull to refresh did nothing. The engine itself keeps
+        // two rounds for one account apart.
+        while isSyncing || isSyncingDrafts { try? await Task.sleep(for: .milliseconds(250)) }
         let shown = unsyncedDrafts
-        await sync()
+        isSyncingDrafts = true
+        _ = try? await engine.syncNow(accountId: accountId)
+        isSyncingDrafts = false
+        reloadSoon()
+        await settleReloads()
         for (thread, d) in shown where unsyncedDrafts[thread] == d { unsyncedDrafts[thread] = nil }
         draftsRevision += 1
     }

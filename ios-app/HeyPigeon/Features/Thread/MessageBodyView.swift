@@ -130,6 +130,8 @@ struct MessageBodyView: View {
     /// first time) and swap them in. A picture that cannot be fetched
     /// stays a broken image, as before; the rest still show.
     private func inlinePictures(_ html: String) async {
+        // Before the attachments are listed there is nothing to look for.
+        guard !inlineImages.isEmpty else { return }
         let wanted = InlineImages.references(in: html)
         let parts = inlineImages.filter { a in
             a.isImage && a.size <= InlineImages.maxBytes
@@ -138,14 +140,21 @@ struct MessageBodyView: View {
         guard !parts.isEmpty else { return }
         var uris: [String: String] = [:]
         for a in parts {
-            guard let id = a.contentId,
-                  let file = try? await model.engine.attachmentFile(a),
-                  let data = try? Data(contentsOf: file), data.count <= InlineImages.maxBytes
-            else { continue }
-            uris[InlineImages.normalize(id)] = "data:\(a.mimeType);base64,\(data.base64EncodedString())"
+            guard let id = a.contentId, let file = try? await model.engine.attachmentFile(a) else { continue }
+            // Reading and encoding up to 5 MB, and the splice below, ran
+            // on the main actor while the thread opened.
+            let mime = a.mimeType
+            let uri = await Task.detached { () -> String? in
+                guard let data = try? Data(contentsOf: file), data.count <= InlineImages.maxBytes else { return nil }
+                return "data:\(mime);base64,\(data.base64EncodedString())"
+            }.value
+            if let uri { uris[InlineImages.normalize(id)] = uri }
         }
         guard !Task.isCancelled, !uris.isEmpty else { return }
-        inlinedHTML = InlineImages.inlined(html, dataURIs: uris)
+        let found = uris
+        let spliced = await Task.detached { InlineImages.inlined(html, dataURIs: found) }.value
+        guard !Task.isCancelled else { return }
+        inlinedHTML = spliced
     }
 
     /// Web links leave the app for the user's default browser. A mailto:
@@ -194,17 +203,32 @@ struct MessageBodyView: View {
     /// Plain-text mail with every URL turned into a tappable, underlined link.
     private static func linkified(_ text: String, style: PlatformFont.TextStyle = .body,
                                   color: Color = Theme.textPrimary) -> NSAttributedString {
+        // Kept per text, style and type size: the body re-renders on every
+        // move of a selection handle, and each time built a detector and
+        // scanned the whole message again.
+        let font = PlatformFont.preferredFont(forTextStyle: style)
+        let key = "\(style.rawValue)|\(font.pointSize)|\(text)" as NSString
+        if let known = linkCache.object(forKey: key) { return known }
         let out = NSMutableAttributedString(string: text, attributes: [
-            .font: PlatformFont.preferredFont(forTextStyle: style),
+            .font: font,
             .foregroundColor: PlatformColor(color),
         ])
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return out }
-        for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-            guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme ?? "") else { continue }
-            out.addAttribute(.link, value: url, range: match.range)
+        if let detector = linkDetector {
+            for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme ?? "") else { continue }
+                out.addAttribute(.link, value: url, range: match.range)
+            }
         }
+        linkCache.setObject(out, forKey: key)
         return out
     }
+
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    private static let linkCache: NSCache<NSString, NSAttributedString> = {
+        let cache = NSCache<NSString, NSAttributedString>()
+        cache.countLimit = 40
+        return cache
+    }()
 }
 
 /// Whether a body shows web pictures, and its hash for the inline-picture

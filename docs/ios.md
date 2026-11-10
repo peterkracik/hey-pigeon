@@ -137,8 +137,8 @@ is something to say:
 - The unread mark is a 3 pt bar on the row's left edge (the accent on
   light, white on dark) and the bolder sender; a read row has neither. In
   the unified view the sender's first letter takes the account's colour.
-  VoiceOver reads the row with "Unread" as its value and the marks by
-  name (Reminder, Need reply, Pinned, Done).
+  VoiceOver reads the row's state as its value (`ThreadRow.spokenState`:
+  Unread, Reminder, Need reply, Pinned, Done, Has attachment).
 - Sender in semibold (14 pt Manrope, bold when unread), subject semibold
   when unread, one line of snippet in grey.
 - Reminder, need-reply, pin and done marks sit next to the time; the AI's
@@ -276,7 +276,8 @@ messages before the last two stays visible.
 - **Reply pill** works like Superhuman's: tapping it runs the default (Reply
   all when others are on the latest message, else Reply), the chevron picks
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
-  the thread), and the AI draft is its own circle beside it. There are no action
+  the thread; a reply goes to the message's Reply-To when its sender set
+  one, and the account's "Send mail as" addresses count as the user's own), and the AI draft is its own circle beside it. There are no action
   links under the bodies: an open message's ••• or a long press on any
   message's header line replies to or forwards that one (the body is left
   to the long press that starts a text selection).
@@ -309,7 +310,10 @@ again (`AppModel.discardDraft`). A send deletes the draft too once it
 commits. A draft deleted from under its thread goes at once as well, and
 its Undo saves it back (`discardSavedDraft`); only when the draft cannot
 be read first — offline — does the delete ask, because it could not be
-undone.
+undone. A saved draft reopens with its formatting: the phone reads back
+bold, italic, underline, strikethrough, links and paragraphs; a draft
+with anything richer (a list, Gmail's own blocks) opens as its plain
+text here, while the Mac's HTML editor loads it whole.
 
 A reply shows the conversation it answers under the editor
 (`ComposeThreadHistory`): the latest message open, earlier ones a line

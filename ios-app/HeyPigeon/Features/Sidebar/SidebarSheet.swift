@@ -13,6 +13,15 @@ struct SidebarSheet: View {
     @AppStorage("sidebarAllLabels") private var allLabels = false
     /// "N more" in the bundles card: every active bundle, hidden ones too.
     @AppStorage("sidebarAllBundles") private var allBundles = false
+    /// Gmail labels made, renamed and deleted from here: the label a
+    /// dialog is about, and the name typed into it.
+    @State private var creatingLabel = false
+    @State private var renaming: MailLabelItem?
+    @State private var deleting: MailLabelItem?
+    @State private var labelName = ""
+
+    /// The account a new label is made in: the one shown, else the first.
+    private var labelAccountId: String? { model.selectedAccountId ?? model.accounts.first?.id }
 
     var body: some View {
         NavigationStack {
@@ -53,11 +62,19 @@ struct SidebarSheet: View {
                 folderRow(.trash)
             }
             .menuCard()
-            if !model.labels.isEmpty {
+            if !model.labels.isEmpty || labelAccountId != nil {
                 let rows = AppModel.sidebarLabels(model.labels, pinned: model.pinnedLabelIds,
                                                   expanded: allLabels, current: model.currentLabelId)
                 Section {
-                    ForEach(rows.shown) { l in labelRow(l) }
+                    ForEach(rows.shown) { l in
+                        labelRow(l)
+                            // A long press: the label is the account's own
+                            // in Gmail, renamed and deleted there.
+                            .contextMenu {
+                                Button { labelName = l.name; renaming = l } label: { Label("Rename", systemImage: "pencil") }
+                                Button(role: .destructive) { deleting = l } label: { Label("Delete", systemImage: "trash") }
+                            }
+                    }
                     if rows.hidden > 0 || allLabels && !model.pinnedLabelIds.isEmpty {
                         Button {
                             withAnimation(.snappy(duration: 0.2)) { allLabels.toggle() }
@@ -69,6 +86,10 @@ struct SidebarSheet: View {
                         }
                         .accessibilityLabel(allLabels ? "Show pinned labels only" : "Show all labels, \(rows.hidden) more")
                     }
+                    Button {
+                        labelName = ""
+                        creatingLabel = true
+                    } label: { Label("New label", systemImage: "plus") }
                 }
                 .menuCard()
             }
@@ -87,6 +108,34 @@ struct SidebarSheet: View {
         }
         .menuList()
         .foregroundStyle(Theme.textPrimary)
+        .alert("New label", isPresented: $creatingLabel) {
+            TextField("Name", text: $labelName)
+            Button("Add") {
+                guard let account = labelAccountId else { return }
+                let name = labelName
+                Task { await model.createLabel(named: name, accountId: account) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(labelAccountId.map { "A Gmail label in \($0)." } ?? "Add an account first.")
+        }
+        .alert("Rename label", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
+               presenting: renaming) { label in
+            TextField("Name", text: $labelName)
+            Button("Rename") {
+                let name = labelName
+                Task { await model.renameLabel(label, to: name) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Delete this label?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { label in
+            Button("Delete \(label.name)", role: .destructive) {
+                Task { await model.deleteLabel(label) }
+            }
+        } message: { _ in
+            Text("The label is removed from Gmail. Its mail stays where it is, without the label.")
+        }
     }
 
     private func go(_ folder: MailView) {

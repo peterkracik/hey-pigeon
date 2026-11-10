@@ -104,6 +104,22 @@ struct CalendarInviteTests {
 }
 
 @MainActor
+struct BannerActionTests {
+    @Test func aBannersButtonsActThroughTheModel() async throws {
+        let model = AppModel(engine: MockEngine())
+        let id = try #require(model.rows.first { !$0.isDone && $0.scheduledAt == nil }?.id)
+        await NewMailNotifier.perform(NotificationActions.remindInAnHour, threadId: id, model: model)
+        let reminded = try #require(try model.engine.threadRow(id: id))
+        #expect(reminded.scheduledAt.map { $0 > Date() } == true)
+        await NewMailNotifier.perform(NotificationActions.done, threadId: id, model: model)
+        #expect(try model.engine.threadRow(id: id)?.isDone == true)
+        // A plain tap asks the inbox for the thread.
+        await NewMailNotifier.perform("com.apple.UNNotificationDefaultActionIdentifier", threadId: id, model: model)
+        #expect(model.pendingThreadId == id)
+    }
+}
+
+@MainActor
 struct ListOrderTests {
     @Test func theFlatOrderFollowsTheGroupsAndCountsItsChanges() async {
         let model = AppModel(engine: MockEngine())

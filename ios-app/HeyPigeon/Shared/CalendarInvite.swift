@@ -251,20 +251,14 @@ enum CalendarAccess {
         case denied, noTime
         var errorDescription: String? {
             switch self {
-            case .denied: "Hey Pigeon may not add events. Allow it in System Settings › Privacy & Security › Calendars."
+            case .denied: "Hey Pigeon may not add events. Allow it in Settings › Privacy & Security › Calendars."
             case .noTime: "The invitation has no start time."
             }
         }
     }
 
-    /// The Mac only: the phone's build carries no calendar usage string.
-    static var isAvailable: Bool {
-        #if os(macOS)
-        true
-        #else
-        false
-        #endif
-    }
+    /// Both apps carry the calendar usage string (project.yml).
+    static let isAvailable = true
 
     /// Not on the main actor: the store is made, asked and written to in
     /// one place, off the UI.

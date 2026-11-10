@@ -1315,9 +1315,11 @@ final class AppModel {
     /// Bring these threads' bodies into the store, one at a time, so that
     /// opening one shows the message at once instead of a spinner while
     /// Gmail answers. The engine fetches only what the store lacks; a
-    /// thread already whole costs one local read. Not in Low Power Mode.
+    /// thread already whole costs one local read. Not in Low Power Mode,
+    /// and not on a metered path or in Low Data Mode (the phone on
+    /// cellular fetches a thread when it is opened, as before).
     func prefetchBodies(_ rows: [ThreadRow]) {
-        guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled, Connectivity.shared.allowsPrefetch else { return }
         for row in rows where prefetched[row.id] != row.messageCount {
             prefetched[row.id] = row.messageCount
             if !prefetchQueue.contains(row.id) { prefetchQueue.append(row.id) }

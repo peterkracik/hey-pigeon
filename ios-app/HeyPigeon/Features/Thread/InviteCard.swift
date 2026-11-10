@@ -1,8 +1,8 @@
 // A calendar invitation in a thread (Shared/CalendarInvite.swift): what,
 // when, where — read on the device from the message's .ics attachment —
 // with Accept · Maybe · Decline, which answer the organizer by mail from
-// the account that was invited (through the send's usual Undo), and, on
-// the Mac, Add to Calendar.
+// the account that was invited (through the send's usual Undo), and Add
+// to Calendar.
 
 import SwiftUI
 

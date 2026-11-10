@@ -569,10 +569,19 @@ extension ComposeView {
     private var bodyRich: AttributedString? { body_ }
 
     private func setBody(text: String) { body_ = AttributedString(text) }
-    /// A snippet: the phone's composer has no snippets menu; before the
-    /// text, should one ever call it.
+    /// A snippet goes in where the caret is, or over the selection.
     private func insertAtCaret(_ text: String) {
-        body_ = AttributedString(text) + body_
+        let snippet = AttributedString(text)
+        switch selection.indices(in: body_) {
+        case .insertionPoint(let index):
+            body_.transform(updating: &selection) { $0.insert(snippet, at: index) }
+        case .ranges(let set):
+            if let first = set.ranges.first {
+                body_.transform(updating: &selection) { $0.replaceSubrange(first, with: snippet) }
+            } else {
+                body_ = snippet + body_
+            }
+        }
         pristine = false
     }
     private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }

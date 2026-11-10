@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Mark Done · Remind Me in 1 Hour · Reply under a new-mail banner.
+        NewMailNotifier.registerActions()
         return true
     }
 
@@ -49,7 +51,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    // MARK: Notification taps → the thread
+    // MARK: Notification taps and buttons → the thread, or the action
     //
     // UNUserNotificationCenterDelegate calls back off the main actor with
     // non-Sendable arguments, so these two stay nonisolated: pull out the
@@ -61,10 +63,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let threadId = response.notification.request.content.userInfo["threadId"] as? String
+        let action = response.actionIdentifier
         completionHandler()
         guard let threadId else { return }
         Task { @MainActor in
-            AppModel.current?.openThread(id: threadId)
+            // A button pressed with the app not running starts it in the
+            // background: wait for the model, as the intents do.
+            guard let model = try? await IntentSupport.model() else { return }
+            await NewMailNotifier.perform(action, threadId: threadId, model: model)
         }
     }
 

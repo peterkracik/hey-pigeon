@@ -101,6 +101,9 @@ targets:
       path: HeyPigeon/Info.plist
       properties:
         CFBundleDisplayName: Hey Pigeon
+        # "Add to Calendar" on an invitation (CalendarAccess): write-only,
+        # the app adds the one event and reads nothing.
+        NSCalendarsWriteOnlyAccessUsageDescription: Hey Pigeon adds the event of an invitation to your calendar when you ask it to. It never reads your calendar.
         # XcodeGen writes literal 1.0 / 1 here unless told otherwise, which
         # ignores the MARKETING_VERSION / CURRENT_PROJECT_VERSION the publish
         # workflow passes — and App Store Connect then rejects the second

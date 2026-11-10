@@ -27,8 +27,8 @@ struct SettingsView: View {
                 DefaultAppSection()
                 TriageSection()
                 NotificationsSection()
-                #if os(macOS)
                 ComposeSection()
+                #if os(macOS)
                 UpdatesSection()
                 #endif
                 Section {
@@ -1053,11 +1053,10 @@ private func mark(_ text: String) -> some View {
         .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 }
 
-#if os(macOS)
-// MARK: - Compose (the Mac)
+// MARK: - Compose
 
 /// Settings › Compose: how long a send waits for Undo, and the snippets
-/// the composer's quote button and the command palette insert.
+/// the composer's quote button (and the Mac's command palette) insert.
 private struct ComposeSection: View {
     @Environment(AppModel.self) private var model
     @State private var editing: Snippet?
@@ -1093,10 +1092,18 @@ private struct ComposeSection: View {
         } header: {
             Text("Compose")
         } footer: {
-            Text("A sent message waits this long before it leaves, with Undo in the toast (and on Z). Snippets are pieces of text you drop into a message from the composer or the command palette; like your other settings they sync to your devices through your own Google Drive.")
+            Text(Self.footer)
         }
         .menuCard()
     }
+
+    static let footer: String = {
+        #if os(macOS)
+        "A sent message waits this long before it leaves, with Undo in the toast (and on Z). Snippets are pieces of text you drop into a message from the composer or the command palette; like your other settings they sync to your devices through your own Google Drive."
+        #else
+        "A sent message waits this long before it leaves, with Undo in the toast. Snippets are pieces of text you drop into a message from the composer; like your other settings they sync to your devices through your own Google Drive."
+        #endif
+    }()
 }
 
 /// One snippet: its name and its text, saved or deleted.
@@ -1134,7 +1141,7 @@ private struct SnippetEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .snippetEditorSize()
         .background(Theme.canvas)
     }
 
@@ -1153,4 +1160,14 @@ private struct SnippetEditor: View {
         dismiss()
     }
 }
-#endif
+
+private extension View {
+    /// A dialog on the Mac; the phone's sheet is as wide as the screen.
+    func snippetEditorSize() -> some View {
+        #if os(macOS)
+        frame(width: 460)
+        #else
+        frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        #endif
+    }
+}

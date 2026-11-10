@@ -184,24 +184,16 @@ final class BackgroundGrace {
     }
 }
 
-/// The buttons a new-mail banner carries. The Mac's banners come from its
-/// own timer while the app runs, so its delegate is there to act on them
-/// (MacAppDelegate); the phone's arrive through a silent push and stay
-/// plain.
+/// The buttons a new-mail banner carries, on both platforms: Mark Done and
+/// Remind Me in 1 Hour act without opening the app, Reply opens it on the
+/// thread with the composer. Registered and acted on in NewMailNotifier
+/// (`registerActions`, `perform`), from each platform's app delegate.
 enum NotificationActions {
     static let done = "mail.done"
     static let remindInAnHour = "mail.remind.1h"
     static let reply = "mail.reply"
-
-    /// The category a new-mail banner is filed under, nil where banners
-    /// have no buttons.
-    static var newMailCategory: String? {
-        #if os(macOS)
-        "mail.new"
-        #else
-        nil
-        #endif
-    }
+    /// The category a new-mail banner is filed under.
+    static let newMailCategory = "mail.new"
 }
 
 /// An attachment out of the app: the Mac copies it into the Downloads
@@ -596,14 +588,17 @@ struct MacBarButtonStyle: ButtonStyle {
 enum ComposePresentation {
     #if os(iOS)
     static let switchReopens = true
+    /// No send-later on the phone: the message would wait for the app to
+    /// run again, and iOS decides when that is — it could leave hours
+    /// after the time picked. The Mac's app is open at its desk all day.
     static let offersSendLater = false
-    static let offersSnippets = false
+    static let offersSnippets = true
     /// A reply opens the phone's composer sheet.
     static let inlineReplies = false
     #else
     static let switchReopens = false
-    /// The Mac's composer has the send-later clock and the snippets menu
-    /// beside Send; the phone's footer stays as it is.
+    /// The Mac's composer has the send-later clock beside Send; both
+    /// have the snippets menu.
     static let offersSendLater = true
     static let offersSnippets = true
     /// The Mac writes a reply under its thread (ThreadView's inline

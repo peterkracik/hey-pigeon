@@ -15,8 +15,8 @@ too. There is no second model, engine or intent layer.
 
 ```text
 HeyPigeonMac/
-  App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate (+ the banner's buttons), MacSyncLoop,
-              Connectivity (the network path: no round without one), MacCommands,
+  App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop (no round without a
+              network path: the shared Connectivity), MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
   Features/   MainWindow (sidebar + NavigationStack, Settings or the Bundles page), MainToolbar (+ ViewTabs),
               SearchSpotlight (+ SpotlightPanel),
@@ -187,7 +187,7 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   2 min in Low Power Mode, none without a network path (`Connectivity`),
   and composes new-mail banners from its diff
   (`NewMailNotifier.post`; their buttons are `NotificationActions`,
-  handled in `MacAppDelegate.act`). The Mac build has no push entitlement — it is
+  acted on by the shared `NewMailNotifier.perform`). The Mac build has no push entitlement — it is
   signed with Developer ID and no provisioning profile, which also makes
   the App Group the team-prefixed name (`AppGroup.identifier` reads it
   from the Info.plist) — so the relay is the phone's.

@@ -72,6 +72,7 @@ struct MailListScreen: View {
                     .animation(.snappy, value: model.analysis.isVisible)
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) { OfflineBar() }
             .navigationDestination(for: ThreadRow.self) { row in
                 ThreadView(row: row) { path.removeLast() }
             }
@@ -81,6 +82,25 @@ struct MailListScreen: View {
                 model.pendingThreadId = nil
                 path = [row]
             }
+        }
+    }
+}
+
+/// A line over the list while there is no network: what is done meanwhile
+/// is kept and sent when it is back, and the line says how much is waiting.
+struct OfflineBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if !Connectivity.shared.isOnline {
+            Label(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send when it is back" : "Offline",
+                  systemImage: "wifi.slash")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(Theme.sunken)
+                .accessibilityLabel(model.queuedChanges > 0 ? "Offline. \(model.queuedChanges) changes to send." : "Offline")
         }
     }
 }
@@ -219,6 +239,10 @@ struct ThreadList: View {
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 0, for: .scrollContent)
         .dismissKeyboardOnScroll()
+        // The top of the inbox has its bodies fetched ahead, on Wi-Fi: a
+        // tap then shows the message, not a spinner (AppModel.prefetchBodies).
+        .onAppear { model.prefetchTopOfInbox() }
+        .onChange(of: model.rowOrderRevision) { _, _ in model.prefetchTopOfInbox() }
         // No animation keyed on the rows here: the slide-out of a swiped
         // row is animated where the rows change (AppModel.perform). Keyed
         // on every row id, the animation re-laid the whole list out on

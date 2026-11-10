@@ -708,8 +708,8 @@ extension View {
 
     /// The composer's scroll view opens at its end when `on`: on the Mac a
     /// reply sits under the thread's messages, as in Superhuman, and the
-    /// draft is what the sheet opens on; the phone's composer has nothing
-    /// above its fields.
+    /// draft is what the sheet opens on; the phone keeps the thread under
+    /// its editor and opens at the fields.
     @ViewBuilder
     func composeScrollsToEnd(_ on: Bool) -> some View {
         #if os(macOS)

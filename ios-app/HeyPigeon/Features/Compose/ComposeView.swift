@@ -7,8 +7,8 @@
 // or leaving the app saves it as a Gmail draft; Discard deletes that draft.
 //
 // The body editor and the AI are per platform, in the two extensions at
-// the end: the phone's rich TextEditor over an AttributedString and the
-// AIEditSheet, as they ship; the Mac's HTML editor, the thread above a
+// the end: the phone's rich TextEditor over an AttributedString, the
+// thread under a reply and the AIEditSheet; the Mac's HTML editor, the thread above a
 // reply, the floating toolbar and the AI panel (ComposeMac.swift). The
 // struct itself holds what both share: the fields, the attachments, the
 // footer and the draft's lifecycle.
@@ -146,6 +146,10 @@ struct ComposeView: View {
                     headerFields
                     bodyEditor
                     if !attachments.isEmpty { attachmentChips }
+                    // The Mac's reply has its thread above (headerFields).
+                    #if os(iOS)
+                    replyHistory
+                    #endif
                 }
                 .padding(.bottom, 24)
             }
@@ -587,6 +591,27 @@ extension ComposeView {
     private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
     private var footerBackground: Color { Theme.canvas }
 
+    /// Under a reply's text: the conversation it answers, the latest
+    /// message open. The sheet covers the thread, and a reply used to be
+    /// written without the mail it answers anywhere in sight.
+    @ViewBuilder private var replyHistory: some View {
+        if let threadId = draft.replyToThreadId {
+            Divider().padding(.top, 16)
+            ComposeThreadHistory(threadId: threadId, showsSubject: false, onQuote: { quote($0) }) { _ in }
+        }
+    }
+
+    /// "Quote in reply": the message goes under the text as "> " lines
+    /// (once), to be answered between them; the reply then carries it.
+    private func quote(_ m: MessageItem) {
+        let quoted = QuotedText.quote(m.bodyText ?? m.snippet, from: m.fromName, address: m.fromAddress,
+                                      date: Formatters.fullDate(m.date))
+        guard !plainBody.contains(quoted) else { return }
+        body_.transform(updating: &selection) { $0.append(AttributedString("\n\n" + quoted)) }
+        pristine = false
+        focus = .body
+    }
+
     /// The From chip and the To / Cc / Bcc / Subject rows.
     @ViewBuilder private var headerFields: some View {
         if showsFromRow { fromRow }
@@ -612,7 +637,8 @@ extension ComposeView {
             .foregroundStyle(Theme.textPrimary)
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
-            .frame(minHeight: 280)
+            // A reply leaves room for the conversation under it.
+            .frame(minHeight: draft.replyToThreadId == nil ? 280 : 140)
             .padding(.horizontal, 12)
             .padding(.top, 6)
             .focused($focus, equals: .body)

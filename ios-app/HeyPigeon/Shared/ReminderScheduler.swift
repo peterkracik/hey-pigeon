@@ -39,6 +39,13 @@ enum ReminderScheduler {
             "\(t.id)|\(at.timeIntervalSince1970)|\(t.isFollowUp)|\(t.fromSummary)|\(t.subject)"
         }
         if await MainActor.run(body: { lastPlan == plan }) { return }
+        // Two runs at once (a sync's and a reminder just set) interleave
+        // their removes and adds: neither then knows what is pending, so
+        // neither records its plan and the next run starts clean.
+        await MainActor.run {
+            running += 1
+            if running > 1 { overlapped = true }
+        }
         var scheduledAll = true
         let pending = await center.pendingNotificationRequests()
         center.removePendingNotificationRequests(withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(prefix) })
@@ -67,9 +74,16 @@ enum ReminderScheduler {
         }
         // A plan that did not go in whole (no permission yet) is tried
         // again next time.
-        let done = scheduledAll ? plan : []
-        await MainActor.run { lastPlan = done }
+        await MainActor.run {
+            lastPlan = scheduledAll && !overlapped ? plan : []
+            running -= 1
+            if running == 0 { overlapped = false }
+        }
     }
+
+    /// Runs in flight, and whether any two of them met.
+    @MainActor private static var running = 0
+    @MainActor private static var overlapped = false
 
     /// What `reschedule` last put in place, to tell when nothing moved.
     @MainActor private static var lastPlan: [String] = []

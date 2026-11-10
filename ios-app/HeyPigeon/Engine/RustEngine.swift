@@ -161,9 +161,14 @@ final class RustEngine: MailEngine {
         // Without its <style> blocks: the Mac's editor loads the html into
         // its own page, where a draft written elsewhere could restyle the
         // editor or hide text that is still sent.
+        // And without its `cid:` pictures: the picture itself comes back
+        // as an ordinary attachment with no Content-ID, so the html would
+        // go out pointing at nothing (a broken image in the body).
         draft.bodyHTML = d.bodyHtml.map {
             $0.replacingOccurrences(of: #"<style\b[^>]*>[\s\S]*?</style\s*>"#, with: "",
                                     options: [.regularExpression, .caseInsensitive])
+                .replacingOccurrences(of: #"<img\b[^>]*\bsrc\s*=\s*["']?\s*cid:[^>]*>"#, with: "",
+                                      options: [.regularExpression, .caseInsensitive])
         }
         // The size from the base64 length: decoding an 18 MB attachment
         // only to count its bytes cost a copy of it on every draft open.

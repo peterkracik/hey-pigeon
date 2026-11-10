@@ -2063,14 +2063,20 @@ final class AppModel {
     /// Pull a draft change into the store (Gmail's push only covers the
     /// inbox), then let the open thread reload. A draft saved again while
     /// this ran stays shown until its own sync.
+    @ObservationIgnored private var isSyncingDrafts = false
+
     /// Only the draft's account is synced: closing a composer used to
     /// run a whole round over every account, reminders and index included.
     private func syncDrafts(_ accountId: String) async {
-        while isSyncing { try? await Task.sleep(for: .milliseconds(250)) }
+        // Its own flag, not `isSyncing`: with that one set, a Check for
+        // Mail pressed meanwhile was dropped and left the Mac's spinner
+        // on, and a pull to refresh did nothing. The engine itself keeps
+        // two rounds for one account apart.
+        while isSyncing || isSyncingDrafts { try? await Task.sleep(for: .milliseconds(250)) }
         let shown = unsyncedDrafts
-        isSyncing = true
+        isSyncingDrafts = true
         _ = try? await engine.syncNow(accountId: accountId)
-        isSyncing = false
+        isSyncingDrafts = false
         reloadSoon()
         await settleReloads()
         for (thread, d) in shown where unsyncedDrafts[thread] == d { unsyncedDrafts[thread] = nil }

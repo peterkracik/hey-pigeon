@@ -497,11 +497,22 @@ extension View {
 enum ToastMetrics {
     #if os(iOS)
     static let bottomInset: CGFloat = 72
+    /// With a thread open the tab bar is hidden and the thread's two
+    /// glass bars stand in its place, taller than it: the toast sat on
+    /// the triage bar.
+    static let bottomInsetOverThread: CGFloat = 136
     static let verticalPadding: CGFloat = 12
     #else
     static let bottomInset: CGFloat = 18
+    /// The Mac's thread bar is one small card: the toast stays where it is.
+    static let bottomInsetOverThread: CGFloat = 18
     static let verticalPadding: CGFloat = 11
     #endif
+
+    /// How far up from the bottom edge the toast sits.
+    static func bottomInset(threadOpen: Bool) -> CGFloat {
+        threadOpen ? bottomInsetOverThread : bottomInset
+    }
 }
 
 extension View {
@@ -775,6 +786,8 @@ enum ComposePresentation {
     static let offersSnippets = true
     /// A reply opens the phone's composer sheet.
     static let inlineReplies = false
+    /// Return in the Subject field ends editing, as it always did.
+    static let subjectReturnMovesToBody = false
     #else
     static let switchReopens = false
     /// The Mac's composer has the send-later clock beside Send; both
@@ -786,6 +799,8 @@ enum ComposePresentation {
     /// stays for a new message, a forward, and a reply pulled out into a
     /// window (`AppModel.composeDetached`).
     static let inlineReplies = true
+    /// Return in the Subject field moves on to the body.
+    static let subjectReturnMovesToBody = true
     #endif
 }
 
@@ -857,6 +872,18 @@ extension View {
     func borderlessFields() -> some View {
         #if os(macOS)
         textFieldStyle(.plain).focusEffectDisabled()
+        #else
+        self
+        #endif
+    }
+
+    /// A text button inside the composer's fields ("Cc/Bcc"): the
+    /// phone's as it is; plain on the Mac, where a default button draws
+    /// a bezel.
+    @ViewBuilder
+    func composeTextButton() -> some View {
+        #if os(macOS)
+        buttonStyle(.plain)
         #else
         self
         #endif

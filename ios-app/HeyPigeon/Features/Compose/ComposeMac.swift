@@ -93,17 +93,10 @@ final class MacComposeEditor {
         text.replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: "\n\n")
             .map { paragraph in
-                let inner = paragraph.components(separatedBy: "\n").map(escape).joined(separator: "<br>")
+                let inner = paragraph.components(separatedBy: "\n").map(RichText.escape).joined(separator: "<br>")
                 return inner.isEmpty ? "<p><br></p>" : "<p>\(inner)</p>"
             }
             .joined()
-    }
-
-    static func escape(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     /// The html part to send: nil while the body is empty, so an empty
@@ -256,7 +249,7 @@ struct HTMLEditorView: NSViewRepresentable {
         <!doctype html><html><head><meta charset="utf-8">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-\(nonce)'; img-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'">
         <style>\(style)</style></head>
-        <body><div id="editor" contenteditable="true" spellcheck="true" data-placeholder="\(MacComposeEditor.escape(placeholder))"></div>
+        <body><div id="editor" contenteditable="true" spellcheck="true" data-placeholder="\(RichText.escape(placeholder))"></div>
         <script nonce="\(nonce)">\(script)</script></body></html>
         """
     }
@@ -721,6 +714,13 @@ struct MacAIPanel: View {
             if let error = runner.error {
                 Text(error).font(.footnote).foregroundStyle(Theme.dangerText)
             }
+            // What a click sends, and to whom (AIAssist.footnote, as under
+            // the phone's sheet). The Mac sends the AIWriteContext too.
+            Text(AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: true,
+                                   destination: AIAssist.Destination(try? model.engine.aiStatus()),
+                                   refining: runner.result != nil))
+                .font(.caption2).foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))

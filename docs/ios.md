@@ -90,8 +90,9 @@ floating "splits" pill above the tab bar. Here that maps to:
   tab bar; Search is the system's separate search circle. Inbox carries an
   unread badge, Remind me the number of reminders due today, Need reply its
   count. The app icon badge is unified unread + reminders due today.
-- **The sidebar (≡)** is the desktop sidebar as a sheet: the accounts
-  (All / each account) nested under Inbox, then the desktop's folders in
+- **The sidebar (≡)** is the desktop sidebar as a sheet: Inbox, then the
+  accounts (All / each account) on a card of their own — a disconnected
+  one with a Reconnect row under it — then the desktop's folders in
   its order — Pinned (Gmail's Starred) · Sent · Drafts · Archive · Remind me · Need reply ·
   All emails · Spam · Trash — the Gmail labels, Add account and Settings.
   Picking a folder shows it in the Inbox tab.
@@ -99,7 +100,7 @@ floating "splits" pill above the tab bar. Here that maps to:
   folder title: the folder (no filter), then the **Jev triage labels** from
   Settings › Triage. One tap narrows the list to that label. Gmail labels
   stay in the sidebar. Accounts (desktop `0`/`1`/`2`) switch in the sidebar,
-  nested under Inbox, and the choice applies across all tabs.
+  under Inbox, and the choice applies across all tabs.
 - **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
   Last 7 days · Older. Remind me buckets by due date; Need reply has no
   Pinned group.
@@ -397,6 +398,11 @@ only when formatting was applied.
   attachment, a translation) is one view, `ResultState`: a spinner and a
   word, or what went wrong with **Try again**, or the result. A thread
   that could not load has Try again too.
+- Removing what cannot be brought back asks once, in one way — a
+  confirmation dialog: an account, an API key, a triage label, a Gmail
+  label. What can be undone gets Undo in the toast instead.
+- The toast sits above the tab bar, and above the thread's two bars
+  while a thread is open (`ToastMetrics.bottomInset(threadOpen:)`).
 - The toast (`ToastStack`, one view for the phone and the Mac) is spoken
   by VoiceOver as it appears and stays 20 s while VoiceOver runs.
 - Reduce Motion: the row leaves without the slide, a swiped row is back

@@ -107,7 +107,7 @@ struct SearchSpotlight: View {
                 if model.isSearchPending {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("No results").font(.system(size: 13)).foregroundStyle(Theme.textTertiary)
+                    Text("No matches").font(.system(size: 13)).foregroundStyle(Theme.textTertiary)
                 }
             }
             .frame(maxWidth: .infinity)

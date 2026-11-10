@@ -66,7 +66,9 @@ struct MacCommands: Commands {
             Button(selectedDone ? "Mark Not Done" : "Mark Done") { run(.markDone) }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(!hasSelection)
-            Button("Remind Me…") { run(.remind) }
+            // The key removes a reminder that is set (as the swipe does):
+            // the title says which of the two it will do.
+            Button(selectedReminded ? "Remove Reminder" : "Remind Me…") { run(.remind) }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
                 .disabled(!hasOne)
             Button("Need Reply") { run(.needReply) }
@@ -163,6 +165,12 @@ struct MacCommands: Commands {
             }
             Button("Keyboard Shortcuts") { run(.shortcuts) }
         }
+    }
+
+    /// The one thread the Message menu acts on has a reminder.
+    private var selectedReminded: Bool {
+        guard let state, state.hasOneTarget else { return false }
+        return state.focusRow(in: model)?.scheduledAt != nil
     }
 
     private var selectedDone: Bool {

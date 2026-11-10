@@ -146,7 +146,7 @@ struct RootView: View {
         .tabBarMinimizeBehavior(.onScrollDown)
             .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
-            .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
+            .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss(); model.settingsClosed() }) { SettingsView() }
             // Remind me, Add to bundle, the summary (Shared/RootChrome).
             // While the Bundles sheet is open it presents these itself
             // (AppModel.modal, BundleSheetPresenters).

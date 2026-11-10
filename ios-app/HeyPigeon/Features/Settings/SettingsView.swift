@@ -259,7 +259,16 @@ private struct AccountRow: View {
             LabeledContent("Name") {
                 TextField("Name", text: $name)
                     .multilineTextAlignment(.trailing)
-                    .onSubmit { model.updateAccount(account, displayName: name) }
+                    .onSubmit { saveName() }
+                    // Saved once typing pauses, like the signature: it was
+                    // saved on Return only, and a name typed and left by
+                    // closing Settings was lost.
+                    .task(id: name) {
+                        try? await Task.sleep(for: AppModel.prefSaveDelay)
+                        guard !Task.isCancelled else { return }
+                        saveName()
+                    }
+                    .onDisappear { saveName() }
             }
             LabeledContent("Color") {
                 HStack(spacing: 10) {
@@ -314,6 +323,12 @@ private struct AccountRow: View {
         // Renamed or re-signed on another device while this row is open.
         .onChange(of: account.displayName) { _, v in name = v }
         .onChange(of: account.signature) { _, v in if v != signature { signature = v } }
+    }
+
+    /// An emptied field is not a name to save.
+    private func saveName() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty, trimmed != account.displayName { model.updateAccount(account, displayName: trimmed) }
     }
 
     private func saveSignature() {
@@ -547,10 +562,17 @@ private struct KeyedProviderControls: View {
                 }
                 Spacer()
                 if hasKey {
-                    Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
-                        if confirmRemove { remove() } else { confirmRemove = true }
-                    }
-                    .font(.footnote.weight(.semibold))
+                    // Asks once, in the dialog an account's Remove uses (a
+                    // key is not kept anywhere to bring back): it was a
+                    // second tap on a button that had changed its words.
+                    Button("Remove") { confirmRemove = true }
+                        .font(.footnote.weight(.semibold))
+                        .confirmationDialog("Remove the \(provider.shortName) key?", isPresented: $confirmRemove,
+                                            titleVisibility: .visible) {
+                            Button("Remove key", role: .destructive) { remove() }
+                        } message: {
+                            Text("The key is deleted from this \(Device.name). \(provider.shortName) answers here again once you paste one.")
+                        }
                 }
             }
             if hasKey {
@@ -692,7 +714,7 @@ private struct SiriSection: View {
                 }
             }
             if InboxAsk.isAvailable(model) {
-                Button { model.askSheet = AskPresentation() } label: {
+                Button { model.askFromSettings() } label: {
                     Label("Ask my inbox", systemImage: "questionmark.bubble")
                 }
             }
@@ -802,6 +824,8 @@ private struct TriageSection: View {
     @State private var error: String?
     @State private var confirmRemove = false
     @State private var newLabel = ""
+    /// The triage label the Remove dialog is asking about.
+    @State private var removing: TriageLabelItem?
     @State private var reanalyzeQueued = false
 
     private var jevConfigured: Bool { status?.jevConfigured == true }
@@ -838,10 +862,13 @@ private struct TriageSection: View {
                     }
                     Spacer()
                     if jevConfigured {
-                        Button(confirmRemove ? "Really remove?" : "Remove", role: confirmRemove ? .destructive : nil) {
-                            if confirmRemove { remove() } else { confirmRemove = true }
-                        }
-                        .font(.footnote.weight(.semibold))
+                        Button("Remove") { confirmRemove = true }
+                            .font(.footnote.weight(.semibold))
+                            .confirmationDialog("Remove the Jev key?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                                Button("Remove key", role: .destructive) { remove() }
+                            } message: {
+                                Text("The key is deleted from this \(Device.name). Jev classifies here again once you paste one.")
+                            }
                     }
                 }
                 if !jevConfigured {
@@ -905,8 +932,14 @@ private struct TriageSection: View {
         Section {
             ForEach(model.triageLabels) { l in
                 Text(l.name)
+                    // Asks first: a label made again is a new label, so
+                    // there is no Undo to offer. The menu is the way on
+                    // the Mac, whose form has no swipe.
                     .swipeActions {
-                        Button(role: .destructive) { delete(l) } label: { Label("Remove", systemImage: "trash") }
+                        Button(role: .destructive) { removing = l } label: { Label("Remove", systemImage: "trash") }
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) { removing = l } label: { Label("Remove…", systemImage: "trash") }
                     }
             }
             .onMove { model.moveTriageLabels(from: $0, to: $1) }
@@ -918,6 +951,15 @@ private struct TriageSection: View {
                 Button("Add") { add() }
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
                     .font(.footnote.weight(.semibold))
+            }
+            // On this one row, not on the labels: a modifier on the
+            // ForEach goes to every row, and each would present it.
+            .confirmationDialog("Remove “\(removing?.name ?? "")”?",
+                                isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                                titleVisibility: .visible, presenting: removing) { l in
+                Button("Remove label", role: .destructive) { delete(l) }
+            } message: { _ in
+                Text("It leaves the bar over your inbox, on every device.")
             }
         } header: {
             Text("Labels")
@@ -947,7 +989,7 @@ private struct TriageSection: View {
 
     /// How to reorder and remove a label, in this platform's gestures.
     #if os(macOS)
-    private static let labelHint = "Drag a label to change the order the bar shows; swipe it left to remove it."
+    private static let labelHint = "Drag a label to change the order the bar shows; right-click it to remove it."
     #else
     private static let labelHint = "Touch and hold a label, then drag it to change the order the bar shows; swipe it left to remove it."
     #endif
@@ -1195,8 +1237,9 @@ private struct SnippetEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(isNew ? "New snippet" : "Snippet")
-                .font(Theme.display(18, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
+            // The title row the other bar-less sheets have (Theme's
+            // SheetHeader); its close, and Esc, leave without saving.
+            SheetHeader(title: isNew ? "New snippet" : "Snippet") { dismiss() }
             TextField("Name (shown in the menu)", text: $snippet.name)
                 .textFieldStyle(.roundedBorder)
             TextEditor(text: $snippet.body)
@@ -1211,9 +1254,8 @@ private struct SnippetEditor: View {
                     }
                 }
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
                 Button("Save") { save() }
+                    .pillButton(prominent: true)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
             }

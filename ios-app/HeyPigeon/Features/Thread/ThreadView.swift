@@ -71,10 +71,6 @@ struct ThreadView: View {
 
     private var replyKind: ReplyKind { replyChoice ?? defaultReply }
 
-    private var accountLabels: [MailLabelItem] {
-        model.labels.filter { $0.accountId == current.accountId && !$0.id.hasPrefix("CATEGORY_") }
-    }
-
     /// Plain-text transcript, oldest first, "Me" for own messages (AI context).
     private var transcript: String { detail?.transcript ?? "" }
 
@@ -221,21 +217,7 @@ struct ThreadView: View {
                     Button { model.pendingBundlePick = current } label: {
                         Label(current.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
                     }
-                    if !accountLabels.isEmpty {
-                        Menu {
-                            ForEach(accountLabels) { label in
-                                Button { IntentDonations.labeled(current, label, on: true, in: model); model.move(current, to: label); onClose() } label: { Label(label.name, systemImage: "tray") }
-                            }
-                        } label: { Label("Move to folder", systemImage: "folder") }
-                        Menu {
-                            ForEach(accountLabels) { label in
-                                let on = current.labels.contains(label.id)
-                                Button { IntentDonations.labeled(current, label, on: !on, in: model); model.setLabel(current, label, on: !on) } label: {
-                                    Label(on ? "Remove \(label.name)" : label.name, systemImage: on ? "checkmark" : "tag")
-                                }
-                            }
-                        } label: { Label("Add label", systemImage: "tag") }
-                    }
+                    LabelMenuItems(row: current) { onClose() }
                     Button { if let last = detail?.mail.last { forward(last) } } label: {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
@@ -401,22 +383,42 @@ struct ThreadView: View {
     /// chip to edit them by hand (sticky until "Reanalyze all emails" in
     /// Settings), the reminder and need-reply badges; then the count.
     private var metaLine: some View {
+        // On one line while it fits, as it always was; when the chips are
+        // too many or too large for the width (long labels, large type, a
+        // small phone) they wrap instead of being squeezed and cut.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                metaChips
+                Spacer(minLength: 4)
+                messageCount
+            }
+            HStack(alignment: .top, spacing: 6) {
+                FlowLayout(spacing: 6) { metaChips }
+                messageCount
+            }
+        }
+    }
+
+    /// How many messages the thread holds, at the line's end.
+    @ViewBuilder private var messageCount: some View {
+        let count = detail?.mail.count ?? row.messageCount
+        if count > 1 {
+            Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                .accessibilityLabel("\(count) messages")
+        }
+    }
+
+    /// The chips of the line, in order.
+    @ViewBuilder private var metaChips: some View {
         let names = current.triageLabelIds.compactMap { id in model.triageLabels.first { $0.id == id } }
-        return HStack(spacing: 6) {
+        Group {
             if let p = current.priority { PriorityIndicator(priority: p) }
             ForEach(names) { l in
                 Chip(text: l.name, background: Theme.sunken, foreground: Theme.textSecondary)
             }
             if !model.triageLabels.isEmpty {
                 Menu {
-                    ForEach(model.triageLabels) { label in
-                        let on = current.triageLabelIds.contains(label.id)
-                        Button {
-                            var ids = current.triageLabelIds
-                            if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
-                            model.setTriageLabels(current, ids)
-                        } label: { Label(label.name, systemImage: on ? "checkmark" : "tag") }
-                    }
+                    TriageLabelToggles(row: current, offImage: "tag")
                 } label: {
                     Chip(text: names.isEmpty ? "Label" : "", systemImage: "plus",
                          background: Theme.sunken, foreground: Theme.textTertiary)
@@ -442,12 +444,6 @@ struct ThreadView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Unsubscribe from \(offer.sender)")
-            }
-            Spacer(minLength: 4)
-            let count = detail?.mail.count ?? row.messageCount
-            if count > 1 {
-                Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
-                    .accessibilityLabel("\(count) messages")
             }
         }
     }

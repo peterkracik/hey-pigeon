@@ -281,38 +281,15 @@ private struct RowActions: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SmallIcon(systemImage: RowAction.done.glyph(for: row),
-                      help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))") { onDone() }
+            IconButton(RowAction.done.glyph(for: row),
+                       help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))", size: .small) { onDone() }
             ForEach(actions) { action in
-                SmallIcon(systemImage: action.glyph(for: row), help: "\(action.label(for: row)) (\(action.key))") {
+                IconButton(action.glyph(for: row), help: "\(action.label(for: row)) (\(action.key))", size: .small) {
                     state.run(action.command, in: model, rows: [row])
                 }
             }
-            SmallIcon(systemImage: "chevron.right", help: "Open full thread (↩)") { state.open(row, in: model) }
+            IconButton("chevron.right", help: "Open full thread (↩)", size: .small) { state.open(row, in: model) }
         }
-    }
-}
-
-/// A row's own icon button: smaller than the top bar's.
-private struct SmallIcon: View {
-    let systemImage: String
-    let help: String
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
-                .frame(width: 26, height: 26)
-                .background(hovering ? MacTheme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
-        .accessibilityLabel(help)
     }
 }
 

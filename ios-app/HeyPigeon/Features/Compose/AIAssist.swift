@@ -170,7 +170,12 @@ enum AIAssist {
         case (.write, true): parts = ["the conversation you are replying to", "its subject", "your notes"]
         case (.write, false): parts = ["your brief", "the subject"]
         }
-        if sendsWriter { parts.append("who is writing to whom") }
+        if sendsWriter {
+            // The Mac's AIWriteContext carries the subject with the names
+            // and addresses, in every mode.
+            if !parts.contains(where: { $0.contains("subject") }) { parts.append("the subject") }
+            parts.append("who is writing to whom")
+        }
         let what = parts.count > 1
             ? parts.dropLast().joined(separator: ", ") + " and " + (parts.last ?? "")
             : parts.first ?? ""

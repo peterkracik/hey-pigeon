@@ -39,6 +39,12 @@ struct SidebarSheet: View {
         List {
             Section {
                 folderRow(.inbox)
+            }
+            .menuCard()
+            // Whose mail every list shows. A card of its own: in one card
+            // with Inbox, the folder's checkmark and the account's sat one
+            // above the other and meant different things.
+            Section {
                 accountRow(nil, title: "All accounts", subtitle: nil, color: nil)
                 ForEach(model.accounts) { a in
                     let disconnected = model.accountStates[a.id]?.isConnected == false

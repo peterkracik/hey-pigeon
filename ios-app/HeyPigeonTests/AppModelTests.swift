@@ -198,6 +198,39 @@ struct AppModelTests {
         #expect(model.composeDraft == nil)
     }
 
+    /// The answer shows on the invitation while its send stands, and goes
+    /// with the send's Undo.
+    @Test func anInvitationsAnswerIsKeptUntilItsSendIsUndone() {
+        var draft = SendDraft()
+        draft.to = ["organizer@acme.test"]
+        model.answerInvite(.accepted, with: draft, threadId: "t1", from: "me@work.test")
+        #expect(model.inviteAnswers["t1"]?.answer == .accepted)
+        model.toast?.undo?()
+        #expect(model.inviteAnswers["t1"] == nil)
+    }
+
+    /// The phone's Settings is a sheet: the question opens once it closed.
+    @Test func askFromSettingsWaitsForTheSheetToClose() {
+        model.showSettings = true
+        model.askFromSettings()
+        #expect(!model.showSettings && model.askSheet == nil)
+        model.settingsClosed()
+        #expect(model.askSheet != nil)
+        // With no Settings sheet up (the Mac's page) it opens at once.
+        model.askSheet = nil
+        model.askFromSettings()
+        #expect(model.askSheet != nil)
+        model.settingsClosed() // nothing waiting: nothing more opens
+    }
+
+    /// The composer's link alert: a bare host gets https://, nothing typed
+    /// is no link.
+    @Test func theLinkAlertsAddressBecomesAURL() {
+        #expect(ComposeView.linkAddress(from: " example.com/a ")?.absoluteString == "https://example.com/a")
+        #expect(ComposeView.linkAddress(from: "http://example.com")?.absoluteString == "http://example.com")
+        #expect(ComposeView.linkAddress(from: "   ") == nil)
+    }
+
     /// The composer's trash: gone at once, and Undo opens the composer on
     /// the message again, as one no Gmail draft stands behind.
     @Test func aDiscardedDraftComesBackWithUndo() throws {

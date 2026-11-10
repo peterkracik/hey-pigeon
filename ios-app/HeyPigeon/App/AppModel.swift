@@ -2024,9 +2024,50 @@ final class AppModel {
             guard let self, let pending = self.pendingSends.removeValue(forKey: id) else { return }
             pending.task?.cancel()
             Keyboard.dismiss()
+            // An invitation's answer that was taken back is not an answer.
+            self.inviteAnswers = self.inviteAnswers.filter { $0.value.draftKey != pending.draft.draftKey }
             self.composeDraft = pending.draft
         }
     }
+
+    /// The answers sent to invitations, by thread, while the app runs: the
+    /// invitation's card shows which one went out. It was the card's own
+    /// state, so it was forgotten when the thread closed, and stayed after
+    /// the answer's send was undone.
+    struct InviteAnswer: Equatable {
+        let answer: CalendarInvite.Answer
+        /// The answer's message: its Undo takes the answer back.
+        let draftKey: String
+    }
+    private(set) var inviteAnswers: [String: InviteAnswer] = [:]
+
+    /// Answer an invitation: `draft` is the reply to the organizer, sent
+    /// like any message, with the send's Undo.
+    func answerInvite(_ answer: CalendarInvite.Answer, with draft: SendDraft, threadId: String, from accountId: String) {
+        inviteAnswers[threadId] = InviteAnswer(answer: answer, draftKey: draft.draftKey)
+        send(draft, from: accountId)
+    }
+
+    /// "Ask my inbox" from Settings. On the phone Settings is a sheet, and
+    /// the root cannot put the Ask sheet over it: Settings closes first
+    /// and the question opens once it has (`settingsClosed`). On the Mac
+    /// Settings is a page of the window and the sheet opens at once.
+    func askFromSettings() {
+        if showSettings {
+            askAfterSettings = true
+            showSettings = false
+        } else {
+            askSheet = AskPresentation()
+        }
+    }
+
+    /// The Settings sheet has gone (the phone's root tells it).
+    func settingsClosed() {
+        guard askAfterSettings else { return }
+        askAfterSettings = false
+        askSheet = AskPresentation()
+    }
+    @ObservationIgnored private var askAfterSettings = false
 
     private func commitSend(_ id: UUID) async {
         guard let pending = pendingSends.removeValue(forKey: id) else { return } // undone

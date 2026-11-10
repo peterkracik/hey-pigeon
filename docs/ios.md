@@ -277,7 +277,8 @@ messages before the last two stays visible.
   all when others are on the latest message, else Reply), the chevron picks
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
   the thread; a reply goes to the message's Reply-To when its sender set
-  one, and the account's "Send mail as" addresses count as the user's own), and the AI draft is its own circle beside it. There are no action
+  one, and the account's "Send mail as" addresses count as the user's own;
+  the rules are in `docs/specs/reply-recipients.md`), and the AI draft is its own circle beside it. There are no action
   links under the bodies: an open message's ••• or a long press on any
   message's header line replies to or forwards that one (the body is left
   to the long press that starts a text selection).
@@ -313,7 +314,8 @@ be read first — offline — does the delete ask, because it could not be
 undone. A saved draft reopens with its formatting: the phone reads back
 bold, italic, underline, strikethrough, links and paragraphs; a draft
 with anything richer (a list, Gmail's own blocks) opens as its plain
-text here, while the Mac's HTML editor loads it whole.
+text here, while the Mac's HTML editor loads it whole
+(`docs/specs/draft-formatting.md`).
 
 A reply shows the conversation it answers under the editor
 (`ComposeThreadHistory`): the latest message open, earlier ones a line

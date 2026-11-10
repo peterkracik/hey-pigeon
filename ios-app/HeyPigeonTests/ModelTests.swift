@@ -198,7 +198,18 @@ struct ThreadModelTests {
         #expect(makeRow(read: false, needsReply: true, starred: true).spokenState(showsDone: true) == "Unread, Need reply, Pinned")
         // Mail sent from an alias is the user's own: the reply follows it.
         let sent = makeMessage("2", address: "Alias@work.test", to: ["ana@acme.test"])
-        #expect(SendDraft.reply(to: sent, in: row, all: false, history: nil, mine: ["alias@work.test"]).to == ["ana@acme.test"])
+        let followUp = SendDraft.reply(to: sent, in: row, all: false, history: nil, mine: ["alias@work.test"])
+        #expect(followUp.to == ["ana@acme.test"] && followUp.fromAddress == "Alias@work.test")
+        // Mail that came to the alias is answered from it; other mail
+        // from the account's own address (nil).
+        #expect(all.fromAddress == "alias@work.test")
+        #expect(SendDraft.reply(to: list, in: row, all: false, history: nil).fromAddress == nil)
+        // The open message says where a reply will go, when not to its sender.
+        #expect(list.repliesGoTo == ["desk@hotel.test"])
+        #expect(same.repliesGoTo.isEmpty && sent.repliesGoTo.isEmpty)
+        // Into a composer without style blocks or cid: pictures.
+        #expect(ComposerHTML.clean("<STYLE type=\"text/css\">p{display:none}</style><p>Hi<img alt=\"\" src=\"cid:logo@x\"> <img src=\"https://x.test/a.png\"></p>")
+            == "<p>Hi <img src=\"https://x.test/a.png\"></p>")
     }
 
     @Test func forwardQuotesTheMessageUnderOneFwd() {

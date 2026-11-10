@@ -735,6 +735,9 @@ final class AppModel {
         // What was scheduled to send before the last quit; the first tick
         // sends whatever came due meanwhile.
         if persistsScheduledSends { scheduledSends = ScheduledSendStore.load() }
+        // The aliases as Gmail last gave them, until it answers again: a
+        // reply started offline or right at launch knows them too.
+        if persistsScheduledSends { sendAliases = Self.storedAliases() }
         clock = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -1506,6 +1509,16 @@ final class AppModel {
     /// inline are part of the HTML, which a forward does not keep.
     func forwardDraft(of m: MessageItem, in thread: ThreadRow) async -> SendDraft {
         var draft = SendDraft.forward(of: m, in: thread, signature: account(for: thread)?.signature ?? "")
+        #if os(macOS)
+        // The Mac's editor holds html: the forwarded message keeps its
+        // formatting under the signature and the header. The phone's
+        // editor cannot, and forwards the text.
+        if let html = m.bodyHTML, !html.isEmpty {
+            let lead = String(draft.bodyText.dropLast((m.bodyText ?? m.snippet).count))
+                .trimmingCharacters(in: .newlines)
+            draft.bodyHTML = MacComposeEditor.html(fromText: "\n\n" + lead) + ComposerHTML.clean(html)
+        }
+        #endif
         guard thread.hasAttachment, let all = try? await engine.attachments(threadId: thread.id) else { return draft }
         let files = all.filter { $0.messageId == m.id && !InlineImages.isShownInline($0, in: m.bodyHTML) }
         guard !files.isEmpty else { return draft }
@@ -1845,6 +1858,17 @@ final class AppModel {
         Set((sendAliases[accountId] ?? []).map { $0.email.lowercased() })
     }
 
+    private nonisolated static let aliasesKey = "sendAliases"
+
+    private nonisolated static func storedAliases() -> [String: [SendAlias]] {
+        guard let data = UserDefaults.standard.data(forKey: aliasesKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: [SendAlias]].self, from: data)) ?? [:]
+    }
+
+    private nonisolated static func store(_ aliases: [String: [SendAlias]]) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(aliases), forKey: aliasesKey)
+    }
+
     /// Ask Gmail for every account's aliases, once per launch.
     func loadSendAliases() {
         for account in accounts where !aliasesAsked.contains(account.id) {
@@ -1855,6 +1879,7 @@ final class AppModel {
                     return
                 }
                 sendAliases[account.id] = list
+                if persistsScheduledSends { Self.store(sendAliases) }
             }
         }
     }
@@ -2508,6 +2533,10 @@ final class AppModel {
     func removeAccount(_ account: MailAccount) async {
         do {
             try await engine.removeAccount(id: account.id)
+            // Its addresses are not kept past it.
+            sendAliases[account.id] = nil
+            aliasesAsked.remove(account.id)
+            if persistsScheduledSends { Self.store(sendAliases) }
             reloadAccounts()
             reload()
             push.refreshStatus()

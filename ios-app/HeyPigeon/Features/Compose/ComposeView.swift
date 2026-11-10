@@ -282,6 +282,20 @@ struct ComposeView: View {
                 .pillButton(prominent: true)
                 .tint(Theme.textPrimary)
                 .disabled(!canSend)
+                if ComposePresentation.offersSendLater {
+                    // The same message at a later hour. It is sent by this
+                    // device, so the help says what that takes.
+                    Menu {
+                        ForEach(SendLaterPreset.available(), id: \.preset) { item in
+                            Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { sendLater(at: item.date) }
+                        }
+                    } label: { Image(systemName: "clock").frame(width: 22, height: 22) }
+                        .pillButton()
+                        .labelOnlyMenu()
+                        .disabled(!canSend)
+                        .help("Send later — from this \(Device.name), while Hey Pigeon is open")
+                        .accessibilityLabel("Send later")
+                }
                 Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
                     .pillButton()
                     .accessibilityLabel("Discard")
@@ -290,6 +304,17 @@ struct ComposeView: View {
                     Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
                         .pillButton()
                         .accessibilityLabel("Write or edit with AI")
+                }
+                if ComposePresentation.offersSnippets, !model.snippets.isEmpty {
+                    Menu {
+                        ForEach(model.snippets) { snippet in
+                            Button(snippet.name) { insertAtCaret(snippet.body) }
+                        }
+                    } label: { Image(systemName: "text.quote").frame(width: 22, height: 22) }
+                        .pillButton()
+                        .labelOnlyMenu()
+                        .help("Insert a snippet (Settings › Compose)")
+                        .accessibilityLabel("Insert a snippet")
                 }
                 Menu {
                     Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
@@ -425,6 +450,22 @@ struct ComposeView: View {
         model.send(d, from: from)
     }
 
+    /// Send's twin for a later hour (AppModel.sendLater): the composer
+    /// closes the same way, the message waits on this device.
+    private func sendLater(at date: Date) {
+        sending = true
+        finished = true
+        var d = composed
+        let from = fromId
+        if let old = savedFrom, old != from {
+            model.deleteDraft(d.draftKey, from: old)
+            d.draftSaved = false
+        }
+        Keyboard.dismiss()
+        leave()
+        model.sendLater(d, from: from, at: date)
+    }
+
     /// Take the fields of a draft changed outside the editor (an intent).
     private func adopt(_ d: SendDraft) {
         draft = d
@@ -498,6 +539,12 @@ extension ComposeView {
     private var bodyRich: AttributedString? { body_ }
 
     private func setBody(text: String) { body_ = AttributedString(text) }
+    /// A snippet: the phone's composer has no snippets menu; before the
+    /// text, should one ever call it.
+    private func insertAtCaret(_ text: String) {
+        body_ = AttributedString(text) + body_
+        pristine = false
+    }
     private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
     private var footerBackground: Color { Theme.canvas }
 
@@ -621,6 +668,12 @@ extension ComposeView {
     private var bodyRich: AttributedString? { AttributedString(editor.text) }
 
     private func setBody(text: String) { editor.setText(text) }
+    /// A snippet goes in where the caret is, as typing would (⌘Z takes it
+    /// back).
+    private func insertAtCaret(_ text: String) {
+        editor.replaceSelection(with: text)
+        pristine = false
+    }
     private func adoptBody(of d: SendDraft) { editor.set(draft: d) }
     private var footerBackground: Color { inline ? Theme.card : Theme.canvas }
 

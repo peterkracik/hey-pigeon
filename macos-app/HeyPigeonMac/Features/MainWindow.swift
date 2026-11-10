@@ -253,7 +253,7 @@ struct MacToast: View {
             .padding(.bottom, 18)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .task(id: toast.id) {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: toast.duration)
                 if model.toast?.id == toast.id { withAnimation { model.toast = nil } }
             }
         }

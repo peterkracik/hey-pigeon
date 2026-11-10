@@ -80,7 +80,7 @@ enum PaletteRecents {
     /// `id` to the front. Rows about one thread or one search result are
     /// not habits: they are left out.
     static func remember(_ id: String, _ defaults: UserDefaults = .standard) {
-        guard !id.hasPrefix("hit."), !id.hasPrefix("person."), !id.hasPrefix("label."), !id.hasPrefix("move.") else { return }
+        guard !["hit.", "person.", "label.", "move.", "scheduled."].contains(where: { id.hasPrefix($0) }) else { return }
         defaults.set(pushed(id, onto: load(defaults)), forKey: key)
     }
 
@@ -330,6 +330,23 @@ struct CommandPalette: View {
         out.append(PaletteItem(id: "compose", title: "New message", systemImage: "square.and.pencil", key: "C") {
             state.run(.compose, in: model)
         })
+        // A new message that starts from a snippet, and what is waiting to
+        // be sent later (picking one puts it back in the composer).
+        for snippet in model.snippets {
+            out.append(PaletteItem(id: "snippet.\(snippet.id)", title: "New message · \(snippet.name)", subtitle: snippet.body,
+                                   systemImage: "text.quote") {
+                var draft = SendDraft()
+                draft.bodyText = snippet.body
+                model.compose(draft)
+            })
+        }
+        for send in model.scheduledSends {
+            let subject = send.draft.subject.isEmpty ? "(no subject)" : send.draft.subject
+            out.append(PaletteItem(id: "scheduled.\(send.id)", title: "Scheduled · \(subject)",
+                                   subtitle: "Sends \(Formatters.reminder(send.at)) — pick to edit or cancel", systemImage: "clock") {
+                model.cancelScheduledSend(send.id, reopen: true)
+            })
+        }
         out.append(PaletteItem(id: "search", title: "Search", systemImage: "magnifyingglass", key: "/") {
             state.run(.search, in: model)
         })

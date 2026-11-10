@@ -28,6 +28,7 @@ struct SettingsView: View {
                 TriageSection()
                 NotificationsSection()
                 #if os(macOS)
+                ComposeSection()
                 UpdatesSection()
                 #endif
                 Section {
@@ -1021,7 +1022,7 @@ private struct NotificationsSection: View {
 
     static let footer: String = {
         #if os(macOS)
-        "The Mac checks for mail every 30 seconds while the app is open and composes the banner itself; nothing goes through a relay. Reminders are local notifications either way."
+        "The Mac checks for mail every 30 seconds while the app is open (every two minutes in Low Power Mode, and not while it has no network) and composes the banner itself; nothing goes through a relay. A banner's buttons mark the thread done, set a reminder an hour on, or open a reply. Reminders are local notifications either way."
         #else
         "Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way."
         #endif
@@ -1051,3 +1052,105 @@ private func mark(_ text: String) -> some View {
         .frame(width: 32, height: 32)
         .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 }
+
+#if os(macOS)
+// MARK: - Compose (the Mac)
+
+/// Settings › Compose: how long a send waits for Undo, and the snippets
+/// the composer's quote button and the command palette insert.
+private struct ComposeSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var editing: Snippet?
+
+    var body: some View {
+        @Bindable var model = model
+        Section {
+            Picker("Undo send", selection: $model.sendUndoSeconds) {
+                ForEach(AppModel.sendUndoChoices, id: \.self) { seconds in
+                    Text("\(seconds) seconds").tag(seconds)
+                }
+            }
+            ForEach(model.snippets) { snippet in
+                Button { editing = snippet } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(snippet.name.isEmpty ? "Untitled" : snippet.name).foregroundStyle(Theme.textPrimary)
+                            Text(snippet.body).font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Button { editing = Snippet(name: "", body: "") } label: { Label("New snippet", systemImage: "plus") }
+                // On one row, not on the section: a section hands its
+                // modifiers to every row, and each would present the sheet.
+                .sheet(item: $editing) { snippet in
+                    SnippetEditor(snippet: snippet)
+                }
+        } header: {
+            Text("Compose")
+        } footer: {
+            Text("A sent message waits this long before it leaves, with Undo in the toast (and on Z). Snippets are pieces of text you drop into a message from the composer or the command palette; like your other settings they sync to your devices through your own Google Drive.")
+        }
+        .menuCard()
+    }
+}
+
+/// One snippet: its name and its text, saved or deleted.
+private struct SnippetEditor: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State var snippet: Snippet
+
+    private var isNew: Bool { !model.snippets.contains { $0.id == snippet.id } }
+    private var canSave: Bool { !snippet.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(isNew ? "New snippet" : "Snippet")
+                .font(Theme.display(18, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
+            TextField("Name (shown in the menu)", text: $snippet.name)
+                .textFieldStyle(.roundedBorder)
+            TextEditor(text: $snippet.body)
+                .font(.body)
+                .frame(minHeight: 160)
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
+            HStack {
+                if !isNew {
+                    Button("Delete", role: .destructive) {
+                        model.snippets.removeAll { $0.id == snippet.id }
+                        dismiss()
+                    }
+                }
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSave)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .background(Theme.canvas)
+    }
+
+    private func save() {
+        var s = snippet
+        s.name = s.name.trimmingCharacters(in: .whitespaces)
+        if s.name.isEmpty {
+            // Its first words name it.
+            s.name = String(s.body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+        }
+        if let index = model.snippets.firstIndex(where: { $0.id == s.id }) {
+            model.snippets[index] = s
+        } else {
+            model.snippets.append(s)
+        }
+        dismiss()
+    }
+}
+#endif

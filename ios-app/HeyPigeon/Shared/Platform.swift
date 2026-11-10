@@ -554,10 +554,16 @@ struct MacBarButtonStyle: ButtonStyle {
 enum ComposePresentation {
     #if os(iOS)
     static let switchReopens = true
+    static let offersSendLater = false
+    static let offersSnippets = false
     /// A reply opens the phone's composer sheet.
     static let inlineReplies = false
     #else
     static let switchReopens = false
+    /// The Mac's composer has the send-later clock and the snippets menu
+    /// beside Send; the phone's footer stays as it is.
+    static let offersSendLater = true
+    static let offersSnippets = true
     /// The Mac writes a reply under its thread (ThreadView's inline
     /// composer, ComposeView's `inline`), as Superhuman does; the sheet
     /// stays for a new message, a forward, and a reply pulled out into a

@@ -16,6 +16,8 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     let text: String
     var undo: (() -> Void)?
+    /// How long it stays: five seconds, or a send's undo window.
+    var duration: Duration = .seconds(5)
     static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
 }
 
@@ -414,6 +416,10 @@ final class AppModel {
         /// Settings › AI › "Make bundles" (the core reads it too:
         /// crates/ffi/src/bundles.rs, unset = on).
         static let autoBundles = "bundles.auto"
+        /// The snippets, one JSON string (SnippetStore).
+        static let snippets = "compose.snippets"
+        /// How long a send waits for Undo, in seconds, as a string.
+        static let sendUndo = "send.undo_seconds"
     }
 
     /// The user's order of the triage labels, by id. The core lists them
@@ -673,6 +679,8 @@ final class AppModel {
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
         if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
+        if let v = prefs[PrefName.snippets] as? String { snippets = SnippetStore.decode(v) }
+        if let v = (prefs[PrefName.sendUndo] as? String).flatMap(Int.init), Self.sendUndoChoices.contains(v) { sendUndoSeconds = v }
         adoptingPrefs = false
     }
 
@@ -708,6 +716,9 @@ final class AppModel {
         AppModel.current = self
         // Donations are system state: not from the sample inbox or the tests.
         IntentDonations.enabled = !(engine is MockEngine)
+        // What was scheduled to send before the last quit; the first tick
+        // sends whatever came due meanwhile.
+        if persistsScheduledSends { scheduledSends = ScheduledSendStore.load() }
         clock = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -720,6 +731,7 @@ final class AppModel {
     /// and the icon badge adds it (the notification carries the same count
     /// for the asleep case).
     private func tick() {
+        sendDueScheduled()
         let before = dueCount
         dueCount = Self.due(Self.scoped(scheduledAcrossAccounts, to: selectedAccountId)).count
         if dueCount != before {
@@ -1606,9 +1618,84 @@ final class AppModel {
 
     // MARK: Send — deferred, with an undo window (desktop `sendCompose`)
 
-    /// How long a send waits in the toast before it commits. Same window
-    /// as the toast itself, so Undo is available exactly while it shows.
-    static let sendUndoWindow: Duration = .seconds(5)
+    /// How long a send waits in the toast before it commits (Settings ›
+    /// Compose; synced). The toast stays for the same time, so Undo is
+    /// available exactly while it shows.
+    var sendUndoSeconds = 5 {
+        didSet { if sendUndoSeconds != oldValue { savePref(PrefName.sendUndo, String(sendUndoSeconds)) } }
+    }
+    static let sendUndoChoices = [5, 10, 20, 30]
+    var sendUndoWindow: Duration { .seconds(sendUndoSeconds) }
+
+    /// The user's snippets (Shared/Snippets.swift), synced as one pref.
+    var snippets: [Snippet] = [] {
+        didSet { if snippets != oldValue { savePref(PrefName.snippets, SnippetStore.encode(snippets)) } }
+    }
+
+    // MARK: Send later (Shared/ScheduledSends.swift)
+
+    /// Messages waiting for their time on this device, soonest first.
+    private(set) var scheduledSends: [ScheduledSend] = []
+    /// The sample inbox and the tests keep nothing on disk.
+    private var persistsScheduledSends: Bool { !(engine is MockEngine) }
+
+    private func storeScheduledSends() {
+        if persistsScheduledSends { ScheduledSendStore.save(scheduledSends) }
+    }
+
+    /// Send `draft` at `date` instead of now. It leaves the composer, is
+    /// kept as a Gmail draft meanwhile, and the toast's Undo brings it
+    /// back to the composer.
+    func sendLater(_ draft: SendDraft, from accountId: String, at date: Date) {
+        var d = draft
+        d.fromAccountId = accountId
+        d.draftSaved = true
+        let item = ScheduledSend(id: d.draftKey, draft: d, accountId: accountId, at: date)
+        scheduledSends.removeAll { $0.id == item.id }
+        scheduledSends.append(item)
+        scheduledSends.sort { $0.at < $1.at }
+        storeScheduledSends()
+        saveDraft(d, from: accountId)
+        show("Will send \(Formatters.reminder(date))") { [weak self] in
+            self?.cancelScheduledSend(item.id, reopen: true)
+        }
+    }
+
+    /// Take a message off the list; `reopen` puts it back in the composer
+    /// (its Gmail draft stays, as for any open draft).
+    func cancelScheduledSend(_ id: String, reopen: Bool) {
+        guard let index = scheduledSends.firstIndex(where: { $0.id == id }) else { return }
+        let item = scheduledSends.remove(at: index)
+        storeScheduledSends()
+        if reopen {
+            Keyboard.dismiss()
+            composeDraft = item.draft
+        }
+    }
+
+    /// Send what has come due: every half minute while the app runs, and
+    /// once at launch for what came due while it did not. Off the list
+    /// before the send starts, so a slow send is never started twice.
+    func sendDueScheduled(now: Date = Date()) {
+        let due = scheduledSends.filter { $0.at <= now }
+        guard !due.isEmpty else { return }
+        scheduledSends.removeAll { $0.at <= now }
+        storeScheduledSends()
+        for item in due {
+            Task {
+                do {
+                    try await engine.perform(.send(item.draft), accountId: item.accountId)
+                    show("Sent · \(item.draft.subject.isEmpty ? "(no subject)" : item.draft.subject)")
+                    deleteDraft(item.draft.draftKey, from: item.accountId)
+                } catch {
+                    // Not queued again: the engine's outbox keeps a send it
+                    // could not deliver, and a second copy here could go
+                    // out twice. The Gmail draft is still there.
+                    show("Couldn't send the scheduled message: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
 
     private struct PendingSend {
         let draft: SendDraft
@@ -1626,13 +1713,13 @@ final class AppModel {
         let id = UUID()
         pendingSends[id] = PendingSend(draft: d, accountId: accountId)
         pendingSends[id]?.task = Task { [weak self] in
-            try? await Task.sleep(for: Self.sendUndoWindow)
+            try? await Task.sleep(for: self?.sendUndoWindow ?? .seconds(5))
             guard !Task.isCancelled else { return }
             await self?.commitSend(id)
         }
         let n = d.to.count + d.cc.count + d.bcc.count
         let first = d.to.first ?? d.cc.first ?? d.bcc.first ?? ""
-        show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")") { [weak self] in
+        show("Sending · \(n == 1 ? "to \(first)" : "to \(n) recipients")", duration: sendUndoWindow) { [weak self] in
             // A send that already committed must not reopen the composer
             // (that is how duplicates get sent).
             guard let self, let pending = self.pendingSends.removeValue(forKey: id) else { return }
@@ -1738,8 +1825,8 @@ final class AppModel {
         if let text { show(text, undo: undo) }
     }
 
-    func show(_ text: String, undo: (() -> Void)? = nil) {
-        toast = Toast(text: text, undo: undo)
+    func show(_ text: String, duration: Duration = .seconds(5), undo: (() -> Void)? = nil) {
+        toast = Toast(text: text, undo: undo, duration: duration)
         if let undo { lastUndo = (undo, Date()) }
     }
 

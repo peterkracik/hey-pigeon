@@ -411,6 +411,40 @@ struct ShortcutsSheetTests {
     }
 }
 
+@MainActor
+struct ComposeExtrasTests {
+    @Test func snippetsSurviveThePrefAndAScheduledSendCanBeTakenBack() {
+        let snippets = [Snippet(id: "a", name: "Address", body: "Hlavná 1\nBratislava"), Snippet(id: "b", name: "No", body: "Thanks, but no.")]
+        #expect(SnippetStore.decode(SnippetStore.encode(snippets)) == snippets)
+        #expect(SnippetStore.decode("not json").isEmpty)
+
+        let model = AppModel(engine: MockEngine())
+        var draft = SendDraft()
+        draft.to = ["ana@example.com"]
+        draft.subject = "Friday"
+        let at = Date().addingTimeInterval(3600)
+        model.sendLater(draft, from: model.accounts.first?.id ?? "me@example.com", at: at)
+        #expect(model.scheduledSends.map(\.id) == [draft.draftKey])
+        // Not due yet: nothing leaves.
+        model.sendDueScheduled(now: Date())
+        #expect(model.scheduledSends.count == 1)
+        // The toast's Undo (and Z) puts it back in the composer.
+        #expect(model.undoLast())
+        #expect(model.scheduledSends.isEmpty)
+        #expect(model.composeDraft?.draftKey == draft.draftKey)
+    }
+
+    @Test func laterTodayIsOfferedOnlyBeforeTheEvening() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Bratislava"))
+        let noon = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 12)))
+        let night = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 21)))
+        #expect(SendLaterPreset.laterToday.date(now: noon, calendar: calendar) != nil)
+        #expect(SendLaterPreset.laterToday.date(now: night, calendar: calendar) == nil)
+        #expect(SendLaterPreset.inAnHour.date(now: noon, calendar: calendar) == noon.addingTimeInterval(3600))
+    }
+}
+
 struct WindowRestorationTests {
     @Test func aViewSurvivesARelaunch() {
         for view in [MailView.inbox, .needReply, .archive, .label(id: "Label_7", name: "Receipts / 2026")] {

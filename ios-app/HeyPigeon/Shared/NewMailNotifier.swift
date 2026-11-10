@@ -58,7 +58,8 @@ enum NewMailNotifier {
         let fresh = unreadInbox(model, accountId: accountId).filter { !before.contains($0.id) }
         // In front, the list is live and a banner would be noise.
         if !AppLifecycle.isActive {
-            for row in fresh {
+            // A Focus filter narrows the banners to its account.
+            for row in fresh where model.focusAllows(row) {
                 await post(row)
             }
         }

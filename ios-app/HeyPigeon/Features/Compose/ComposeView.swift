@@ -20,6 +20,9 @@ import UniformTypeIdentifiers
 struct ComposeView: View {
     @State private var draft: SendDraft
     @State private var fromId: String
+    /// A "Send mail as" address of the From account, when one is picked
+    /// instead of the account's own (AppModel.sendAliases).
+    @State private var fromAddress: String?
     @State private var to: [String]
     @State private var cc: [String]
     @State private var bcc: [String]
@@ -83,6 +86,7 @@ struct ComposeView: View {
         _bcc = State(initialValue: draft.bcc)
         _showCc = State(initialValue: !draft.cc.isEmpty || !draft.bcc.isEmpty)
         _fromId = State(initialValue: draft.fromAccountId ?? "")
+        _fromAddress = State(initialValue: draft.fromAddress)
         _body_ = State(initialValue: draft.bodyRich ?? AttributedString(draft.bodyText))
         _attachments = State(initialValue: draft.attachments)
         // A forward or a restored (undone) send arrives with a body the user
@@ -110,6 +114,15 @@ struct ComposeView: View {
     }
 
     private var fromAccount: MailAccount? { model.accounts.first { $0.id == fromId } }
+    /// An account's other addresses to send from: its aliases, without
+    /// the one it sends from anyway.
+    private func aliases(of account: MailAccount) -> [SendAlias] {
+        (model.sendAliases[account.id] ?? []).filter { !EmailAddress.same($0.email, account.email) }
+    }
+    /// The From row is worth showing: there is a choice to make.
+    private var showsFromRow: Bool {
+        model.accounts.count > 1 || model.accounts.contains { !aliases(of: $0).isEmpty }
+    }
     private var canSend: Bool { !(to.isEmpty && cc.isEmpty && bcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
@@ -154,6 +167,7 @@ struct ComposeView: View {
         content
             .task { people = model.searchPeople() }
             .onAppear {
+                model.loadSendAliases()
                 if fromId.isEmpty {
                     fromId = model.selectedAccountId ?? model.accounts.first?.id ?? ""
                 }
@@ -218,13 +232,26 @@ struct ComposeView: View {
             Menu {
                 ForEach(model.accounts) { a in
                     Button { switchFrom(a) } label: {
-                        Label { Text("\(a.displayName)  \(a.email)") } icon: { Image(systemName: a.id == fromId ? "checkmark" : "circle.fill") }
+                        Label { Text("\(a.displayName)  \(a.email)") } icon: {
+                            Image(systemName: a.id == fromId && fromAddress == nil ? "checkmark" : "circle.fill")
+                        }
+                    }
+                    // The account's "Send mail as" addresses, under it.
+                    ForEach(aliases(of: a)) { alias in
+                        Button {
+                            if a.id != fromId { switchFrom(a) }
+                            fromAddress = alias.email
+                        } label: {
+                            Label { Text(alias.name.isEmpty ? alias.email : "\(alias.name)  \(alias.email)") } icon: {
+                                Image(systemName: a.id == fromId && fromAddress == alias.email ? "checkmark" : "arrow.turn.down.right")
+                            }
+                        }
                     }
                 }
             } label: {
                 HStack(spacing: 8) {
                     if let a = fromAccount { Circle().fill(Theme.tagForeground(a.color)).frame(width: 8, height: 8) }
-                    Text(fromAccount?.email ?? "Choose account").foregroundStyle(Theme.textPrimary)
+                    Text(fromAddress ?? fromAccount?.email ?? "Choose account").foregroundStyle(Theme.textPrimary)
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
@@ -362,6 +389,8 @@ struct ComposeView: View {
             pristine = true
         }
         fromId = next.id
+        // The account's own address again: an alias is another account's.
+        fromAddress = nil
     }
 
     // MARK: Attachments
@@ -431,6 +460,7 @@ struct ComposeView: View {
         d.bodyHTML = bodyHTML
         d.bodyRich = bodyRich
         d.attachments = attachments
+        d.fromAddress = fromAddress
         return d
     }
 
@@ -550,7 +580,7 @@ extension ComposeView {
 
     /// The From chip and the To / Cc / Bcc / Subject rows.
     @ViewBuilder private var headerFields: some View {
-        if model.accounts.count > 1 { fromRow }
+        if showsFromRow { fromRow }
         fieldRow("To") {
             RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
             if !showCc {
@@ -705,7 +735,7 @@ extension ComposeView {
             draftHeader
         }
         if showFields {
-            if model.accounts.count > 1 { fromRow }
+            if showsFromRow { fromRow }
             fieldRow("To") {
                 RecipientField(addresses: $to, focused: $focus, field: .to, people: people)
                 if !showCc {

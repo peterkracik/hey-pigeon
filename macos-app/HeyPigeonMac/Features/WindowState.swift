@@ -24,6 +24,8 @@ enum MailCommand: Hashable {
     case extendNext, extendPrevious, selectAll
     /// Z, Edit › Undo: take the last action back (AppModel.undoLast).
     case undo
+    /// ⌘P: the thread on paper or as a PDF (ThreadPrinter).
+    case print
     /// Switch account: the index in `AppModel.accounts`, nil for all.
     case account(Int?)
     case go(MailView)
@@ -620,6 +622,21 @@ final class WindowState: Equatable {
             selectAll(in: model)
         case .undo:
             model.undoLast()
+        case .print:
+            guard let row else { return }
+            let window = NSApp.keyWindow
+            Task {
+                // The stored copy when it is whole; else Gmail's, once.
+                var detail = try? model.engine.threadLocal(id: row.id)
+                let whole = detail?.mail.isEmpty == false
+                    && detail?.mail.allSatisfy { $0.bodyHTML != nil || $0.bodyText != nil } == true
+                if !whole { detail = (try? await model.engine.thread(id: row.id)) ?? detail }
+                guard let detail, !detail.mail.isEmpty else {
+                    model.show("Couldn't load the thread to print")
+                    return
+                }
+                ThreadPrinter.print(detail, in: window)
+            }
         case .open:
             // On the Bundles page the email is already open where it is.
             guard let row, !showBundles else { return }

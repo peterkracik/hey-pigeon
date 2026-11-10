@@ -62,7 +62,9 @@ final class MacSyncLoop {
         if notificationsEnabled { before = Set(await unreadInbox(model).map(\.id)) }
         await model.sync(quiet: true)
         guard notificationsEnabled, !AppLifecycle.isActive else { return }
-        let fresh = await unreadInbox(model).filter { !before.contains($0.id) }
+        // A Focus filter (Intents/FocusFilter.swift) narrows the banners
+        // to its account.
+        let fresh = await unreadInbox(model).filter { !before.contains($0.id) && model.focusAllows($0) }
         for row in fresh {
             await NewMailNotifier.post(row)
         }

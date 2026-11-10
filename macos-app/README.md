@@ -44,15 +44,17 @@ macos-app/
 | --- | --- | --- |
 | Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no title bar or toolbar; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
-| After Mark done | Undo toast, back to the list | Undo toast; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
-| Several at once | — | ⌘/⇧-click rows: a batch bar on a bordered panel at the bottom |
-| Sync | On open, pull, background refresh, the optional relay | Every 30 s while open, every activation, ⇧⌘N; no relay — the Mac build has no push entitlement |
-| New mail | A relay push → banner | The timer's diff → banner (Settings › Notifications), communication-style with the sender's initial |
+| After Mark done | Undo toast, back to the list | Undo toast, and `Z` / ⌘Z for two minutes after it; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
+| Several at once | — | ⌘/⇧-click rows, or ⇧J / ⇧K / X and ⌘A from the keyboard: a batch bar on a bordered panel at the bottom; rows drag onto a label, a bundle or a folder in the sidebar |
+| Reading | A thread in the list's place | The same, or beside the list with View › Reading Pane (⌥⌘P) on a wide window; Space previews a row in place and pages a thread; ⌘P prints or saves a PDF |
+| Sync | On open, pull, background refresh, the optional relay | Every 30 s while open (2 min in Low Power Mode, not without a network), every activation, ⇧⌘N; no relay — the Mac build has no push entitlement |
+| New mail | A relay push → banner | The timer's diff → banner (Settings › Notifications), communication-style with the sender's initial, with Mark Done · Remind Me in 1 Hour · Reply |
 | Siri, Spotlight, Shortcuts | App Intents, the Mail schema, the index | The same files; "Ask my inbox" and "triage my inbox" through the Mailbox menu and the palette |
 | Widgets | Unread · Next reminder · Need reply, Live Activities, Controls | The three widgets; Done and 1 h are `heypigeon://` links the app acts on |
 | Default mail app | iOS Settings › Default Apps | Settings › Default email app asks macOS to make Hey Pigeon the `mailto:` handler and shows whether it is |
 | Updates | TestFlight | In-app (Sparkle): an hourly check of the `mac-latest` feed, a background download, the install on the next quit; Hey Pigeon › Check for Updates… and a switch in Settings › Updates |
-| Compose | Full-screen sheet | A reply is written under its thread, scrolled to the middle (a sheet for a new message, a forward, or a reply pulled out into a window): an HTML editor (paragraphs, lists, ⌘B/⌘I/⌘U, ⌘K, a floating toolbar over a selection), attachments, the AI as a panel under the text (⌘J), ⌘↩ sends |
+| Compose | Full-screen sheet | A reply is written under its thread, scrolled to the middle (a sheet for a new message, a forward, or a reply pulled out into a window): an HTML editor (paragraphs, lists, ⌘B/⌘I/⌘U, ⌘K, a floating toolbar over a selection), attachments (also dropped on the composer or pasted), snippets, send later (the clock beside Send: sent by this Mac while the app is open), From with the account's Gmail aliases, the AI as a panel under the text (⌘J), ⌘↩ sends |
+| Gmail | — | Labels are made, renamed and deleted from the sidebar; Report spam, Not spam and Move to inbox in the menus and the palette; Unsubscribe on a list's mail; "Search all of Gmail" under the search results; an invitation's card answers the organizer and adds the event to Calendar |
 
 Everything else — the rows, the thread view with its glass bars, the Remind
 sheet, the summaries, Ask my inbox, attachments and "Explain attachment",

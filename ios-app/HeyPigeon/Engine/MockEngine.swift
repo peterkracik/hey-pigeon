@@ -98,9 +98,53 @@ final class MockEngine: MailEngine {
         accountList.map { AccountState(id: $0.id, isConnected: true, syncState: "ok", syncDetail: nil, lastSyncAt: Date()) }
     }
 
-    func labels() throws -> [MailLabelItem] {
-        [MailLabelItem(id: "Label_1", accountId: "me@work.test", name: "Invoices"),
-         MailLabelItem(id: "Label_2", accountId: "me@personal.test", name: "Travel")]
+    private var labelList = [
+        MailLabelItem(id: "Label_1", accountId: "me@work.test", name: "Invoices"),
+        MailLabelItem(id: "Label_2", accountId: "me@personal.test", name: "Travel"),
+    ]
+
+    func labels() throws -> [MailLabelItem] { labelList }
+
+    // Labels live in the account (adapter-gmail labels.create / patch /
+    // delete); here in the list above.
+    func createLabel(accountId: String, name: String) async throws -> MailLabelItem {
+        let label = MailLabelItem(id: "Label_\(labelList.count + 1)_\(name.hashValue.magnitude % 1000)", accountId: accountId, name: name)
+        labelList.append(label)
+        onThreadsUpdated?()
+        return label
+    }
+
+    func renameLabel(_ label: MailLabelItem, to name: String) async throws {
+        guard let i = labelList.firstIndex(where: { $0.id == label.id && $0.accountId == label.accountId }) else { return }
+        labelList[i] = MailLabelItem(id: label.id, accountId: label.accountId, name: name)
+        onThreadsUpdated?()
+    }
+
+    func deleteLabel(_ label: MailLabelItem) async throws {
+        labelList.removeAll { $0.id == label.id && $0.accountId == label.accountId }
+        for id in rows.keys { update(id) { $0.labels.removeAll { $0 == label.id } } }
+        onThreadsUpdated?()
+    }
+
+    /// The sample inbox has nothing beyond what it holds: Gmail's search
+    /// is the local one.
+    func searchRemote(_ query: String, accountId: String?, limit: Int) async throws -> [ThreadRow] {
+        try search(query, limit: limit).filter { accountId == nil || $0.accountId == accountId }
+    }
+
+    func sendAliases(accountId: String) async throws -> [SendAlias] {
+        [SendAlias(email: accountId, name: "", isDefault: true)]
+    }
+
+    /// The senders of the sample inbox whose name or address has the words.
+    func searchContacts(_ query: String, limit: Int) async -> [ContactMatch] {
+        let q = query.lowercased()
+        var seen = Set<String>()
+        return rows.values
+            .filter { $0.fromSummary.lowercased().contains(q) || $0.lastFromAddress.lowercased().contains(q) }
+            .filter { seen.insert($0.lastFromAddress.lowercased()).inserted }
+            .prefix(limit)
+            .map { ContactMatch(name: $0.fromSummary, email: $0.lastFromAddress) }
     }
 
     func triageLabels() throws -> [TriageLabelItem] { triage }
@@ -238,6 +282,10 @@ final class MockEngine: MailEngine {
         case .star(let id, let starred): update(id) { $0.isStarred = starred }
         case .modifyLabel(let id, let label, let add):
             update(id) { $0.labels = add ? Array(Set($0.labels + [label])) : $0.labels.filter { $0 != label } }
+        // The sample inbox keeps no Trash or Spam: a thread sent to Spam
+        // leaves like a deleted one, and nothing comes back out.
+        case .untrash: break
+        case .markSpam(let id, let spam): if spam { rows.removeValue(forKey: id) }
         case .send, .saveDraft, .deleteDraft: try? await Task.sleep(for: .milliseconds(300))
         }
         onThreadsUpdated?()

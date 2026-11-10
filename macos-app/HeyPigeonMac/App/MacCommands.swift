@@ -44,6 +44,13 @@ struct MacCommands: Commands {
             Divider()
         }
 
+        // File › Print…: the open (or highlighted) thread, as a PDF too.
+        CommandGroup(replacing: .printItem) {
+            Button("Print…") { run(.print) }
+                .keyboardShortcut("p", modifiers: .command)
+                .disabled(!hasOne)
+        }
+
         // View › the drawer, where macOS keeps "Show Sidebar".
         CommandGroup(after: .sidebar) {
             // ⌘S: nothing here is saved by hand (drafts save themselves), so

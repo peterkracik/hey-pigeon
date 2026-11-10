@@ -119,8 +119,9 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     let to: [String]
     let date: Date
     let snippet: String
-    /// Sanitized by the core; still rendered with scripts off and remote
-    /// images blocked (MessageBodyView).
+    /// As the sender wrote it (the core does not sanitize): only ever
+    /// rendered with scripts off, under a CSP, remote images blocked
+    /// (MessageBodyView).
     let bodyHTML: String?
     let bodyText: String?
     let isRead: Bool
@@ -128,6 +129,14 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     /// An unsent Gmail draft (DRAFT label): shown under the thread as one,
     /// never replied to or read as part of the conversation.
     var isDraft = false
+    /// The Cc line, like `to`: addresses, the account's own as "me". Empty
+    /// for mail the store took in before it kept the header, until the
+    /// thread is next fetched (opening it does that once).
+    var cc: [String] = []
+    /// The sender's `List-Unsubscribe` header, raw, when it sent one, and
+    /// whether a POST to its https link is enough (RFC 8058 one-click).
+    var listUnsubscribe: String?
+    var unsubscribeOneClick = false
 }
 
 /// An open thread: its row and every stored message, drafts included.
@@ -788,6 +797,9 @@ struct SendDraft: Hashable {
     var replyToThreadId: String?
     /// Account that received the thread (replies go out from it).
     var fromAccountId: String?
+    /// A "Send mail as" address of that account to send from instead of
+    /// its own (Gmail's aliases); nil sends from the account's default.
+    var fromAddress: String?
     /// Plain-text transcript of the thread being replied to (AI context).
     var history: String?
     /// The composer's id: its Gmail draft is saved and deleted under it.
@@ -814,12 +826,20 @@ struct SendDraft: Hashable {
     /// and the Siri Reply intent build the same draft.
     static func reply(to m: MessageItem, in thread: ThreadRow, all: Bool, history: String?) -> SendDraft {
         var d = SendDraft()
-        let others = m.to.filter { $0 != "me" && !$0.isEmpty }
+        func others(_ list: [String]) -> [String] { list.filter { $0 != "me" && !$0.isEmpty } }
         if m.isMine {
-            d.to = others
+            // A reply to one's own message goes where that one went.
+            d.to = others(m.to)
+            if all { d.cc = others(m.cc) }
         } else {
             d.to = [m.fromAddress]
-            if all { d.cc = others }
+            // Reply all: everyone else the message went to, To and Cc
+            // alike (the Cc line used to be dropped: the store did not
+            // keep it), each once, the sender not again.
+            if all {
+                var seen: Set<String> = [m.fromAddress.lowercased()]
+                d.cc = (others(m.to) + others(m.cc)).filter { seen.insert($0.lowercased()).inserted }
+            }
         }
         d.subject = thread.subject.lowercased().hasPrefix("re:") ? thread.subject : "Re: \(thread.subject)"
         d.replyToThreadId = thread.id
@@ -843,9 +863,29 @@ enum MailAction: Hashable {
     case trash(threadId: String)
     case star(threadId: String, starred: Bool)
     case modifyLabel(threadId: String, labelId: String, add: Bool)
+    /// Out of Trash, back into the inbox.
+    case untrash(threadId: String)
+    /// To Spam, or ("Not spam") back into the inbox.
+    case markSpam(threadId: String, spam: Bool)
     case send(SendDraft)
     case saveDraft(SendDraft)
     case deleteDraft(key: String)
+}
+
+/// An address an account may send from (`MailEngine.sendAliases`).
+struct SendAlias: Identifiable, Hashable, Sendable {
+    let email: String
+    /// The name it sends under; empty when Gmail has none for it.
+    let name: String
+    let isDefault: Bool
+    var id: String { email }
+}
+
+/// One suggestion for a recipient field (`MailEngine.searchContacts`).
+struct ContactMatch: Identifiable, Hashable, Sendable {
+    let name: String
+    let email: String
+    var id: String { email.lowercased() }
 }
 
 /// The consent URL the engine built and the scheme its redirect comes back on.
@@ -975,6 +1015,21 @@ protocol MailEngine: AnyObject {
     /// How many changes (done, read, a label, a send) are still waiting to
     /// reach Gmail: the Mac's toolbar says so while there is no network.
     func pendingChanges() -> Int
+
+    // Gmail labels: made, renamed and deleted in the account itself.
+    func createLabel(accountId: String, name: String) async throws -> MailLabelItem
+    func renameLabel(_ label: MailLabelItem, to name: String) async throws
+    func deleteLabel(_ label: MailLabelItem) async throws
+    /// Ask Gmail itself for threads matching `query` (its own search
+    /// syntax), one account or all: mail the store has not downloaded yet
+    /// is found too. The rows land in the store; bodies are not fetched.
+    func searchRemote(_ query: String, accountId: String?, limit: Int) async throws -> [ThreadRow]
+    /// The addresses the account may send from: its own and its verified
+    /// "Send mail as" aliases.
+    func sendAliases(accountId: String) async throws -> [SendAlias]
+    /// People for a recipient field: who the stored mail was exchanged
+    /// with, then the account's Google contacts. Empty on an error.
+    func searchContacts(_ query: String, limit: Int) async -> [ContactMatch]
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws
     func setNeedsReply(threadId: String, _ value: Bool) throws
     /// Drop the AI's proposal without acting on it. Accepting needs no call

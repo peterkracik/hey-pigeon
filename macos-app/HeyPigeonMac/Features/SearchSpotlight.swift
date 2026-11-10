@@ -35,7 +35,35 @@ struct SearchSpotlight: View {
             SearchFilterBar(picking: $picking).padding(.bottom, 6)
             Hairline().opacity(0.6)
             content
+            if model.isSearching {
+                Hairline().opacity(0.6)
+                gmailRow
+            }
         }
+    }
+
+    /// The same search asked of Gmail itself: the list on this Mac holds
+    /// what has been downloaded, Gmail everything (AppModel.searchGmail).
+    private var gmailRow: some View {
+        Button { Task { await model.searchGmail() } } label: {
+            HStack(spacing: 8) {
+                if model.isSearchingGmail {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "tray.and.arrow.down")
+                }
+                Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail — older mail not on this \(Device.name) yet")
+                Spacer()
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 20)
+            .frame(height: 36)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isSearchingGmail)
+        .help("Ask Gmail for this search and add what it finds to the results")
     }
 
     // MARK: The field

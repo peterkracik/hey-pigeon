@@ -22,7 +22,7 @@ struct ShortcutsSheet: View {
         ("Act on a thread", [
             ("E", "Mark done (and back)"), ("H", "Remind me (or remove the reminder)"), ("N", "Need reply"),
             ("S", "Pin"), ("U", "Read / unread"), ("# · ⌫", "Delete"), ("L", "Add label"), ("V", "Move to folder"),
-            ("I", "Summarize the thread"), ("Z · ⌘Z", "Undo the last action"),
+            ("I", "Summarize the thread"), ("Z · ⌘Z", "Undo the last action"), ("⌘P", "Print, or save as PDF"),
         ]),
         ("Write", [
             ("C · ⌘N", "New message"), ("R", "Reply"), ("A", "Reply all"), ("F", "Forward"),

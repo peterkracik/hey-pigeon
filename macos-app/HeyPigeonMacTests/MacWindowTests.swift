@@ -445,6 +445,22 @@ struct ComposeExtrasTests {
     }
 }
 
+@MainActor
+struct ThreadPrinterTests {
+    @Test func theThreadPrintsAsOnePageWithNothingFromTheWeb() {
+        let row = makeRow("t1", subject: "Q4 <plan> & budget")
+        var first = makeMessage("m1", from: "Ana", address: "ana@acme.test", text: "Numbers attached.\n<b>not markup</b>")
+        first.cc = ["ben@acme.test"]
+        let html = ThreadPrinter.document(ThreadDetail(thread: row, messages: [first, makeMessage("m2", mine: true)]))
+        #expect(html.contains("<h1>Q4 &lt;plan&gt; &amp; budget</h1>"))
+        #expect(html.contains("Cc: ben@acme.test"))
+        // A plain-text body is text, not markup; and no remote sources.
+        #expect(html.contains("&lt;b&gt;not markup&lt;/b&gt;"))
+        #expect(html.contains("default-src 'none'"))
+        #expect(!html.contains("img-src *"))
+    }
+}
+
 struct WindowRestorationTests {
     @Test func aViewSurvivesARelaunch() {
         for view in [MailView.inbox, .needReply, .archive, .label(id: "Label_7", name: "Receipts / 2026")] {

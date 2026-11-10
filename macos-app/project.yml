@@ -72,6 +72,13 @@ targets:
         com.apple.security.app-sandbox: true
         # Gmail, Drive, OpenAI / Jev with the user's own key, the OAuth consent.
         com.apple.security.network.client: true
+        # "Add to Calendar" on an invitation (CalendarAccess): write-only,
+        # the app adds the one event and reads nothing.
+        com.apple.security.personal-information.calendars: true
+        # File › Print… on a thread (ThreadPrinter).
+        com.apple.security.print: true
+        # "Save to Downloads" on an attachment (Platform.swift, Downloads).
+        com.apple.security.files.downloads.read-write: true
         # The composer's Files picker.
         com.apple.security.files.user-selected.read-only: true
         # Shared with the widget and share extensions: the widgets' JSON
@@ -122,6 +129,7 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSApplicationCategoryType: public.app-category.productivity
         NSHumanReadableCopyright: ""
+        NSCalendarsWriteOnlyAccessUsageDescription: Hey Pigeon adds the event of an invitation to your calendar when you ask it to. It never reads your calendar.
         # The Rust engine reads the Mac's Google OAuth client id from here
         # (HeyPigeonMacApp.makeEngine). An "iOS" type client works for the Mac
         # too; its reversed id is the consent sheet's callback scheme below.

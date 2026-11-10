@@ -21,6 +21,15 @@ struct SidebarColumn: View {
     @AppStorage("sidebarBundlesOpen") private var bundlesOpen = true
     /// "N more" under the bundles: every active one, hidden ones too.
     @AppStorage("sidebarAllBundles") private var allBundles = false
+    /// Gmail labels made, renamed and deleted from here: the label a
+    /// dialog is about, and the name typed into it.
+    @State private var creatingLabel = false
+    @State private var renaming: MailLabelItem?
+    @State private var deleting: MailLabelItem?
+    @State private var labelName = ""
+
+    /// The account a new label is made in: the one shown, else the first.
+    private var labelAccountId: String? { model.selectedAccountId ?? model.accounts.first?.id }
 
     private var labels: [MailLabelItem] {
         model.labels.filter { l in
@@ -63,16 +72,24 @@ struct SidebarColumn: View {
                         folder(.trash)
                     }
 
-                    if !labels.isEmpty {
+                    if !labels.isEmpty || labelAccountId != nil {
                         SectionHeader(title: "Labels", open: $labelsOpen)
                         if labelsOpen {
                             let rows = AppModel.sidebarLabels(labels, pinned: model.pinnedLabelIds,
                                                               expanded: allLabels, current: model.currentLabelId)
                             ForEach(rows.shown) { l in
                                 folder(.label(id: l.id, name: l.name), pin: l)
+                                    .contextMenu {
+                                        Button("Rename…") { labelName = l.name; renaming = l }
+                                        Button("Delete…", role: .destructive) { deleting = l }
+                                    }
                             }
                             if rows.hidden > 0 || allLabels && labels.contains(where: { model.pinnedLabelIds.contains($0.id) }) {
                                 MoreLabelsRow(expanded: $allLabels, hidden: rows.hidden)
+                            }
+                            SidebarRow(title: "New label…", systemImage: "plus", help: "A new Gmail label") {
+                                labelName = ""
+                                creatingLabel = true
                             }
                         }
                     }
@@ -86,6 +103,36 @@ struct SidebarColumn: View {
             AccountFooter()
         }
         .background(MacTheme.sidebar)
+        // Gmail's labels are the account's own: made, renamed and deleted
+        // there, so they are the same on the web and the phone.
+        .alert("New label", isPresented: $creatingLabel) {
+            TextField("Name", text: $labelName)
+            Button("Add") {
+                guard let account = labelAccountId else { return }
+                let name = labelName
+                Task { await model.createLabel(named: name, accountId: account) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(labelAccountId.map { "A Gmail label in \($0)." } ?? "Add an account first.")
+        }
+        .alert("Rename label", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
+               presenting: renaming) { label in
+            TextField("Name", text: $labelName)
+            Button("Rename") {
+                let name = labelName
+                Task { await model.renameLabel(label, to: name) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Delete this label?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { label in
+            Button("Delete \(label.name)", role: .destructive) {
+                Task { await model.deleteLabel(label) }
+            }
+        } message: { _ in
+            Text("The label is removed from Gmail. Its mail stays where it is, without the label.")
+        }
     }
 
     /// A folder row with its count; `badge` is the Scheduled row's due

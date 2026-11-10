@@ -290,8 +290,27 @@ struct CommandPalette: View {
                 ("Forward", "arrowshape.turn.up.right", "F", .forward),
                 ("Open", "arrow.right.circle", "↩", .open),
                 ("Open in new window", "macwindow", "⌘↩", .openInWindow),
+                ("Print or save as PDF…", "printer", "⌘P", .print),
                 ("Delete", "trash", "#", .delete),
             ]
+            // Report spam, or the way back out of Spam and Trash.
+            switch model.view {
+            case .spam:
+                out.append(PaletteItem(id: "thread.notspam", title: "Not spam", subtitle: row.subject, systemImage: "tray.and.arrow.down") {
+                    state.advance(in: model)
+                    model.markNotSpam(row)
+                })
+            case .trash:
+                out.append(PaletteItem(id: "thread.untrash", title: "Move to inbox", subtitle: row.subject, systemImage: "tray.and.arrow.down") {
+                    state.advance(in: model)
+                    model.untrash(row)
+                })
+            default:
+                out.append(PaletteItem(id: "thread.spam", title: "Report spam", subtitle: row.subject, systemImage: "xmark.bin") {
+                    state.advance(in: model)
+                    model.markSpam(row)
+                })
+            }
             for (title, image, key, command) in threadItems {
                 out.append(PaletteItem(id: "thread.\(command)", title: title, subtitle: row.subject, systemImage: image, key: key) {
                     state.run(command, in: model)

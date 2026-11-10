@@ -1338,6 +1338,44 @@ final class AppModel {
         prefetchBodies(Array(rows.prefix(Self.prefetchDepth)))
     }
 
+    // MARK: Focus filter (Intents/FocusFilter.swift)
+
+    private static let focusAccountKey = "focus.account"
+    private static let focusPreviousKey = "focus.previousAccount"
+
+    /// The account the Focus that is on narrows the app to; nil without
+    /// one. Kept across launches: the system only says when it changes.
+    private(set) var focusAccountId: String? = UserDefaults.standard.string(forKey: AppModel.focusAccountKey)
+
+    /// A Focus with the filter turned on (an account) or off (nil): the
+    /// list shows that account, and goes back to what it showed before
+    /// when the Focus ends. An account that is gone is no filter.
+    func applyFocus(accountId: String?) {
+        let defaults = UserDefaults.standard
+        let id = accountId.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
+        guard id != focusAccountId else { return }
+        if let id {
+            // Only the first Focus remembers: a second one on top of it
+            // would remember the first one's account.
+            if focusAccountId == nil { defaults.set(selectedAccountId ?? "", forKey: Self.focusPreviousKey) }
+            focusAccountId = id
+            defaults.set(id, forKey: Self.focusAccountKey)
+            if selectedAccountId != id { selectedAccountId = id }
+        } else {
+            let previous = defaults.string(forKey: Self.focusPreviousKey).flatMap { $0.isEmpty ? nil : $0 }
+            focusAccountId = nil
+            defaults.removeObject(forKey: Self.focusAccountKey)
+            defaults.removeObject(forKey: Self.focusPreviousKey)
+            let back = previous.flatMap { p in accounts.contains { $0.id == p } ? p : nil }
+            if selectedAccountId != back { selectedAccountId = back }
+        }
+    }
+
+    /// Whether a new-mail banner for this thread fits the Focus that is on.
+    func focusAllows(_ row: ThreadRow) -> Bool {
+        focusAccountId == nil || row.accountId == focusAccountId
+    }
+
     /// Deep link from a notification (reminder or new mail): the inbox tab
     /// pushes the thread when it sees `pendingThreadId`.
     func openThread(id: String) {
@@ -1590,6 +1628,120 @@ final class AppModel {
         markDone(row)
     }
 
+    /// Report spam: the thread goes to Gmail's Spam (and trains its
+    /// filter); Undo brings it back.
+    func markSpam(_ row: ThreadRow) {
+        Haptics.archive()
+        perform(.markSpam(threadId: row.id, spam: true), on: row, toast: "Moved to Spam") { [weak self] in
+            self?.perform(.markSpam(threadId: row.id, spam: false), on: row)
+            self?.reloadSoon()
+        }
+    }
+
+    /// "Not spam": out of Spam, back into the inbox.
+    func markNotSpam(_ row: ThreadRow) {
+        perform(.markSpam(threadId: row.id, spam: false), on: row, toast: "Moved to the inbox")
+    }
+
+    /// Out of Trash, back into the inbox.
+    func untrash(_ row: ThreadRow) {
+        perform(.untrash(threadId: row.id), on: row, toast: "Moved to the inbox")
+    }
+
+    // MARK: Gmail labels
+
+    /// A new label in the account, then the list of labels again.
+    @discardableResult
+    func createLabel(named name: String, accountId: String) async -> MailLabelItem? {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        do {
+            let label = try await engine.createLabel(accountId: accountId, name: name)
+            reloadAccounts()
+            show("Label added · \(label.name)")
+            return label
+        } catch {
+            show("Couldn't add the label: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func renameLabel(_ label: MailLabelItem, to name: String) async {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, name != label.name else { return }
+        do {
+            try await engine.renameLabel(label, to: name)
+            reloadAccounts()
+            // The list on screen may be the label's own: it carries the name.
+            if case .label(let id, _) = folder, id == label.id { folder = .label(id: id, name: name) }
+        } catch { show("Couldn't rename the label: \(error.localizedDescription)") }
+    }
+
+    /// Delete the label in Gmail. Its mail stays where it is, without it.
+    func deleteLabel(_ label: MailLabelItem) async {
+        do {
+            try await engine.deleteLabel(label)
+            if pinnedLabelIds.contains(label.id) { pinnedLabelIds.remove(label.id) }
+            if case .label(let id, _) = folder, id == label.id { navigate(to: .inbox, folder: .inbox) }
+            reloadAccounts()
+            reload()
+            show("Label deleted · \(label.name)")
+        } catch { show("Couldn't delete the label: \(error.localizedDescription)") }
+    }
+
+    // MARK: Gmail's own search
+
+    /// Gmail is being asked for the search on screen.
+    private(set) var isSearchingGmail = false
+
+    /// The search on screen, asked of Gmail itself: mail older than what
+    /// this device has downloaded is found too. What comes back joins the
+    /// results (and the store), newest first.
+    func searchGmail() async {
+        guard isSearching, !isSearchingGmail else { return }
+        let text = searchText.trimmingCharacters(in: .whitespaces)
+        var parts: [String] = []
+        if let from = searchFilters.from { parts.append("from:\(from.address)") }
+        if let to = searchFilters.to { parts.append("to:\(to.address)") }
+        if searchFilters.unreadOnly { parts.append("is:unread") }
+        if !text.isEmpty { parts.append(text) }
+        let query = parts.joined(separator: " ")
+        guard !query.isEmpty else { return }
+        isSearchingGmail = true
+        defer { isSearchingGmail = false }
+        do {
+            let rows = try await engine.searchRemote(query, accountId: searchFilters.accountId, limit: Self.searchLimit)
+            // The search moved on while Gmail answered: not these results.
+            guard isSearching, searchText.trimmingCharacters(in: .whitespaces) == text else { return }
+            let merged = Self.unique(searchResults + rows).sorted { $0.lastMessageAt > $1.lastMessageAt }
+            if merged != searchResults { searchResults = merged }
+            if rows.isEmpty { show("Gmail found nothing more") }
+        } catch {
+            show("Couldn't search Gmail: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Send-as addresses
+
+    /// Each account's addresses to send from (its own first), once asked
+    /// for: the composer's From menu lists them.
+    private(set) var sendAliases: [String: [SendAlias]] = [:]
+    @ObservationIgnored private var aliasesAsked: Set<String> = []
+
+    /// Ask Gmail for every account's aliases, once per launch.
+    func loadSendAliases() {
+        for account in accounts where !aliasesAsked.contains(account.id) {
+            aliasesAsked.insert(account.id)
+            Task {
+                guard let list = try? await engine.sendAliases(accountId: account.id) else {
+                    aliasesAsked.remove(account.id)
+                    return
+                }
+                sendAliases[account.id] = list
+            }
+        }
+    }
+
     /// Manual Jev label edit — sticky until "Reanalyze all emails".
     func setTriageLabels(_ row: ThreadRow, _ ids: [String]) {
         do {
@@ -1688,10 +1840,10 @@ final class AppModel {
                     show("Sent · \(item.draft.subject.isEmpty ? "(no subject)" : item.draft.subject)")
                     deleteDraft(item.draft.draftKey, from: item.accountId)
                 } catch {
-                    // Not queued again: the engine's outbox keeps a send it
-                    // could not deliver, and a second copy here could go
-                    // out twice. The Gmail draft is still there.
-                    show("Couldn't send the scheduled message: \(error.localizedDescription)")
+                    // Not queued again here: the engine's outbox keeps a
+                    // send Gmail did not take and retries it, and a second
+                    // copy could go out twice. The Gmail draft is still there.
+                    show("Scheduled message not sent yet: \(error.localizedDescription)")
                 }
             }
         }
@@ -1736,7 +1888,12 @@ final class AppModel {
             Haptics.success()
             show("Sent")
             if pending.draft.draftSaved { deleteDraft(pending.draft.draftKey, from: pending.accountId) }
-        } catch { show("Couldn't send: \(error.localizedDescription)") }
+        } catch {
+            // The engine keeps a send Gmail did not take in its outbox and
+            // tries again on the next sync: say so, or the user sends it a
+            // second time by hand.
+            show("Not sent yet: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Drafts — the composer's Gmail draft
@@ -1811,6 +1968,9 @@ final class AppModel {
         var leaves = false
         if view.archivesOut, case .archive = action { leaves = true }
         if case .trash = action { leaves = true }
+        // To Spam from anywhere; out of Spam or Trash from that folder.
+        if case .markSpam(_, let spam) = action, spam || view == .spam { leaves = true }
+        if case .untrash = action, view == .trash { leaves = true }
         if leaves {
             withAnimation(.easeOut(duration: 0.15)) { rows.removeAll { $0.id == row.id } }
         }

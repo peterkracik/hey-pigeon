@@ -15,14 +15,15 @@ too. There is no second model, engine or intent layer.
 
 ```text
 HeyPigeonMac/
-  App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate, MacSyncLoop, MacCommands,
+  App/        HeyPigeonMacApp (scenes, commands, deep links), MacAppDelegate (+ the banner's buttons), MacSyncLoop,
+              Connectivity (the network path: no round without one), MacCommands,
               MacUpdater (Sparkle: the feed publish-macos writes, the app menu's Check for Updates…)
   Features/   MainWindow (sidebar + NavigationStack, Settings or the Bundles page), MainToolbar (+ ViewTabs),
               SearchSpotlight (+ SpotlightPanel),
               MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
               (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), BundlesPage
               (the shared BundlesStack over the window's path), WindowState,
-              CommandPalette, ShortcutsSheet, MenuBarExtraView
+              CommandPalette, ShortcutsSheet, MenuBarExtraView, ThreadPrinter (⌘P)
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
 ```
@@ -162,9 +163,31 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   remove the highlighted row; a folder switch clears the highlight
   instead. With a thread open, its row leaving the list opens the next
   one (`rowsChanged`, `closeOpen`), and a folder switch closes it.
+- **Nothing asks the store from a view body.** A count or a list a view
+  shows comes from the model's last snapshot (`unifiedCounts`,
+  `countsByAccount`, `needReplyAcrossAccounts`, all observed and assigned
+  only when they moved) or from a `.task` that reads off the main actor
+  (`readInBackground`). A query inside `body` runs on every render and is
+  redrawn by none: nothing observes it. The list's order is the model's
+  too (`flatRowIds`, `listIndex(of:)`, `rowOrderRevision`): do not flatten
+  `groupedRows` per key press or compare id arrays per render.
+- **The keyboard map, the shortcuts sheet and the tests move together.**
+  A new bare key goes into `KeyboardMap.resolve`, `KeyboardMap.characters`
+  and `ShortcutsSheet.groups`; `ShortcutsSheetTests` fails when one of the
+  three is missing. Space previews (pages in a thread), ⇧J / ⇧K / X grow
+  the selection, Z undoes (`AppModel.undoLast`, for two minutes).
+- **The reading pane shares the stack's state.** View › Reading Pane
+  (`MacWindows.readingPaneKey`) shows `state.path.last` beside the list
+  instead of pushing it, when the content is at least
+  `MacLayout.paneMinWidth` wide; `WindowState.readingPane` tells `expand`
+  to open the thread there. Nothing else knows the difference.
 - **Sync is the timer.** No BGTaskScheduler on the Mac; `MacSyncLoop` runs
-  a round every 30 s and composes new-mail banners from its diff
-  (`NewMailNotifier.post`). The Mac build has no push entitlement — it is
+  a quiet round every 30 s (`AppModel.sync(quiet:)`: no reload, no
+  reminder pass, no Spotlight pass when the round brought nothing), every
+  2 min in Low Power Mode, none without a network path (`Connectivity`),
+  and composes new-mail banners from its diff
+  (`NewMailNotifier.post`; their buttons are `NotificationActions`,
+  handled in `MacAppDelegate.act`). The Mac build has no push entitlement — it is
   signed with Developer ID and no provisioning profile, which also makes
   the App Group the team-prefixed name (`AppGroup.identifier` reads it
   from the Info.plist) — so the relay is the phone's.

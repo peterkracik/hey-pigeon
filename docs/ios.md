@@ -235,7 +235,8 @@ messages before the last two stays visible.
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
   "Load" line per sender remembers the choice. The HTML is the
-  ammonia-sanitized body the core already stores. Web links open in
+  body as the core stores it — as received, not sanitized — so this
+  view is the safety layer. Web links open in
   the user's default browser (never in-app); the real URL is shown in a
   long-press preview.
   The trailing quoted history (`div.gmail_quote`, Outlook's reference

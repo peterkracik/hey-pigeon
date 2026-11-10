@@ -411,7 +411,28 @@ struct RowMenu: View {
             } label: { Label("Jev labels", systemImage: "sparkles") }
         }
         Divider()
+        FolderMoveItem(row: row)
         Button(role: .destructive) { IntentDonations.deleted(row, in: model); model.delete(row) } label: { Label("Delete", systemImage: "trash") }
+    }
+}
+
+/// Report spam — or, in Spam and Trash, the way back to the inbox. One
+/// menu item, by the folder on screen; `then` runs after it (the thread
+/// view closes).
+struct FolderMoveItem: View {
+    let row: ThreadRow
+    var then: () -> Void = {}
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        switch model.view {
+        case .spam:
+            Button { model.markNotSpam(row); then() } label: { Label("Not spam", systemImage: "tray.and.arrow.down") }
+        case .trash:
+            Button { model.untrash(row); then() } label: { Label("Move to inbox", systemImage: "tray.and.arrow.down") }
+        default:
+            Button { model.markSpam(row); then() } label: { Label("Report spam", systemImage: "xmark.bin") }
+        }
     }
 }
 

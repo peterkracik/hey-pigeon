@@ -324,6 +324,8 @@ final class AppModel {
     var composeDetached = false
     var showSidebar = false
     var showSettings = false
+    /// Settings opens on its Outbox page (`openOutbox`).
+    var showOutbox = false
     /// The Bundles list (a sheet on both platforms).
     var showBundles = false
     /// The bundle the sheet opens on (a folded inbox row was tapped).
@@ -1643,8 +1645,12 @@ final class AppModel {
         } catch { show(error.localizedDescription) }
     }
 
+    /// Back to the inbox. A muted thread is unmuted by it: the user wants
+    /// it there, and the rule would take it out again with the next reply.
     func markNotDone(_ row: ThreadRow) {
-        perform(.unarchive(threadId: row.id), on: row, toast: "Moved to inbox")
+        let wasMuted = isMuted(row)
+        if wasMuted { unmute(threadId: row.id) }
+        perform(.unarchive(threadId: row.id), on: row, toast: wasMuted ? "Moved to inbox · unmuted" : "Moved to inbox")
     }
 
     func toggleDone(_ row: ThreadRow) {
@@ -1775,14 +1781,28 @@ final class AppModel {
     func isMuted(_ row: ThreadRow) -> Bool { mutedThreads.contains(row.id) }
     func isBlocked(_ address: String) -> Bool { blockedSenders.contains(address.lowercased()) }
 
+    /// The address "Block" would block for this thread, nil when there is
+    /// nothing to offer: no sender, one already blocked, the user's own
+    /// address (the newest mail in Sent and in a thread just answered is
+    /// theirs), or a thread that is in Spam already.
+    func blockableSender(of row: ThreadRow) -> String? {
+        let address = row.lastFromAddress.lowercased()
+        guard !address.isEmpty, view != .spam, !isBlocked(address),
+              !accounts.contains(where: { EmailAddress.same($0.email, address) }) else { return nil }
+        return address
+    }
+
     /// Mute: the thread is marked done now and stays out of the inbox as
-    /// replies come in. Undo unmutes it and brings it back.
+    /// replies come in. Undo unmutes it and brings it back — where it was:
+    /// a thread that was done already stays done.
     func mute(_ row: ThreadRow) {
         guard !isMuted(row) else { return }
         mutedThreads = Array((mutedThreads + [row.id]).suffix(Self.ruleLimit))
-        if !row.isDone { perform(.archive(threadId: row.id), on: row) }
+        let wasDone = row.isDone
+        if !wasDone { perform(.archive(threadId: row.id), on: row) }
         show("Muted · new replies will skip the inbox") { [weak self] in
             self?.unmute(threadId: row.id)
+            guard !wasDone else { return }
             self?.perform(.unarchive(threadId: row.id), on: row)
             self?.restoreFlags(row)
         }
@@ -1819,27 +1839,40 @@ final class AppModel {
 
     // MARK: Outbox
 
-    /// What is waiting to reach Gmail, and what Gmail refused.
-    func outbox() -> [QueuedChange] { engine.outbox() }
+    /// What is waiting to reach Gmail, and what could not be sent.
+    func outbox() async -> [QueuedChange] { await engine.outbox() }
 
-    /// Try a stuck change again now.
-    func retryQueued(_ change: QueuedChange) async {
-        do {
-            try await engine.retryOutbox(id: change.id)
-            show("Sent to Gmail")
-        } catch {
-            show("Still not accepted: \(error.localizedDescription)")
-        }
-        reloadSoon()
+    /// Settings, on the Outbox page: where the "not sent" line over the
+    /// list and the Mac's toolbar item lead.
+    func openOutbox() {
+        showOutbox = true
+        showSettings = true
     }
 
-    /// Drop a change that will not go through. What it did on this device
-    /// stays until the next sync brings Gmail's state back.
-    func discardQueued(_ change: QueuedChange) {
+    /// Try a stuck change again now. Nil when it went through, else why
+    /// not — for the Outbox row to show: on the phone Settings is a sheet
+    /// over the toasts.
+    func retryQueued(_ change: QueuedChange) async -> String? {
+        defer { reloadSoon() }
         do {
-            try engine.discardOutbox(id: change.id)
-            reload()
-        } catch { show(error.localizedDescription) }
+            try await engine.retryOutbox(id: change.id)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Drop a change that will not go through; the engine waits for a
+    /// send in flight and brings the thread back to what Gmail has. Nil
+    /// when it is gone, else why not.
+    func discardQueued(_ change: QueuedChange) async -> String? {
+        defer { reload() }
+        do {
+            try await engine.discardOutbox(id: change.id)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     /// Report spam: the thread goes to Gmail's Spam (and trains its
@@ -1852,9 +1885,14 @@ final class AppModel {
         }
     }
 
-    /// "Not spam": out of Spam, back into the inbox.
+    /// "Not spam": out of Spam, back into the inbox. A blocked sender is
+    /// unblocked by it: the rule put the thread there, and would again.
     func markNotSpam(_ row: ThreadRow) {
-        perform(.markSpam(threadId: row.id, spam: false), on: row, toast: "Moved to the inbox")
+        let sender = row.lastFromAddress.lowercased()
+        let wasBlocked = !sender.isEmpty && isBlocked(sender)
+        if wasBlocked { unblock(sender) }
+        perform(.markSpam(threadId: row.id, spam: false), on: row,
+                toast: wasBlocked ? "Moved to the inbox · \(sender) unblocked" : "Moved to the inbox")
     }
 
     /// Out of Trash, back into the inbox.
@@ -2099,7 +2137,12 @@ final class AppModel {
 
     private func commitSend(_ id: UUID) async {
         guard let pending = pendingSends.removeValue(forKey: id) else { return } // undone
-        if let shown = pending.toastId { dismissToast(shown) }
+        if let shown = pending.toastId {
+            dismissToast(shown)
+            // Gone for good: an entry left on the stack would make the next
+            // `z` do nothing, silently, instead of taking back what came before.
+            undoStack.removeAll { $0.id == shown }
+        }
         do {
             try await engine.perform(.send(pending.draft), accountId: pending.accountId)
             Haptics.success()

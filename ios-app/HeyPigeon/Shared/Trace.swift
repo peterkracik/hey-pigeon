@@ -20,14 +20,17 @@ enum Trace {
 
     /// Time `body` under `name`.
     static func interval<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
-        let state = signposter.beginInterval(name)
+        let state = signposter.beginInterval(name, id: signposter.makeSignpostID())
         defer { signposter.endInterval(name, state) }
         return try body()
     }
 
     /// An interval that spans awaits: `end` it with what this returns.
+    /// Its own id: two of a name overlap (a second thread opened while
+    /// the first is still being fetched), and the default id is for
+    /// intervals that never do — Instruments paired them wrongly.
     static func begin(_ name: StaticString) -> OSSignpostIntervalState {
-        signposter.beginInterval(name)
+        signposter.beginInterval(name, id: signposter.makeSignpostID())
     }
 
     static func end(_ name: StaticString, _ state: OSSignpostIntervalState) {

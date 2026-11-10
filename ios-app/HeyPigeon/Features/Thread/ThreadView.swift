@@ -230,6 +230,8 @@ struct ThreadView: View {
                 .accessibilityLabel("More")
             }
         }
+        // Above the bars, where a browser has its status line.
+        .hoveredLinkStatus()
         .safeAreaInset(edge: .bottom) { bottomBars }
         .confirmationDialog("Delete this draft?", isPresented: Binding(get: { deletingDraft != nil }, set: { if !$0 { deletingDraft = nil } }),
                             titleVisibility: .visible, presenting: deletingDraft) { d in

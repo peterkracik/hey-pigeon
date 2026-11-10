@@ -11,19 +11,22 @@
 // and a split layout has none. Remind me and Need reply were sidebar rows
 // already.
 //
-// Keys: the list column and the detail column are each focusable and hand
-// their key presses to PadState. Neither holds a text field — the search
-// field lives in the navigation bar, the composer in a sheet — so a letter
-// typed into one never reaches the map; and the map stands down while any
-// sheet is up.
+// Keys: `PadKeys` are key equivalents on buttons that draw nothing
+// (`PadKeyButtons`), so they work wherever the focus is; a text field
+// gets a bare letter first, and the map stands down while any sheet is up.
 
 #if os(iOS)
 import SwiftUI
 
 struct PadSplitView: View {
+    /// RootView's, so the open thread outlives a window resized across
+    /// the width where the columns give way to the tabs.
+    let state: PadState
     @Environment(AppModel.self) private var model
-    @State private var state = PadState()
-    @State private var columns = NavigationSplitViewVisibility.all
+    /// The list and the thread; the folders slide in from the bar's
+    /// button, as the phone's drawer does. Three columns at once squeeze
+    /// the thread in portrait.
+    @State private var columns = NavigationSplitViewVisibility.doubleColumn
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -36,8 +39,9 @@ struct PadSplitView: View {
             PadDetailColumn(state: state)
         }
         .navigationSplitViewStyle(.balanced)
-        // The open thread's row left the list (done, a reminder, another
-        // device): the next one opens. Another list closes it.
+        .background { PadKeyButtons(state: state) }
+        // Where the open thread sits in the list now, for the advance
+        // when the user deals with it.
         .onChange(of: model.rowOrderRevision) { _, _ in state.rowsChanged(in: model) }
         // A notification, a widget or Spotlight asked for a thread.
         .onChange(of: model.pendingThreadId, initial: true) { _, id in
@@ -54,9 +58,8 @@ struct PadSplitView: View {
 /// The thread list of the place shown (a folder, Remind me, Need reply) or
 /// the search, with the keyboard.
 private struct PadListColumn: View {
-    @Bindable var state: PadState
+    let state: PadState
     @Environment(AppModel.self) private var model
-    @FocusState private var focused: Bool
 
     var body: some View {
         Group {
@@ -67,12 +70,25 @@ private struct PadListColumn: View {
             }
         }
         .environment(\.openThreadId, state.openRow?.id)
-        .focusable()
-        .focusEffectDisabled()
-        .focused($focused)
-        .onKeyPress(phases: .down) { press in state.handle(press, in: model) }
-        .onAppear { focused = true }
-        .onChange(of: state.listFocusRequest) { _, _ in focused = true }
+    }
+}
+
+/// The layout's keys (`PadKeys`), each on a button nobody sees.
+private struct PadKeyButtons: View {
+    let state: PadState
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(PadKeys.bindings.enumerated()), id: \.offset) { _, binding in
+                Button(binding.command.title) { state.press(binding.command, in: model) }
+                    .keyboardShortcut(binding.key, modifiers: binding.modifiers)
+                    // Esc with nothing open is not ours: the system has it.
+                    .disabled(binding.command == .close && state.openRow == nil)
+            }
+        }
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 }
 
@@ -92,7 +108,7 @@ private extension PadState {
 /// The phone's MailListScreen without its stack: the list, the title, the
 /// actions, the offline line and the triage pill.
 private struct PadMailList: View {
-    @Bindable var state: PadState
+    let state: PadState
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -144,15 +160,16 @@ private struct PadMailList: View {
 
 /// ThreadList, scrolled to the row a key or an auto-advance opened.
 private struct PadThreadList: View {
-    @Bindable var state: PadState
+    let state: PadState
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
             ThreadList(path: state.listPath(in: model))
                 .onChange(of: state.scrollTarget) { _, id in
                     guard let id else { return }
-                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { proxy.scrollTo(id) }
                 }
         }
     }
@@ -161,7 +178,7 @@ private struct PadThreadList: View {
 /// The phone's SearchScreen without its stack: the field in the bar, the
 /// filters, the recent searches or the results, and Gmail's own search.
 private struct PadSearchList: View {
-    @Bindable var state: PadState
+    let state: PadState
     @Environment(AppModel.self) private var model
     @State private var picking: PersonField?
     @FocusState private var searchFocused: Bool
@@ -220,9 +237,8 @@ private struct PadSearchList: View {
 /// The open thread, or a word that none is. Its own stack, so the shared
 /// ThreadView's title and toolbar items have a bar to sit in.
 private struct PadDetailColumn: View {
-    @Bindable var state: PadState
+    let state: PadState
     @Environment(AppModel.self) private var model
-    @FocusState private var focused: Bool
 
     var body: some View {
         NavigationStack {
@@ -231,21 +247,13 @@ private struct PadDetailColumn: View {
                     ThreadView(row: row) { state.closeOpen(in: model) }
                         .id(row.id)
                 } else {
-                    ContentUnavailableView("No thread open", systemImage: "envelope.open",
-                                           description: Text("Pick one in the list, or press J on a keyboard."))
+                    // No instruction here: beside an empty list there is
+                    // nothing to pick, and most iPads have no keyboard.
+                    ContentUnavailableView("No thread open", systemImage: "envelope.open")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Theme.canvas)
                 }
             }
-            .focusable()
-            .focusEffectDisabled()
-            .focused($focused)
-            .onKeyPress(phases: .down) { press in state.handle(press, in: model) }
-        }
-        // The keys follow the thread a key opened; Esc hands them back
-        // to the list (PadState.listFocusRequest).
-        .onChange(of: state.openRow?.id) { _, id in
-            if id != nil { focused = true }
         }
     }
 }
@@ -253,25 +261,14 @@ private struct PadDetailColumn: View {
 // MARK: - Keys
 
 extension PadState {
-    /// A key press from the list or the detail column. Nothing while a
-    /// sheet is up: its fields and buttons own the keyboard then.
-    func handle(_ press: KeyPress, in model: AppModel) -> KeyPress.Result {
+    /// A key of the layout was pressed. Nothing while a sheet is up: its
+    /// fields and buttons own the keyboard then.
+    func press(_ command: PadCommand, in model: AppModel) {
         let sheetUp = model.composeDraft != nil || model.showSettings || model.showSidebar || model.showBundles
             || model.pendingRemind != nil || model.pendingBundlePick != nil || model.askSheet != nil
             || model.summarySheet != nil
-        guard !sheetUp else { return .ignored }
-        let key: PadKey
-        switch press.key {
-        case .upArrow: key = .up
-        case .downArrow: key = .down
-        case .escape: key = .escape
-        default: key = .character(press.characters)
-        }
-        guard let command = PadKeys.resolve(key, modifiers: press.modifiers) else { return .ignored }
-        // Esc with nothing open is not ours: let the system have it.
-        if command == .close && openRow == nil { return .ignored }
+        guard !sheetUp else { return }
         run(command, in: model)
-        return .handled
     }
 }
 #endif

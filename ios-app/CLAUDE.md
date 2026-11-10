@@ -68,18 +68,29 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   width on an iPad `RootView` shows `PadSplitView` (`Features/Pad`): the
   sheet's `SidebarList`, the phone's `ThreadList` and `ThreadView` side
   by side; anywhere else, the tabs. What is open belongs to `PadState`
-  (per scene, with the auto-advance and the key map, `PadKeys`), never to
-  `AppModel`. The open thread's `e` `h` `n` `s` `⌘⌫` are ThreadView's own
-  (`threadKey`): do not bind them a second time. A new place must be
-  reachable from `SidebarList` too, since the columns have no tab bar.
+  (owned by `RootView`, so it outlives a resize across the width where
+  the layouts swap; with the auto-advance and the key map, `PadKeys`),
+  never to `AppModel`. The keys are key equivalents on buttons that draw
+  nothing, not focus-based `onKeyPress`: nothing has to hold the focus,
+  and a text field gets a bare letter first. The open thread's `e` `h`
+  `n` `s` `r` `⌘⌫` are ThreadView's own (`threadKey`): do not bind them a
+  second time. A new place must be reachable from `SidebarList` too,
+  since the columns have no tab bar.
 - **Mute and block are the app's own rules**, two synced prefs the core
   applies at the end of every sync (`mute.threads`, `block.senders`;
   `AppModel.mute`, `.block`). Gmail's API has no mute and its filters need
-  a scope the app does not ask for. The Outbox (Settings › Outbox,
-  `OutboxView`) is where a change Gmail keeps refusing waits for the
+  a scope the app does not ask for. A rule acts once per arrival and
+  never against the user: Not spam unblocks the sender, Move to inbox
+  unmutes the thread. The Outbox (Settings › Outbox,
+  `OutboxView`; `AppModel.openOutbox`) is where a change that could not be sent waits for the
   user; `failedChanges` puts a line over the list while there is one.
 - **A message's HTML is sanitized by the core** and its tracking pixels
   replaced by a marker the view counts (`MailDocument.trackerCount`).
+  What tells the reader something about a mail's safety must not be the
+  mail's to forge or hide: the core strips `hp-` classes from incoming
+  mail, the link note is styled inline and counted by the script
+  (`linkWarningScript`), and the count is said again in the app's own
+  chrome, where the mail's styles do not reach.
   `MailDocument` holds the page and its scripts; `RenderTests` loads the
   same page in a real web view, and `HeyPigeonUITests` launches the app on
   the sample inbox. Every wait in a test has a timeout.

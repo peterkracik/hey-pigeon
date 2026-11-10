@@ -123,6 +123,10 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
+    /// What the columns show. Kept here, not in PadSplitView: resizing an
+    /// iPad window across the width where the layouts swap rebuilds the
+    /// one shown, and the open thread must not close with it.
+    @State private var pad = PadState()
 
     /// The split layout: an iPad wide enough for columns. Never a phone —
     /// the large ones are "regular" in landscape too — and not an iPad in
@@ -134,11 +138,16 @@ struct RootView: View {
     var body: some View {
         withSheets(Group {
             if showsColumns {
-                PadSplitView()
+                PadSplitView(state: pad)
             } else {
                 tabs
             }
         })
+        // Narrowed to the tabs with a thread open: the stack pushes it
+        // (the same request a notification makes).
+        .onChange(of: showsColumns) { _, columns in
+            if !columns, let open = pad.openRow { model.openThread(id: open.id) }
+        }
     }
 
     /// The phone's four tabs (an iPad in a narrow window has them too).

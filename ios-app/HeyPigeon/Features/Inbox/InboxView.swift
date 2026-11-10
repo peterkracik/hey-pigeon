@@ -105,19 +105,21 @@ struct OfflineBar: View {
                 .background(Theme.sunken)
                 .accessibilityLabel(model.queuedChanges > 0 ? "Offline. \(model.queuedChanges) changes to send." : "Offline")
         } else if model.failedChanges > 0 {
-            // Gmail refused something for good: say so, and where to look
-            // (Settings › Outbox). Silence left this device and Gmail
-            // disagreeing with nobody the wiser.
-            Button { model.showSettings = true } label: {
-                Label("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent · Settings › Outbox",
+            // Something could not be sent for good: say so, and open the
+            // Outbox. Silence left this device and Gmail disagreeing with
+            // nobody the wiser.
+            Button { model.openOutbox() } label: {
+                Label("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent · Review",
                       systemImage: "exclamationmark.triangle")
                     .font(.footnote.weight(.medium))
-                    .foregroundStyle(Theme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .foregroundStyle(Theme.warning)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .background(Theme.sunken)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent")
+            .accessibilityHint("Opens the Outbox")
         }
     }
 }
@@ -275,7 +277,7 @@ struct ThreadList: View {
         SwipeableRow(
             leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
             trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
-            background: row.id == openThreadId ? Theme.sunken : Theme.card
+            background: row.id == openThreadId ? Theme.rowOpen : Theme.card
         ) {
             ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
                           highlight: model.tab == .search ? model.searchTerms : [])
@@ -476,9 +478,9 @@ struct FolderMoveItem: View {
         } else {
             Button { model.mute(row); then() } label: { Label("Mute", systemImage: "bell.slash") }
         }
-        if !row.lastFromAddress.isEmpty, !model.isBlocked(row.lastFromAddress), model.view != .spam {
-            Button { model.block(sender: row.lastFromAddress, row: row); then() } label: {
-                Label("Block \(row.lastFromAddress)", systemImage: "hand.raised.slash")
+        if let sender = model.blockableSender(of: row) {
+            Button { model.block(sender: sender, row: row); then() } label: {
+                Label("Block \(sender)", systemImage: "hand.raised.slash")
             }
         }
         switch model.view {

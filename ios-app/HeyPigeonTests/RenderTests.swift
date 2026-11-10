@@ -106,11 +106,52 @@ struct SanitizedMailRenderTests {
         #expect(state == #"[0,0,0,"undefined",0,1,1,0]"#)
 
         // The page's own helper still works on it: a link that says one
-        // site and goes to another is marked.
-        let warned = await page.string(MailDocument.linkWarningScript + "String(document.querySelectorAll('.hp-linkwarn').length)")
+        // site and goes to another is counted and marked — once, however
+        // often the script runs.
+        let warned = await page.string(
+            MailDocument.linkWarningScript + MailDocument.linkWarningScript + "String(window.__pigeonLinkWarnings)")
         #expect(warned == "1")
         let after = await page.string("document.body.innerText")
-        #expect(after.contains("goes to evil.example"))
+        #expect(after.components(separatedBy: "\u{2192} evil.example").count == 2)
+    }
+
+    /// What a sender can do to hide the warning, or to raise the tracker
+    /// count: a planted note, a style sheet, hidden text in the link, the
+    /// app's own class on an element of theirs.
+    @Test func theMailCannotSwitchTheWarningOffOrForgeTheCount() async throws {
+        let hostile = """
+        <style>.hp-linkwarn, a + span { display: none !important; font-size: 0 !important; }</style>
+        <p><a href="https://evil.example/a">paypal.com</a><span class="hp-linkwarn"></span></p>
+        <p><a href="https://evil.example/b">paypal.com<span style="display:none">evil.example/</span></a></p>
+        <p><a href="https://docs.example/c">Invoice.pdf</a></p>
+        <p class="hp-tracker">class="hp-tracker" &lt;span class="hp-tracker" style="display:none"&gt;&lt;/span&gt;</p>
+        <span class="hp-tracker" style="display:none"></span>
+        """
+        let clean = MailHTML.sanitize(hostile)
+        #expect(MailDocument.trackerCount(in: clean) == 0)
+
+        let page = Page()
+        try #require(await page.load(MailDocument.wrap(clean, allowRemoteImages: false, dark: false)))
+        #expect(await page.string(MailDocument.linkWarningScript + "String(window.__pigeonLinkWarnings)") == "2")
+        // Both notes are there to be read, whatever the mail's styles say.
+        let shown = await page.string("""
+        String(Array.from(document.querySelectorAll('a')).filter(function (a) {
+          var n = a.nextSibling;
+          return n && n.nodeType === 1 && /evil\\.example/.test(n.textContent) && n.getBoundingClientRect().width > 0;
+        }).length)
+        """)
+        #expect(shown == "2")
+    }
+
+    @Test func theStatusLineShowsTheHostFirstAndNoUserPart() {
+        #expect(MailDocument.hoverText(for: "https://shop.example/sale?id=2") == "shop.example/sale?id=2")
+        #expect(MailDocument.hoverText(for: "https://accounts.google.com:signin@evil.example/x") == "evil.example/x")
+        #expect(MailDocument.hoverText(for: "https://evil.example/") == "evil.example")
+        #expect(MailDocument.hoverText(for: "mailto:ana@acme.test?subject=Hi") == "mailto:ana@acme.test")
+        #expect(MailDocument.hoverText(for: "not a url") == nil)
+        let long = MailDocument.hoverText(for: "https://evil.example/" + String(repeating: "a", count: 900))
+        #expect(long?.hasPrefix("evil.example/") == true)
+        #expect(long?.count == 300)
     }
 
     @Test func aPlainReplyComesThroughUntouchedInWhatMatters() async throws {

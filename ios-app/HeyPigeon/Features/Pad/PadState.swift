@@ -3,52 +3,78 @@
 // which thread a window shows is the window's business, as on the Mac
 // (macos-app WindowState). This file is the part with no view in it, so it
 // compiles for the Mac too and the tests run it on both: the key map is a
-// pure function, and the moves (j / k, auto-advance) only read the model's
-// list order (`AppModel.flatRowIds`, `listIndex(of:)`).
+// table, and the moves (j / k, auto-advance) only read the model's list
+// order (`AppModel.flatRowIds`, `listIndex(of:)`).
 
 import SwiftUI
 
 /// What a key can do in the split layout.
-enum PadCommand: Equatable {
+enum PadCommand: Equatable, Sendable {
     case next, previous
     case delete, toggleRead
-    case reply, replyAll, forward
+    case replyAll, forward
     case compose, search, close, undo
-}
 
-/// A key press, reduced to what the map decides on.
-enum PadKey: Equatable {
-    case character(String), up, down, escape
-}
-
-/// The iPad's keys, the desktop's letters. Mark done (e), Remind me (h),
-/// Need reply (n), Pin (s) and Delete (⌘⌫) are not here: the open thread's
-/// own buttons hold those keys (ThreadView's bars, `threadKey`), and in
-/// this layout the highlighted row and the open thread are the same one —
-/// a second binding would run the action twice.
-enum PadKeys {
-    static func resolve(_ key: PadKey, modifiers: EventModifiers = []) -> PadCommand? {
-        // ⌘, ⌃ and ⌥ chords belong to the system and the menus.
-        if !modifiers.isDisjoint(with: [.command, .control, .option]) { return nil }
-        switch key {
-        case .up: return .previous
-        case .down: return .next
-        case .escape: return .close
-        case .character(let c):
-            switch c {
-            case "j": return .next
-            case "k": return .previous
-            case "#": return .delete
-            case "u": return .toggleRead
-            case "r": return .reply
-            case "a": return .replyAll
-            case "f": return .forward
-            case "c": return .compose
-            case "/": return .search
-            case "z": return .undo
-            default: return nil
-            }
+    /// Its name where the system lists an app's keys (the iPad's ⌘-hold
+    /// overlay).
+    var title: String {
+        switch self {
+        case .next: "Next thread"
+        case .previous: "Previous thread"
+        case .delete: "Delete"
+        case .toggleRead: "Mark read or unread"
+        case .replyAll: "Reply all"
+        case .forward: "Forward"
+        case .compose: "New message"
+        case .search: "Search"
+        case .close: "Close thread"
+        case .undo: "Undo"
         }
+    }
+}
+
+/// One key of the split layout.
+struct PadBinding: Sendable {
+    let key: KeyEquivalent
+    var modifiers: EventModifiers = []
+    let command: PadCommand
+}
+
+/// The iPad's keys, the desktop's letters. Each is a key equivalent on a
+/// button that draws nothing (PadSplitView), like the open thread's own
+/// (`threadKey`): the system hands a bare letter to a text field first, so
+/// typing in the search field or the composer never runs one, and no view
+/// has to hold the keyboard focus for them to work — a focus-based map
+/// went dead after every sheet.
+///
+/// Mark done (e), Remind me (h), Need reply (n), Pin (s), Reply (r) and
+/// Delete (⌘⌫) are not here: the open thread's own buttons hold those
+/// keys, and in this layout the highlighted row and the open thread are
+/// the same one — a second binding would run the action twice (or, for
+/// `r`, skip the pill's "Continue draft").
+enum PadKeys {
+    static let bindings: [PadBinding] = [
+        PadBinding(key: "j", command: .next),
+        PadBinding(key: .downArrow, command: .next),
+        PadBinding(key: "k", command: .previous),
+        PadBinding(key: .upArrow, command: .previous),
+        // `#` as the character and as the key that types it on a US
+        // layout: which of the two the system matches is the keyboard's
+        // business, and one press runs at most one of them.
+        PadBinding(key: "#", command: .delete),
+        PadBinding(key: "3", modifiers: .shift, command: .delete),
+        PadBinding(key: "u", command: .toggleRead),
+        PadBinding(key: "a", command: .replyAll),
+        PadBinding(key: "f", command: .forward),
+        PadBinding(key: "c", command: .compose),
+        PadBinding(key: "/", command: .search),
+        PadBinding(key: "z", command: .undo),
+        PadBinding(key: .escape, command: .close),
+    ]
+
+    /// What a key runs, nil when it is not one of the layout's.
+    static func command(for key: KeyEquivalent, modifiers: EventModifiers = []) -> PadCommand? {
+        bindings.first { $0.key.character == key.character && $0.modifiers == modifiers }?.command
     }
 }
 
@@ -61,27 +87,21 @@ final class PadState {
     /// The list scrolls to this id after a keyboard move or an auto-advance
     /// (a tap needs none: the row is under the finger).
     var scrollTarget: String?
-    /// Bumped to hand the keyboard back to the list (Esc, a closed thread).
-    var listFocusRequest = 0
     /// `/` was pressed: the Search column takes the caret once it is up.
     var wantsSearchFocus = false
 
-    /// The list the open thread was opened from: another folder, account
-    /// or tab is another list, and its rows are not "the next thread".
+    /// A list: another folder, account or tab is another one, and its
+    /// rows are not "the next thread" of this one.
     private struct ListKey: Equatable {
         let tab: MainTab
         let view: MailView
         let accountId: String?
     }
 
-    @ObservationIgnored private var openedIn: ListKey?
-    /// Where the open thread sat in the list, so its neighbour takes its
-    /// place when it leaves.
-    @ObservationIgnored private var lastIndex: Int?
-    /// Whether the open thread was a row of the list at all (one opened
-    /// from a banner or a search may not be): only a row that was there
-    /// can leave.
-    @ObservationIgnored private var wasListed = false
+    /// Where the open thread last sat as a row, and in which list, so its
+    /// neighbour takes its place when the user deals with it. Nil for a
+    /// thread that never was a row (opened from a banner).
+    @ObservationIgnored private var listedAt: (list: ListKey, index: Int)?
 
     private func key(_ model: AppModel) -> ListKey {
         ListKey(tab: model.tab, view: model.view, accountId: model.selectedAccountId)
@@ -92,17 +112,13 @@ final class PadState {
     /// Show a thread in the detail column and highlight its row.
     func open(_ row: ThreadRow, in model: AppModel) {
         openRow = row
-        let index = model.listIndex(of: row.id)
-        lastIndex = index ?? lastIndex
-        wasListed = index != nil
-        openedIn = key(model)
+        listedAt = model.listIndex(of: row.id).map { (key(model), $0) }
     }
 
-    /// Back to the placeholder (Esc); the list has the keyboard again.
+    /// Back to the placeholder (Esc).
     func close() {
         openRow = nil
-        wasListed = false
-        listFocusRequest += 1
+        listedAt = nil
     }
 
     /// A row picked by a key or by auto-advance: read, as a tap makes it,
@@ -129,41 +145,37 @@ final class PadState {
 
     /// The row that took the open thread's place opens (Superhuman's
     /// auto-advance, as on the Mac); the placeholder when there is none.
-    private func advance(in model: AppModel) {
+    private func advance(from index: Int, in model: AppModel) {
         let ids = model.flatRowIds
-        guard let index = lastIndex, !ids.isEmpty,
-              let next = model.row(forThreadId: ids[min(index, ids.count - 1)]) else {
+        guard !ids.isEmpty, let next = model.row(forThreadId: ids[min(index, ids.count - 1)]) else {
             close()
             return
         }
         show(next, in: model)
     }
 
-    /// The open thread's own bars did something that ends it (done,
+    /// The user did something on the open thread that ends it (done,
     /// delete, mark unread, move): the next thread takes its place when
-    /// its row left the list, else the placeholder comes back.
+    /// its row left the list it was in, else the placeholder comes back.
     func closeOpen(in model: AppModel) {
         guard let open = openRow else { return }
-        if wasListed, model.listIndex(of: open.id) == nil { advance(in: model) } else { close() }
+        if let at = listedAt, at.list == key(model), model.listIndex(of: open.id) == nil {
+            advance(from: at.index, in: model)
+        } else {
+            close()
+        }
     }
 
-    /// The list's order changed (`AppModel.rowOrderRevision`). An open
-    /// thread whose row left the same list — done on another device, a
-    /// reminder set from a banner — hands over to the next one; a list
-    /// that is another list altogether just closes it.
+    /// The list's order changed (`AppModel.rowOrderRevision`): remember
+    /// where the open thread sits now. A row that left the list on its
+    /// own — another folder or filter, a search typed with a thread open,
+    /// done on another device — opens nothing: only the user's own action
+    /// on the open thread advances (`closeOpen`). Advancing here opened
+    /// the next thread and marked it read without anyone asking, and
+    /// with an "unread" search that walked through every result.
     func rowsChanged(in model: AppModel) {
-        guard let open = openRow else { return }
-        if let index = model.listIndex(of: open.id) {
-            lastIndex = index
-            wasListed = true
-            return
-        }
-        guard wasListed else { return }
-        guard openedIn == key(model) else {
-            close()
-            return
-        }
-        advance(in: model)
+        guard let open = openRow, let index = model.listIndex(of: open.id) else { return }
+        listedAt = (key(model), index)
     }
 
     // MARK: Commands
@@ -191,11 +203,10 @@ final class PadState {
             let wasRead = row.isRead
             model.toggleRead(row)
             if wasRead { close() }
-        case .reply, .replyAll:
+        case .replyAll:
             guard let row else { return }
-            let all = command == .replyAll
-            IntentDonations.replied(row, all: all, in: model)
-            Task { try? await model.openReply(to: row, all: all, body: nil) }
+            IntentDonations.replied(row, all: true, in: model)
+            Task { try? await model.openReply(to: row, all: true, body: nil) }
         case .forward:
             guard let row else { return }
             Task { try? await model.openForward(of: row) }

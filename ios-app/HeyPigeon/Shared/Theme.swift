@@ -33,6 +33,12 @@ enum Theme {
     static let textSecondary = Color(light: Color(hex: 0x4E5057), dark: navy400)
     static let textTertiary = Color(light: Color(hex: 0x8E9096), dark: navy500)
     static let separator = Color(light: Color(hex: 0xE4E4E7), dark: Color(hex: 0x343338))
+    /// Something went wrong and wants a look (a change that was not
+    /// sent). Not the accent: pink is the colour of done.
+    static let warning = Color(light: Color(hex: 0xB34E2E), dark: Color(hex: 0xF0916F))
+    /// The row of the thread open beside the list (the iPad's columns).
+    /// Not `sunken`: that is the label chips' fill, and they vanished on it.
+    static let rowOpen = Color(light: Color(hex: 0xE8EBF3), dark: Color(hex: 0x2B2F3B))
     /// Unread rows sit on the card surface; read rows sink into the canvas.
     static let rowUnread = card
     static let rowRead = canvas

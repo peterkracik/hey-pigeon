@@ -207,15 +207,20 @@ final class RustEngine: MailEngine {
     func pendingChanges() -> Int { Int(engine.pendingMutations()) }
     func failedChanges() -> Int { Int(engine.failedMutations()) }
 
-    func outbox() -> [QueuedChange] {
-        engine.listOutbox().map {
-            QueuedChange(id: $0.id, accountId: $0.accountId, kind: $0.kind, summary: $0.summary,
-                         attempts: Int($0.attempts), failed: $0.failed, lastError: $0.lastError)
-        }
+    /// Off the caller's thread: the core reads every queued row, a
+    /// queued send with its attachments, and each row's thread.
+    func outbox() async -> [QueuedChange] {
+        let engine = engine
+        return await Task.detached(priority: .userInitiated) {
+            engine.listOutbox().map {
+                QueuedChange(id: $0.id, accountId: $0.accountId, kind: $0.kind, summary: $0.summary,
+                             attempts: Int($0.attempts), failed: $0.failed, lastError: $0.lastError)
+            }
+        }.value
     }
 
     func retryOutbox(id: Int64) async throws { try await engine.retryOutbox(id: id) }
-    func discardOutbox(id: Int64) throws { engine.discardOutbox(id: id) }
+    func discardOutbox(id: Int64) async throws { try await engine.discardOutbox(id: id) }
 
     func createLabel(accountId: String, name: String) async throws -> MailLabelItem {
         let l = try await engine.createLabel(accountId: accountId, name: name)

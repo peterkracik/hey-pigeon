@@ -1,9 +1,10 @@
 // Crash and hang reports, kept on the device. MetricKit hands the app a
 // diagnostic payload (crashes, hangs, CPU and disk exceptions, with their
-// call stacks) the day after one happened; the app has no backend to send
-// it to and never will, so it writes each as a JSON file next to its store
-// and Settings › Diagnostics lists them, to copy into an issue or delete.
-// Nothing leaves the device unless the user copies it out.
+// call stacks) soon after one happened — a crash's at the next launch;
+// the app has no backend to send it to and never will, so it writes each
+// as a JSON file next to its store and Settings › Diagnostics lists them,
+// to copy into an issue or delete. Nothing leaves the device unless the
+// user copies it out: the folder is kept out of iCloud and Finder backups.
 
 import Foundation
 import MetricKit
@@ -41,9 +42,13 @@ final class DiagnosticsCollector: NSObject, MXMetricManagerSubscriber, @unchecke
             .appendingPathComponent("Diagnostics", isDirectory: true)
     }
 
-    static func store(_ json: Data, at date: Date, in directory: URL? = directory) {
-        guard let directory else { return }
+    static func store(_ json: Data, at date: Date, in directory: URL? = DiagnosticsCollector.directory) {
+        guard var directory else { return }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // "Kept on this device" has to be true of its backups too.
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? directory.setResourceValues(values)
         let name = "diagnostic-\(Int(date.timeIntervalSince1970))-\(UUID().uuidString.prefix(6)).json"
         try? json.write(to: directory.appendingPathComponent(name), options: .atomic)
         for old in reports(in: directory).dropFirst(limit) { try? FileManager.default.removeItem(at: old.url) }
@@ -57,7 +62,7 @@ final class DiagnosticsCollector: NSObject, MXMetricManagerSubscriber, @unchecke
     }
 
     /// The stored reports, newest first.
-    static func reports(in directory: URL? = directory) -> [Report] {
+    static func reports(in directory: URL? = DiagnosticsCollector.directory) -> [Report] {
         guard let directory,
               let urls = try? FileManager.default.contentsOfDirectory(
                   at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])
@@ -69,7 +74,7 @@ final class DiagnosticsCollector: NSObject, MXMetricManagerSubscriber, @unchecke
         .sorted { $0.date > $1.date }
     }
 
-    static func deleteAll(in directory: URL? = directory) {
+    static func deleteAll(in directory: URL? = DiagnosticsCollector.directory) {
         for report in reports(in: directory) { try? FileManager.default.removeItem(at: report.url) }
     }
 }

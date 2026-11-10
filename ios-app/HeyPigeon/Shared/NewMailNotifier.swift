@@ -120,11 +120,14 @@ enum NewMailNotifier {
             }
             // The engine queues the change and sends it in the background:
             // wait for the queue to empty, for a few seconds at most.
+            // The badge follows by itself: the change reloads the model,
+            // and every reload refreshes it (AppModel.refreshStoreSurfaces).
+            // Awaiting it here hung under the iPhone tests, where the
+            // system never answers a badge request.
             for _ in 0..<40 {
                 try? await Task.sleep(for: .milliseconds(250))
                 if grace.isExpired || model.engine.pendingChanges() == 0 { break }
             }
-            await refreshBadge(model)
         case NotificationActions.reply:
             model.openThread(id: threadId)
             guard let row = try? model.engine.threadRow(id: threadId) else { return }

@@ -141,6 +141,22 @@ struct OfflineBar: View {
                 .padding(.vertical, 6)
                 .background(Theme.sunken)
                 .accessibilityLabel(model.queuedChanges > 0 ? "Offline. \(model.queuedChanges) changes to send." : "Offline")
+        } else if model.failedChanges > 0 {
+            // Something could not be sent for good: say so, and open the
+            // Outbox. Silence left this device and Gmail disagreeing with
+            // nobody the wiser.
+            Button { model.openOutbox() } label: {
+                Label("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent · Review",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Theme.warning)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Theme.sunken)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent")
+            .accessibilityHint("Opens the Outbox")
         }
     }
 }
@@ -276,6 +292,9 @@ struct TriageSplitBar: View {
 struct ThreadList: View {
     @Binding var path: [ThreadRow]
     @Environment(AppModel.self) private var model
+    /// The thread open beside the list (the iPad's split layout): its row
+    /// is tinted. Nil on the phone.
+    @Environment(\.openThreadId) private var openThreadId
 
     var body: some View {
         List {
@@ -308,7 +327,7 @@ struct ThreadList: View {
         SwipeableRow(
             leading: [swipe(model.swipeActions[0], row), swipe(model.swipeActions[1], row)],
             trailing: [swipe(model.swipeActions[2], row), swipe(model.swipeActions[3], row)],
-            background: Theme.card
+            background: row.id == openThreadId ? Theme.rowOpen : Theme.card
         ) {
             ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
                           highlight: model.tab == .search ? model.searchTerms : [])
@@ -487,6 +506,18 @@ struct FolderMoveItem: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        // The app's own rules (AppModel.mute, .block): Gmail's API has no
+        // mute, and blocking there needs a permission the app does not ask.
+        if model.isMuted(row) {
+            Button { model.unmute(threadId: row.id) } label: { Label("Unmute", systemImage: "bell") }
+        } else {
+            Button { model.mute(row); then() } label: { Label("Mute", systemImage: "bell.slash") }
+        }
+        if let sender = model.blockableSender(of: row) {
+            Button { model.block(sender: sender, row: row); then() } label: {
+                Label("Block \(sender)", systemImage: "hand.raised.slash")
+            }
+        }
         switch model.view {
         case .spam:
             Button { model.markNotSpam(row); then() } label: { Label("Not spam", systemImage: "tray.and.arrow.down") }

@@ -181,11 +181,20 @@ pub struct MailMessage {
     /// attributes mail leans on (`width`, `height`, `align`, `valign`,
     /// `bgcolor`, `border`, `cellpadding`, `cellspacing`, `colspan`,
     /// `rowspan`, `background`), `<font>`, `<center>`, `class` and `id`
-    /// unprefixed (`gmail_quote`), inline `style` (minus `position` and
+    /// unprefixed (`gmail_quote`) — except names beginning `hp-`, which
+    /// are the app's and which mail loses — inline `style` (minus
+    /// `position` and
     /// anything that could run script) and `<style>` blocks (minus
     /// `@import`; `url(…)` stays, so remote pictures in CSS load or not
     /// by the view's content security policy). A full document comes as
     /// its content, the `<body>`'s attributes on a `<div>` around it.
+    ///
+    /// A tracking pixel is replaced by
+    /// `<span class="hp-tracker" style="display:none"></span>`, exactly
+    /// that text and only ever written by the sanitizer: count it for
+    /// "n trackers blocked". A body that has one ends in a comment,
+    /// `<!--hp-seal:…-->`, by which the sanitizer knows its own output
+    /// again; it shows nothing and needs no handling.
     ///
     /// This is one layer of two. The shell's view is the other: the
     /// mail's JavaScript off, a content security policy, remote images
@@ -275,6 +284,31 @@ impl From<domain::Label> for MailLabel {
             name: l.name,
         }
     }
+}
+
+/// One change still waiting for Gmail (`Engine::list_outbox`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OutboxEntry {
+    /// The row's id, for `retry_outbox` / `discard_outbox`.
+    pub id: i64,
+    pub account_id: String,
+    /// What kind of change: `send`, `draft`, `delete_draft`, `archive`,
+    /// `unarchive`, `read`, `trash`, `untrash`, `star`, `label`, `spam`.
+    pub kind: String,
+    /// What it is about, for a person: `To ana@x.com · Subject` for
+    /// outgoing mail and drafts (`To ana@x.com +2 · …` with more
+    /// recipients), the thread's subject for a change to a thread (its id
+    /// when the store no longer has the thread), `Draft` for a draft
+    /// being deleted.
+    pub summary: String,
+    /// How many times Gmail refused it. (Being offline does not count.)
+    pub attempts: u32,
+    /// Refused so often that it is no longer retried on its own: it waits
+    /// for `retry_outbox` or `discard_outbox`.
+    pub failed: bool,
+    /// Why the last try did not go through, in words; None before the
+    /// first failure.
+    pub last_error: Option<String>,
 }
 
 /// An address the account may send from (`Engine::list_send_as`): its
@@ -386,6 +420,10 @@ pub struct DraftContent {
     pub attachments: Vec<OutAttachment>,
     /// The thread it replies to; None for a stand-alone draft.
     pub reply_to_thread: Option<String>,
+    /// The address the draft was written from, when that is not the
+    /// account's own: one of its send-as aliases (`list_send_as`), to put
+    /// back in the composer's From. None for the account's own address.
+    pub from_addr: Option<String>,
 }
 
 /// A local, optimistic change queued for Gmail (outbox pattern) — the same

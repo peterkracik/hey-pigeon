@@ -178,6 +178,7 @@ targets:
         HEYPIGEON_MOCK: "0"
       testTargets:
         - HeyPigeonTests
+        - HeyPigeonUITests
 
   # Widgets (Unread · Next reminder · Need reply), the reminder Live
   # Activity and the Controls. Reads the App Group snapshot the app writes;
@@ -259,3 +260,19 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.ios.tests
         GENERATE_INFOPLIST_FILE: true
+
+  # One smoke test through the real views, on the sample inbox: the app
+  # launches, the inbox shows, a thread opens and closes. The unit tests
+  # never build a view; a hang or a crash on launch showed only on a device.
+  HeyPigeonUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: HeyPigeonUITests
+    dependencies:
+      - target: HeyPigeon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.heypigeon.ios.uitests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: HeyPigeon

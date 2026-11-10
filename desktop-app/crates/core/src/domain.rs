@@ -569,6 +569,36 @@ impl Mutation {
         }
     }
 
+    /// What kind of change this is, in the words the shells list the
+    /// outbox with.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Mutation::Archive { .. } => "archive",
+            Mutation::Unarchive { .. } => "unarchive",
+            Mutation::MarkRead { .. } => "read",
+            Mutation::Trash { .. } => "trash",
+            Mutation::Star { .. } => "star",
+            Mutation::ModifyLabel { .. } => "label",
+            Mutation::Send { .. } => "send",
+            Mutation::SaveDraft { .. } => "draft",
+            Mutation::DeleteDraft { .. } => "delete_draft",
+            Mutation::Untrash { .. } => "untrash",
+            Mutation::MarkSpam { .. } => "spam",
+        }
+    }
+
+    /// `kind_name` for the tag a stored mutation carries (its serialized
+    /// `kind`), for reading the outbox without parsing each row.
+    pub fn kind_name_of_tag(tag: &str) -> &str {
+        match tag {
+            "mark_read" => "read",
+            "modify_label" => "label",
+            "save_draft" => "draft",
+            "mark_spam" => "spam",
+            other => other,
+        }
+    }
+
     /// Outgoing mail and draft changes: the ones whose caller waits for the
     /// provider's answer (a send that failed must be reported), where a
     /// label flip is done for the user the moment it is applied locally.
@@ -591,6 +621,9 @@ pub struct DraftContent {
     pub body_text: Option<String>,
     pub body_html: Option<String>,
     pub attachments: Vec<OutAttachment>,
+    /// The bare address in the draft's `From` header, when it has one:
+    /// the alias it was written from, or the account's own address.
+    pub from_addr: Option<String>,
 }
 
 // Log hygiene: addresses, subject and body stay out of Debug output.
@@ -721,6 +754,49 @@ pub struct OutboxItem {
     pub attempts: i64,
     /// Epoch milliseconds.
     pub created_at: i64,
+    /// Why the last drain could not send it, in words; None before the
+    /// first try.
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+/// One outbox row as a list shows it: what kind of change, what it is
+/// about, how it is doing — without the change itself (a queued send
+/// carries its attachments).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboxSummary {
+    pub id: i64,
+    pub account_id: AccountId,
+    /// `Mutation::kind_name`.
+    pub kind: String,
+    /// The thread a thread change is about.
+    pub thread_id: Option<ThreadId>,
+    /// Recipients and subject of outgoing mail or a draft.
+    pub to: Vec<String>,
+    pub subject: Option<String>,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+}
+
+impl OutboxSummary {
+    pub fn of(item: &OutboxItem) -> Self {
+        let (to, subject) = match &item.mutation {
+            Mutation::Send { to, subject, .. } | Mutation::SaveDraft { to, subject, .. } => {
+                (to.clone(), Some(subject.clone()))
+            }
+            _ => (Vec::new(), None),
+        };
+        Self {
+            id: item.id,
+            account_id: item.account_id.clone(),
+            kind: item.mutation.kind_name().to_string(),
+            thread_id: item.mutation.thread_id().cloned(),
+            to,
+            subject,
+            attempts: item.attempts,
+            last_error: item.last_error.clone(),
+        }
+    }
 }
 
 /// One local search hit: the thread plus an FTS5 snippet() preview line

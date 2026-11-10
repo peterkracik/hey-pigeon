@@ -295,6 +295,11 @@ struct CommandPalette: View {
                 (RowAction.delete.label(for: row), RowAction.delete.glyph(for: row), RowAction.delete.key, .delete),
             ]
             let threadItems = actionItems + otherItems
+            for (title, image, key, command) in threadItems {
+                out.append(PaletteItem(id: "thread.\(command)", title: title, subtitle: row.subject, systemImage: image, key: key) {
+                    state.run(command, in: model)
+                })
+            }
             // Report spam, or the way back out of Spam and Trash.
             switch model.view {
             case .spam:
@@ -313,9 +318,24 @@ struct CommandPalette: View {
                     model.markSpam(row)
                 })
             }
-            for (title, image, key, command) in threadItems {
-                out.append(PaletteItem(id: "thread.\(command)", title: title, subtitle: row.subject, systemImage: image, key: key) {
-                    state.run(command, in: model)
+            // The app's own rules, after the everyday commands: the palette
+            // opens on its first item, and "m" must still find Mark done
+            // and Mark unread before Mute.
+            if model.isMuted(row) {
+                out.append(PaletteItem(id: "thread.unmute", title: "Unmute", subtitle: row.subject, systemImage: "bell") {
+                    model.unmute(threadId: row.id)
+                })
+            } else {
+                out.append(PaletteItem(id: "thread.mute", title: "Mute", subtitle: row.subject, systemImage: "bell.slash") {
+                    state.advance(in: model)
+                    model.mute(row)
+                })
+            }
+            if let sender = model.blockableSender(of: row) {
+                out.append(PaletteItem(id: "thread.block", title: "Block \(sender)", subtitle: row.subject,
+                                       systemImage: "hand.raised.slash") {
+                    state.advance(in: model)
+                    model.block(sender: sender, row: row)
                 })
             }
             if !labelItems(for: row).isEmpty {

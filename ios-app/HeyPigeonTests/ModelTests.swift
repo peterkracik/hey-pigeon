@@ -72,6 +72,8 @@ struct EmailAddressTests {
     @Test func parsesHeaderText() {
         #expect(EmailAddress.address(in: "\"Ana Novak\" <ana@acme.test>") == "ana@acme.test")
         #expect(EmailAddress.address(in: "  ana@acme.test ") == "ana@acme.test")
+        // A name that holds an address of its own does not choose the sender.
+        #expect(EmailAddress.address(in: "\"Support <alerts@bank.test>\" <someone@else.test>") == "someone@else.test")
         #expect(EmailAddress.displayName(in: "\"Ana Novak\" <ana@acme.test>") == "Ana Novak")
         #expect(EmailAddress.displayName(in: "<ana@acme.test>") == "ana@acme.test")
         #expect(EmailAddress.displayName(in: "ana@acme.test") == "ana@acme.test")

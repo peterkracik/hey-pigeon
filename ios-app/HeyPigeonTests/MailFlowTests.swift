@@ -149,3 +149,42 @@ struct ListOrderTests {
         }
     }
 }
+
+/// Mute and block (AppModel): a rule never works against what the user
+/// just did, and the stack of undos holds only what can still be undone.
+@MainActor
+struct RuleTests {
+    @Test func blockIsOfferedForSomeoneElsesAddressOnly() {
+        let model = AppModel(engine: MockEngine())
+        #expect(model.blockableSender(of: makeRow(fromAddress: "Ana@Acme.test")) == "ana@acme.test")
+        // The newest mail in Sent, or in a thread just answered, is the user's.
+        #expect(model.blockableSender(of: makeRow(fromAddress: "me@work.test")) == nil)
+        #expect(model.blockableSender(of: makeRow(fromAddress: "")) == nil)
+        model.block(sender: "ana@acme.test", row: nil)
+        #expect(model.blockableSender(of: makeRow(fromAddress: "ana@acme.test")) == nil)
+    }
+
+    @Test func rescuingAThreadLiftsItsRule() {
+        let model = AppModel(engine: MockEngine())
+        let row = makeRow("t-rule", fromAddress: "ana@acme.test")
+        model.mute(row)
+        #expect(model.isMuted(row))
+        // Back to the inbox by hand: the rule would take it out again.
+        model.markNotDone(row)
+        #expect(!model.isMuted(row))
+
+        model.block(sender: "ana@acme.test", row: nil)
+        #expect(model.isBlocked("ANA@acme.test"))
+        model.markNotSpam(row)
+        #expect(!model.isBlocked("ana@acme.test"))
+    }
+
+    @Test func undoingAMuteUnmutesAndTakesNothingElseBack() {
+        let model = AppModel(engine: MockEngine())
+        let row = makeRow("t-done", archived: true)
+        model.mute(row)
+        #expect(model.undoLast())
+        #expect(!model.isMuted(row))
+        #expect(!model.canUndoLast)
+    }
+}

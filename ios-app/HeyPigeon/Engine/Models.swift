@@ -243,12 +243,17 @@ enum ComposerHTML {
     /// its own page, where they could restyle the editor or hide text
     /// that is still sent) and without its `cid:` pictures (the picture
     /// itself travels as an ordinary attachment with no Content-ID, so
-    /// the html would go out pointing at nothing).
+    /// the html would go out pointing at nothing). And without what the
+    /// core's sanitizer left in a received body for this app alone: the
+    /// markers where tracking pictures were, and the seal after them
+    /// (core/src/sanitize.rs) — a forwarded message would carry both out.
     static func clean(_ html: String) -> String {
         html.replacingOccurrences(of: #"<style\b[^>]*>[\s\S]*?</style\s*>"#, with: "",
                                   options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"<img\b[^>]*\bsrc\s*=\s*["']?\s*cid:[^>]*>"#, with: "",
                                   options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: MailDocument.trackerMarker, with: "")
+            .replacingOccurrences(of: #"<!--hp-seal:[0-9a-f]*-->"#, with: "", options: .regularExpression)
     }
 }
 
@@ -261,8 +266,11 @@ enum EmailAddress {
     }
 
     /// The address between the angle brackets, or the trimmed text itself.
+    /// The last pair: a display name may hold brackets of its own
+    /// (`"Support <alerts@bank.test>" <someone@else.test>`), and the mail
+    /// is from the address that follows the name.
     static func address(in header: String) -> String {
-        if let open = header.firstIndex(of: "<"), let close = header[open...].firstIndex(of: ">") {
+        if let open = header.lastIndex(of: "<"), let close = header[open...].firstIndex(of: ">") {
             return String(header[header.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
         }
         return header.trimmingCharacters(in: .whitespaces)
@@ -1020,6 +1028,42 @@ protocol StoreReader: Sendable {
 extension MailEngine {
     /// Nothing waits in an engine that keeps no outbox (the sample inbox).
     func pendingChanges() -> Int { 0 }
+    func failedChanges() -> Int { 0 }
+    func outbox() async -> [QueuedChange] { [] }
+    func retryOutbox(id: Int64) async throws {}
+    func discardOutbox(id: Int64) async throws {}
+}
+
+/// One change in the engine's outbox (`MailEngine.outbox`).
+struct QueuedChange: Identifiable, Hashable, Sendable {
+    let id: Int64
+    let accountId: String
+    /// "send", "draft", "archive", "label"… (the core's words).
+    let kind: String
+    /// What it is about: a send's recipient and subject, a thread's subject.
+    let summary: String
+    let attempts: Int
+    /// Gmail refused it until the engine stopped retrying.
+    let failed: Bool
+    let lastError: String?
+
+    /// The kind in the app's words.
+    var title: String {
+        switch kind {
+        case "send": "Send"
+        case "draft": "Save draft"
+        case "delete_draft": "Delete draft"
+        case "archive": "Mark done"
+        case "unarchive": "Mark not done"
+        case "read": "Read / unread"
+        case "trash": "Delete"
+        case "untrash": "Move to inbox"
+        case "star": "Pin"
+        case "label": "Label"
+        case "spam": "Spam"
+        default: kind.capitalized
+        }
+    }
 }
 
 /// `StoreReader` over the main-actor engine itself: the reads a synchronous
@@ -1101,6 +1145,14 @@ protocol MailEngine: AnyObject {
     /// How many changes (done, read, a label, a send) are still waiting to
     /// reach Gmail: the Mac's toolbar says so while there is no network.
     func pendingChanges() -> Int
+    /// How many of them Gmail refused until the engine stopped retrying.
+    func failedChanges() -> Int
+    /// The outbox, oldest first: what waits, and what is stuck and why.
+    func outbox() async -> [QueuedChange]
+    /// Clear a stuck change's failures and send it again now.
+    func retryOutbox(id: Int64) async throws
+    /// Remove a change from the outbox without sending it.
+    func discardOutbox(id: Int64) async throws
 
     // Gmail labels: made, renamed and deleted in the account itself.
     func createLabel(accountId: String, name: String) async throws -> MailLabelItem

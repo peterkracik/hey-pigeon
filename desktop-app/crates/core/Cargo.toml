@@ -12,6 +12,10 @@ log.workspace = true
 # HTML sanitation of mail bodies (sanitize.rs): an allowlist over a real
 # HTML parse.
 ammonia = "4.2"
+# The seal on sanitized output that holds tracker markers (sanitize.rs):
+# a keyed hash, and random bytes for a key when the engine gave none.
+sha2 = "0.10"
+getrandom = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

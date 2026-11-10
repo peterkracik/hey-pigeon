@@ -33,3 +33,16 @@ pub use ai::*;
 pub use bundles::*;
 pub use engine::*;
 pub use types::*;
+
+/// The core's HTML sanitizer (`heypigeon_core::sanitize::html`), as the
+/// engine applies it to every mail body and draft before the shell gets
+/// one: for the shell's own tests, and for HTML that reaches it some
+/// other way. Sanitizing twice changes nothing: a body that holds
+/// tracker markers ends in a seal (`<!--hp-seal:…-->`) the sanitizer
+/// knows its own output by. HTML without a valid one is treated as mail —
+/// names beginning `hp-` are taken from it, a marker's class included —
+/// so a sanitized body that was edited since has no markers left.
+#[uniffi::export]
+pub fn sanitize_html(html: String) -> String {
+    heypigeon_core::sanitize::html(&html)
+}

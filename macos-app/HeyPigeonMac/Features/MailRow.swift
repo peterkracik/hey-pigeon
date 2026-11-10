@@ -184,7 +184,7 @@ struct MailRow: View {
                 .accessibilityHidden(true)
         }
         if row.needsReply {
-            RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Color(hex: 0x2A6BAE))
+            RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Theme.needReply)
                 .accessibilityHidden(true)
         }
         if let at = row.scheduledAt {

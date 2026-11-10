@@ -177,7 +177,7 @@ struct UnreadView: View {
                 Text("\(snapshot.unreadTotal)")
                     .font(.system(size: 44, weight: .bold, design: .rounded)).monospacedDigit()
                     .contentTransition(.numericText())
-                Text(snapshot.unreadTotal == 1 ? "unread" : "unread").font(.caption).foregroundStyle(.secondary)
+                Text("unread").font(.caption).foregroundStyle(.secondary)
                 // One bar per account, in its colour, proportional to its share.
                 if snapshot.accounts.count > 1, snapshot.unreadTotal > 0 {
                     GeometryReader { geo in

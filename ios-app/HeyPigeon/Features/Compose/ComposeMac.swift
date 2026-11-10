@@ -667,12 +667,12 @@ struct MacFormatBar: View {
 // MARK: - The AI panel
 
 /// The writing assistant as a panel under the text (the phone's
-/// AIEditSheet, in Superhuman's shape): one line to describe the change
-/// and the presets as chips, Write or Edit; while it runs, Cancel is
-/// always a click away and the request gives up after `timeout`; the
-/// result is reviewed, refined (tone chips chain on it) and only then
-/// replaces the selection or the message. Content leaves the device on
-/// an explicit click only.
+/// AIEditSheet, in Superhuman's shape), over the shared AIAssist: one
+/// line to describe the change and the presets as chips, Write or Edit;
+/// while it runs, Cancel is always a click away and the request gives up
+/// after `AIAssist.timeout`; the result is reviewed, refined (tone chips
+/// chain on it) and only then replaces the selection or the message.
+/// Content leaves the device on an explicit click only.
 struct MacAIPanel: View {
     let subject: String
     let history: String?
@@ -687,32 +687,11 @@ struct MacAIPanel: View {
     let onWrite: (String) -> Void
     let onClose: () -> Void
     @Environment(AppModel.self) private var model
-    @State private var mode: Mode
+    @State private var mode: AIAssist.Mode
     @State private var instruction = ""
-    @State private var running = false
-    @State private var error: String?
-    /// The pending output and whether it is an edit (of a selection or the
-    /// body) or a written message; applied only when the user says so.
-    @State private var result: Outcome?
-    @State private var task: Task<Void, Never>?
-    @State private var watchdog: Task<Void, Never>?
+    /// The request that is out and the result under review (AIAssist).
+    @State private var runner = AIAssistRunner()
     @FocusState private var focused: Bool
-
-    enum Mode: String, CaseIterable, Identifiable {
-        case write = "Write", edit = "Edit"
-        var id: String { rawValue }
-    }
-
-    struct Outcome: Equatable {
-        let text: String
-        let written: Bool
-        let hasSelection: Bool
-    }
-
-    /// How long a request may take before the panel gives up on it: the
-    /// adapters time out around then too, and a spinner nobody can stop
-    /// is what froze the old sheet.
-    static let timeout: Duration = .seconds(90)
 
     init(subject: String, history: String?, context: AIWriteContext,
          target: @escaping () -> (text: String, hasSelection: Bool),
@@ -724,50 +703,23 @@ struct MacAIPanel: View {
         self.onApply = onApply
         self.onWrite = onWrite
         self.onClose = onClose
-        _mode = State(initialValue: Self.isBlank(target().text) ? .write : .edit)
+        _mode = State(initialValue: AIAssist.startMode(text: target().text))
     }
 
-    /// The edit presets, as chips; the first is the one Superhuman leads with.
-    static let edits: [(String, String)] = [
-        ("Improve writing", "Improve the writing: clearer, smoother and better structured, keeping the meaning, the tone and roughly the length."),
-        ("Fix spelling and grammar", "Fix spelling, grammar and punctuation mistakes. Change nothing else."),
-        ("Shorten", "Make this more concise without losing the key points."),
-        ("Lengthen", "Expand this with a bit more detail and context, keeping the tone."),
-        ("Simplify", "Simplify the wording: shorter sentences and plain words, same meaning."),
-        ("More formal", "Rewrite this in a more formal, professional tone."),
-        ("More casual", "Rewrite this in a more casual, friendly tone."),
-    ]
-    /// Shown with a result, to refine it: tone is what is left to dial in.
-    static let tones: [(String, String)] = [
-        ("Warmer", "Make the tone warmer and friendlier, without changing the meaning."),
-        ("More formal", "Make the tone more formal and professional, without changing the meaning."),
-        ("More casual", "Make the tone more casual and relaxed, without changing the meaning."),
-        ("More confident", "Make the tone more confident and direct, without changing the meaning."),
-        ("Softer", "Soften the tone — more polite and less blunt — without changing the meaning."),
-        ("More concise", "Make it more concise without losing the key points."),
-    ]
-    /// Quick notes for a drafted reply.
-    static let replies: [(String, String?)] = [
-        ("Draft the reply", nil),
-        ("Say yes", "Agree and confirm."),
-        ("Decline politely", "Decline politely, with a brief reason in a placeholder."),
-        ("Ask for details", "Ask for the details needed before answering."),
-    ]
-
-    private static func isBlank(_ s: String) -> Bool { s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var isReply: Bool { !Self.isBlank(history ?? "") }
-    private var hasText: Bool { !Self.isBlank(target().text) }
+    private var running: Bool { runner.running }
+    private var isReply: Bool { !AIAssist.isBlank(history ?? "") }
+    private var hasText: Bool { !AIAssist.isBlank(target().text) }
     private var typed: String { instruction.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let result {
+            if let result = runner.result {
                 review(result)
             } else {
                 prompt
             }
-            if let error {
-                Text(error).font(.footnote).foregroundStyle(Color(hex: 0xB34E2E))
+            if let error = runner.error {
+                Text(error).font(.footnote).foregroundStyle(Theme.dangerText)
             }
         }
         .padding(12)
@@ -775,7 +727,7 @@ struct MacAIPanel: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
         .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
         .onAppear { focused = true }
-        .onDisappear { cancel() }
+        .onDisappear { runner.cancel() }
     }
 
     // MARK: Asking
@@ -792,7 +744,7 @@ struct MacAIPanel: View {
                     .disabled(running)
                 if running {
                     ProgressView().controlSize(.small)
-                    Button("Cancel") { cancel() }
+                    Button("Cancel") { runner.cancel() }
                         .buttonStyle(.plain)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -824,7 +776,7 @@ struct MacAIPanel: View {
                 Spacer()
                 if hasText {
                     Picker("Mode", selection: $mode) {
-                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                        ForEach(AIAssist.Mode.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -851,26 +803,22 @@ struct MacAIPanel: View {
     }
 
     private var canGo: Bool {
-        guard !running else { return false }
-        switch mode {
-        case .edit: return !typed.isEmpty && hasText
-        case .write: return !typed.isEmpty || isReply
-        }
+        !running && AIAssist.canRun(mode: mode, typed: typed, hasText: hasText, isReply: isReply)
     }
 
     @ViewBuilder private var chips: some View {
         switch mode {
         case .edit:
             FlowLayout(spacing: 6) {
-                ForEach(Array(Self.edits.enumerated()), id: \.element.0) { index, preset in
-                    chip(preset.0, primary: index == 0) { edit(preset.1) }
+                ForEach(Array(AIAssist.edits.enumerated()), id: \.element.id) { index, preset in
+                    chip(preset.title, primary: index == 0) { edit(preset.instruction) }
                 }
             }
         case .write:
             if isReply {
                 FlowLayout(spacing: 6) {
-                    ForEach(Array(Self.replies.enumerated()), id: \.element.0) { index, preset in
-                        chip(preset.0, primary: index == 0) { write(notes: preset.1 ?? typed) }
+                    ForEach(Array(AIAssist.replies.enumerated()), id: \.element.id) { index, preset in
+                        chip(preset.title, primary: index == 0) { write(notes: preset.notes ?? typed) }
                     }
                 }
             }
@@ -893,16 +841,15 @@ struct MacAIPanel: View {
 
     // MARK: Reviewing
 
-    private func review(_ r: Outcome) -> some View {
+    private func review(_ r: AIAssist.Outcome) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(r.written ? "Review before it replaces the message" :
-                        r.hasSelection ? "Review before it replaces the selected text" : "Review before it replaces the message")
+                Text(AIAssist.reviewTitle(r))
                     .font(.caption).foregroundStyle(Theme.textTertiary)
                 Spacer()
                 if running {
                     ProgressView().controlSize(.small)
-                    Button("Cancel") { cancel() }
+                    Button("Cancel") { runner.cancel() }
                         .buttonStyle(.plain)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -920,16 +867,16 @@ struct MacAIPanel: View {
             .frame(maxHeight: 220)
             .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             FlowLayout(spacing: 6) {
-                ForEach(Self.tones, id: \.0) { tone in
-                    chip(tone.0) { refine(r, with: tone.1) }
+                ForEach(AIAssist.tones) { tone in
+                    chip(tone.title) { runner.refine(r, with: tone.instruction, history: history, context: context, in: model) }
                 }
             }
             HStack(spacing: 8) {
                 Spacer()
-                Button("Discard") { result = nil; error = nil }
+                Button("Discard") { runner.discard() }
                     .pillButton()
                     .disabled(running)
-                Button(r.written ? "Use it" : r.hasSelection ? "Replace selection" : "Replace message") { apply(r) }
+                Button(AIAssist.applyTitle(r)) { apply(r) }
                     .pillButton(prominent: true)
                     .disabled(running)
                     .keyboardShortcut(.defaultAction)
@@ -950,94 +897,17 @@ struct MacAIPanel: View {
 
     private func edit(_ instruction: String) {
         let t = target()
-        guard !Self.isBlank(t.text) else { error = "Nothing to edit — write something first."; return }
-        let (history, context) = (self.history, self.context)
-        run {
-            try await model.engine.aiEditText(instruction: instruction, text: t.text, history: history, context: context)
-        } done: { out in
-            result = Outcome(text: out, written: false, hasSelection: t.hasSelection)
-        }
+        runner.edit(instruction, text: t.text, hasSelection: t.hasSelection, history: history, context: context, in: model)
     }
 
-    /// A tone chip on a result: applied to the result, not the original,
-    /// so chips chain (Warmer, then More concise).
-    private func refine(_ r: Outcome, with instruction: String) {
-        let (history, context) = (self.history, self.context)
-        run {
-            try await model.engine.aiEditText(instruction: instruction, text: r.text, history: history, context: context)
-        } done: { out in
-            result = Outcome(text: out, written: r.written, hasSelection: r.hasSelection)
-        }
-    }
-
-    /// A reply from the transcript (the notes steer it), or a new message
-    /// from the brief through the edit endpoint, as the phone does.
     private func write(notes: String) {
-        let (subject, history, context) = (self.subject, self.history, self.context)
-        let reply = isReply
-        run {
-            if reply, let history {
-                return try await model.engine.aiDraftReply(subject: subject, history: history,
-                                                           notes: notes.isEmpty ? nil : notes, context: context)
-            }
-            guard !notes.isEmpty else { throw AIPanelError.nothingToWrite }
-            return try await model.engine.aiEditText(instruction: AIEditSheet.writeInstruction(subject: subject),
-                                                     text: notes, history: nil, context: context)
-        } done: { out in
-            result = Outcome(text: out, written: true, hasSelection: false)
-        }
+        runner.write(notes: notes, subject: subject, history: history, context: context, in: model)
     }
 
-    /// `work` is main-actor like the engine it calls: a non-isolated async
-    /// closure taking the engine was a send of a non-Sendable value, which
-    /// Swift 6 refuses (the phone's sheet calls the engine inline, same thing).
-    private func run(_ work: @escaping @MainActor () async throws -> String, done: @escaping (String) -> Void) {
-        cancel()
-        running = true
-        error = nil
-        task = Task {
-            do {
-                let out = try await work()
-                guard !Task.isCancelled else { return }
-                done(out)
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                self.error = error.localizedDescription
-            }
-            finish()
-        }
-        watchdog = Task {
-            try? await Task.sleep(for: Self.timeout)
-            guard !Task.isCancelled else { return }
-            task?.cancel()
-            error = "The AI took too long. Try again, or pick another provider in Settings."
-            finish()
-        }
-    }
-
-    private func finish() {
-        running = false
-        watchdog?.cancel()
-        watchdog = nil
-        task = nil
-    }
-
-    private func cancel() {
-        task?.cancel()
-        finish()
-    }
-
-    private func apply(_ r: Outcome) {
+    private func apply(_ r: AIAssist.Outcome) {
         if r.written { onWrite(r.text) } else { onApply(r.text) }
-        result = nil
+        runner.discard()
         onClose()
     }
-}
-
-private enum AIPanelError: LocalizedError {
-    case nothingToWrite
-    var errorDescription: String? { "Say what the email should say first." }
 }
 #endif

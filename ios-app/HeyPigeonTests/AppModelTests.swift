@@ -198,6 +198,64 @@ struct AppModelTests {
         #expect(model.composeDraft == nil)
     }
 
+    /// The composer's trash: gone at once, and Undo opens the composer on
+    /// the message again, as one no Gmail draft stands behind.
+    @Test func aDiscardedDraftComesBackWithUndo() throws {
+        var draft = SendDraft()
+        draft.to = ["ana@acme.test"]
+        draft.subject = "Lunch"
+        draft.draftSaved = true
+        model.discardDraft(draft, savedFrom: "me@work.test")
+        #expect(model.toast?.text == "Draft discarded")
+        #expect(model.composeDraft == nil)
+        model.toast?.undo?()
+        let reopened = try #require(model.composeDraft)
+        #expect(reopened.subject == "Lunch" && reopened.draftKey == draft.draftKey && !reopened.draftSaved)
+    }
+
+    /// A draft deleted under its thread: Undo saves it back, and the thread
+    /// shows it again at once.
+    @Test func aDeletedThreadDraftIsSavedBackWithUndo() throws {
+        var draft = SendDraft()
+        draft.to = ["ana@acme.test"]
+        draft.bodyText = "On it."
+        draft.replyToThreadId = "t1"
+        model.saveDraft(draft, from: "me@work.test")
+        #expect(model.unsyncedDrafts["t1"]?.draftKey == draft.draftKey)
+        model.discardSavedDraft(draft, from: "me@work.test")
+        #expect(model.toast?.text == "Draft deleted")
+        #expect(model.unsyncedDrafts["t1"] == nil)
+        model.toast?.undo?()
+        #expect(model.unsyncedDrafts["t1"]?.bodyText == "On it.")
+    }
+
+    /// The inbox bar's AI circle: a menu only when there are two things in it.
+    @Test func theInboxBarFoldsTheAIIntoOneCircle() {
+        #expect(MailListScreen.aiBarItem(summarize: true, ask: true) == .menu)
+        #expect(MailListScreen.aiBarItem(summarize: true, ask: false) == .summarize)
+        #expect(MailListScreen.aiBarItem(summarize: false, ask: true) == .ask)
+        #expect(MailListScreen.aiBarItem(summarize: false, ask: false) == .nothing)
+    }
+
+    /// The list's title, as VoiceOver reads it: the number is reminders in
+    /// Remind me and threads in Need reply, not "unread".
+    @Test func theListTitleSaysWhatItsNumberCounts() {
+        #expect(ListTitle.spoken(title: "Inbox", count: 3, tab: .inbox) == "Inbox, 3 unread")
+        #expect(ListTitle.spoken(title: "Inbox", count: 0, tab: .inbox) == "Inbox")
+        #expect(ListTitle.spoken(title: "Remind me", count: 1, tab: .scheduled) == "Remind me, 1 reminder")
+        #expect(ListTitle.spoken(title: "Remind me", count: 4, tab: .scheduled) == "Remind me, 4 reminders")
+        #expect(ListTitle.spoken(title: "Need reply", count: 2, tab: .needReply) == "Need reply, 2 waiting for a reply")
+    }
+
+    /// With VoiceOver on a toast stays long enough to reach its Undo; a
+    /// send's toast keeps the send's own window.
+    @Test func toastsStayLongerForVoiceOver() {
+        #expect(AppModel.toastDuration(.seconds(5), holds: false, voiceOver: false) == .seconds(5))
+        #expect(AppModel.toastDuration(.seconds(5), holds: false, voiceOver: true) == AppModel.voiceOverToastDuration)
+        #expect(AppModel.toastDuration(.seconds(30), holds: false, voiceOver: true) == .seconds(30))
+        #expect(AppModel.toastDuration(.seconds(5), holds: true, voiceOver: true) == .seconds(5))
+    }
+
     /// "Marked done" used to replace "Sending · Undo": the send then had
     /// nothing left to stop it.
     @Test func aSendKeepsItsUndoWhileOtherToastsShow() throws {

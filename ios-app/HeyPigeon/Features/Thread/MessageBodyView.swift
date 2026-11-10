@@ -170,13 +170,17 @@ struct MessageBodyView: View {
     }
 
     private func imageButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(title, action: action)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(Theme.textPrimary)
-            .lineLimit(1)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .buttonStyle(.plain)
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                // The chip is some 22 pt tall: taller to the finger.
+                .tapArea(vertical: 11)
+        }
+        .buttonStyle(.plain)
     }
 
     private var quoteButton: some View {
@@ -184,6 +188,7 @@ struct MessageBodyView: View {
             Text("•••").font(.callout.weight(.bold)).kerning(2).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.bottom, 4).padding(.top, 1)
                 .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .tapArea(horizontal: 4, vertical: 10)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Show quoted text")

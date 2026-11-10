@@ -42,7 +42,7 @@ struct AttachmentChips: View {
                     .accessibilityLabel("Attachment \(a.filename)")
                 }
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(error).font(.caption).foregroundStyle(Theme.dangerText) }
         }
         .quickLookPreview($preview)
         .sheet(item: $explaining) { a in AttachmentInsightSheet(attachment: a) }
@@ -93,7 +93,7 @@ struct AttachmentInsightSheet: View {
                         InsightFields(insight: insight)
                         AttachmentActionChips(actions: AttachmentUnderstanding.actions(for: insight), row: row)
                     } else if let error {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+                        Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.dangerText)
                     } else {
                         HStack(spacing: 10) {
                             ProgressView()
@@ -218,6 +218,7 @@ struct SuggestionCard: View {
             Button { model.dismissSuggestion(row) } label: {
                 Image(systemName: "xmark").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                     .padding(6)
+                    .tapArea(horizontal: 8, vertical: 10)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss suggestion")

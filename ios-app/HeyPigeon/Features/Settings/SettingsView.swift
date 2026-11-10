@@ -16,16 +16,43 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var removing: MailAccount?
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
+    #if os(macOS)
+    /// The menu bar extra (macos-app HeyPigeonMacApp reads the same key).
+    /// Without a switch here, an icon dragged out of the menu bar had no
+    /// way back.
+    @AppStorage("menuBarExtra") private var menuBarExtra = true
+    #endif
 
     var body: some View {
         @Bindable var model = model
         NavigationStack {
             SettingsList {
                 accountsSection
-                AISection()
-                SiriSection()
-                DefaultAppSection()
-                TriageSection()
+                if SettingsLayout.pushesPages {
+                    // The phone: AI and Triage are a page each. On one
+                    // scroll their pickers, keys and privacy footers stood
+                    // between the top and everything else in Settings.
+                    Section {
+                        NavigationLink {
+                            SettingsPage(title: "AI") { AISection() }
+                        } label: {
+                            pageLabel("AI", "Who summarizes, drafts and edits", systemImage: "sparkles")
+                        }
+                        NavigationLink {
+                            SettingsPage(title: "Triage") { TriageSection() }
+                        } label: {
+                            pageLabel("Triage", "Sorting new mail into your labels", systemImage: "tray.2")
+                        }
+                    }
+                    .menuCard()
+                    SiriSection()
+                    DefaultAppSection()
+                } else {
+                    AISection()
+                    SiriSection()
+                    DefaultAppSection()
+                    TriageSection()
+                }
                 NotificationsSection()
                 ComposeSection()
                 #if os(macOS)
@@ -81,6 +108,7 @@ struct SettingsView: View {
                         ForEach(Appearance.allCases) { a in Text(a.title).tag(a.rawValue) }
                     }
                     .pickerStyle(.segmented)
+                    menuBarToggle
                 }
                 .menuCard()
                 Section {
@@ -108,6 +136,34 @@ struct SettingsView: View {
             }
         }
         .menuSheet()
+    }
+
+    /// Appearance › "Show in the menu bar", on the Mac; nothing on the
+    /// phone. Its own builder so the `#if` does not sit behind the
+    /// picker's modifier.
+    @ViewBuilder private var menuBarToggle: some View {
+        #if os(macOS)
+        Toggle(isOn: $menuBarExtra) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show in the menu bar")
+                Text("The unread count in the menu bar, with what is due and what needs a reply a click away.")
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        #endif
+    }
+
+    /// A row that opens one of Settings' pages: its name and, under it,
+    /// what is in there.
+    private func pageLabel(_ title: String, _ detail: String, systemImage: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail).font(.caption).foregroundStyle(Theme.textTertiary)
+            }
+        } icon: {
+            Image(systemName: systemImage)
+        }
     }
 
     // MARK: Accounts
@@ -163,6 +219,20 @@ struct SettingsView: View {
     }()
 }
 
+/// A page pushed from Settings' root (the phone's AI and Triage): the same
+/// list look, the page's name in the bar.
+private struct SettingsPage<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        SettingsList { content() }
+            .navigationTitle(title)
+            .toolbarTitleDisplayMode(.inline)
+            .dismissKeyboardOnScroll(.interactively)
+    }
+}
+
 /// One account block: avatar, name/email, status, Reconnect/Remove, then
 /// the sub-settings (name, colour, sync, signature).
 private struct AccountRow: View {
@@ -197,14 +267,16 @@ private struct AccountRow: View {
                         Button { model.updateAccount(account, color: c) } label: {
                             Circle().fill(Theme.tagForeground(c)).frame(width: 22, height: 22)
                                 .overlay { if c == account.color { Circle().stroke(Theme.textPrimary, lineWidth: 2).padding(-3) } }
+                                .tapArea(horizontal: 5, vertical: 11)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(c.rawValue)
+                        .accessibilityAddTraits(c == account.color ? .isSelected : [])
                     }
                 }
             }
             LabeledContent("Sync") {
-                Text(syncLine).font(.footnote).foregroundStyle(syncWarn ? .red : Theme.textSecondary)
+                Text(syncLine).font(.footnote).foregroundStyle(syncWarn ? Theme.dangerText : Theme.textSecondary)
                     .multilineTextAlignment(.trailing)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -234,7 +306,7 @@ private struct AccountRow: View {
                     Text(account.displayName).font(.body.weight(.medium))
                     Text(account.email).font(.caption).foregroundStyle(Theme.textTertiary)
                     if disconnected {
-                        Text("Disconnected — mail stops syncing until you sign in again").font(.caption).foregroundStyle(.red)
+                        Text("Disconnected — mail stops syncing until you sign in again").font(.caption).foregroundStyle(Theme.dangerText)
                     }
                 }
             }
@@ -369,7 +441,7 @@ private struct AISection: View {
                     }
                 }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("AI")
         } footer: {
@@ -499,7 +571,7 @@ private struct KeyedProviderControls: View {
                         .font(.footnote.weight(.semibold))
                 }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         }
         .task(id: provider) { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
@@ -803,34 +875,34 @@ private struct TriageSection: View {
                     AnalysisProgressRow(progress: model.analysis)
                 }
                 if let last = status?.lastError {
-                    Text("Last run failed: \(last)").font(.footnote).foregroundStyle(.red)
+                    Text("Last run failed: \(last)").font(.footnote).foregroundStyle(Theme.dangerText)
                 }
             }
             // "Hey Siri, triage my inbox": the agentic run over the engine
-            // (AI/TriageAgent.swift) — a dry-run switch, the user's own
-            // rules, and the journal of what it did.
+            // (AI/TriageAgent.swift). Its dry-run switch, the user's own
+            // rules and the journal of what it did are one page
+            // (TriageJournalView).
             if onDevice {
-                @Bindable var model = model
-                Toggle(isOn: $model.triageDryRun) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Siri triage: dry run")
-                        Text("\"Triage my inbox\" only reports what it would do.").font(.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Your triage rules")
-                    TextEditor(text: $model.triageRules)
-                        .frame(minHeight: 60)
-                        .font(.subheadline)
-                    Text("In your words, one per line; they win over the built-in ones. \"Newsletters are done. Anything from the bank needs a reply.\"")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
-                }
                 NavigationLink { TriageJournalView() } label: {
-                    Label(model.triageAgent == nil ? "Siri triage and journal" : "Siri triage · \(model.triageAgent!.phase.title)", systemImage: "list.bullet.rectangle")
+                    Label(model.triageAgent.map { "Siri triage · \($0.phase.title)" } ?? "Siri triage and journal",
+                          systemImage: "list.bullet.rectangle")
                 }
             }
-            // The labels: the categories the classifier sorts mail into, and the
-            // segments of the bottom pill, in this order (drag to change it).
+            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
+        } header: {
+            Text("Triage")
+        } footer: {
+            // Privacy copy must be true (CLAUDE.md): what each classifier
+            // is sent (settings.rs classify_pending_inner, keyed.rs).
+            Text(Self.footer)
+        }
+        .menuCard()
+        .task { load() }
+        .onChange(of: model.prefsVersion) { _, _ in load() }
+        // The labels: the categories the classifier sorts mail into, and the
+        // segments of the bottom pill, in this order (drag to change it).
+        // A section of their own: they sat unnamed between the switches.
+        Section {
             ForEach(model.triageLabels) { l in
                 Text(l.name)
                     .swipeActions {
@@ -847,17 +919,17 @@ private struct TriageSection: View {
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
                     .font(.footnote.weight(.semibold))
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
         } header: {
-            Text("Triage")
+            Text("Labels")
         } footer: {
-            // Privacy copy must be true (CLAUDE.md): what each classifier
-            // is sent (settings.rs classify_pending_inner, keyed.rs).
-            Text("New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). Apple Intelligence on this \(Device.name) does it with nothing leaving the device; Apple's cloud sends those three fields to Apple, never stored. Pick ChatGPT, Claude or Gemini and they go to that provider with your API key (the same key as AI above). Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. When the classifier you pick can't run, Apple Intelligence or Jev takes over — never a provider you didn't pick. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices. \(Self.labelHint)")
+            Text("What mail is sorted into, and the bar over your inbox, in this order. \(Self.labelHint)")
         }
         .menuCard()
-        .task { load() }
-        .onChange(of: model.prefsVersion) { _, _ in load() }
+    }
+
+    /// What each classifier is sent, and what syncs.
+    private static var footer: String {
+        "New mail is sorted into your own labels and given a priority in the background, from the subject, sender and preview (never the full message). Apple Intelligence on this \(Device.name) does it with nothing leaving the device; Apple's cloud sends those three fields to Apple, never stored. Pick ChatGPT, Claude or Gemini and they go to that provider with your API key (the same key as in AI). Jev is a third-party classification service, not part of Hey Pigeon — see jevtypesafeai.com. When the classifier you pick can't run, Apple Intelligence or Jev takes over — never a provider you didn't pick. Keys stay on this device; your labels, the switch and the classifier choice sync to your other devices."
     }
 
     private func load() { status = try? model.engine.triageStatus() }
@@ -976,8 +1048,25 @@ private struct NotificationsSection: View {
     /// relay: one local switch, on by default (HeyPigeonMacApp reads it).
     @AppStorage("newMailNotifications") private var newMailNotifications = true
 
+    /// The Mac always has its local switch. The phone's only row is the
+    /// relay's, so a build without the relay shows no section at all: it
+    /// used to show a switch that was off and could not be turned on.
+    private static func showsSection(canEnablePush: Bool) -> Bool {
+        #if os(macOS)
+        true
+        #else
+        canEnablePush
+        #endif
+    }
+
     var body: some View {
         let push = model.push
+        if Self.showsSection(canEnablePush: push.canEnable) {
+            section(push)
+        }
+    }
+
+    private func section(_ push: PushController) -> some View {
         Section {
             #if os(macOS)
             Toggle(isOn: $newMailNotifications) {
@@ -999,18 +1088,8 @@ private struct NotificationsSection: View {
                     }
                 }
                 .disabled(push.busy)
-            } else {
-                #if os(iOS)
-                Toggle(isOn: .constant(false)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("New mail (push)")
-                        Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                .disabled(true)
-                #endif
             }
-            if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("Notifications")
         } footer: {
@@ -1031,7 +1110,6 @@ private struct NotificationsSection: View {
     /// One line under the toggle: state, then the sync lease when there is one.
     private var statusLine: String {
         let push = model.push
-        if !push.canEnable { return "Not available in this build" }
         if push.busy { return "Working…" }
         if !push.enabled { return "Off" }
         guard push.status?.enabled == true else {

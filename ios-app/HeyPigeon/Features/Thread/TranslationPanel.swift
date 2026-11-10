@@ -49,7 +49,7 @@ struct TranslationPanel: View {
                             .textSelection(.enabled)
                     } else if let error {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .font(.footnote).foregroundStyle(.red)
+                            .font(.footnote).foregroundStyle(Theme.dangerText)
                     } else {
                         HStack(spacing: 10) {
                             ProgressView()

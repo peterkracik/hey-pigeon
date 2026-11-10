@@ -42,7 +42,7 @@ macos-app/
 
 | | Phone | Mac |
 | --- | --- | --- |
-| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1040 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no title bar or toolbar; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
+| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1120 pt), a thread in its place (`NavigationStack`), the folders in a grey sidebar (⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no window title; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
 | After Mark done | Undo toast, back to the list | Undo toast, and `Z` / ⌘Z for two minutes after it; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
 | Several at once | — | ⌘/⇧-click rows, or ⇧J / ⇧K / X and ⌘A from the keyboard: a batch bar on a bordered panel at the bottom; rows drag onto a label, a bundle or a folder in the sidebar |

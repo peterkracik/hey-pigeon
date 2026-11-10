@@ -346,7 +346,8 @@ enum MailFolder: String, AppEnum {
         .inbox: "Inbox",
         .scheduled: "Remind me",
         .needReply: "Need reply",
-        .starred: "Starred",
+        // The app's word; Gmail's is still understood when spoken.
+        .starred: DisplayRepresentation(title: "Pinned", synonyms: ["Starred"]),
         .drafts: "Drafts",
         .sent: "Sent",
         .archive: "Archive",

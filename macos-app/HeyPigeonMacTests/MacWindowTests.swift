@@ -223,6 +223,26 @@ struct WindowStateTests {
         #expect(!state.showSettings && model.view == .starred)
     }
 
+    /// A page pushed in Settings (AI, Triage) is the window's to walk
+    /// back: Back and Esc return to Settings' root, then leave Settings.
+    @Test func settingsPagesGoBackThroughTheWindow() {
+        state.showSettings = true
+        #expect(!state.canGoBack)
+        state.settingsPath = [.triage, .siriTriage]
+        #expect(state.canGoBack)
+        state.run(.back, in: model)
+        #expect(state.settingsPath == [.triage] && state.showSettings)
+        state.run(.escape, in: model)
+        #expect(state.settingsPath.isEmpty && state.showSettings)
+        state.run(.escape, in: model)
+        #expect(!state.showSettings)
+        // Leaving Settings from a page forgets the page.
+        state.showSettings = true
+        state.settingsPath = [.ai]
+        state.run(.go(.inbox), in: model)
+        #expect(!state.showSettings && state.settingsPath.isEmpty)
+    }
+
     @Test func bundlesAreAPageWhoseOpenEmailIsTheWindows() throws {
         let t4 = try #require(model.row(forThreadId: "t4")) // the sample's Lisbon trip bundle, b1
         state.select("t1", in: model)

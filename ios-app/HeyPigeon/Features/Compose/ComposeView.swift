@@ -344,7 +344,7 @@ struct ComposeView: View {
                     // device, so the help says what that takes.
                     Menu {
                         ForEach(SendLaterPreset.available(), id: \.preset) { item in
-                            Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { sendLater(at: item.date) }
+                            Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { send(at: item.date) }
                         }
                     } label: { Image(systemName: "clock").frame(width: 22, height: 22) }
                         .pillButton()
@@ -494,7 +494,10 @@ struct ComposeView: View {
         return d
     }
 
-    private func send() {
+    /// Send now, or — with a date — at a later hour (AppModel.sendLater:
+    /// the composer closes the same way, the message waits on this
+    /// device).
+    private func send(at date: Date? = nil) {
         sending = true
         finished = true
         var d = composed
@@ -507,23 +510,48 @@ struct ComposeView: View {
         }
         Keyboard.dismiss()
         leave()
-        model.send(d, from: from)
+        if let date { model.sendLater(d, from: from, at: date) } else { model.send(d, from: from) }
     }
 
-    /// Send's twin for a later hour (AppModel.sendLater): the composer
-    /// closes the same way, the message waits on this device.
-    private func sendLater(at date: Date) {
-        sending = true
-        finished = true
-        var d = composed
-        let from = fromId
-        if let old = savedFrom, old != from {
-            model.deleteDraft(d.draftKey, from: old)
-            d.draftSaved = false
+    /// The link alert's address as a URL ("example.com" gets https://);
+    /// nil for nothing typed or something that is no address.
+    static func linkAddress(from typed: String) -> URL? {
+        let raw = typed.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return nil }
+        return URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)")
+    }
+
+    /// The link alert's "Link": the typed address onto the selection, by
+    /// each platform's editor (`link(_:)`).
+    private func applyLink() {
+        let url = Self.linkAddress(from: linkURL)
+        linkURL = ""
+        if let url { link(url) }
+    }
+
+    /// The From chip and the To / Cc / Bcc / Subject rows, on both
+    /// platforms (the Mac folds them behind its "Draft to …" line).
+    @ViewBuilder private var recipientRows: some View {
+        if showsFromRow { fromRow }
+        fieldRow("To") {
+            RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
+            if !showCc {
+                Button("Cc/Bcc") { showCc = true; focus = .cc }
+                    .composeTextButton()
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            }
         }
-        Keyboard.dismiss()
-        leave()
-        model.sendLater(d, from: from, at: date)
+        if showCc {
+            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
+            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
+        }
+        fieldRow("Subject") {
+            TextField("", text: $draft.subject)
+                .focused($focus, equals: .subject)
+                // Return in the Subject goes on to the body on the Mac.
+                .onSubmit { if ComposePresentation.subjectReturnMovesToBody { focus = .body } }
+                .accessibilityLabel("Subject")
+        }
     }
 
     /// Take the fields of a draft changed outside the editor (an intent).
@@ -648,22 +676,7 @@ extension ComposeView {
 
     /// The From chip and the To / Cc / Bcc / Subject rows.
     @ViewBuilder private var headerFields: some View {
-        if showsFromRow { fromRow }
-        fieldRow("To") {
-            RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
-            if !showCc {
-                Button("Cc/Bcc") { showCc = true; focus = .cc }
-                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-            }
-        }
-        if showCc {
-            fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
-            fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
-        }
-        fieldRow("Subject") {
-            TextField("", text: $draft.subject).focused($focus, equals: .subject)
-                .accessibilityLabel("Subject")
-        }
+        recipientRows
     }
 
     private var bodyEditor: some View {
@@ -729,11 +742,8 @@ extension ComposeView {
         }
     }
 
-    private func applyLink() {
-        let raw = linkURL.trimmingCharacters(in: .whitespaces)
-        linkURL = ""
-        guard !raw.isEmpty else { return }
-        let url = URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)")
+    /// The selection becomes a link (`applyLink`).
+    private func link(_ url: URL) {
         body_.transformAttributes(in: &selection) { c in
             c.link = url
             c.underlineStyle = .single
@@ -805,25 +815,7 @@ extension ComposeView {
             draftHeader
         }
         if showFields {
-            if showsFromRow { fromRow }
-            fieldRow("To") {
-                RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
-                if !showCc {
-                    Button("Cc/Bcc") { showCc = true; focus = .cc }
-                        .buttonStyle(.plain)
-                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                }
-            }
-            if showCc {
-                fieldRow("Cc") { RecipientField(addresses: $cc, focused: $focus, field: .cc, people: people, text: $typedCc) }
-                fieldRow("Bcc") { RecipientField(addresses: $bcc, focused: $focus, field: .bcc, people: people, text: $typedBcc) }
-            }
-            fieldRow("Subject") {
-                TextField("", text: $draft.subject)
-                    .focused($focus, equals: .subject)
-                    .onSubmit { focus = .body }
-                    .accessibilityLabel("Subject")
-            }
+            recipientRows
         }
     }
 
@@ -968,10 +960,8 @@ extension ComposeView {
         return true
     }
 
-    private func applyLink() {
-        let raw = linkURL.trimmingCharacters(in: .whitespaces)
-        linkURL = ""
-        guard !raw.isEmpty, let url = URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)") else { return }
+    /// The selection becomes a link (`applyLink`).
+    private func link(_ url: URL) {
         editor.createLink(url)
     }
 
@@ -1104,7 +1094,9 @@ enum RichText {
         return formatted ? out : nil
     }
 
-    private static func escape(_ s: String) -> String {
+    /// Text as HTML text or an attribute's value. The one escape: the
+    /// Mac's editor page uses it too (MacComposeEditor).
+    static func escape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")

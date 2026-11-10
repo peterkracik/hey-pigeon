@@ -423,13 +423,7 @@ struct BundleScreen: View {
     /// An email as the inbox shows it — the same swipes, the same menu —
     /// plus ⊖: not part of this bundle (the model learns from it).
     private func threadRow(_ row: ThreadRow, dimmed: Bool) -> some View {
-        SwipeableRow(
-            leading: [RowSwipes.action(model.swipeActions[0], row, model: model),
-                      RowSwipes.action(model.swipeActions[1], row, model: model)],
-            trailing: [RowSwipes.action(model.swipeActions[2], row, model: model),
-                       RowSwipes.action(model.swipeActions[3], row, model: model)],
-            background: Theme.card
-        ) {
+        RowSwipes.row(row, model: model) {
             HStack(spacing: 8) {
                 ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil, showsBundle: false)
                     .opacity(dimmed ? 0.6 : 1)
@@ -449,9 +443,7 @@ struct BundleScreen: View {
                 .accessibilityLabel("Not part of this bundle")
             }
             .padding(.horizontal, 16).padding(.vertical, 7)
-            .overlay(alignment: .leading) {
-                if !row.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
-            }
+            .unreadEdge(!row.isRead)
         }
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         .contextMenu { RowMenu(row: row) }
@@ -683,19 +675,7 @@ struct AddToBundleSheet: View {
                     pick(s, reason: "Shares a booking, order or tracking number")
                 }
             } header: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Add to bundle").font(Theme.display(22, relativeTo: .title2)).foregroundStyle(Theme.textPrimary)
-                        Text(row.subject.isEmpty ? row.fromSummary : row.subject)
-                            .font(.subheadline).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                    Spacer()
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.glass)
-                        .accessibilityLabel("Close")
-                }
-                .textCase(nil)
-                .padding(.bottom, 6)
+                SheetHeader(title: "Add to bundle", subtitle: row.subject.isEmpty ? row.fromSummary : row.subject) { dismiss() }
             }
             if !others.isEmpty {
                 Section("Bundles") {
@@ -711,7 +691,7 @@ struct AddToBundleSheet: View {
                             dismiss()
                         }
                     } label: { Text("Create and add").frame(maxWidth: .infinity) }
-                        .buttonStyle(.glassProminent)
+                        .pillButton(prominent: true)
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .listRowBackground(Color.clear)
                 }

@@ -406,19 +406,61 @@ extension ToolbarItemPlacement {
     }
 }
 
-// MARK: - Settings
+// MARK: - A readable column on a wide screen
 
-/// How Settings is laid out. The phone and the iPad push AI and Triage
-/// as pages of their own from a short root; the Mac keeps one grouped
-/// form, as System Settings' panes are — its Settings is a page of the
-/// window, and a page pushed inside it would need the window's Back.
-enum SettingsLayout {
-    #if os(iOS)
-    static let pushesPages = true
-    #else
-    static let pushesPages = false
-    #endif
+/// How wide a column of mail may get on the iPad, where the phone's
+/// edge-to-edge list and thread stretched across the whole screen. The
+/// Mac has its own measure for its single-line rows (macos-app
+/// `MacLayout.maxWidth`).
+enum ReadableLayout {
+    static let maxWidth: CGFloat = 760
+
+    /// The margin on each side that centres a `maxWidth` column in a
+    /// container this wide; none when it already fits.
+    static func margin(in width: CGFloat) -> CGFloat {
+        max(0, (width - maxWidth) / 2)
+    }
 }
+
+extension View {
+    /// Keeps a list's or a scroll view's content to a readable column on
+    /// a regular-width iPad, centred, while the scroll view itself still
+    /// spans the screen (a drag in the margin scrolls). The phone — and
+    /// the iPad in a compact width — get the view untouched; so does the
+    /// Mac, whose window lays its columns out itself.
+    @ViewBuilder
+    func readableColumn() -> some View {
+        #if os(iOS)
+        modifier(ReadableColumn())
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct ReadableColumn: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var width: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        // Branch on the device, which never changes while the app runs,
+        // not on the size class: an `if` on the size class would rebuild
+        // the list or the thread (scroll position, an inline reply being
+        // written) each time an iPad window is resized across it. It also
+        // keeps a large phone in landscape, which is regular width too,
+        // out of the column.
+        if Device.name == "iPad" {
+            content
+                .contentMargins(.horizontal, sizeClass == .regular ? ReadableLayout.margin(in: width) : 0,
+                                for: .scrollContent)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        } else {
+            content
+        }
+    }
+}
+#endif
 
 // MARK: - Small targets
 
@@ -441,11 +483,22 @@ extension View {
 enum ToastMetrics {
     #if os(iOS)
     static let bottomInset: CGFloat = 72
+    /// With a thread open the tab bar is hidden and the thread's two
+    /// glass bars stand in its place, taller than it: the toast sat on
+    /// the triage bar.
+    static let bottomInsetOverThread: CGFloat = 136
     static let verticalPadding: CGFloat = 12
     #else
     static let bottomInset: CGFloat = 18
+    /// The Mac's thread bar is one small card: the toast stays where it is.
+    static let bottomInsetOverThread: CGFloat = 18
     static let verticalPadding: CGFloat = 11
     #endif
+
+    /// How far up from the bottom edge the toast sits.
+    static func bottomInset(threadOpen: Bool) -> CGFloat {
+        threadOpen ? bottomInsetOverThread : bottomInset
+    }
 }
 
 extension View {
@@ -719,6 +772,8 @@ enum ComposePresentation {
     static let offersSnippets = true
     /// A reply opens the phone's composer sheet.
     static let inlineReplies = false
+    /// Return in the Subject field ends editing, as it always did.
+    static let subjectReturnMovesToBody = false
     #else
     static let switchReopens = false
     /// The Mac's composer has the send-later clock beside Send; both
@@ -730,6 +785,8 @@ enum ComposePresentation {
     /// stays for a new message, a forward, and a reply pulled out into a
     /// window (`AppModel.composeDetached`).
     static let inlineReplies = true
+    /// Return in the Subject field moves on to the body.
+    static let subjectReturnMovesToBody = true
     #endif
 }
 
@@ -801,6 +858,18 @@ extension View {
     func borderlessFields() -> some View {
         #if os(macOS)
         textFieldStyle(.plain).focusEffectDisabled()
+        #else
+        self
+        #endif
+    }
+
+    /// A text button inside the composer's fields ("Cc/Bcc"): the
+    /// phone's as it is; plain on the Mac, where a default button draws
+    /// a bezel.
+    @ViewBuilder
+    func composeTextButton() -> some View {
+        #if os(macOS)
+        buttonStyle(.plain)
         #else
         self
         #endif

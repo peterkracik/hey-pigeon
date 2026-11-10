@@ -10,8 +10,10 @@ struct InviteCard: View {
     let invite: CalendarInvite
     let row: ThreadRow
     @Environment(AppModel.self) private var model
-    /// The answer sent from this card, so its button shows it.
-    @State private var answered: CalendarInvite.Answer?
+    /// The answer sent for this thread, so its button shows it: the
+    /// model's (AppModel.inviteAnswers), so it is still shown when the
+    /// thread is opened again and goes when the answer's send is undone.
+    private var answered: CalendarInvite.Answer? { model.inviteAnswers[row.id]?.answer }
     @State private var added = false
 
     var body: some View {
@@ -39,7 +41,9 @@ struct InviteCard: View {
                 Spacer(minLength: 0)
             }
             if invite.isAnswerable || canAdd {
-                HStack(spacing: 8) {
+                // Four labelled buttons do not fit a phone's width in one
+                // row: they wrap (a single row reads as before).
+                FlowLayout(spacing: 8) {
                     if invite.isAnswerable {
                         ForEach(CalendarInvite.Answer.allCases) { answer in
                             Button { send(answer) } label: {
@@ -78,8 +82,7 @@ struct InviteCard: View {
     /// The answer goes to the organizer as mail from the invited account.
     private func send(_ answer: CalendarInvite.Answer) {
         guard let account = model.account(for: row), let draft = invite.replyDraft(answer, from: account) else { return }
-        answered = answer
-        model.send(draft, from: account.id)
+        model.answerInvite(answer, with: draft, threadId: row.id, from: account.id)
     }
 
     private func add() {

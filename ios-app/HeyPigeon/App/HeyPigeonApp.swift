@@ -10,38 +10,15 @@ struct HeyPigeonApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
-        let engine = Self.makeEngine()
+        let engine = AppBootstrap.makeEngine(clientIdKey: "GoogleIOSClientID")
         let model = AppModel(engine: engine)
         _model = State(initialValue: model)
         AppModel.registerBackgroundRefresh(model)
-        Self.installWidgetActions()
+        // The widget buttons reach the model (the shared AppBootstrap).
+        AppBootstrap.installWidgetActions()
         // Spotlight asks the app for items it should re-index, and the
         // iOS 27 search tool reads full items back through the same door.
         SpotlightIndexer.installDelegate()
-    }
-
-    /// Widget buttons, Live Activity buttons and Controls run their intents
-    /// in this process (Shared/WidgetShared/WidgetIntents.swift); this is
-    /// where they reach the model. The snapshot and the Live Activity follow
-    /// so the surface that was tapped shows the result at once.
-    private static func installWidgetActions() {
-        WidgetActions.handler = { action in
-            guard let model = AppModel.current else { return }
-            switch action {
-            case .markDone(let id):
-                if let row = try? model.engine.threadRow(id: id), !row.isDone { model.markDone(row) }
-            case .snooze(let id, let hours):
-                model.snooze(threadId: id, hours: hours)
-            case .open(let target):
-                model.handle(DeepLink(target))
-            case .cancelTriage:
-                TriageAgent.current?.cancel()
-            }
-            // The optimistic row change lands on the next main-actor turn.
-            try? await Task.sleep(for: .milliseconds(50))
-            model.reload()
-            await ReminderLiveActivityController.sync(model)
-        }
     }
 
     var body: some Scene {
@@ -91,26 +68,6 @@ struct HeyPigeonApp: App {
             default:
                 break
             }
-        }
-    }
-
-    /// Real engine unless the scheme asks for the mock (HEYPIGEON_MOCK=1) or
-    /// no OAuth client id is configured — then the sample inbox, so the UI
-    /// is always runnable.
-    private static func makeEngine() -> MailEngine {
-        let env = ProcessInfo.processInfo.environment
-        let clientId = (Bundle.main.object(forInfoDictionaryKey: "GoogleIOSClientID") as? String) ?? ""
-        if env["HEYPIGEON_MOCK"] == "1" || clientId.isEmpty || clientId.hasPrefix("$(") {
-            return MockEngine()
-        }
-        do {
-            let dir = try FileManager.default.url(
-                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-            ).appendingPathComponent("HeyPigeon", isDirectory: true)
-            return try RustEngine(dataDir: dir, clientId: clientId)
-        } catch {
-            assertionFailure("engine failed to open: \(error)")
-            return MockEngine()
         }
     }
 }
@@ -185,7 +142,7 @@ extension RootView {
         return content
             .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
-            .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
+            .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss(); model.settingsClosed() }) { SettingsView() }
             // Remind me, Add to bundle, the summary (Shared/RootChrome).
             // While the Bundles sheet is open it presents these itself
             // (AppModel.modal, BundleSheetPresenters).

@@ -195,6 +195,17 @@ struct MailRow: View {
         if !inBundle, let b = model.bundle(id: row.bundleId) {
             RowChip(text: b.name, systemImage: b.category.systemImage, tint: Theme.tagForeground(.sky))
         }
+        // The AI's proposal and an unsent reply, as the phone's row shows
+        // them (ThreadRowView): here a suggestion was only in the context
+        // menu and inside the thread, and a draft nowhere. Read-only — the
+        // thread and the menu accept or dismiss a suggestion.
+        if let s = row.openSuggestion {
+            RowChip(text: s.title, systemImage: "sparkles", tint: Theme.textPrimary, background: Theme.accentSoft)
+                .accessibilityLabel("Suggested: \(s.title)")
+        }
+        if row.labels.contains("DRAFT"), model.view != .drafts {
+            RowChip(text: "Draft", systemImage: "pencil", tint: Theme.danger)
+        }
         if row.hasAttachment {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
                 .accessibilityHidden(true)
@@ -254,6 +265,9 @@ private struct RowChip: View {
     let text: String
     let systemImage: String
     let tint: Color
+    /// The fill, when it is not a wash of the tint (the suggestion's
+    /// accent behind primary text, as on the phone).
+    var background: Color? = nil
 
     var body: some View {
         HStack(spacing: 3) {
@@ -262,7 +276,7 @@ private struct RowChip: View {
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(tint.opacity(0.12), in: Capsule())
+        .background(background ?? tint.opacity(0.12), in: Capsule())
     }
 }
 
@@ -286,43 +300,20 @@ private struct RowActions: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SmallIcon(systemImage: RowAction.done.glyph(for: row),
-                      help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))") { onDone() }
+            IconButton(RowAction.done.glyph(for: row),
+                       help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))", size: .small) { onDone() }
             ForEach(actions) { action in
-                SmallIcon(systemImage: action.glyph(for: row), help: "\(action.label(for: row)) (\(action.key))") {
+                IconButton(action.glyph(for: row), help: "\(action.label(for: row)) (\(action.key))", size: .small) {
                     state.run(action.command, in: model, rows: [row])
                 }
             }
             if inBundle {
-                SmallIcon(systemImage: "minus.circle", help: "Not part of this bundle") { model.removeFromBundle(row) }
+                IconButton("minus.circle", help: "Not part of this bundle", size: .small) { model.removeFromBundle(row) }
             }
-            SmallIcon(systemImage: "chevron.right", help: inBundle ? "Open full thread" : "Open full thread (↩)") {
+            IconButton("chevron.right", help: inBundle ? "Open full thread" : "Open full thread (↩)", size: .small) {
                 state.open(row, in: model)
             }
         }
-    }
-}
-
-/// A row's own icon button: smaller than the top bar's.
-private struct SmallIcon: View {
-    let systemImage: String
-    let help: String
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
-                .frame(width: 26, height: 26)
-                .background(hovering ? MacTheme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
-        .accessibilityLabel(help)
     }
 }
 

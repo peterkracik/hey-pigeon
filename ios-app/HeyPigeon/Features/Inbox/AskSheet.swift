@@ -34,6 +34,11 @@ struct AskSheet: View {
                             ConversationView(conversation: c) { row in
                                 dismiss()
                                 model.openThread(id: row.id)
+                            } retry: {
+                                // The same question again, in the failed one's place.
+                                if conversations.indices.contains(i) {
+                                    conversations[i] = InboxAsk.ask(c.question, model: model)
+                                }
                             }
                             .id(i)
                         }
@@ -111,20 +116,17 @@ struct AskSheet: View {
 private struct ConversationView: View {
     let conversation: InboxAskConversation
     let open: (ThreadRow) -> Void
+    /// Asks the question again after a failure.
+    let retry: () -> Void
     @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(conversation.question)
                 .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-            if let error = conversation.error {
-                Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.dangerText)
-            } else if conversation.answer.isEmpty {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Looking through your mail…").font(.body).foregroundStyle(Theme.textSecondary)
-                }
-            } else {
+            // An error wins over a partial answer, as before.
+            ResultState(working: "Looking through your mail…", error: conversation.error,
+                        isReady: conversation.error == nil && !conversation.answer.isEmpty, retry: retry) {
                 SummaryTextView(text: conversation.answer).font(.body).foregroundStyle(Theme.textPrimary)
             }
             if !conversation.citations.isEmpty {

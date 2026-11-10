@@ -142,7 +142,14 @@ final class WindowState: Equatable {
     /// Space then opens the thread beside the list instead of in the row.
     var readingPane = false
     /// Settings in the content area, from ⌘, or the palette.
-    var showSettings = false
+    var showSettings = false {
+        // Settings opens on its root the next time.
+        didSet { if !showSettings, !settingsPath.isEmpty { settingsPath = [] } }
+    }
+    /// The page pushed over Settings' root (AI, Triage, Siri triage): the
+    /// shared SettingsView's stack, kept here so the window's Back, Esc
+    /// and title follow it, as they follow a thread.
+    var settingsPath: [SettingsRoute] = []
     /// Bundles — the list, one bundle, an email in it — as a page of the
     /// window in the list's place, as Settings is: the phone covers its
     /// screen, and a sheet here looked like a dialog over the window.
@@ -201,7 +208,16 @@ final class WindowState: Equatable {
     /// Esc and ⌘[ do (`run(.back)`). The stacks' own Back is hidden
     /// (`backInWindowToolbar`): it sat beside the traffic lights, over
     /// the sidebar.
-    var canGoBack: Bool { showBundles ? !bundlePath.isEmpty : !path.isEmpty }
+    var canGoBack: Bool {
+        if showSettings, !settingsPath.isEmpty { return true }
+        return showBundles ? !bundlePath.isEmpty : !path.isEmpty
+    }
+
+    /// Esc or Back in Settings: a pushed page goes back to the root, the
+    /// root leaves Settings.
+    private func backInSettings() {
+        if settingsPath.isEmpty { showSettings = false } else { settingsPath.removeLast() }
+    }
 
     /// The open thread (live from the store), else the one highlighted
     /// row. On the Bundles page without an email open there is nothing:
@@ -601,8 +617,8 @@ final class WindowState: Equatable {
             } else if searching {
                 endSearch(in: model)
             } else if showSettings {
-                showSettings = false
-                listFocusRequest += 1
+                backInSettings()
+                if !showSettings { listFocusRequest += 1 }
             } else if showBundles {
                 escapeInBundles()
             } else if isThreadOpen {
@@ -617,7 +633,7 @@ final class WindowState: Equatable {
                 selection = []
             }
         case .back:
-            if showSettings { showSettings = false } else if showBundles { backInBundles() } else if isThreadOpen { close() }
+            if showSettings { backInSettings() } else if showBundles { backInBundles() } else if isThreadOpen { close() }
         case .toggleSidebar:
             sidebarVisible.toggle()
         case .next:
@@ -845,18 +861,6 @@ extension RowAction {
         }
     }
 
-    // The words, the glyph and the colour are the phone's too:
+    // The words, the glyph, the colour and the key are the phone's too:
     // ios-app/HeyPigeon/Shared/RowActionPresentation.swift.
-
-    /// The bare key that runs it (the shortcuts sheet and tooltips).
-    var key: String {
-        switch self {
-        case .done: "E"
-        case .delete: "#"
-        case .remind: "H"
-        case .needReply: "N"
-        case .pin: "S"
-        case .read: "U"
-        }
-    }
 }

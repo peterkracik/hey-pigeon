@@ -39,6 +39,7 @@ should reach UIKit or AppKit:
 | Reduce Motion | `Motion.animation(_:)` / `.transition(_:)` / `.isReduced` |
 | VoiceOver | `VoiceOver.isRunning` / `.announce(_:)` |
 | A small control's tap area | `tapArea(horizontal:vertical:)` |
+| A readable column on a wide iPad | `readableColumn()`, `ReadableLayout` |
 | The toast's surface and place | `toastSurface()`, `toastButton()`, `ToastMetrics` |
 
 The platform door also hides the modifiers that exist on one platform

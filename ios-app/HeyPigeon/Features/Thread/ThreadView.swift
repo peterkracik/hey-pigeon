@@ -24,6 +24,9 @@ struct ThreadView: View {
     @State private var expanded: Set<String> = []
     @State private var allCollapsed = false
     @State private var failed: String?
+    /// Bumped by "Try again" on a thread that did not load: the load runs
+    /// once more.
+    @State private var loadAttempt = 0
     @State private var drafting = false
     /// Reply kind picked from the chevron; nil follows the default.
     @State private var replyChoice: ReplyKind?
@@ -67,10 +70,6 @@ struct ThreadView: View {
     }
 
     private var replyKind: ReplyKind { replyChoice ?? defaultReply }
-
-    private var accountLabels: [MailLabelItem] {
-        model.labels.filter { $0.accountId == current.accountId && !$0.id.hasPrefix("CATEGORY_") }
-    }
 
     /// Plain-text transcript, oldest first, "Me" for own messages (AI context).
     private var transcript: String { detail?.transcript ?? "" }
@@ -151,7 +150,18 @@ struct ThreadView: View {
                                 }
                         }
                     } else if let failed {
-                        ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(failed))
+                        // With the way to ask again: the only one was to
+                        // go back to the list and open the thread anew.
+                        ContentUnavailableView {
+                            Label("Couldn't load", systemImage: "wifi.exclamationmark")
+                        } description: {
+                            Text(failed)
+                        } actions: {
+                            Button("Try again") {
+                                self.failed = nil
+                                loadAttempt += 1
+                            }
+                        }
                     } else {
                         ProgressView().frame(maxWidth: .infinity).padding(40)
                     }
@@ -161,6 +171,8 @@ struct ThreadView: View {
                 .padding(.bottom, inlineDraft == nil ? 150 : max(150, viewportHeight / 2))
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            // On a wide iPad the messages keep to a readable column.
+            .readableColumn()
             // The reply opens in the middle of the view: a moment after it
             // is there, so the lazy stack has laid it out.
             .onChange(of: inlineDraftShown) { _, key in
@@ -205,21 +217,7 @@ struct ThreadView: View {
                     Button { model.pendingBundlePick = current } label: {
                         Label(current.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
                     }
-                    if !accountLabels.isEmpty {
-                        Menu {
-                            ForEach(accountLabels) { label in
-                                Button { IntentDonations.labeled(current, label, on: true, in: model); model.move(current, to: label); onClose() } label: { Label(label.name, systemImage: "tray") }
-                            }
-                        } label: { Label("Move to folder", systemImage: "folder") }
-                        Menu {
-                            ForEach(accountLabels) { label in
-                                let on = current.labels.contains(label.id)
-                                Button { IntentDonations.labeled(current, label, on: !on, in: model); model.setLabel(current, label, on: !on) } label: {
-                                    Label(on ? "Remove \(label.name)" : label.name, systemImage: on ? "checkmark" : "tag")
-                                }
-                            }
-                        } label: { Label("Add label", systemImage: "tag") }
-                    }
+                    LabelMenuItems(row: current) { onClose() }
                     Button { if let last = detail?.mail.last { forward(last) } } label: {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
@@ -250,7 +248,7 @@ struct ThreadView: View {
         }
         .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
-        .task(id: row.id) {
+        .task(id: "\(row.id)|\(loadAttempt)") {
             // What the store already holds is on screen at once (a thread
             // opened before, or prefetched, whole; another as its snippets):
             // the thread used to show a spinner until Gmail had answered,
@@ -396,22 +394,42 @@ struct ThreadView: View {
     /// chip to edit them by hand (sticky until "Reanalyze all emails" in
     /// Settings), the reminder and need-reply badges; then the count.
     private var metaLine: some View {
+        // On one line while it fits, as it always was; when the chips are
+        // too many or too large for the width (long labels, large type, a
+        // small phone) they wrap instead of being squeezed and cut.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                metaChips
+                Spacer(minLength: 4)
+                messageCount
+            }
+            HStack(alignment: .top, spacing: 6) {
+                FlowLayout(spacing: 6) { metaChips }
+                messageCount
+            }
+        }
+    }
+
+    /// How many messages the thread holds, at the line's end.
+    @ViewBuilder private var messageCount: some View {
+        let count = detail?.mail.count ?? row.messageCount
+        if count > 1 {
+            Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                .accessibilityLabel("\(count) messages")
+        }
+    }
+
+    /// The chips of the line, in order.
+    @ViewBuilder private var metaChips: some View {
         let names = current.triageLabelIds.compactMap { id in model.triageLabels.first { $0.id == id } }
-        return HStack(spacing: 6) {
+        Group {
             if let p = current.priority { PriorityIndicator(priority: p) }
             ForEach(names) { l in
                 Chip(text: l.name, background: Theme.sunken, foreground: Theme.textSecondary)
             }
             if !model.triageLabels.isEmpty {
                 Menu {
-                    ForEach(model.triageLabels) { label in
-                        let on = current.triageLabelIds.contains(label.id)
-                        Button {
-                            var ids = current.triageLabelIds
-                            if on { ids.removeAll { $0 == label.id } } else { ids.append(label.id) }
-                            model.setTriageLabels(current, ids)
-                        } label: { Label(label.name, systemImage: on ? "checkmark" : "tag") }
-                    }
+                    TriageLabelToggles(row: current, offImage: "tag")
                 } label: {
                     Chip(text: names.isEmpty ? "Label" : "", systemImage: "plus",
                          background: Theme.sunken, foreground: Theme.textTertiary)
@@ -437,12 +455,6 @@ struct ThreadView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Unsubscribe from \(offer.sender)")
-            }
-            Spacer(minLength: 4)
-            let count = detail?.mail.count ?? row.messageCount
-            if count > 1 {
-                Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
-                    .accessibilityLabel("\(count) messages")
             }
         }
     }
@@ -827,33 +839,11 @@ struct MessageRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(message.isMine ? "Me" : message.fromName)
-                            .font(Theme.sender(!message.isRead))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
-                            .font(.footnote)
-                            .foregroundStyle(message.isRead ? Theme.textTertiary : Theme.textSecondary)
-                            .monospacedDigit()
-                        if expanded { actionsMenu }
-                    }
-                    if expanded {
-                        Text("to \(message.to.joined(separator: ", "))")
-                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                        // The sender asked for replies elsewhere: said
-                        // here, not first in the composer's To field.
-                        if !message.repliesGoTo.isEmpty {
-                            Text("replies go to \(message.repliesGoTo.joined(separator: ", "))")
-                                .font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
-                        }
-                    } else {
-                        Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
+                // The header the composer's history shows too
+                // (MessageHeaderLine), with this row's ••• after the time.
+                MessageHeaderLine(message: message, expanded: expanded) {
+                    if expanded { actionsMenu }
                 }
-                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .contextMenu {

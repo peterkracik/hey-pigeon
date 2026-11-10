@@ -46,30 +46,52 @@ enum MacLayout {
     static let paneMinWidth: CGFloat = 1000
 }
 
-/// One icon, no chrome until the pointer is on it: the title row's and the
-/// sidebar's buttons.
+/// One icon, no chrome until the pointer is on it: the batch bar's
+/// buttons and, in the smaller size, a row's hover bar. (The row had a
+/// copy of its own, `SmallIcon`, that differed only in its measures.)
 struct IconButton: View {
+    /// The two sizes the window uses, each with the measures it had.
+    enum Size {
+        /// 32 pt: a bar's button.
+        case regular
+        /// 26 pt: a row's own button, whose icon darkens under the pointer.
+        case small
+
+        var side: CGFloat { self == .regular ? 32 : 26 }
+        var symbol: CGFloat { self == .regular ? 15 : 12 }
+        var weight: Font.Weight { self == .regular ? .regular : .medium }
+        var cornerRadius: CGFloat { self == .regular ? 7 : 6 }
+        var darkensOnHover: Bool { self == .small }
+    }
+
     let systemImage: String
     let help: String
+    var size = Size.regular
     var disabled = false
     let action: () -> Void
     @State private var hovering = false
 
-    init(_ systemImage: String, help: String, disabled: Bool = false, action: @escaping () -> Void) {
+    init(_ systemImage: String, help: String, size: Size = .regular, disabled: Bool = false, action: @escaping () -> Void) {
         self.systemImage = systemImage
         self.help = help
+        self.size = size
         self.disabled = disabled
         self.action = action
+    }
+
+    private var ink: Color {
+        if disabled { return Theme.textTertiary.opacity(0.6) }
+        return hovering && size.darkensOnHover ? Theme.textPrimary : Theme.textSecondary
     }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(disabled ? Theme.textTertiary.opacity(0.6) : Theme.textSecondary)
-                .frame(width: 32, height: 32)
+                .font(.system(size: size.symbol, weight: size.weight))
+                .foregroundStyle(ink)
+                .frame(width: size.side, height: size.side)
                 .background(hovering && !disabled ? MacTheme.selected : .clear,
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

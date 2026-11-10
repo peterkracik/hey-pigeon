@@ -28,7 +28,7 @@ struct MainToolbar: ToolbarContent {
     /// people, a folder, a label, Settings, the Bundles page, a search),
     /// for the title after them.
     private var otherTitle: String? {
-        if state.showSettings { return "Settings" }
+        if state.showSettings { return state.settingsPath.last?.title ?? "Settings" }
         if let open = state.openThread { return open.fromSummary }
         if state.showBundles { return state.bundlesTitle(in: model) }
         if model.isSearching { return "Search" }

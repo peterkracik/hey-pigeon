@@ -155,7 +155,7 @@ text the swipe shows, returned as the Siri dialog.
 | `DeleteThreadIntent` | `delete` | thread | "Deleted" (`isDiscardable`, confirmation on) |
 | `AddLabelIntent` | `setLabel` | thread, `MailLabelEntity` (same account) | "Label added · Travel" |
 | `OpenThreadIntent` | `openThread(id:)` | thread | opens the app |
-| `OpenFolderIntent` | `view = …`, `tab = …` | `Folder: AppEnum` (Inbox · Scheduled · Need reply · Starred · Drafts · Sent · Archive · All · Spam · Trash) | opens the app |
+| `OpenFolderIntent` | `view = …`, `tab = …` | `Folder: AppEnum` (Inbox · Scheduled · Need reply · Pinned · Drafts · Sent · Archive · All · Spam · Trash) | opens the app |
 | `SearchMailIntent` | `engine.search` | text | returns `[MailThreadEntity]`, snippet list in Siri |
 | `WhatNeedsReplyIntent` | `engine.threads(in: .needReply …)` | — | "3 threads need a reply" + the list |
 | `WhatsDueIntent` | `scheduledThreads` filtered to due | — | "2 reminders are due" + the list |

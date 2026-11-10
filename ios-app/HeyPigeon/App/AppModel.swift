@@ -551,9 +551,12 @@ final class AppModel {
     /// The sidebar's label rows: everything when nothing is pinned or the
     /// list is expanded; otherwise the pinned ones and the label the list
     /// shows now (so the open one never disappears), in the given order.
-    /// `hidden` is how many rows ••• would add.
-    static func sidebarLabels(_ all: [MailLabelItem], pinned: Set<String>, expanded: Bool,
+    /// `hidden` is how many rows ••• would add. Only the labels the
+    /// sidebar lists at all (`visibleLabels`: no Gmail categories, the
+    /// account on screen) are counted, on the phone as on the Mac.
+    static func sidebarLabels(_ labels: [MailLabelItem], accountId: String? = nil, pinned: Set<String>, expanded: Bool,
                               current: String?) -> (shown: [MailLabelItem], hidden: Int) {
+        let all = visibleLabels(labels, accountId: accountId)
         guard !expanded, all.contains(where: { pinned.contains($0.id) }) else { return (all, 0) }
         let shown = all.filter { pinned.contains($0.id) || $0.id == current }
         return (shown, all.count - shown.count)
@@ -2168,9 +2171,50 @@ final class AppModel {
             guard let self, let pending = self.pendingSends.removeValue(forKey: id) else { return }
             pending.task?.cancel()
             Keyboard.dismiss()
+            // An invitation's answer that was taken back is not an answer.
+            self.inviteAnswers = self.inviteAnswers.filter { $0.value.draftKey != pending.draft.draftKey }
             self.composeDraft = pending.draft
         }
     }
+
+    /// The answers sent to invitations, by thread, while the app runs: the
+    /// invitation's card shows which one went out. It was the card's own
+    /// state, so it was forgotten when the thread closed, and stayed after
+    /// the answer's send was undone.
+    struct InviteAnswer: Equatable {
+        let answer: CalendarInvite.Answer
+        /// The answer's message: its Undo takes the answer back.
+        let draftKey: String
+    }
+    private(set) var inviteAnswers: [String: InviteAnswer] = [:]
+
+    /// Answer an invitation: `draft` is the reply to the organizer, sent
+    /// like any message, with the send's Undo.
+    func answerInvite(_ answer: CalendarInvite.Answer, with draft: SendDraft, threadId: String, from accountId: String) {
+        inviteAnswers[threadId] = InviteAnswer(answer: answer, draftKey: draft.draftKey)
+        send(draft, from: accountId)
+    }
+
+    /// "Ask my inbox" from Settings. On the phone Settings is a sheet, and
+    /// the root cannot put the Ask sheet over it: Settings closes first
+    /// and the question opens once it has (`settingsClosed`). On the Mac
+    /// Settings is a page of the window and the sheet opens at once.
+    func askFromSettings() {
+        if showSettings {
+            askAfterSettings = true
+            showSettings = false
+        } else {
+            askSheet = AskPresentation()
+        }
+    }
+
+    /// The Settings sheet has gone (the phone's root tells it).
+    func settingsClosed() {
+        guard askAfterSettings else { return }
+        askAfterSettings = false
+        askSheet = AskPresentation()
+    }
+    @ObservationIgnored private var askAfterSettings = false
 
     private func commitSend(_ id: UUID) async {
         guard let pending = pendingSends.removeValue(forKey: id) else { return } // undone
@@ -2673,6 +2717,29 @@ final class AppModel {
     func openThreadSummary(_ row: ThreadRow, messages: [MessageItem]) {
         summarizeThread(row, messages: messages)
         summarySheet = SummaryPresentation(id: threadKey(row), title: row.subject.isEmpty ? "(no subject)" : row.subject)
+    }
+
+    /// "Try again" in the summary sheet: the failed summary is asked for
+    /// once more, from what the sheet was opened on — the open thread's
+    /// stored messages, the view's rows, or the day group. It sends what
+    /// the first request sent (the sheet's footnote holds). Nothing
+    /// happens unless the summary on screen is a failed one, and a
+    /// summary that cannot be asked again keeps its error on screen.
+    func retrySummary(_ presentation: SummaryPresentation) {
+        let id = presentation.id
+        guard groupSummaries[id]?.error != nil else { return }
+        if id.hasPrefix(Self.threadSummaryPrefix) {
+            let threadId = String(id.dropFirst(Self.threadSummaryPrefix.count))
+            guard let row = row(forThreadId: threadId), let detail = try? engine.threadLocal(id: threadId),
+                  !detail.mail.isEmpty else { return }
+            groupSummaries[id] = nil
+            summarizeThread(row, messages: detail.mail)
+        } else if id == viewKey {
+            groupSummaries[id] = nil
+            openViewSummary()
+        } else if let group = groupedRows.first(where: { $0.title == id }) {
+            summarize(group)
+        }
     }
 
     /// Auto-summarize: pre-generate so the sheet opens instantly. One group

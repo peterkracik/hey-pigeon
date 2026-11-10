@@ -18,8 +18,16 @@ struct TranslationPanel: View {
     @State private var result: String?
     @State private var error: String?
     @State private var copied = false
+    /// Bumped by Try again: the same language is asked for once more.
+    @State private var attempt = 0
 
     private var sent: String { Translation.prepared(text) }
+
+    /// Try again, unless there was nothing to translate to begin with.
+    private var retry: (() -> Void)? {
+        guard !sent.isEmpty else { return nil }
+        return { attempt += 1 }
+    }
     private var wasCut: Bool { sent.count < text.trimmingCharacters(in: .whitespacesAndNewlines).count }
 
     /// What left the device, said accurately: the active provider answers
@@ -41,25 +49,19 @@ struct TranslationPanel: View {
                 languageMenu
             }
             ScrollView {
-                Group {
-                    if let result {
-                        Text(result)
-                            .font(.body)
-                            .foregroundStyle(Theme.textPrimary)
-                            .textSelection(.enabled)
-                    } else if let error {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .font(.footnote).foregroundStyle(Theme.dangerText)
-                    } else {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Translating…").font(.body).foregroundStyle(Theme.textSecondary)
-                        }
-                    }
+                ResultState(working: "Translating…", error: error, isReady: result != nil, retry: retry) {
+                    Text(result ?? "")
+                        .font(.body)
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
+            // The panel opens from inside the thread's scroll view: the
+            // iPad's readable-column margins (`readableColumn`) are the
+            // thread's, not this panel's.
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             HStack(alignment: .top) {
                 Text(footnote)
                     .font(.caption).foregroundStyle(Theme.textTertiary)
@@ -83,7 +85,9 @@ struct TranslationPanel: View {
         .padding(16)
         .background(Theme.canvas)
         .panelSize(.medium)
-        .task(id: language) { await translate() }
+        // A new language, or Try again: the task before it is cancelled,
+        // so a late answer for the old request is dropped.
+        .task(id: "\(language)|\(attempt)") { await translate() }
     }
 
     /// The target language: the device's, the user's other languages, then

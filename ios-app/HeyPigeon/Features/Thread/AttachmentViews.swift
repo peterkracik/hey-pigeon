@@ -83,21 +83,19 @@ struct AttachmentInsightSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var insight: AttachmentInsight?
     @State private var error: String?
+    /// Bumped by Try again: the read runs once more.
+    @State private var attempt = 0
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if let insight {
-                        Text(insight.summary).font(.body).foregroundStyle(Theme.textPrimary)
-                        InsightFields(insight: insight)
-                        AttachmentActionChips(actions: AttachmentUnderstanding.actions(for: insight), row: row)
-                    } else if let error {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.dangerText)
-                    } else {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Reading \(attachment.filename)…").font(.body).foregroundStyle(Theme.textSecondary)
+                    ResultState(working: "Reading \(attachment.filename)…", error: error, isReady: insight != nil,
+                                retry: { attempt += 1 }) {
+                        if let insight {
+                            Text(insight.summary).font(.body).foregroundStyle(Theme.textPrimary)
+                            InsightFields(insight: insight)
+                            AttachmentActionChips(actions: AttachmentUnderstanding.actions(for: insight), row: row)
                         }
                     }
                     Text("Read on this \(Device.name) by Apple Intelligence. The attachment never leaves the device.")
@@ -106,15 +104,23 @@ struct AttachmentInsightSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
+            // Presented from inside the thread's scroll view: the iPad's
+            // readable-column margins (`readableColumn`) are the thread's.
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             .background(Theme.canvas)
             .navigationTitle(attachment.filename)
             .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task {
+            // Once as the sheet opens, and again for each Try again.
+            .task(id: attempt) {
+                error = nil
                 do {
                     let file = try await model.engine.attachmentFile(attachment)
                     insight = try await AttachmentUnderstanding.explain(file: file, mimeType: attachment.mimeType, filename: attachment.filename)
-                } catch { self.error = error.localizedDescription }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self.error = error.localizedDescription
+                }
             }
         }
         .sheetSize(.mediumOrLarge)

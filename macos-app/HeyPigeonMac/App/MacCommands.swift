@@ -117,7 +117,7 @@ struct MacCommands: Commands {
             folder("Inbox", .inbox, "1")
             folder("Remind me", .scheduled, "2")
             folder("Need Reply", .needReply, "3")
-            folder("Starred", .starred, "4")
+            folder("Pinned", .starred, "4")
             folder("Drafts", .drafts, "5")
             folder("Sent", .sent, "6")
             folder("Archive", .archive, "7")

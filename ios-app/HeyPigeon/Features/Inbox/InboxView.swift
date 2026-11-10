@@ -54,6 +54,8 @@ struct MailListScreen: View {
                     Color.clear
                 }
             }
+            // On a wide iPad the rows keep to a readable column.
+            .readableColumn()
             // Pull to refresh on the list only. Applied after the bottom
             // inset it reached the label bar's scroll view too: a slightly
             // vertical swipe on the labels pulled the bar down with a spinner.

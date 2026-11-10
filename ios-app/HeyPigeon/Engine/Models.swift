@@ -665,7 +665,9 @@ enum MailView: Hashable, Sendable {
         case .inbox: "Inbox"
         case .scheduled: "Remind me"
         case .needReply: "Need reply"
-        case .starred: "Starred"
+        // Gmail's star is this app's pin: the action is Pin, the list's
+        // group is Pinned, and so is the folder (it read "Starred").
+        case .starred: "Pinned"
         case .drafts: "Drafts"
         case .sent: "Sent"
         case .archive: "Archive"

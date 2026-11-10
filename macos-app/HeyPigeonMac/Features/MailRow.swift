@@ -179,6 +179,17 @@ struct MailRow: View {
         if let b = model.bundle(id: row.bundleId) {
             RowChip(text: b.name, systemImage: b.category.systemImage, tint: Theme.tagForeground(.sky))
         }
+        // The AI's proposal and an unsent reply, as the phone's row shows
+        // them (ThreadRowView): here a suggestion was only in the context
+        // menu and inside the thread, and a draft nowhere. Read-only — the
+        // thread and the menu accept or dismiss a suggestion.
+        if let s = row.openSuggestion {
+            RowChip(text: s.title, systemImage: "sparkles", tint: Theme.textPrimary, background: Theme.accentSoft)
+                .accessibilityLabel("Suggested: \(s.title)")
+        }
+        if row.labels.contains("DRAFT"), model.view != .drafts {
+            RowChip(text: "Draft", systemImage: "pencil", tint: Theme.danger)
+        }
         if row.hasAttachment {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
                 .accessibilityHidden(true)
@@ -238,6 +249,9 @@ private struct RowChip: View {
     let text: String
     let systemImage: String
     let tint: Color
+    /// The fill, when it is not a wash of the tint (the suggestion's
+    /// accent behind primary text, as on the phone).
+    var background: Color? = nil
 
     var body: some View {
         HStack(spacing: 3) {
@@ -246,7 +260,7 @@ private struct RowChip: View {
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(tint.opacity(0.12), in: Capsule())
+        .background(background ?? tint.opacity(0.12), in: Capsule())
     }
 }
 

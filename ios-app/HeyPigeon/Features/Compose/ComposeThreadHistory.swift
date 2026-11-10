@@ -90,26 +90,7 @@ private struct HistoryMessageRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(message.isMine ? "Me" : message.fromName)
-                            .font(Theme.sender(!message.isRead))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
-                            .font(.footnote)
-                            .foregroundStyle(Theme.textTertiary)
-                            .monospacedDigit()
-                    }
-                    if expanded {
-                        Text("to \(message.to.joined(separator: ", "))")
-                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    } else {
-                        Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                }
-                .contentShape(Rectangle())
+                MessageHeaderLine(message: message, expanded: expanded, inThread: false)
             }
             .buttonStyle(.plain)
             if expanded {

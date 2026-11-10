@@ -444,6 +444,18 @@ struct AppModelTests {
         #expect(r.shown.count == 4)
     }
 
+    /// The sidebar lists the user's own labels of the account on screen:
+    /// no Gmail category, no other account's label (the phone listed both).
+    @Test func sidebarLeavesOutCategoriesAndOtherAccounts() {
+        let all = [MailLabelItem(id: "Label_1", accountId: "x", name: "Travel"),
+                   MailLabelItem(id: "CATEGORY_PROMOTIONS", accountId: "x", name: "Promotions"),
+                   MailLabelItem(id: "Label_2", accountId: "y", name: "Clients")]
+        #expect(AppModel.visibleLabels(all, accountId: nil).map(\.id) == ["Label_1", "Label_2"])
+        #expect(AppModel.visibleLabels(all, accountId: "x").map(\.id) == ["Label_1"])
+        let r = AppModel.sidebarLabels(all, accountId: "y", pinned: [], expanded: false, current: nil)
+        #expect(r.shown.map(\.id) == ["Label_2"] && r.hidden == 0)
+    }
+
     @Test func pinningALabelIsASyncedPref() throws {
         let label = try #require(model.labels.first)
         model.togglePinned(label)

@@ -640,19 +640,7 @@ struct AddToBundleSheet: View {
                     pick(s, reason: "Shares a booking, order or tracking number")
                 }
             } header: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Add to bundle").font(Theme.display(22, relativeTo: .title2)).foregroundStyle(Theme.textPrimary)
-                        Text(row.subject.isEmpty ? row.fromSummary : row.subject)
-                            .font(.subheadline).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                    Spacer()
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.glass)
-                        .accessibilityLabel("Close")
-                }
-                .textCase(nil)
-                .padding(.bottom, 6)
+                SheetHeader(title: "Add to bundle", subtitle: row.subject.isEmpty ? row.fromSummary : row.subject) { dismiss() }
             }
             if !others.isEmpty {
                 Section("Bundles") {
@@ -668,7 +656,7 @@ struct AddToBundleSheet: View {
                             dismiss()
                         }
                     } label: { Text("Create and add").frame(maxWidth: .infinity) }
-                        .buttonStyle(.glassProminent)
+                        .pillButton(prominent: true)
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .listRowBackground(Color.clear)
                 }

@@ -13,15 +13,14 @@ struct SidebarSheet: View {
     @AppStorage("sidebarAllLabels") private var allLabels = false
     /// "N more" in the bundles card: every active bundle, hidden ones too.
     @AppStorage("sidebarAllBundles") private var allBundles = false
-    /// Gmail labels made, renamed and deleted from here: the label a
-    /// dialog is about, and the name typed into it.
-    @State private var creatingLabel = false
-    @State private var renaming: MailLabelItem?
-    @State private var deleting: MailLabelItem?
-    @State private var labelName = ""
+    /// Gmail labels made, renamed and deleted from here (LabelDialogs).
+    @State private var labelEditing = LabelEditing()
 
-    /// The account a new label is made in: the one shown, else the first.
-    private var labelAccountId: String? { model.selectedAccountId ?? model.accounts.first?.id }
+    /// The labels this sidebar lists: no Gmail categories, the account
+    /// on screen (AppModel.visibleLabels, as on the Mac).
+    private var labels: [MailLabelItem] {
+        AppModel.visibleLabels(model.labels, accountId: model.selectedAccountId)
+    }
 
     var body: some View {
         NavigationStack {
@@ -42,8 +41,23 @@ struct SidebarSheet: View {
                 folderRow(.inbox)
                 accountRow(nil, title: "All accounts", subtitle: nil, color: nil)
                 ForEach(model.accounts) { a in
-                    accountRow(a.id, title: a.displayName, subtitle: a.email, color: a.color,
-                               disconnected: model.accountStates[a.id]?.isConnected == false)
+                    let disconnected = model.accountStates[a.id]?.isConnected == false
+                    accountRow(a.id, title: a.displayName, subtitle: a.email, color: a.color, disconnected: disconnected)
+                    // The way back in, right under the account that lost
+                    // its sign-in: the line used to send the user to
+                    // Settings to find the same button. The sheet stays up
+                    // for the consent sheet, as for Add Google account.
+                    if disconnected {
+                        Button {
+                            Task {
+                                await model.addAccount(loginHint: a.id)
+                                dismiss()
+                            }
+                        } label: {
+                            Label("Reconnect \(a.displayName)", systemImage: "arrow.clockwise")
+                                .foregroundStyle(Theme.dangerText)
+                        }
+                    }
                 }
             }
             .menuCard()
@@ -62,8 +76,8 @@ struct SidebarSheet: View {
                 folderRow(.trash)
             }
             .menuCard()
-            if !model.labels.isEmpty || labelAccountId != nil {
-                let rows = AppModel.sidebarLabels(model.labels, pinned: model.pinnedLabelIds,
+            if !labels.isEmpty || model.labelAccountId != nil {
+                let rows = AppModel.sidebarLabels(labels, pinned: model.pinnedLabelIds,
                                                   expanded: allLabels, current: model.currentLabelId)
                 Section {
                     ForEach(rows.shown) { l in
@@ -71,11 +85,11 @@ struct SidebarSheet: View {
                             // A long press: the label is the account's own
                             // in Gmail, renamed and deleted there.
                             .contextMenu {
-                                Button { labelName = l.name; renaming = l } label: { Label("Rename", systemImage: "pencil") }
-                                Button(role: .destructive) { deleting = l } label: { Label("Delete", systemImage: "trash") }
+                                Button { labelEditing.startRenaming(l) } label: { Label("Rename", systemImage: "pencil") }
+                                Button(role: .destructive) { labelEditing.deleting = l } label: { Label("Delete", systemImage: "trash") }
                             }
                     }
-                    if rows.hidden > 0 || allLabels && !model.pinnedLabelIds.isEmpty {
+                    if rows.hidden > 0 || allLabels && labels.contains(where: { model.pinnedLabelIds.contains($0.id) }) {
                         Button {
                             withAnimation(.snappy(duration: 0.2)) { allLabels.toggle() }
                         } label: {
@@ -86,10 +100,7 @@ struct SidebarSheet: View {
                         }
                         .accessibilityLabel(allLabels ? "Show pinned labels only" : "Show all labels, \(rows.hidden) more")
                     }
-                    Button {
-                        labelName = ""
-                        creatingLabel = true
-                    } label: { Label("New label", systemImage: "plus") }
+                    Button { labelEditing.startNew() } label: { Label("New label", systemImage: "plus") }
                 }
                 .menuCard()
             }
@@ -108,34 +119,7 @@ struct SidebarSheet: View {
         }
         .menuList()
         .foregroundStyle(Theme.textPrimary)
-        .alert("New label", isPresented: $creatingLabel) {
-            TextField("Name", text: $labelName)
-            Button("Add") {
-                guard let account = labelAccountId else { return }
-                let name = labelName
-                Task { await model.createLabel(named: name, accountId: account) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(labelAccountId.map { "A Gmail label in \($0)." } ?? "Add an account first.")
-        }
-        .alert("Rename label", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
-               presenting: renaming) { label in
-            TextField("Name", text: $labelName)
-            Button("Rename") {
-                let name = labelName
-                Task { await model.renameLabel(label, to: name) }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog("Delete this label?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-                            titleVisibility: .visible, presenting: deleting) { label in
-            Button("Delete \(label.name)", role: .destructive) {
-                Task { await model.deleteLabel(label) }
-            }
-        } message: { _ in
-            Text("The label is removed from Gmail. Its mail stays where it is, without the label.")
-        }
+        .labelDialogs($labelEditing)
     }
 
     private func go(_ folder: MailView) {
@@ -281,7 +265,7 @@ struct SidebarSheet: View {
                         Text(title)
                     }
                     if disconnected {
-                        Text("Disconnected — reconnect in Settings").font(.caption).foregroundStyle(Theme.dangerText)
+                        Text("Disconnected — mail is not syncing").font(.caption).foregroundStyle(Theme.dangerText)
                     } else if let subtitle {
                         Text(subtitle).font(.caption).foregroundStyle(Theme.textTertiary)
                     }

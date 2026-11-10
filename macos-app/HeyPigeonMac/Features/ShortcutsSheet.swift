@@ -33,7 +33,7 @@ struct ShortcutsSheet: View {
             ("⇧⌘8 · ⇧⌘7", "Bulleted · numbered list"), ("↩ · ⇧↩", "New paragraph (with air) · line break (without)"),
         ]),
         ("Go", [
-            ("G then I", "Inbox"), ("G then S", "Remind me"), ("G then N", "Need reply"), ("G then P", "Pinned (Starred)"),
+            ("G then I", "Inbox"), ("G then S", "Remind me"), ("G then N", "Need reply"), ("G then P", "Pinned"),
             ("G then D", "Drafts"), ("G then T", "Sent"), ("G then A", "Archive"),
             ("0 · 1 · 2", "All accounts · the first · the second"), ("⌘1 … ⌘8", "The folders, in the sidebar's order"),
         ]),

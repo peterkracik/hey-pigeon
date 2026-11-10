@@ -39,6 +39,7 @@ should reach UIKit or AppKit:
 | Reduce Motion | `Motion.animation(_:)` / `.transition(_:)` / `.isReduced` |
 | VoiceOver | `VoiceOver.isRunning` / `.announce(_:)` |
 | A small control's tap area | `tapArea(horizontal:vertical:)` |
+| A readable column on a wide iPad | `readableColumn()`, `ReadableLayout` |
 | The toast's surface and place | `toastSurface()`, `toastButton()`, `ToastMetrics` |
 
 The platform door also hides the modifiers that exist on one platform
@@ -50,6 +51,11 @@ iOS, a frame on the Mac), `dismissKeyboardOnScroll`, `hidesTabBar`,
 few places that draw (the notification avatar, the attachment downscale).
 
 ## iPadOS: next steps
+
+Done first: the list and the thread keep to a readable column on a
+regular width (`readableColumn` in Platform.swift), so the phone's layout
+no longer stretches edge to edge. The Search tab's results and the
+thread's bottom bars still span the screen.
 
 1. **Split view.** Replace the per-tab `NavigationStack` in
    `Features/Inbox/InboxView.swift` (`MailListScreen`) with a

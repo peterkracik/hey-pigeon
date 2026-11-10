@@ -92,7 +92,7 @@ floating "splits" pill above the tab bar. Here that maps to:
   count. The app icon badge is unified unread + reminders due today.
 - **The sidebar (≡)** is the desktop sidebar as a sheet: the accounts
   (All / each account) nested under Inbox, then the desktop's folders in
-  its order — Starred · Sent · Drafts · Archive · Remind me · Need reply ·
+  its order — Pinned (Gmail's Starred) · Sent · Drafts · Archive · Remind me · Need reply ·
   All emails · Spam · Trash — the Gmail labels, Add account and Settings.
   Picking a folder shows it in the Inbox tab.
 - **The label pill** above the tab bar is the desktop's label tabs under the
@@ -228,10 +228,12 @@ Pull-to-refresh runs `sync_all`. The app also syncs on every foreground.
 
 ### Remind sheet
 
-Half-height sheet with the presets as a grouped list — *Later today (18:00)*,
+Half-height sheet: the title row (`SheetHeader`, shared with Add to
+bundle), then the toggle **"Only if nobody replies"** (desktop's
+follow-up) — first, because a preset sets the reminder and closes the
+sheet — then the presets as a grouped list — *Later today (18:00)*,
 *Tomorrow (09:00)*, *This weekend*, *Next week*, *In a month*, *Pick date…* —
-a toggle **"Only if nobody replies"** (desktop's follow-up), and a *Remove
-reminder* row when one is set. Times respect the user's locale and a
+and a *Remove reminder* row when one is set. Times respect the user's locale and a
 "day starts at" setting (default 09:00).
 
 ### Thread view
@@ -391,6 +393,10 @@ only when formatting was applied.
 
 ### States and motion
 
+- Waiting on a model or the network (a summary, Ask my inbox, Explain
+  attachment, a translation) is one view, `ResultState`: a spinner and a
+  word, or what went wrong with **Try again**, or the result. A thread
+  that could not load has Try again too.
 - The toast (`ToastStack`, one view for the phone and the Mac) is spoken
   by VoiceOver as it appears and stays 20 s while VoiceOver runs.
 - Reduce Motion: the row leaves without the slide, a swiped row is back
@@ -412,7 +418,9 @@ only when formatting was applied.
 
 ### iPad and hardware keyboards
 
-`NavigationSplitView` gives the sidebar · list · thread layout for free on
+On a regular-width iPad the list and the thread keep to a readable
+column (`readableColumn`, 760 pt, centred; the scroll view still spans the
+screen). `NavigationSplitView` gives the sidebar · list · thread layout for free on
 iPad, and SwiftUI's `.keyboardShortcut` brings the desktop keyboard map
 back 1:1 when a keyboard is attached: `j`/`k`/`e`/`u`/`h`/`n`/`/`/`⌘K`.
 Not an M1 goal, but the structure above does not have to change for it.

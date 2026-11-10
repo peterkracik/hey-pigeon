@@ -220,6 +220,35 @@ extension View {
     }
 }
 
+/// The title row of a sheet that has no navigation bar (Remind me, Add to
+/// bundle): the title in the display face, what the sheet is about under
+/// it, and the close button. It is the first section's header. The close
+/// is the app's pill (`pillButton`: the phone's glass circle; a glass
+/// button on the Mac is a bordered white box) and takes Esc.
+struct SheetHeader: View {
+    let title: String
+    var subtitle: String? = nil
+    let close: () -> Void
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Theme.display(22, relativeTo: .title2)).foregroundStyle(Theme.textPrimary)
+                if let subtitle {
+                    Text(subtitle).font(.subheadline).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(action: close) { Image(systemName: "xmark") }
+                .pillButton()
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("Close")
+        }
+        .textCase(nil)
+        .padding(.bottom, 6)
+    }
+}
+
 /// Settings' container: the phone's menu list; on the Mac a grouped form,
 /// the boxed sections of System Settings, with no scroll bar.
 struct SettingsList<Content: View>: View {

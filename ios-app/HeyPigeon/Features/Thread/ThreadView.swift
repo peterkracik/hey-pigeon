@@ -24,6 +24,9 @@ struct ThreadView: View {
     @State private var expanded: Set<String> = []
     @State private var allCollapsed = false
     @State private var failed: String?
+    /// Bumped by "Try again" on a thread that did not load: the load runs
+    /// once more.
+    @State private var loadAttempt = 0
     @State private var drafting = false
     /// Reply kind picked from the chevron; nil follows the default.
     @State private var replyChoice: ReplyKind?
@@ -151,7 +154,18 @@ struct ThreadView: View {
                                 }
                         }
                     } else if let failed {
-                        ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(failed))
+                        // With the way to ask again: the only one was to
+                        // go back to the list and open the thread anew.
+                        ContentUnavailableView {
+                            Label("Couldn't load", systemImage: "wifi.exclamationmark")
+                        } description: {
+                            Text(failed)
+                        } actions: {
+                            Button("Try again") {
+                                self.failed = nil
+                                loadAttempt += 1
+                            }
+                        }
                     } else {
                         ProgressView().frame(maxWidth: .infinity).padding(40)
                     }
@@ -161,6 +175,8 @@ struct ThreadView: View {
                 .padding(.bottom, inlineDraft == nil ? 150 : max(150, viewportHeight / 2))
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            // On a wide iPad the messages keep to a readable column.
+            .readableColumn()
             // The reply opens in the middle of the view: a moment after it
             // is there, so the lazy stack has laid it out.
             .onChange(of: inlineDraftShown) { _, key in
@@ -248,7 +264,7 @@ struct ThreadView: View {
         }
         .onAppear { model.showThread(row) }
         .onDisappear { model.hideThread(row) }
-        .task(id: row.id) {
+        .task(id: "\(row.id)|\(loadAttempt)") {
             // What the store already holds is on screen at once (a thread
             // opened before, or prefetched, whole; another as its snippets):
             // the thread used to show a spinner until Gmail had answered,
@@ -816,33 +832,11 @@ struct MessageRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(message.isMine ? "Me" : message.fromName)
-                            .font(Theme.sender(!message.isRead))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
-                            .font(.footnote)
-                            .foregroundStyle(message.isRead ? Theme.textTertiary : Theme.textSecondary)
-                            .monospacedDigit()
-                        if expanded { actionsMenu }
-                    }
-                    if expanded {
-                        Text("to \(message.to.joined(separator: ", "))")
-                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                        // The sender asked for replies elsewhere: said
-                        // here, not first in the composer's To field.
-                        if !message.repliesGoTo.isEmpty {
-                            Text("replies go to \(message.repliesGoTo.joined(separator: ", "))")
-                                .font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
-                        }
-                    } else {
-                        Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
+                // The header the composer's history shows too
+                // (MessageHeaderLine), with this row's ••• after the time.
+                MessageHeaderLine(message: message, expanded: expanded) {
+                    if expanded { actionsMenu }
                 }
-                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .contextMenu {

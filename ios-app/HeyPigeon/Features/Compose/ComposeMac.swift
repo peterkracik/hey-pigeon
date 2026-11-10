@@ -52,6 +52,13 @@ final class MacComposeEditor {
     /// The keys the page hands back to the composer: ⌘J (the AI panel),
     /// ⌘K (a link), ⌘↩ (send), Esc (close, keeping the draft).
     var onCommand: ((Command) -> Void)?
+    /// Files dropped on the editor, or pasted into it from the Finder:
+    /// the composer attaches them. Without it WebKit took the drop itself
+    /// and wrote the file's path into the message.
+    @ObservationIgnored var onFiles: (([URL]) -> Void)?
+    /// A picture pasted with no text beside it (a screenshot, Copy Image),
+    /// as PNG: the composer attaches it; the editor pastes only text.
+    @ObservationIgnored var onPastedImage: ((Data) -> Void)?
 
     /// The web view's bridge, installed by `HTMLEditorView`.
     @ObservationIgnored fileprivate weak var bridge: EditorBridge?
@@ -217,6 +224,7 @@ struct HTMLEditorView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         config.userContentController.add(context.coordinator, name: "pigeon")
         let web = EditorWebView(frame: .zero, configuration: config)
+        web.editor = editor
         web.navigationDelegate = context.coordinator
         // Transparent, so the composer's canvas shows through.
         web.setValue(false, forKey: "drawsBackground")
@@ -469,8 +477,76 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 /// window's key map asks whether the first responder is this editor
 /// (WindowState.isTyping).
 final class EditorWebView: WKWebView {
+    /// The composer's editor: what is dropped or pasted here as a file
+    /// goes to it as an attachment.
+    weak var editor: MacComposeEditor?
+
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
+    }
+
+    /// The files on a pasteboard (a drag from the Finder, a copied file).
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+
+    // A file dragged over the editor is an attachment, not content: the
+    // editor's page would write its path (or load it in place of itself).
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        editor?.onFiles != nil && !Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? .copy : super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        editor?.onFiles != nil && !Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let urls = Self.fileURLs(on: sender.draggingPasteboard)
+        guard !urls.isEmpty, let onFiles = editor?.onFiles else { return super.performDragOperation(sender) }
+        onFiles(urls)
+        return true
+    }
+
+    /// ⌘V with a file or a bare picture on the clipboard attaches it; any
+    /// other paste is the page's (plain text). Key equivalents reach every
+    /// view of the window, so only while the editor is being typed in.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "v", window?.firstResponder === self, attachFromClipboard() {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func attachFromClipboard() -> Bool {
+        guard let editor else { return false }
+        let pasteboard = NSPasteboard.general
+        let urls = Self.fileURLs(on: pasteboard)
+        if !urls.isEmpty, let onFiles = editor.onFiles {
+            onFiles(urls)
+            return true
+        }
+        // A picture alone: with text beside it (a copy from a web page) the
+        // text is what the user means to paste.
+        guard pasteboard.string(forType: .string) == nil, let onPastedImage = editor.onPastedImage,
+              let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        else { return false }
+        onPastedImage(png)
+        return true
+    }
+}
+
+extension View {
+    /// Files dropped anywhere on the composer (the fields, the chips, the
+    /// footer; the editor takes its own drops, above) become attachments.
+    func droppingFiles(_ attach: @escaping ([URL]) -> Void) -> some View {
+        dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty else { return false }
+            attach(files)
+            return true
+        }
     }
 }
 

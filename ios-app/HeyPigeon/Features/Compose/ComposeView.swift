@@ -115,9 +115,9 @@ struct ComposeView: View {
     var body: some View {
         #if os(macOS)
         if inline {
-            withLifecycle(inlineContent)
+            withLifecycle(inlineContent).droppingFiles { urls in Task { await addFiles(urls) } }
         } else {
-            NavigationStack { withLifecycle(sheetContent) }
+            NavigationStack { withLifecycle(sheetContent) }.droppingFiles { urls in Task { await addFiles(urls) } }
         }
         #else
         NavigationStack { withLifecycle(sheetContent) }
@@ -776,6 +776,11 @@ extension ComposeView {
                     case .send: if canSend { send() }
                     case .escape: close()
                     }
+                }
+                editor.onFiles = { urls in Task { await addFiles(urls) } }
+                editor.onPastedImage = { data in
+                    add(DraftAttachment(filename: "pasted-image-\(attachments.count + 1).png", mimeType: "image/png",
+                                        size: data.count, dataBase64: data.base64EncodedString()))
                 }
                 if focus == .body { editor.focus() }
             }

@@ -10,6 +10,7 @@ import UserNotifications
 final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        registerNotificationActions()
         // After the window is up: a copy run from the download cannot sign
         // in or update (InstallLocation.swift).
         Task { @MainActor in InstallLocation.warnIfTranslocated() }
@@ -74,9 +75,49 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let threadId = response.notification.request.content.userInfo["threadId"] as? String
+        let action = response.actionIdentifier
         completionHandler()
         guard let threadId else { return }
         Task { @MainActor in
+            await Self.act(action, on: threadId)
+        }
+    }
+
+    /// The banner's buttons: Done and Remind act where the app is, without
+    /// bringing it forward; Reply and a plain click open the thread.
+    private func registerNotificationActions() {
+        guard let category = NotificationActions.newMailCategory else { return }
+        let actions = [
+            UNNotificationAction(identifier: NotificationActions.done, title: "Mark Done", options: []),
+            UNNotificationAction(identifier: NotificationActions.remindInAnHour, title: "Remind Me in 1 Hour", options: []),
+            UNNotificationAction(identifier: NotificationActions.reply, title: "Reply", options: [.foreground]),
+        ]
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: category, actions: actions, intentIdentifiers: [], options: []),
+        ])
+    }
+
+    /// What a click on a banner, or on one of its buttons, does. Through
+    /// the model, like the keys and the widgets, so undo, the badge and
+    /// the other surfaces follow.
+    private static func act(_ action: String, on threadId: String) async {
+        guard let model = AppModel.current else { return }
+        switch action {
+        case NotificationActions.done:
+            if let row = try? model.engine.threadRow(id: threadId), !row.isDone { model.markDone(row) }
+        case NotificationActions.remindInAnHour:
+            model.snooze(threadId: threadId, hours: 1)
+        case NotificationActions.reply:
+            NSApp.activate()
+            model.openThread(id: threadId)
+            guard let row = try? model.engine.threadRow(id: threadId) else { return }
+            // A moment for the window to show the thread: the reply is
+            // then written under it instead of in a sheet.
+            try? await Task.sleep(for: .milliseconds(250))
+            try? await model.openReply(to: row, all: false, body: nil)
+        case UNNotificationDismissActionIdentifier:
+            break
+        default:
             NSApp.activate()
             AppModel.current?.openThread(id: threadId)
         }

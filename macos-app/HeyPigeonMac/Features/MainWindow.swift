@@ -20,6 +20,16 @@ struct MainWindow: View {
     @State private var state = WindowState()
     /// The window's size, for the composer's full-screen sheet.
     @State private var windowSize = CGSize(width: 1000, height: 760)
+    /// View › Reading Pane: the open thread beside the list, not in its
+    /// place, while the window is wide enough for both.
+    @AppStorage(MacWindows.readingPaneKey) private var readingPane = false
+
+    private var showsPane: Bool {
+        readingPane && windowSize.width - (state.sidebarVisible ? MacLayout.sidebarWidth + 1 : 0) >= MacLayout.paneMinWidth
+    }
+    /// System Settings › Accessibility › Reduce Motion: the window's pages
+    /// and panels then change without sliding or fading.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The composer's sheet: a new message, a forward, a reply pulled out
     /// into a window, or a reply to a thread no window shows. A reply to
@@ -57,6 +67,22 @@ struct MainWindow: View {
                 } else if state.showBundles {
                     BundlesPage(state: state)
                         .transition(.opacity)
+                } else if showsPane {
+                    // The list in a column of its own, the open thread (or
+                    // a word that none is) in the rest: the same `path`,
+                    // so the keys, auto-advance and the toolbar's Back are
+                    // what they are in one column.
+                    InboxPage(state: state)
+                        .frame(width: MacLayout.paneListWidth)
+                    Rectangle().fill(MacTheme.hairline).frame(width: 1)
+                    if let row = state.path.last {
+                        ThreadPage(row: row, state: state)
+                    } else {
+                        ContentUnavailableView("No thread open", systemImage: "envelope.open",
+                                               description: Text("Pick one in the list, or press ↩ on the highlighted row."))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(MacTheme.content)
+                    }
                 } else {
                     NavigationStack(path: $state.path) {
                         InboxPage(state: state)
@@ -94,14 +120,15 @@ struct MainWindow: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
-        .animation(.snappy(duration: 0.25), value: state.sidebarVisible)
-        .animation(.easeOut(duration: 0.15), value: state.showSettings)
-        .animation(.easeOut(duration: 0.15), value: state.showBundles)
-        .animation(.easeOut(duration: 0.16), value: state.searching)
-        .animation(.easeOut(duration: 0.16), value: state.showPalette)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: state.sidebarVisible)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: state.showSettings)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: state.showBundles)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: state.searching)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: state.showPalette)
         .background(MacTheme.content)
         .frame(minWidth: 760, minHeight: 480)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
+        .onChange(of: showsPane, initial: true) { _, on in state.readingPane = on }
         // A standard toolbar: the traffic lights and the sidebar button
         // where a Mac user looks for them. No window title: the view's
         // title is the toolbar's own item.
@@ -178,7 +205,30 @@ struct MainWindow: View {
         }
         .onAppear {
             state.openInWindow = { id in openWindow(id: MacWindows.thread, value: id) }
+            restoreWindow()
         }
+        // Where the reader is, for the next launch (WindowRestoration).
+        .onChange(of: model.view) { _, view in
+            UserDefaults.standard.set(WindowRestoration.encode(view), forKey: WindowRestoration.viewKey)
+        }
+        .onChange(of: state.path) { _, path in
+            UserDefaults.standard.set(path.last?.id, forKey: WindowRestoration.threadKey)
+        }
+    }
+
+    /// The first window of a launch comes back on the folder and the thread
+    /// the last one showed. A thread asked for by a notification, a widget
+    /// or a link wins over the remembered one.
+    private func restoreWindow() {
+        guard !WindowRestoration.restored else { return }
+        WindowRestoration.restored = true
+        let defaults = UserDefaults.standard
+        let thread = defaults.string(forKey: WindowRestoration.threadKey)
+        if let raw = defaults.string(forKey: WindowRestoration.viewKey), let view = WindowRestoration.decode(raw),
+           view != model.view {
+            state.run(.go(view), in: model)
+        }
+        if model.pendingThreadId == nil, let thread { model.pendingThreadId = thread }
     }
 }
 

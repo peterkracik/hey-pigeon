@@ -15,6 +15,7 @@ struct MacCommands: Commands {
     let model: AppModel
     let updater: MacUpdater
     @FocusedValue(\.windowState) private var state
+    @AppStorage(MacWindows.readingPaneKey) private var readingPane = false
     @Environment(\.openWindow) private var openWindow
 
     private var hasSelection: Bool { state?.hasTarget ?? false }
@@ -49,6 +50,9 @@ struct MacCommands: Commands {
             // the key is free for the one thing the window shows and hides.
             Button(state?.sidebarVisible == false ? "Show Folders" : "Hide Folders") { run(.toggleSidebar) }
                 .keyboardShortcut("s", modifiers: .command)
+            // The open thread beside the list on a wide window.
+            Toggle("Reading Pane", isOn: $readingPane)
+                .keyboardShortcut("p", modifiers: [.command, .option])
         }
 
         CommandMenu("Message") {

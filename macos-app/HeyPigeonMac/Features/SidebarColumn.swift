@@ -97,9 +97,48 @@ struct SidebarColumn: View {
             && model.view == view
         return SidebarRow(title: view.title, systemImage: view.systemImage, help: view.title,
                           selected: selected, trailing: Self.badgeText(count: n, due: badge),
-                          pin: label.map { l in .init(isOn: model.pinnedLabelIds.contains(l.id)) { model.togglePinned(l) } }) {
+                          pin: label.map { l in .init(isOn: model.pinnedLabelIds.contains(l.id)) { model.togglePinned(l) } },
+                          onDrop: dropAction(for: view, label: label)) {
             state.run(.go(view), in: model)
         }
+    }
+
+    /// What rows dragged onto a folder or a label do there, nil where a
+    /// drop means nothing (Sent, Drafts, All emails…): a label files the
+    /// thread under it and marks it done, as `v` does; Archive is Mark
+    /// done, Inbox brings a done thread back, Trash deletes, Starred pins,
+    /// Need reply flags.
+    private func dropAction(for view: MailView, label: MailLabelItem?) -> (([String]) -> Bool)? {
+        let act: ((ThreadRow) -> Void)?
+        if let label {
+            act = { row in
+                guard row.accountId == label.accountId else {
+                    model.show("\(label.name) belongs to another account")
+                    return
+                }
+                model.move(row, to: label)
+            }
+        } else {
+            switch view {
+            case .archive: act = { if !$0.isDone { model.markDone($0) } }
+            case .inbox: act = { if $0.isDone { model.markNotDone($0) } }
+            case .trash: act = { model.delete($0) }
+            case .starred: act = { if !$0.isPinned { model.togglePin($0) } }
+            case .needReply: act = { if !$0.needsReply { model.toggleNeedsReply($0) } }
+            default: act = nil
+            }
+        }
+        guard let act else { return nil }
+        return { items in dropped(items, act) }
+    }
+
+    /// Run `act` on every dropped thread; false when the drop held none.
+    private func dropped(_ items: [String], _ act: (ThreadRow) -> Void) -> Bool {
+        let rows = ThreadDrag.ids(in: items).compactMap { model.row(forThreadId: $0) }
+        guard !rows.isEmpty else { return false }
+        state.advance(in: model)
+        for row in rows { act(row) }
+        return true
     }
 
     /// A bundle with its open count; on hover the eye hides it from the
@@ -112,7 +151,8 @@ struct SidebarColumn: View {
                           pin: .init(isOn: hidden, onSymbol: "eye.slash", offSymbol: "eye",
                                      onHelp: "Show in the sidebar", offHelp: "Hide from the sidebar") {
                               model.toggleHidden(b)
-                          }) {
+                          },
+                          onDrop: { items in dropped(items) { model.addToBundle($0, bundleId: b.id) } }) {
             model.openBundles(at: b.id)
         }
         .opacity(hidden ? 0.55 : 1)
@@ -137,8 +177,13 @@ private struct SidebarRow: View {
     var selected = false
     var trailing: Text?
     var pin: Pin?
+    /// Rows dragged from the list and dropped here (ThreadDrag); nil for
+    /// a row that takes none.
+    var onDrop: (([String]) -> Bool)?
     let action: () -> Void
     @State private var hovering = false
+    /// A drag is over the row: it tints like the shown folder.
+    @State private var targeted = false
 
     /// A label row's pin, shown on hover in place of the count: filled
     /// when the label is in the short list.
@@ -200,10 +245,15 @@ private struct SidebarRow: View {
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .dropDestination(for: String.self) { items, _ in
+            onDrop?(items) ?? false
+        } isTargeted: { over in
+            targeted = over && onDrop != nil
+        }
     }
 
     private var background: Color {
-        if selected { return MacTheme.selected }
+        if selected || targeted { return MacTheme.selected }
         return hovering ? MacTheme.hover : .clear
     }
 }

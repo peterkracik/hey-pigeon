@@ -891,6 +891,11 @@ protocol StoreReader: Sendable {
     func threadLocal(id: String) throws -> ThreadDetail?
 }
 
+extension MailEngine {
+    /// Nothing waits in an engine that keeps no outbox (the sample inbox).
+    func pendingChanges() -> Int { 0 }
+}
+
 /// `StoreReader` over the main-actor engine itself: the reads a synchronous
 /// reload makes on the main actor, and the mock's `readInBackground`, which
 /// runs in place. Only ever used on the main actor, which `assumeIsolated`
@@ -967,6 +972,9 @@ protocol MailEngine: AnyObject {
     func attachmentFile(_ attachment: AttachmentItem) async throws -> URL
 
     func perform(_ action: MailAction, accountId: String) async throws
+    /// How many changes (done, read, a label, a send) are still waiting to
+    /// reach Gmail: the Mac's toolbar says so while there is no network.
+    func pendingChanges() -> Int
     func setReminder(threadId: String, at date: Date?, onlyIfNoReply: Bool) throws
     func setNeedsReply(threadId: String, _ value: Bool) throws
     /// Drop the AI's proposal without acting on it. Accepting needs no call

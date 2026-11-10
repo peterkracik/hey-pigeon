@@ -98,6 +98,8 @@ enum NewMailNotifier {
         content.sound = .default
         content.threadIdentifier = row.accountId
         content.userInfo = ["threadId": row.id, "accountId": row.accountId]
+        // Done · Remind in 1 hour · Reply, where the platform acts on them.
+        if let category = NotificationActions.newMailCategory { content.categoryIdentifier = category }
         // iOS 27: Siri can act on "that notification" as the thread entity.
         content.appEntityIdentifiers = [MailThreadEntity.identifier(row.id)]
 

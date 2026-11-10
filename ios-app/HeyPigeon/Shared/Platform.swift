@@ -187,6 +187,26 @@ final class BackgroundGrace {
 /// APNs registration (the optional push relay, PushController). The token
 /// comes back through the app delegate.
 @MainActor
+/// The buttons a new-mail banner carries. The Mac's banners come from its
+/// own timer while the app runs, so its delegate is there to act on them
+/// (MacAppDelegate); the phone's arrive through a silent push and stay
+/// plain.
+enum NotificationActions {
+    static let done = "mail.done"
+    static let remindInAnHour = "mail.remind.1h"
+    static let reply = "mail.reply"
+
+    /// The category a new-mail banner is filed under, nil where banners
+    /// have no buttons.
+    static var newMailCategory: String? {
+        #if os(macOS)
+        "mail.new"
+        #else
+        nil
+        #endif
+    }
+}
+
 enum RemoteNotifications {
     static func register() {
         #if canImport(UIKit)

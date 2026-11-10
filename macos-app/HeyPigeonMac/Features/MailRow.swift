@@ -30,6 +30,7 @@ struct MailRow: View {
     @State private var hovering = false
     /// Between a click on Done and the row leaving: the strike runs.
     @State private var completing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var expanded: Bool { state.expanded == row.id }
     private var selected: Bool { state.selection.contains(row.id) }
@@ -106,7 +107,7 @@ struct MailRow: View {
                         .monospacedDigit()
                 }
             }
-            .frame(width: MacLayout.senderWidth, alignment: .leading)
+            .frame(width: state.readingPane ? MacLayout.paneSenderWidth : MacLayout.senderWidth, alignment: .leading)
             HStack(spacing: 10) {
                 Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                     .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
@@ -141,6 +142,19 @@ struct MailRow: View {
         }
         .onHover { hovering = $0 }
         .pointerStyle(.link)
+        // Onto a label, a bundle or a folder in the sidebar (SidebarColumn).
+        .draggable(ThreadDrag.payload(for: row.id, selection: state.selection))
+        // The hover bar's actions for VoiceOver and Voice Control, which
+        // have no pointer to bring it up; the row reads as one element.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { state.open(row, in: model) }
+        .accessibilityActions {
+            ForEach(RowAction.allCases) { action in
+                Button(action.label(for: row)) { state.run(action.command, in: model, rows: [row]) }
+            }
+            Button(expanded ? "Close preview" : "Preview") { state.expand(row, in: model) }
+        }
     }
 
     /// Unread: a dot on the left edge, in the account's colour when the
@@ -195,7 +209,8 @@ struct MailRow: View {
     /// Done: the strike runs, then the row is marked done and leaves
     /// (auto-advance hands the highlight on). On a done row it undoes.
     private func complete() {
-        guard !row.isDone else { state.run(.markDone, in: model, rows: [row]); return }
+        // With Reduce Motion the row just leaves: no strike to wait for.
+        guard !row.isDone, !reduceMotion else { state.run(.markDone, in: model, rows: [row]); return }
         withAnimation(.easeOut(duration: 0.25)) { completing = true }
         Task {
             try? await Task.sleep(for: .milliseconds(380))

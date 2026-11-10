@@ -7,17 +7,22 @@ import SwiftUI
 struct ShortcutsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    private static let groups: [(String, [(String, String)])] = [
+    /// Not private: the tests check every bare key listed here against
+    /// the keyboard map, and the map's keys against this list, so the two
+    /// cannot drift apart.
+    static let groups: [(String, [(String, String)])] = [
         ("Move", [
-            ("J · K", "Next · previous thread (in a thread too)"), ("↩", "Open the thread"), ("⌘↩", "Open it in a new window"),
+            ("J · K", "Next · previous thread (in a thread too)"), ("Space", "Preview the row in place; in a thread, page down (⇧Space up)"),
+            ("⇧J · ⇧K · X", "Add the next · previous row to the selection"), ("⌘A", "Select every row"),
+            ("↩", "Open the thread"), ("⌘↩", "Open it in a new window"),
             ("Esc · ⌘[", "Back to the list; then leave the search; then clear the selection"),
-            ("/", "Search"), ("⌘S", "Show or hide the folders"), ("⌘K", "Command palette"), ("⌘B", "Open a bundle"),
+            ("/", "Search"), ("⌘S", "Show or hide the folders"), ("⌥⌘P", "Reading pane: the thread beside the list"), ("⌘K", "Command palette"), ("⌘B", "Open a bundle"),
             ("?", "This sheet"),
         ]),
         ("Act on a thread", [
             ("E", "Mark done (and back)"), ("H", "Remind me (or remove the reminder)"), ("N", "Need reply"),
             ("S", "Pin"), ("U", "Read / unread"), ("# · ⌫", "Delete"), ("L", "Add label"), ("V", "Move to folder"),
-            ("I", "Summarize the thread"),
+            ("I", "Summarize the thread"), ("Z · ⌘Z", "Undo the last action"),
         ]),
         ("Write", [
             ("C · ⌘N", "New message"), ("R", "Reply"), ("A", "Reply all"), ("F", "Forward"),

@@ -29,8 +29,64 @@ enum PaletteFilter {
         return words.allSatisfy { haystack.contains($0) }
     }
 
-    static func filter(_ items: [PaletteItem], query: String) -> [PaletteItem] {
-        items.filter { matches(query, title: $0.title, subtitle: $0.subtitle) }
+    /// How well an item answers the query, 0 best, nil not at all: the
+    /// title starts with it; every word starts a word of the title; every
+    /// word is in the title; in the title or the subtitle; or the query is
+    /// the title's initials ("gti" for "Go to Inbox", "mu" for "Mark
+    /// unread").
+    static func score(_ query: String, title: String, subtitle: String? = nil) -> Int? {
+        let q = query.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return 0 }
+        let t = title.lowercased()
+        if t.hasPrefix(q) { return 0 }
+        let titleWords = t.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        if matches(q, title: title) {
+            let words = q.split(whereSeparator: \.isWhitespace)
+            return words.allSatisfy { w in titleWords.contains { $0.hasPrefix(w) } } ? 1 : 2
+        }
+        if matches(q, title: title, subtitle: subtitle) { return 3 }
+        let initials = String(titleWords.compactMap(\.first))
+        if q.count >= 2, !q.contains(" "), initials.hasPrefix(q) { return 4 }
+        return nil
+    }
+
+    /// The items that answer the query, the best first; equally good ones
+    /// keep their order, the ones in `recents` (ids, newest first) ahead of
+    /// the rest. An empty query keeps everything, recents first.
+    static func filter(_ items: [PaletteItem], query: String, recents: [String] = []) -> [PaletteItem] {
+        let recency = Dictionary(recents.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        let ranked = items.enumerated().compactMap { index, item -> (item: PaletteItem, score: Int, recent: Int, index: Int)? in
+            guard let rank = Self.score(query, title: item.title, subtitle: item.subtitle) else { return nil }
+            return (item, rank, recency[item.id] ?? Int.max, index)
+        }
+        return ranked.sorted { a, b in
+            if a.score != b.score { return a.score < b.score }
+            if a.recent != b.recent { return a.recent < b.recent }
+            return a.index < b.index
+        }.map(\.item)
+    }
+}
+
+/// The palette rows run lately, newest first, on this Mac: an empty
+/// palette opens on them, and they win a tie as the query is typed.
+enum PaletteRecents {
+    static let key = "paletteRecents"
+    static let limit = 8
+
+    static func load(_ defaults: UserDefaults = .standard) -> [String] {
+        defaults.stringArray(forKey: key) ?? []
+    }
+
+    /// `id` to the front. Rows about one thread or one search result are
+    /// not habits: they are left out.
+    static func remember(_ id: String, _ defaults: UserDefaults = .standard) {
+        guard !id.hasPrefix("hit."), !id.hasPrefix("person."), !id.hasPrefix("label."), !id.hasPrefix("move.") else { return }
+        defaults.set(pushed(id, onto: load(defaults)), forKey: key)
+    }
+
+    /// Pure, for the tests.
+    static func pushed(_ id: String, onto list: [String]) -> [String] {
+        Array(([id] + list.filter { $0 != id }).prefix(limit))
     }
 }
 
@@ -38,11 +94,49 @@ struct CommandPalette: View {
     @Bindable var state: WindowState
     let stage: PaletteStage
     @Environment(AppModel.self) private var model
+    @AppStorage(MacWindows.readingPaneKey) private var readingPane = false
     @State private var query = ""
     @State private var cursor = 0
     @FocusState private var focused: Bool
 
-    private var items: [PaletteItem] { PaletteFilter.filter(allItems, query: query) }
+    /// Threads the typed words find, and the people they name: the
+    /// palette is also the quickest way to a thread or to someone's mail.
+    @State private var hits: [ThreadRow] = []
+    @State private var people: [PersonSuggestion] = []
+    @State private var recents = PaletteRecents.load()
+
+    private var items: [PaletteItem] {
+        PaletteFilter.filter(allItems, query: query, recents: stage == .all ? recents : []) + resultItems
+    }
+
+    /// Below the commands: up to three people and five threads for the
+    /// typed words (the whole palette only, two letters or more).
+    private var resultItems: [PaletteItem] {
+        guard stage == .all, query.trimmingCharacters(in: .whitespaces).count >= 2 else { return [] }
+        let q = query.lowercased().trimmingCharacters(in: .whitespaces)
+        let named = people.filter { $0.person.name.lowercased().contains(q) || $0.person.address.lowercased().contains(q) }.prefix(3)
+        var out = named.map { p in
+            PaletteItem(id: "person.\(p.person.address)", title: "Mail from \(p.person.name)", subtitle: p.person.address,
+                        systemImage: "person.crop.circle") {
+                // The list, with this person's mail in it.
+                state.showSettings = false
+                if state.showBundles { state.closeBundles() }
+                state.path = []
+                var filters = SearchFilters()
+                filters.from = p.person
+                model.searchText = ""
+                model.searchFilters = filters
+                model.rememberSearch()
+            }
+        }
+        out += hits.prefix(5).map { row in
+            PaletteItem(id: "hit.\(row.id)", title: row.subject.isEmpty ? "(no subject)" : row.subject,
+                        subtitle: "\(row.fromSummary) · \(Formatters.rowTime(row.lastMessageAt))", systemImage: "envelope") {
+                state.open(row, in: model)
+            }
+        }
+        return out
+    }
 
     private var placeholder: String {
         switch stage {
@@ -66,6 +160,28 @@ struct CommandPalette: View {
         SpotlightPanel(onClose: { close() }) { panel }
             .onAppear { focused = true }
             .onChange(of: query) { _, _ in cursor = 0 }
+            // The typed words as a search, a moment after the last key,
+            // off the main thread; the newest query wins.
+            .task(id: query) {
+                let words = query.trimmingCharacters(in: .whitespaces)
+                guard stage == .all, words.count >= 2 else {
+                    if !hits.isEmpty { hits = [] }
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled else { return }
+                let rows = await model.engine.searchInBackground(words, limit: 5)
+                if !Task.isCancelled { hits = AppModel.unique(rows) }
+            }
+            // The people to offer, once per palette, read off the main thread.
+            .task {
+                guard stage == .all else { return }
+                let mine = Set(model.accounts.map { $0.email.lowercased() })
+                let rows = try? await model.engine.readInBackground { store in
+                    try store.threads(in: .all, accountId: nil, before: nil, limit: 500)
+                }
+                if let rows, !Task.isCancelled { people = AppModel.people(from: rows, excluding: mine) }
+            }
     }
 
     private var panel: some View {
@@ -146,6 +262,7 @@ struct CommandPalette: View {
     }
 
     private func run(_ item: PaletteItem) {
+        PaletteRecents.remember(item.id)
         close()
         item.run()
     }
@@ -220,6 +337,11 @@ struct CommandPalette: View {
                                systemImage: "sidebar.leading", key: "⌘S") {
             state.run(.toggleSidebar, in: model)
         })
+        out.append(PaletteItem(id: "pane", title: readingPane ? "Hide the reading pane" : "Show the reading pane",
+                               subtitle: "The open thread beside the list, on a wide window",
+                               systemImage: "rectangle.split.2x1", key: "⌥⌘P") {
+            readingPane.toggle()
+        })
         if state.isThreadOpen {
             out.append(PaletteItem(id: "back", title: "Back to the list", systemImage: "chevron.left", key: "Esc") {
                 state.run(.back, in: model)
@@ -269,6 +391,11 @@ struct CommandPalette: View {
         if TriageAgent.isAvailable(model) {
             out.append(PaletteItem(id: "ai.triage", title: "Triage inbox", systemImage: "sparkles", key: "⌥⌘T") {
                 state.run(.triage, in: model)
+            })
+        }
+        if model.canUndoLast {
+            out.append(PaletteItem(id: "undo", title: "Undo the last action", systemImage: "arrow.uturn.backward", key: "Z") {
+                state.run(.undo, in: model)
             })
         }
         out.append(PaletteItem(id: "sync", title: "Check for mail", systemImage: "arrow.clockwise", key: "⇧⌘N") {

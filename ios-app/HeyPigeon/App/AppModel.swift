@@ -149,6 +149,8 @@ final class AppModel {
         }
     }
     private(set) var counts: [String: Int] = [:]
+    /// Changes still waiting to reach Gmail, as of the last reload.
+    private(set) var queuedChanges = 0
     private(set) var aiConfigured = false
     /// Accounts, bundles and triage label names by id. Every row looks
     /// these up on each render, and each changes only when its source does
@@ -877,6 +879,8 @@ final class AppModel {
         if needReply != needReplyCount { needReplyCount = needReply }
         if snapshot.draftsCount != draftsCount { draftsCount = snapshot.draftsCount }
         if !hasLoadedOnce { hasLoadedOnce = true }
+        let queued = engine.pendingChanges()
+        if queued != queuedChanges { queuedChanges = queued }
         refreshOpenThread()
         if isSearching { runSearch() }
         if autoSummarize && aiConfigured { runAutoSummaries() }

@@ -28,6 +28,14 @@ struct KeyboardMapTests {
         #expect(KeyboardMap.resolve(.character("0")) == .run(.account(nil)))
         #expect(KeyboardMap.resolve(.character("2")) == .run(.account(1)))
         #expect(KeyboardMap.resolve(.character("q")) == .ignore)
+        // The keys the pointer used to be needed for.
+        #expect(KeyboardMap.resolve(.character(" ")) == .run(.peek))
+        #expect(KeyboardMap.resolve(.character(" "), modifiers: .shift) == .run(.pageUp))
+        #expect(KeyboardMap.resolve(.character("J"), modifiers: .shift) == .run(.extendNext))
+        #expect(KeyboardMap.resolve(.character("K"), modifiers: .shift) == .run(.extendPrevious))
+        #expect(KeyboardMap.resolve(.down, modifiers: .shift) == .run(.extendNext))
+        #expect(KeyboardMap.resolve(.character("x")) == .run(.extendNext))
+        #expect(KeyboardMap.resolve(.character("z")) == .run(.undo))
     }
 
     @Test func osChordsAreLeftToTheMenus() {
@@ -58,6 +66,23 @@ struct WindowStateTests {
     init() {
         engine = MockEngine()
         model = AppModel(engine: engine)
+    }
+
+    @Test func theSelectionGrowsFromTheKeyboardAndUndoTakesTheLastActionBack() {
+        let ids = state.flatIds(model)
+        state.run(.next, in: model)
+        state.run(.extendNext, in: model)
+        state.run(.extendNext, in: model)
+        #expect(state.selection == Set(ids.prefix(3)))
+        state.run(.selectAll, in: model)
+        #expect(state.selection == Set(ids))
+        // Done, then Z: the row is back.
+        state.select(ids[1], in: model)
+        state.run(.markDone, in: model)
+        #expect(model.listIndex(of: ids[1]) == nil)
+        #expect(model.canUndoLast)
+        state.run(.undo, in: model)
+        #expect(!model.canUndoLast)
     }
 
     @Test func movingWalksTheListInDisplayOrderAndClamps() {
@@ -337,6 +362,61 @@ struct PaletteFilterTests {
         ]
         #expect(PaletteFilter.filter(items, query: "tra").map(\.id) == ["b"])
         #expect(PaletteFilter.filter(items, query: "go").map(\.id) == ["a", "b"])
+    }
+
+    @Test func theBestMatchComesFirstAndRecentsWinATie() {
+        let items = [
+            PaletteItem(id: "reply", title: "Reply", subtitle: "Mark's notes", systemImage: "arrowshape.turn.up.left") {},
+            PaletteItem(id: "unread", title: "Mark unread", systemImage: "envelope.badge") {},
+            PaletteItem(id: "done", title: "Mark done", systemImage: "checkmark") {},
+            PaletteItem(id: "inbox", title: "Go to Inbox", systemImage: "tray") {},
+        ]
+        // A title that starts with the words beats a subtitle that holds them.
+        #expect(PaletteFilter.filter(items, query: "mark").map(\.id) == ["unread", "done", "reply"])
+        // Run lately: ahead of an equally good match.
+        #expect(PaletteFilter.filter(items, query: "mark", recents: ["done"]).map(\.id) == ["done", "unread", "reply"])
+        // Initials find a command: "gti" is Go to Inbox, "mu" Mark unread.
+        #expect(PaletteFilter.filter(items, query: "gti").map(\.id) == ["inbox"])
+        #expect(PaletteFilter.filter(items, query: "mu").map(\.id) == ["unread"])
+        // An empty palette opens on what was run lately.
+        #expect(PaletteFilter.filter(items, query: "", recents: ["inbox", "done"]).map(\.id) == ["inbox", "done", "reply", "unread"])
+        #expect(PaletteRecents.pushed("b", onto: ["a", "b", "c"]) == ["b", "a", "c"])
+        #expect(PaletteRecents.pushed("z", onto: (0..<8).map(String.init)).count == PaletteRecents.limit)
+    }
+}
+
+struct ShortcutsSheetTests {
+    /// The bare keys the sheet shows outside the composer: "J · K" is J
+    /// and K, "Space" is the space bar; chords and ⌘ keys are not bare.
+    private var listed: [String] {
+        ShortcutsSheet.groups.filter { $0.0 != "In the composer" }.flatMap(\.1).flatMap { row in
+            row.0.components(separatedBy: " · ").compactMap { token -> String? in
+                if token == "Space" { return " " }
+                if token.hasPrefix("G then ") { return "g" }
+                if token.hasPrefix("⇧"), token.count == 2 { return String(token.dropFirst()) }
+                return token.count == 1 && token != "↩" && token != "⌫" ? token.lowercased() : nil
+            }
+        }
+    }
+
+    @Test func theSheetAndTheKeyboardMapAgree() {
+        // Every key the sheet promises does something…
+        for key in listed where Int(key) == nil {
+            #expect(KeyboardMap.resolve(.character(key)) != .ignore, "the sheet lists \(key), the map ignores it")
+        }
+        // …and every key the map acts on is on the sheet.
+        for key in KeyboardMap.characters {
+            #expect(listed.contains(key.lowercased()), "the map handles \(key), the sheet does not list it")
+        }
+    }
+}
+
+struct WindowRestorationTests {
+    @Test func aViewSurvivesARelaunch() {
+        for view in [MailView.inbox, .needReply, .archive, .label(id: "Label_7", name: "Receipts / 2026")] {
+            #expect(WindowRestoration.decode(WindowRestoration.encode(view)) == view)
+        }
+        #expect(WindowRestoration.decode("nonsense") == nil)
     }
 }
 

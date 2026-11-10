@@ -141,6 +141,16 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     /// (a list, a booking system writing from a no-reply address). Empty
     /// when it set none, and for mail stored before the header was kept.
     var replyTo: [String] = []
+
+    /// Where a reply to this message goes when that is not its sender:
+    /// the Reply-To addresses that are neither the sender nor the user.
+    /// The open message says so under its recipients, before any reply
+    /// is started.
+    var repliesGoTo: [String] {
+        guard !isMine else { return [] }
+        let asked = replyTo.filter { $0 != "me" && !$0.isEmpty }
+        return asked.contains { EmailAddress.same($0, fromAddress) } ? [] : asked
+    }
 }
 
 extension ThreadRow {
@@ -227,6 +237,21 @@ struct ThreadDetail: Hashable, Sendable {
 
 /// RFC 5322-ish address handling for what the core hands over as header
 /// text (`"Ana Novak" <ana@acme.test>`, or a bare address).
+/// A stored message's or draft's html on its way into a composer.
+enum ComposerHTML {
+    /// Without its `<style>` blocks (the Mac's editor loads the html into
+    /// its own page, where they could restyle the editor or hide text
+    /// that is still sent) and without its `cid:` pictures (the picture
+    /// itself travels as an ordinary attachment with no Content-ID, so
+    /// the html would go out pointing at nothing).
+    static func clean(_ html: String) -> String {
+        html.replacingOccurrences(of: #"<style\b[^>]*>[\s\S]*?</style\s*>"#, with: "",
+                                  options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<img\b[^>]*\bsrc\s*=\s*["']?\s*cid:[^>]*>"#, with: "",
+                                  options: [.regularExpression, .caseInsensitive])
+    }
+}
+
 enum EmailAddress {
     /// The address that text still being typed into a recipient field
     /// stands for, nil while it is not one yet ("ana@", a name).
@@ -875,6 +900,15 @@ struct SendDraft: Hashable {
         func others(_ list: [String]) -> [String] {
             list.filter { $0 != "me" && !$0.isEmpty && !mine.contains($0.lowercased()) }
         }
+        // Mail that came to an alias is answered from it, and a follow-up
+        // to one's own alias-sent message goes out from it again — as
+        // Gmail does; the composer's From shows it.
+        func alias(_ a: String) -> Bool { mine.contains(a.lowercased()) && !EmailAddress.same(a, thread.accountId) }
+        if alias(m.fromAddress) {
+            d.fromAddress = m.fromAddress
+        } else if !m.isMine {
+            d.fromAddress = (m.to + m.cc).first(where: alias)
+        }
         if m.isMine || mine.contains(m.fromAddress.lowercased()) {
             // A reply to one's own message goes where that one went.
             d.to = others(m.to)
@@ -925,7 +959,7 @@ enum MailAction: Hashable {
 }
 
 /// An address an account may send from (`MailEngine.sendAliases`).
-struct SendAlias: Identifiable, Hashable, Sendable {
+struct SendAlias: Identifiable, Hashable, Sendable, Codable {
     let email: String
     /// The name it sends under; empty when Gmail has none for it.
     let name: String

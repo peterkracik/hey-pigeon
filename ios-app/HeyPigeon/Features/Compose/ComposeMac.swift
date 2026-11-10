@@ -213,8 +213,10 @@ final class MacComposeEditor {
 
 /// The editor's web view for SwiftUI: as tall as `MacComposeEditor.height`
 /// says, transparent, scrolled by the composer's scroll view. JavaScript is
-/// on (the page is the app's own, the content the user's); the CSP keeps
-/// everything but inline pictures out.
+/// on for the page's own script alone: the CSP names it by a nonce, so a
+/// handler inside the content (a saved draft's html is loaded here, and
+/// the core's sanitizer is the only other thing in its way) does not run.
+/// The CSP also keeps everything but inline pictures out.
 struct HTMLEditorView: NSViewRepresentable {
     let editor: MacComposeEditor
     let placeholder: String
@@ -246,12 +248,16 @@ struct HTMLEditorView: NSViewRepresentable {
     /// paragraph and list spacing the message gets in a mail client, and
     /// the script that talks to `EditorBridge`.
     static func document(placeholder: String) -> String {
-        """
+        // A fresh nonce per page: `'unsafe-inline'` let any inline handler
+        // in the content run next to the bridge that can send the mail.
+        // What Swift evaluates is not subject to the page's policy.
+        let nonce = UUID().uuidString
+        return """
         <!doctype html><html><head><meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-\(nonce)'; img-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'">
         <style>\(style)</style></head>
         <body><div id="editor" contenteditable="true" spellcheck="true" data-placeholder="\(MacComposeEditor.escape(placeholder))"></div>
-        <script>\(script)</script></body></html>
+        <script nonce="\(nonce)">\(script)</script></body></html>
         """
     }
 

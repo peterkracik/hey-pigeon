@@ -13,7 +13,7 @@ use heypigeon_core::domain::{self, now_ms, AccountId, AttachmentRef, ThreadId};
 use heypigeon_core::ports::{
     MailError, MailProvider, SecretStore, Store, SyncError as TransportError,
 };
-use heypigeon_core::{devsync, outbox, sync};
+use heypigeon_core::{devsync, outbox, rules, sync};
 use tokio::sync::RwLock;
 
 use crate::ai::AiBackend;
@@ -563,14 +563,69 @@ impl Engine {
             return Ok(());
         }
         self.drain_outbox().await?;
-        if !self.store.outbox_contains(row)? {
-            return Ok(());
+        self.outcome_of(row)
+    }
+
+    /// What is waiting for Gmail, oldest first: changes made offline,
+    /// ones a drain has not reached yet, and ones Gmail refused (`failed`
+    /// once it refused them `outbox::MAX_ATTEMPTS` times). Read from the
+    /// store without loading the changes themselves, so a queued send
+    /// with attachments costs nothing here. Empty when the store cannot
+    /// be read.
+    pub fn list_outbox(&self) -> Vec<OutboxEntry> {
+        let rows = match self.store.outbox_summaries() {
+            Ok(rows) => rows,
+            Err(e) => {
+                log::warn!("outbox: cannot list: {e}");
+                return Vec::new();
+            }
+        };
+        rows.into_iter()
+            .map(|row| {
+                let summary = self.outbox_summary_text(&row);
+                OutboxEntry {
+                    id: row.id,
+                    account_id: row.account_id,
+                    kind: row.kind,
+                    summary,
+                    attempts: u32::try_from(row.attempts).unwrap_or(0),
+                    failed: row.attempts >= outbox::MAX_ATTEMPTS,
+                    last_error: row.last_error,
+                }
+            })
+            .collect()
+    }
+
+    /// Try one waiting change again now: its refusals are forgotten (a
+    /// `failed` row is due again) and the outbox is drained. `Ok` means
+    /// Gmail took it; an error is this try's failure, as `mutate` reports
+    /// one for a send — the row stays queued. `EngineError::Invalid` when
+    /// there is no such row (it went out meanwhile, or was discarded).
+    pub async fn retry_outbox(self: Arc<Self>, id: i64) -> Result<(), EngineError> {
+        if !self.store.outbox_reset(id)? {
+            return Err(EngineError::Invalid(format!("no queued change {id}")));
         }
-        Err(match self.drain_failures.lock().unwrap().get(&row) {
-            Some((true, why)) => EngineError::AuthExpired(why.clone()),
-            Some((false, why)) => EngineError::Mail(format!("{why} (queued, will retry)")),
-            None => EngineError::Mail("not sent yet (queued, will retry)".into()),
-        })
+        self.drain_failures.lock().unwrap().remove(&id);
+        let drained = self.drain_outbox().await;
+        // The list the shell shows moved either way.
+        self.notify_threads_updated();
+        drained?;
+        self.outcome_of(id)
+    }
+
+    /// Give up on one waiting change: the row is removed and Gmail never
+    /// hears of it. Nothing is undone locally — for a change to a thread
+    /// (an archive, a label…) the thread stays as the change left it here
+    /// until the next sync brings Gmail's state back, and a discarded send
+    /// or draft is simply not sent or saved. A change being sent at this
+    /// very moment may still go through. Fires `on_threads_updated`.
+    pub fn discard_outbox(&self, id: i64) {
+        if let Err(e) = self.store.outbox_delete(id) {
+            log::warn!("outbox: cannot discard {id}: {e}");
+            return;
+        }
+        self.drain_failures.lock().unwrap().remove(&id);
+        self.notify_threads_updated();
     }
 
     /// Outbox rows still waiting for Gmail: changes made offline, or that
@@ -727,6 +782,8 @@ impl Engine {
     pub async fn sync_now(self: Arc<Self>, account_id: String) -> Result<bool, EngineError> {
         on_runtime(async move {
             let changed = self.sync_account(&account_id).await;
+            // What the mute and block rules queued (`sync_account`).
+            self.drain_soon();
             if changed {
                 self.notify_threads_updated();
             }
@@ -982,7 +1039,9 @@ impl Engine {
         let engine = Arc::clone(&self);
         let account_id = email.clone();
         tokio::spawn(async move {
-            if engine.sync_account(&account_id).await {
+            let changed = engine.sync_account(&account_id).await;
+            engine.drain_soon();
+            if changed {
                 engine.notify_threads_updated();
             }
         });
@@ -1055,6 +1114,41 @@ impl Engine {
     /// Clears a stale disconnected mark; true if it was set.
     fn mark_connected(&self, account_id: &AccountId) -> bool {
         self.disconnected.lock().unwrap().remove(account_id)
+    }
+
+    /// How an outbox row fared in the drain that just ran: `Ok` when it
+    /// is gone (Gmail took it), else why it is still queued.
+    fn outcome_of(&self, row: i64) -> Result<(), EngineError> {
+        if !self.store.outbox_contains(row)? {
+            return Ok(());
+        }
+        Err(match self.drain_failures.lock().unwrap().get(&row) {
+            Some((true, why)) => EngineError::AuthExpired(why.clone()),
+            Some((false, why)) => EngineError::Mail(format!("{why} (queued, will retry)")),
+            None => EngineError::Mail("not sent yet (queued, will retry)".into()),
+        })
+    }
+
+    /// The words for one outbox row (`OutboxEntry::summary`).
+    fn outbox_summary_text(&self, row: &domain::OutboxSummary) -> String {
+        if let Some(thread_id) = &row.thread_id {
+            return match self.store.get_thread(thread_id) {
+                Ok(Some(thread)) if !thread.subject.trim().is_empty() => thread.subject,
+                _ => thread_id.clone(),
+            };
+        }
+        if row.kind == "delete_draft" {
+            return "Draft".to_string();
+        }
+        let subject = match row.subject.as_deref().map(str::trim) {
+            Some(subject) if !subject.is_empty() => subject,
+            _ => "(no subject)",
+        };
+        match row.to.split_first() {
+            Some((first, [])) => format!("To {first} · {subject}"),
+            Some((first, others)) => format!("To {first} +{} · {subject}", others.len()),
+            None => subject.to_string(),
+        }
     }
 
     /// Drain the outbox, one drain at a time: a second caller waits for
@@ -1297,6 +1391,27 @@ impl Engine {
         if result.is_ok() {
             self.renew_watch(account_id).await;
         }
+        // The user's own rules (rules.rs): muted threads leave the inbox
+        // again, mail from blocked senders goes to Spam. Here — after the
+        // new mail and the other devices' preferences are in, before the
+        // round is reported — so the shell never sees that mail as new.
+        // The changes are queued; whoever called drains.
+        let ruled = match rules::apply(&self.store, account_id) {
+            Ok(applied) => {
+                if applied.any() {
+                    log::info!(
+                        "rules({account_id}): {} muted, {} blocked",
+                        applied.muted.len(),
+                        applied.blocked.len()
+                    );
+                }
+                applied.any()
+            }
+            Err(e) => {
+                log::warn!("rules({account_id}) failed: {e}");
+                false
+            }
+        };
         self.syncing.lock().unwrap().remove(account_id);
         let changed = match result {
             Ok(changed) => self.mark_connected(account_id) || changed,
@@ -1309,7 +1424,7 @@ impl Engine {
                 false
             }
         };
-        changed || synced
+        changed || synced || ruled
     }
 
     async fn devsync_account(&self, account_id: &AccountId) -> bool {
@@ -1614,6 +1729,215 @@ mod tests {
         e.remove_account("a@x.com".into()).await.unwrap();
         assert!(e.list_accounts().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn account(e: &Engine, id: &str) {
+        e.store
+            .upsert_account(&domain::Account {
+                id: id.into(),
+                email: id.into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+    }
+
+    /// The outbox as the shell lists it: what each waiting change is, why
+    /// it has not gone out, and the two things a person can do about one.
+    /// (No grant is stored, so every drain fails on "sign in again" —
+    /// without a request being made.)
+    #[tokio::test]
+    async fn the_outbox_can_be_listed_retried_and_discarded() {
+        let dir = temp_dir("outbox");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        account(&e, "a@x.com");
+        e.store
+            .upsert_thread(&sample_thread("t1", "a@x.com"))
+            .unwrap();
+        assert!(e.list_outbox().is_empty());
+
+        // A thread change returns at once; a send waits and reports.
+        Arc::clone(&e)
+            .mutate(
+                "a@x.com".into(),
+                Mutation::Archive {
+                    thread_id: "t1".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let sent = Arc::clone(&e)
+            .mutate(
+                "a@x.com".into(),
+                Mutation::Send {
+                    to: vec!["ana@x.com".into(), "bo@x.com".into()],
+                    cc: vec![],
+                    bcc: vec![],
+                    subject: "Quarterly numbers".into(),
+                    body_text: "see attached".into(),
+                    body_html: None,
+                    attachments: vec![],
+                    reply_to_thread: None,
+                    from_addr: None,
+                },
+            )
+            .await;
+        assert!(matches!(sent, Err(EngineError::AuthExpired(_))), "{sent:?}");
+        // A thread the store never had: its id stands in for a subject.
+        e.store
+            .outbox_push(
+                &"a@x.com".to_string(),
+                &domain::Mutation::Star {
+                    thread_id: "gone-thread".into(),
+                    starred: true,
+                },
+            )
+            .unwrap();
+        e.drain_outbox().await.unwrap();
+
+        let rows = e.list_outbox();
+        let shown: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.kind.as_str(), r.summary.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("archive", "Hello"),
+                ("send", "To ana@x.com +1 · Quarterly numbers"),
+                ("star", "gone-thread"),
+            ]
+        );
+        for row in &rows {
+            assert_eq!(row.account_id, "a@x.com");
+            // Being signed out is not the change's fault: nothing counted,
+            // nothing given up on, and the reason is on the row.
+            assert_eq!((row.attempts, row.failed), (0, false));
+            assert_eq!(
+                row.last_error.as_deref(),
+                Some("authentication expired or revoked")
+            );
+        }
+        assert_eq!((e.pending_mutations(), e.failed_mutations()), (3, 0));
+
+        // Refused by Gmail five times: failed, waiting for the user.
+        for _ in 0..outbox::MAX_ATTEMPTS {
+            e.store.outbox_bump_attempts(rows[2].id).unwrap();
+        }
+        e.store
+            .outbox_set_error(rows[2].id, "provider: 404 Not Found")
+            .unwrap();
+        let star = &e.list_outbox()[2];
+        assert_eq!((star.attempts, star.failed), (5, true));
+        assert_eq!(star.last_error.as_deref(), Some("provider: 404 Not Found"));
+        assert_eq!((e.pending_mutations(), e.failed_mutations()), (2, 1));
+
+        // Retry: a fresh start, tried at once, and the result reported.
+        let retried = Arc::clone(&e).retry_outbox(rows[2].id).await;
+        assert!(
+            matches!(retried, Err(EngineError::AuthExpired(_))),
+            "{retried:?}"
+        );
+        let star = &e.list_outbox()[2];
+        assert_eq!((star.attempts, star.failed), (0, false));
+        assert!(matches!(
+            Arc::clone(&e).retry_outbox(9_999).await,
+            Err(EngineError::Invalid(_))
+        ));
+
+        // Discard: the row goes, the local change stays as it is.
+        e.discard_outbox(rows[0].id);
+        e.discard_outbox(rows[1].id);
+        e.discard_outbox(9_999);
+        let left = e.list_outbox();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].kind, "star");
+        assert!(e.get_thread_row("t1".into()).unwrap().unwrap().is_archived);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The mute and block rules run inside the account's round, whatever
+    /// the network did: by the time the round reports, the muted thread
+    /// is out of the inbox and read, the blocked sender's mail is in
+    /// Spam, and both changes are queued for Gmail.
+    #[tokio::test]
+    async fn a_sync_round_applies_the_mute_and_block_rules() {
+        let dir = temp_dir("rules");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        account(&e, "a@x.com");
+        for id in ["muted", "blocked", "plain"] {
+            e.store
+                .upsert_thread(&sample_thread(id, "a@x.com"))
+                .unwrap();
+        }
+        let mut from_blocked = sample_thread("blocked", "a@x.com");
+        from_blocked.last_from_addr = "Spammer@Evil.example".into();
+        e.store.upsert_thread(&from_blocked).unwrap();
+        e.set_pref(rules::MUTE_THREADS_PREF.into(), Some("[\"muted\"]".into()))
+            .unwrap();
+        e.set_pref(
+            rules::BLOCK_SENDERS_PREF.into(),
+            Some("[\"spammer@evil.example\"]".into()),
+        )
+        .unwrap();
+        assert_eq!(rules::MUTE_THREADS_PREF, "mute.threads");
+        assert_eq!(rules::BLOCK_SENDERS_PREF, "block.senders");
+
+        // No grant: the delta fails before any request. The rules still run.
+        assert!(e.sync_account(&"a@x.com".to_string()).await);
+
+        let inbox: Vec<String> = e
+            .list_threads(ThreadFilter::Inbox, None, None, 50)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(inbox, vec!["plain"]);
+        let muted = e.get_thread_row("muted".into()).unwrap().unwrap();
+        assert!(muted.is_archived && muted.is_read);
+        let spam: Vec<String> = e
+            .list_threads(ThreadFilter::Spam, None, None, 50)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(spam, vec!["blocked"]);
+        let queued: Vec<(String, String)> = e
+            .list_outbox()
+            .into_iter()
+            .map(|r| (r.kind, r.summary))
+            .collect();
+        assert_eq!(
+            queued,
+            vec![
+                ("archive".to_string(), "Hello".to_string()),
+                ("read".to_string(), "Hello".to_string()),
+                ("spam".to_string(), "Hello".to_string()),
+            ]
+        );
+        // Nothing left to do: the next round changes nothing.
+        assert!(!e.sync_account(&"a@x.com".to_string()).await);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_exported_sanitizer_is_the_cores() {
+        let raw = "<p onclick=\"x()\">hi <a href=\"https://example.com/?a=1&b=2\">link</a></p>\
+                   <img src=\"https://track.example/o\" width=\"1\" height=\"1\"><script>x</script>";
+        let clean = crate::sanitize_html(raw.to_string());
+        assert_eq!(clean, heypigeon_core::sanitize::html(raw));
+        assert_eq!(
+            clean,
+            format!(
+                "<p>hi <a href=\"https://example.com/?a=1&amp;b=2\" \
+                 rel=\"noopener noreferrer\">link</a></p>{}",
+                heypigeon_core::sanitize::TRACKER_MARKER
+            )
+        );
+        assert_eq!(crate::sanitize_html(clean.clone()), clean);
     }
 
     /// Two drains asked for at once (a mutation's and a sync round's):

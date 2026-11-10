@@ -948,6 +948,42 @@ protocol StoreReader: Sendable {
 extension MailEngine {
     /// Nothing waits in an engine that keeps no outbox (the sample inbox).
     func pendingChanges() -> Int { 0 }
+    func failedChanges() -> Int { 0 }
+    func outbox() -> [QueuedChange] { [] }
+    func retryOutbox(id: Int64) async throws {}
+    func discardOutbox(id: Int64) throws {}
+}
+
+/// One change in the engine's outbox (`MailEngine.outbox`).
+struct QueuedChange: Identifiable, Hashable, Sendable {
+    let id: Int64
+    let accountId: String
+    /// "send", "draft", "archive", "label"… (the core's words).
+    let kind: String
+    /// What it is about: a send's recipient and subject, a thread's subject.
+    let summary: String
+    let attempts: Int
+    /// Gmail refused it until the engine stopped retrying.
+    let failed: Bool
+    let lastError: String?
+
+    /// The kind in the app's words.
+    var title: String {
+        switch kind {
+        case "send": "Send"
+        case "draft": "Save draft"
+        case "delete_draft": "Delete draft"
+        case "archive": "Mark done"
+        case "unarchive": "Mark not done"
+        case "read": "Read / unread"
+        case "trash": "Delete"
+        case "untrash": "Move to inbox"
+        case "star": "Pin"
+        case "label": "Label"
+        case "spam": "Spam"
+        default: kind.capitalized
+        }
+    }
 }
 
 /// `StoreReader` over the main-actor engine itself: the reads a synchronous
@@ -1029,6 +1065,14 @@ protocol MailEngine: AnyObject {
     /// How many changes (done, read, a label, a send) are still waiting to
     /// reach Gmail: the Mac's toolbar says so while there is no network.
     func pendingChanges() -> Int
+    /// How many of them Gmail refused until the engine stopped retrying.
+    func failedChanges() -> Int
+    /// The outbox, oldest first: what waits, and what is stuck and why.
+    func outbox() -> [QueuedChange]
+    /// Clear a stuck change's failures and send it again now.
+    func retryOutbox(id: Int64) async throws
+    /// Remove a change from the outbox without sending it.
+    func discardOutbox(id: Int64) throws
 
     // Gmail labels: made, renamed and deleted in the account itself.
     func createLabel(accountId: String, name: String) async throws -> MailLabelItem

@@ -293,6 +293,24 @@ struct CommandPalette: View {
                 ("Print or save as PDF…", "printer", "⌘P", .print),
                 ("Delete", "trash", "#", .delete),
             ]
+            // The app's own rules: mute the thread, block its sender.
+            if model.isMuted(row) {
+                out.append(PaletteItem(id: "thread.unmute", title: "Unmute", subtitle: row.subject, systemImage: "bell") {
+                    model.unmute(threadId: row.id)
+                })
+            } else {
+                out.append(PaletteItem(id: "thread.mute", title: "Mute", subtitle: row.subject, systemImage: "bell.slash") {
+                    state.advance(in: model)
+                    model.mute(row)
+                })
+            }
+            if !row.lastFromAddress.isEmpty, !model.isBlocked(row.lastFromAddress) {
+                out.append(PaletteItem(id: "thread.block", title: "Block \(row.lastFromAddress)", subtitle: row.subject,
+                                       systemImage: "hand.raised.slash") {
+                    state.advance(in: model)
+                    model.block(sender: row.lastFromAddress, row: row)
+                })
+            }
             // Report spam, or the way back out of Spam and Trash.
             switch model.view {
             case .spam:

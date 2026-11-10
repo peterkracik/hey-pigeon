@@ -271,6 +271,31 @@ impl From<domain::Label> for MailLabel {
     }
 }
 
+/// One change still waiting for Gmail (`Engine::list_outbox`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OutboxEntry {
+    /// The row's id, for `retry_outbox` / `discard_outbox`.
+    pub id: i64,
+    pub account_id: String,
+    /// What kind of change: `send`, `draft`, `delete_draft`, `archive`,
+    /// `unarchive`, `read`, `trash`, `untrash`, `star`, `label`, `spam`.
+    pub kind: String,
+    /// What it is about, for a person: `To ana@x.com · Subject` for
+    /// outgoing mail and drafts (`To ana@x.com +2 · …` with more
+    /// recipients), the thread's subject for a change to a thread (its id
+    /// when the store no longer has the thread), `Draft` for a draft
+    /// being deleted.
+    pub summary: String,
+    /// How many times Gmail refused it. (Being offline does not count.)
+    pub attempts: u32,
+    /// Refused so often that it is no longer retried on its own: it waits
+    /// for `retry_outbox` or `discard_outbox`.
+    pub failed: bool,
+    /// Why the last try did not go through, in words; None before the
+    /// first failure.
+    pub last_error: Option<String>,
+}
+
 /// An address the account may send from (`Engine::list_send_as`): its
 /// own, or a "Send mail as" alias it has verified in Gmail.
 #[derive(Debug, Clone, uniffi::Record)]

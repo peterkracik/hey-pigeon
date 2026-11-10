@@ -53,6 +53,8 @@ struct MessageBodyView: View {
     @State private var hasQuote = false
     /// What a render needs to know about the HTML, worked out once per body.
     @State private var facts = BodyFacts()
+    /// The address of the link under the pointer, while there is one.
+    @State private var hoverURL: String?
     @Environment(\.colorScheme) private var scheme
     @Environment(AppModel.self) private var model
 
@@ -68,6 +70,15 @@ struct MessageBodyView: View {
                 // Only remote pictures are held back: inline (cid:) ones are
                 // part of the message and show without asking.
                 let known = facts.of(html)
+                // The core's sanitizer took these out for good (1 × 1 and
+                // hidden pictures that only report the mail was opened):
+                // they do not load even when pictures are allowed.
+                if known.trackers > 0 {
+                    Label("\(known.trackers) \(known.trackers == 1 ? "tracker" : "trackers") blocked", systemImage: "eye.slash")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textTertiary)
+                        .accessibilityLabel("\(known.trackers) tracking pictures blocked")
+                }
                 if !imagesAllowed && known.hasRemoteImages {
                     HStack(spacing: 6) {
                         Text("Images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
@@ -80,8 +91,25 @@ struct MessageBodyView: View {
                 }
                 HTMLView(html: inlinedHTML ?? html, allowRemoteImages: imagesAllowed, dark: scheme == .dark, showQuoted: showQuoted,
                          height: $height, hasQuote: $hasQuote, onLink: { url in open(url) },
-                         onSelection: { select($0, in: .html) })
+                         onSelection: { select($0, in: .html) },
+                         onHoverLink: { url in if url != hoverURL { hoverURL = url } })
                     .frame(height: height)
+                    // Where the link under the pointer really goes, as a
+                    // browser's status line shows it (the Mac, an iPad's
+                    // pointer; a finger never hovers).
+                    .overlay(alignment: .bottomLeading) {
+                        if let hoverURL {
+                            Text(hoverURL)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
                     .translatable(.html, selection: selection, translation: $translation, enabled: offersTranslation)
                     .task(id: InlineImages.taskKey(hash: known.hash, images: inlineImages)) { await inlinePictures(html) }
                 if hasQuote && !showQuoted { quoteButton }
@@ -210,13 +238,13 @@ struct MessageBodyView: View {
 @MainActor
 private final class BodyFacts {
     private var html: String?
-    private var value: (hasRemoteImages: Bool, hash: Int) = (false, 0)
+    private var value: (hasRemoteImages: Bool, hash: Int, trackers: Int) = (false, 0, 0)
 
-    func of(_ html: String) -> (hasRemoteImages: Bool, hash: Int) {
+    func of(_ html: String) -> (hasRemoteImages: Bool, hash: Int, trackers: Int) {
         // String equality answers at once for the same storage.
         if self.html != html {
             self.html = html
-            value = (InlineImages.hasRemoteImages(html), html.hashValue)
+            value = (InlineImages.hasRemoteImages(html), html.hashValue, MailDocument.trackerCount(in: html))
         }
         return value
     }
@@ -533,6 +561,86 @@ enum InlineImages {
     }
 }
 
+// MARK: - The document
+
+/// The page a message's HTML is shown in, and the scripts the app runs in
+/// it. Not private to the view: the render tests load the same page.
+enum MailDocument {
+    /// CSP: no scripts, no frames, no forms; images only from data:/cid:
+    /// unless allowed. Base styles keep the mail's own layout but set a
+    /// readable measure and the app's text colour in both themes.
+    static func wrap(_ html: String, allowRemoteImages: Bool, dark: Bool) -> String {
+        let img = allowRemoteImages ? "img-src * data: cid:" : "img-src data: cid:"
+        let fg = dark ? "#F7F7F8" : "#0D0D10"
+        let link = dark ? "#9A9CA2" : "#33363E"
+        return """
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; \(img); style-src 'unsafe-inline'; font-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'">
+        <style>
+          :root { color-scheme: \(dark ? "dark" : "light"); }
+          body { margin: 0; font: -apple-system-body; font-family: -apple-system, system-ui; color: \(fg); word-wrap: break-word; -webkit-text-size-adjust: 100%; }
+          img, table { max-width: 100% !important; height: auto; }
+          /* Some mail turns selection off; the user can always select and copy. */
+          body, body * { -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important; }
+          a { color: \(link); }
+          blockquote { border-left: 3px solid #9A9CA2; margin: 0; padding-left: 12px; color: #75787F; }
+        </style></head><body>\(html)</body></html>
+        """
+    }
+
+    /// How many tracking pictures the core's sanitizer replaced with its
+    /// marker (`<span class="hp-tracker" …>`, core/src/sanitize.rs).
+    static func trackerCount(in html: String) -> Int {
+        html.components(separatedBy: "class=\"hp-tracker\"").count - 1
+    }
+
+    /// A link whose text names one site and whose address is another's
+    /// gets the real host written after it: "paypal.com ⚠︎ goes to
+    /// evil.example". The cheap phishing tell (DESIGN.md, "Rendering
+    /// untrusted mail"). Only when the text is itself an address or a
+    /// domain; "Click here" promises nothing to compare.
+    static let linkWarningScript = #"""
+    (function () {
+      function host(u) {
+        try { return new URL(u).hostname.replace(/^www\./i, "").toLowerCase(); } catch (e) { return ""; }
+      }
+      var links = document.querySelectorAll("a[href]");
+      for (var i = 0; i < links.length; i++) {
+        var a = links[i], href = a.getAttribute("href") || "";
+        if (!/^https?:/i.test(href)) continue;
+        var text = (a.textContent || "").trim();
+        var m = text.match(/^(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[\/:?#]|$)/i);
+        if (!m) continue;
+        var shown = m[1].replace(/^www\./i, "").toLowerCase(), real = host(href);
+        if (!real || real === shown || real.endsWith("." + shown) || shown.endsWith("." + real)) continue;
+        if (a.nextSibling && a.nextSibling.className === "hp-linkwarn") continue;
+        var note = document.createElement("span");
+        note.className = "hp-linkwarn";
+        note.textContent = " \u26A0\uFE0E goes to " + real;
+        note.style.cssText = "color:#B34E2E;font-size:0.85em;white-space:nowrap";
+        a.parentNode.insertBefore(note, a.nextSibling);
+      }
+    })();
+    """#
+
+    /// Posts the address of the link under the pointer, and null when the
+    /// pointer leaves it.
+    static let hoverScript = #"""
+    (function () {
+      var w = window.webkit, h = w && w.messageHandlers && w.messageHandlers.pigeonHover;
+      if (!h) return;
+      var last = null;
+      function post(v) { if (v !== last) { last = v; h.postMessage(v); } }
+      document.addEventListener("mouseover", function (e) {
+        var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+        post(a ? a.href : null);
+      });
+      document.addEventListener("mouseleave", function () { post(null); });
+    })();
+    """#
+}
+
 // MARK: - HTML
 
 /// The HTML body in a WKWebView. The representable conformance is per
@@ -553,11 +661,15 @@ private struct HTMLView {
     /// The selection in the page, with where it ends, as the user script
     /// reports it; nil once nothing is selected.
     var onSelection: ((BodySelection?) -> Void)? = nil
+    /// The address of the link under the pointer; nil when it leaves.
+    var onHoverLink: ((String?) -> Void)? = nil
 
     /// The message handler the selection script posts to.
     fileprivate static let selectionHandler = "pigeonSelection"
     /// The message handler the height script posts to.
     fileprivate static let heightHandler = "pigeonHeight"
+    /// The message handler the hover script posts a link's address to.
+    fileprivate static let hoverHandler = "pigeonHover"
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -580,6 +692,9 @@ private struct HTMLView {
         config.userContentController.add(coordinator, name: Self.heightHandler)
         config.userContentController.addUserScript(
             WKUserScript(source: Coordinator.heightScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController.add(coordinator, name: Self.hoverHandler)
+        config.userContentController.addUserScript(
+            WKUserScript(source: MailDocument.hoverScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         return config
     }
 
@@ -588,6 +703,7 @@ private struct HTMLView {
     fileprivate static func tearDown(_ web: WKWebView) {
         web.configuration.userContentController.removeScriptMessageHandler(forName: selectionHandler)
         web.configuration.userContentController.removeScriptMessageHandler(forName: heightHandler)
+        web.configuration.userContentController.removeScriptMessageHandler(forName: hoverHandler)
     }
 
     /// Load the wrapped document when something it depends on changed.
@@ -622,23 +738,7 @@ private struct HTMLView {
     /// unless allowed. Base styles keep the mail's own layout but set a
     /// readable measure and the app's text colour in both themes.
     private var wrapped: String {
-        let img = allowRemoteImages ? "img-src * data: cid:" : "img-src data: cid:"
-        let fg = dark ? "#F7F7F8" : "#0D0D10"
-        let link = dark ? "#9A9CA2" : "#33363E"
-        return """
-        <!doctype html><html><head><meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; \(img); style-src 'unsafe-inline'; font-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'">
-        <style>
-          :root { color-scheme: \(dark ? "dark" : "light"); }
-          body { margin: 0; font: -apple-system-body; font-family: -apple-system, system-ui; color: \(fg); word-wrap: break-word; -webkit-text-size-adjust: 100%; }
-          img, table { max-width: 100% !important; height: auto; }
-          /* Some mail turns selection off; the user can always select and copy. */
-          body, body * { -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important; }
-          a { color: \(link); }
-          blockquote { border-left: 3px solid #9A9CA2; margin: 0; padding-left: 12px; color: #75787F; }
-        </style></head><body>\(html)</body></html>
-        """
+        MailDocument.wrap(html, allowRemoteImages: allowRemoteImages, dark: dark)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
@@ -656,6 +756,9 @@ private struct HTMLView {
             switch message.name {
             case HTMLView.selectionHandler:
                 parent.onSelection?(BodySelection(message: message.body as? [String: Any]))
+            case HTMLView.hoverHandler:
+                let url = message.body as? String
+                DispatchQueue.main.async { self.parent.onHoverLink?(url) }
             case HTMLView.heightHandler:
                 guard let value = message.body as? NSNumber else { return }
                 let height = CGFloat(truncating: value)
@@ -803,7 +906,7 @@ private struct HTMLView {
             // allowsContentJavaScript only blocks the mail's own scripts; this
             // app-injected one still runs. Linkify, fold the quote, shrink a
             // too-wide layout to fit, then measure.
-            let script = Self.linkifyScript + Self.quoteScript(hide: !parent.showQuoted) + Self.fitScript
+            let script = Self.linkifyScript + MailDocument.linkWarningScript + Self.quoteScript(hide: !parent.showQuoted) + Self.fitScript
                 + "[window.__pigeonFrameHeight ? window.__pigeonFrameHeight() : document.documentElement.scrollHeight + 4,"
                 + " window.__pigeonQuote === true]"
             webView.evaluateJavaScript(script) { [weak self] result, _ in

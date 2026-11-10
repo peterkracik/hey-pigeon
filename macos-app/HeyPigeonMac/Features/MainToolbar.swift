@@ -79,6 +79,14 @@ struct MainToolbar: ToolbarContent {
                         .padding(.horizontal, 6)
                         .help("No network. What you do is kept and sent when it is back.")
                 }
+                // Gmail refused something for good: Settings › Outbox.
+                if model.failedChanges > 0 {
+                    Button { model.showSettings = true } label: {
+                        Label("\(model.failedChanges) not sent", systemImage: "exclamationmark.triangle")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .help("Changes Gmail did not accept. Review them in Settings › Outbox.")
+                }
                 // Only a sync worth showing: one the user asked for, or one
                 // that takes a while. A spinner for every 30-second round
                 // came and went, and moved the buttons each time.

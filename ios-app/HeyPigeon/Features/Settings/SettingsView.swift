@@ -28,6 +28,9 @@ struct SettingsView: View {
                 TriageSection()
                 NotificationsSection()
                 ComposeSection()
+                OutboxSection()
+                RulesSection()
+                DiagnosticsSection()
                 #if os(macOS)
                 UpdatesSection()
                 #endif

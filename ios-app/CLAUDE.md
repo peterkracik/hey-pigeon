@@ -64,6 +64,25 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   fetched ahead of a tap only on an unmetered path
   (`AppModel.prefetchBodies`). No send-later on the phone
   (`ComposePresentation.offersSendLater`): iOS decides when the app runs.
+- **The iPad's columns are a layout, not a second app.** At regular
+  width on an iPad `RootView` shows `PadSplitView` (`Features/Pad`): the
+  sheet's `SidebarList`, the phone's `ThreadList` and `ThreadView` side
+  by side; anywhere else, the tabs. What is open belongs to `PadState`
+  (per scene, with the auto-advance and the key map, `PadKeys`), never to
+  `AppModel`. The open thread's `e` `h` `n` `s` `⌘⌫` are ThreadView's own
+  (`threadKey`): do not bind them a second time. A new place must be
+  reachable from `SidebarList` too, since the columns have no tab bar.
+- **Mute and block are the app's own rules**, two synced prefs the core
+  applies at the end of every sync (`mute.threads`, `block.senders`;
+  `AppModel.mute`, `.block`). Gmail's API has no mute and its filters need
+  a scope the app does not ask for. The Outbox (Settings › Outbox,
+  `OutboxView`) is where a change Gmail keeps refusing waits for the
+  user; `failedChanges` puts a line over the list while there is one.
+- **A message's HTML is sanitized by the core** and its tracking pixels
+  replaced by a marker the view counts (`MailDocument.trackerCount`).
+  `MailDocument` holds the page and its scripts; `RenderTests` loads the
+  same page in a real web view, and `HeyPigeonUITests` launches the app on
+  the sample inbox. Every wait in a test has a timeout.
 - **SwiftUI `List` aborts on duplicate ids.** Rows go through
   `AppModel.unique`; keep it that way when adding sources of rows.
 - **Platform code goes in `Shared/Platform.swift`.** Haptics, keyboard,

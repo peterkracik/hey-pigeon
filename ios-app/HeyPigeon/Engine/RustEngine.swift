@@ -203,6 +203,17 @@ final class RustEngine: MailEngine {
     }
 
     func pendingChanges() -> Int { Int(engine.pendingMutations()) }
+    func failedChanges() -> Int { Int(engine.failedMutations()) }
+
+    func outbox() -> [QueuedChange] {
+        engine.listOutbox().map {
+            QueuedChange(id: $0.id, accountId: $0.accountId, kind: $0.kind, summary: $0.summary,
+                         attempts: Int($0.attempts), failed: $0.failed, lastError: $0.lastError)
+        }
+    }
+
+    func retryOutbox(id: Int64) async throws { try await engine.retryOutbox(id: id) }
+    func discardOutbox(id: Int64) throws { engine.discardOutbox(id: id) }
 
     func createLabel(accountId: String, name: String) async throws -> MailLabelItem {
         let l = try await engine.createLabel(accountId: accountId, name: name)
@@ -632,5 +643,14 @@ private extension MailAction {
 extension AnalysisProgress {
     init(_ p: AnalysisPass) {
         self.init(done: Int(p.done), total: Int(p.total), isRunning: p.running)
+    }
+}
+
+/// The core's HTML sanitizer (core/src/sanitize.rs), as the engine applies
+/// it to every body before it is stored. Here for the render tests, which
+/// load what it returns into a real web view.
+enum MailHTML {
+    static func sanitize(_ html: String) -> String {
+        sanitizeHtml(html: html)
     }
 }

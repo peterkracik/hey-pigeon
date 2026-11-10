@@ -753,8 +753,29 @@ impl Store for MemStore {
             mutation: mutation.clone(),
             attempts: 0,
             created_at: 0,
+            last_error: None,
         });
         Ok(id)
+    }
+
+    fn outbox_set_error(&self, id: i64, error: &str) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(item) = g.outbox.iter_mut().find(|i| i.id == id) {
+            item.last_error = Some(error.to_string());
+        }
+        Ok(())
+    }
+
+    fn outbox_reset(&self, id: i64) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        Ok(match g.outbox.iter_mut().find(|i| i.id == id) {
+            Some(item) => {
+                item.attempts = 0;
+                item.last_error = None;
+                true
+            }
+            None => false,
+        })
     }
 
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError> {

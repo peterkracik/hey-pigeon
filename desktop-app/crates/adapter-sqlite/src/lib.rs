@@ -430,6 +430,9 @@ const MIGRATIONS: &[&str] = &[
     // thread's next full fetch (one more refetch per thread opened in
     // that window, none for anyone else).
     "UPDATE messages SET body_fetched = 0 WHERE body_fetched = 1;",
+    // v27 — why a queued change has not gone out: the last drain's error,
+    // in words, for the outbox view. NULL until a drain fails on the row.
+    "ALTER TABLE outbox ADD COLUMN last_error TEXT;",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1015,16 +1018,27 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     })
 }
 
+/// The outbox columns, in `row_to_outbox_item`'s order.
+const OUTBOX_COLS: &str = "id, account_id, mutation, attempts, created_at, last_error";
+
 fn row_to_outbox_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxItem> {
-    let payload: String = r.get(2)?;
+    let conversion = |e: Box<dyn std::error::Error + Send + Sync>| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, e)
+    };
+    // Parsed straight from SQLite's own buffer: a queued send's JSON holds
+    // its attachments, and copying it into a String first was one more
+    // copy of every one of them.
+    let payload = r
+        .get_ref(2)?
+        .as_str()
+        .map_err(|e| conversion(Box::new(e)))?;
     Ok(OutboxItem {
         id: r.get(0)?,
         account_id: r.get(1)?,
-        mutation: serde_json::from_str(&payload).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
-        })?,
+        mutation: serde_json::from_str(payload).map_err(|e| conversion(Box::new(e)))?,
         attempts: r.get(3)?,
         created_at: r.get(4)?,
+        last_error: r.get(5)?,
     })
 }
 
@@ -2255,7 +2269,17 @@ impl Store for SqliteStore {
     }
 
     fn outbox_push(&self, account_id: &AccountId, mutation: &Mutation) -> Result<i64, StoreError> {
-        let payload = serde_json::to_string(mutation).map_err(err)?;
+        // Sized up front: a send's attachments make this megabytes, and a
+        // buffer that grows by doubling copies them several times over.
+        let attached: usize = match mutation {
+            Mutation::Send { attachments, .. } | Mutation::SaveDraft { attachments, .. } => {
+                attachments.iter().map(|a| a.data_b64.len() + 256).sum()
+            }
+            _ => 0,
+        };
+        let mut payload = Vec::with_capacity(attached + 1024);
+        serde_json::to_writer(&mut payload, mutation).map_err(err)?;
+        let payload = String::from_utf8(payload).map_err(err)?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -2272,28 +2296,110 @@ impl Store for SqliteStore {
 
     fn outbox_list(&self, limit: u32) -> Result<Vec<OutboxItem>, StoreError> {
         self.with(|c| {
-            let mut stmt = c.prepare_cached(
-                "SELECT id, account_id, mutation, attempts, created_at
-                 FROM outbox ORDER BY id LIMIT ?1",
-            )?;
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {OUTBOX_COLS} FROM outbox ORDER BY id LIMIT ?1"
+            ))?;
             let rows = stmt.query_map(params![limit], row_to_outbox_item)?;
             rows.collect()
         })
     }
 
-    fn outbox_list_due(
+    fn outbox_due(
         &self,
         after_id: i64,
         limit: u32,
         max_attempts: i64,
-    ) -> Result<Vec<OutboxItem>, StoreError> {
+    ) -> Result<Vec<(i64, AccountId)>, StoreError> {
         self.with(|c| {
             let mut stmt = c.prepare_cached(
-                "SELECT id, account_id, mutation, attempts, created_at
-                 FROM outbox WHERE id > ?1 AND attempts < ?3 ORDER BY id LIMIT ?2",
+                "SELECT id, account_id FROM outbox
+                  WHERE id > ?1 AND attempts < ?3 ORDER BY id LIMIT ?2",
             )?;
-            let rows =
-                stmt.query_map(params![after_id, limit, max_attempts], row_to_outbox_item)?;
+            let rows = stmt.query_map(params![after_id, limit, max_attempts], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+            rows.collect()
+        })
+    }
+
+    fn outbox_get(&self, id: i64) -> Result<Option<OutboxItem>, StoreError> {
+        self.with(|c| {
+            c.prepare_cached(&format!("SELECT {OUTBOX_COLS} FROM outbox WHERE id = ?1"))?
+                .query_row(params![id], row_to_outbox_item)
+                .optional()
+        })
+    }
+
+    fn outbox_set_error(&self, id: i64, error: &str) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE outbox SET last_error = ?2 WHERE id = ?1",
+                params![id, error],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn outbox_reset(&self, id: i64) -> Result<bool, StoreError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE outbox SET attempts = 0, last_error = NULL WHERE id = ?1",
+                params![id],
+            )
+            .map(|n| n > 0)
+        })
+    }
+
+    /// The fields a list needs, picked out of each row's JSON by SQLite:
+    /// the row itself (for a queued send, megabytes of attachments) never
+    /// reaches this side.
+    fn outbox_summaries(&self) -> Result<Vec<OutboxSummary>, StoreError> {
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT id, account_id, mutation ->> '$.kind', mutation ->> '$.thread_id',
+                        mutation -> '$.to', mutation ->> '$.subject', attempts, last_error
+                   FROM outbox ORDER BY id",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                let kind: Option<String> = r.get(2)?;
+                let to: Option<String> = r.get(4)?;
+                Ok(OutboxSummary {
+                    id: r.get(0)?,
+                    account_id: r.get(1)?,
+                    kind: Mutation::kind_name_of_tag(kind.as_deref().unwrap_or_default())
+                        .to_string(),
+                    thread_id: r.get(3)?,
+                    to: to
+                        .and_then(|json| serde_json::from_str(&json).ok())
+                        .unwrap_or_default(),
+                    subject: r.get(5)?,
+                    attempts: r.get(6)?,
+                    last_error: r.get(7)?,
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
+    /// `idx_threads_list` narrows this to the inbox; the sender list is
+    /// short.
+    fn inbox_threads_from(
+        &self,
+        account_id: &AccountId,
+        senders: &[String],
+    ) -> Result<Vec<Thread>, StoreError> {
+        if senders.is_empty() {
+            return Ok(Vec::new());
+        }
+        let senders = serde_json::to_string(senders).map_err(err)?;
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                  WHERE is_inbox = 1 AND is_archived = 0 AND account_id = ?1
+                    AND lower(last_from_addr) IN (SELECT value FROM json_each(?2))
+                  ORDER BY last_msg_at DESC"
+            ))?;
+            let rows = stmt.query_map(params![account_id, senders], row_to_thread)?;
             rows.collect()
         })
     }
@@ -5111,20 +5217,19 @@ mod tests {
         }
 
         // `first` reached the cap of 3: kept, not due.
-        let due: Vec<i64> = s
-            .outbox_list_due(0, 10, 3)
-            .unwrap()
-            .into_iter()
-            .map(|i| i.id)
-            .collect();
-        assert_eq!(due, vec![second, third]);
-        let next: Vec<i64> = s
-            .outbox_list_due(second, 10, 3)
-            .unwrap()
-            .into_iter()
-            .map(|i| i.id)
-            .collect();
-        assert_eq!(next, vec![third]);
+        assert_eq!(
+            s.outbox_due(0, 10, 3).unwrap(),
+            vec![(second, a1.clone()), (third, a1.clone())]
+        );
+        assert_eq!(
+            s.outbox_due(second, 10, 3).unwrap(),
+            vec![(third, a1.clone())]
+        );
+        assert_eq!(s.outbox_due(0, 1, 3).unwrap().len(), 1);
+        let row = s.outbox_get(third).unwrap().unwrap();
+        assert_eq!((row.id, row.attempts), (third, 0));
+        assert!(matches!(row.mutation, Mutation::Archive { ref thread_id } if thread_id == "t3"));
+        assert!(s.outbox_get(9_999).unwrap().is_none());
         assert_eq!(s.outbox_counts(3).unwrap(), (2, 1));
         assert_eq!(s.outbox_list(10).unwrap().len(), 3);
         assert!(s.outbox_contains(first).unwrap());
@@ -5301,5 +5406,214 @@ mod tests {
         s.upsert_message(&meta).unwrap();
         assert_eq!(by_id("m1").body_html.as_deref(), Some("<p>hi</p>"));
         assert!(by_id("m1").body_fetched && by_id("m1").is_read);
+    }
+
+    // ---- v27: the outbox as a list, with each row's last error
+
+    /// A queued row from before the column existed is still there, reads
+    /// without an error, and can take one.
+    #[test]
+    fn v27_upgrade_keeps_queued_rows() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v27-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v26.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 26).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            s.with(|c| {
+                c.execute(
+                    "INSERT INTO outbox (account_id, mutation, attempts, created_at)
+                     VALUES ('a1', '{\"kind\":\"archive\",\"thread_id\":\"t1\"}', 2, 1)",
+                    [],
+                )
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v27
+        let rows = s.outbox_list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].attempts, rows[0].last_error.clone()), (2, None));
+        s.outbox_set_error(rows[0].id, "provider: 404 Not Found")
+            .unwrap();
+        assert_eq!(
+            s.outbox_get(rows[0].id)
+                .unwrap()
+                .unwrap()
+                .last_error
+                .as_deref(),
+            Some("provider: 404 Not Found")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn outbox_summaries_say_what_each_row_is_without_reading_it_whole() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        let a1 = "a1".to_string();
+        let send = |to: &[&str], subject: &str| Mutation::Send {
+            to: to.iter().map(|s| s.to_string()).collect(),
+            cc: vec![],
+            bcc: vec![],
+            subject: subject.to_string(),
+            body_text: "b".to_string(),
+            body_html: None,
+            attachments: vec![OutAttachment {
+                filename: "a.bin".to_string(),
+                mime_type: "application/octet-stream".to_string(),
+                data_b64: "QUJD".repeat(1000),
+            }],
+            reply_to_thread: None,
+            from_addr: None,
+            in_reply_to: None,
+            references: None,
+        };
+        let rows = [
+            send(&["ana@x.com", "bo@x.com"], "Hello \"there\" & more"),
+            Mutation::SaveDraft {
+                key: "k1".to_string(),
+                to: vec![],
+                cc: vec![],
+                bcc: vec![],
+                subject: String::new(),
+                body_text: String::new(),
+                body_html: None,
+                attachments: vec![],
+                reply_to_thread: None,
+                from_addr: None,
+                in_reply_to: None,
+                references: None,
+            },
+            Mutation::DeleteDraft {
+                key: "k1".to_string(),
+            },
+            Mutation::Archive {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::Unarchive {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::MarkRead {
+                thread_id: "t1".to_string(),
+                read: true,
+            },
+            Mutation::Trash {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::Untrash {
+                thread_id: "t1".to_string(),
+            },
+            Mutation::Star {
+                thread_id: "t1".to_string(),
+                starred: true,
+            },
+            Mutation::ModifyLabel {
+                thread_id: "t1".to_string(),
+                label_id: "Label_1".to_string(),
+                add: true,
+            },
+            Mutation::MarkSpam {
+                thread_id: "t1".to_string(),
+                spam: true,
+            },
+        ];
+        let mut ids = Vec::new();
+        for m in &rows {
+            ids.push(s.outbox_push(&a1, m).unwrap());
+        }
+        s.outbox_bump_attempts(ids[3]).unwrap();
+        s.outbox_set_error(ids[3], "provider: 404 Not Found")
+            .unwrap();
+
+        let summaries = s.outbox_summaries().unwrap();
+        // Exactly what reading each row whole would say.
+        let whole: Vec<OutboxSummary> = s
+            .outbox_list(100)
+            .unwrap()
+            .iter()
+            .map(OutboxSummary::of)
+            .collect();
+        assert_eq!(summaries, whole);
+        let kinds: Vec<&str> = summaries.iter().map(|r| r.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "send",
+                "draft",
+                "delete_draft",
+                "archive",
+                "unarchive",
+                "read",
+                "trash",
+                "untrash",
+                "star",
+                "label",
+                "spam"
+            ]
+        );
+        assert_eq!(summaries[0].to, vec!["ana@x.com", "bo@x.com"]);
+        assert_eq!(
+            summaries[0].subject.as_deref(),
+            Some("Hello \"there\" & more")
+        );
+        assert_eq!(summaries[3].thread_id.as_deref(), Some("t1"));
+        assert_eq!(
+            (summaries[3].attempts, summaries[3].last_error.as_deref()),
+            (1, Some("provider: 404 Not Found"))
+        );
+
+        // A fresh start for one row; the others are as they were.
+        assert!(s.outbox_reset(ids[3]).unwrap());
+        assert!(!s.outbox_reset(9_999).unwrap());
+        let after = s.outbox_get(ids[3]).unwrap().unwrap();
+        assert_eq!((after.attempts, after.last_error), (0, None));
+        // The row with attachments comes back whole when it is its turn.
+        assert_eq!(s.outbox_get(ids[0]).unwrap().unwrap().mutation, rows[0]);
+    }
+
+    #[test]
+    fn inbox_threads_from_finds_the_block_rules_candidates() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        s.upsert_account(&sample_account("a2")).unwrap();
+        let seed = |id: &str, account: &str, from: &str, inbox: bool| {
+            s.upsert_thread(&Thread {
+                id: id.to_string(),
+                account_id: account.to_string(),
+                subject: id.to_string(),
+                last_msg_at: 1,
+                is_inbox: inbox,
+                is_archived: !inbox,
+                msg_count: 1,
+                last_from_addr: from.to_string(),
+                labels: if inbox {
+                    vec!["INBOX".to_string()]
+                } else {
+                    vec![]
+                },
+                ..Thread::default()
+            })
+            .unwrap();
+        };
+        seed("t1", "a1", "Spammer@Evil.example", true);
+        seed("t2", "a1", "friend@x.com", true);
+        seed("t3", "a1", "spammer@evil.example", false);
+        seed("t4", "a2", "spammer@evil.example", true);
+        s.set_needs_reply(&"t1".to_string(), true).unwrap();
+
+        let blocked = vec!["spammer@evil.example".to_string()];
+        let found: Vec<String> = s
+            .inbox_threads_from(&"a1".to_string(), &blocked)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(found, vec!["t1"]);
+        assert!(s
+            .inbox_threads_from(&"a1".to_string(), &[])
+            .unwrap()
+            .is_empty());
     }
 }

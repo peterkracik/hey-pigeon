@@ -40,6 +40,13 @@
 //!   out; what they wrapped stays.
 //! - **`<pre>` keeps a leading blank line** ([`keep_pre_line_breaks`]),
 //!   which the serializer would lose.
+//! - **Tracking pixels are taken out** ([`block_tracking_pixels`]): a
+//!   remote picture too small to see, or hidden, is there to tell the
+//!   sender the mail was opened. Each leaves [`TRACKER_MARKER`] in its
+//!   place, which the shells count ("3 trackers blocked").
+//! - **A body past [`MAX_INPUT_BYTES`] comes out as its text**
+//!   ([`oversized_as_text`]): parsing costs time and memory in proportion,
+//!   and mail of any size can be sent to anyone.
 //!
 //! `html(html(x)) == html(x)`: a body stored sanitized can go through
 //! again (a draft opened, saved and opened once more) without changing.
@@ -218,6 +225,9 @@ const MAX_NESTING: usize = 256;
 /// Sanitize an HTML mail body (or draft) for display. See the module
 /// documentation for what stays and what goes.
 pub fn html(input: &str) -> String {
+    if input.len() > MAX_INPUT_BYTES {
+        return oversized_as_text(input);
+    }
     let input = &*cap_nesting(input, MAX_NESTING);
     let mut out = String::with_capacity(input.len());
     for css in style_blocks(input) {
@@ -229,8 +239,243 @@ pub fn html(input: &str) -> String {
         }
     }
     let markup = builder().clean(&body_as_div(input)).to_string();
-    keep_pre_line_breaks(&markup, &mut out);
+    keep_pre_line_breaks(&block_tracking_pixels(&markup), &mut out);
     out
+}
+
+/// What stands where a tracking pixel was. Hidden, so the mail looks the
+/// same; a class of its own, so the shells can count them.
+pub const TRACKER_MARKER: &str = "<span class=\"hp-tracker\" style=\"display:none\"></span>";
+
+/// The longest body that is parsed. Real HTML mail is tens to hundreds of
+/// kilobytes; this leaves room for the odd one that carries its pictures
+/// inline.
+pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
+
+/// A picture this small in both directions (CSS pixels) cannot be seen.
+const PIXEL_MAX_SIZE: f64 = 2.0;
+
+/// Sanitized `markup` with its tracking pixels replaced by
+/// `TRACKER_MARKER`. A tracking pixel is an `<img>` loaded from the web
+/// (`http` / `https`: a `cid:` or `data:` picture is part of the mail and
+/// tells nobody anything) that the reader is not meant to see:
+/// - at most 2 × 2, by its `width` / `height` attributes or its inline
+///   style (both directions known — a 1 × 600 rule or a spacer that is
+///   only narrow is layout);
+/// - or hidden by its own inline style (`display:none`,
+///   `visibility:hidden`) with no `class` or `id` a style sheet could
+///   show it by: newsletters hide a picture that way and bring it back on
+///   a narrow screen, and that picture is content.
+///
+/// Runs on ammonia's output, where a tag is a tag and every attribute is
+/// `name="value"`, so the reading is exact. The marker is not an `<img>`:
+/// a second pass leaves it alone and counts nothing twice.
+fn block_tracking_pixels(markup: &str) -> Cow<'_, str> {
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(pos) = markup[from..].find("<img") {
+        let tag = from + pos;
+        let Some(end) = markup[tag..].find('>').map(|i| tag + i + 1) else {
+            break;
+        };
+        from = end;
+        if !markup[tag + 4..].starts_with([' ', '>']) {
+            continue;
+        }
+        if is_tracking_pixel(&markup[tag + 4..end - 1]) {
+            let out = out.get_or_insert_with(|| String::with_capacity(markup.len()));
+            out.push_str(&markup[copied..tag]);
+            out.push_str(TRACKER_MARKER);
+            copied = end;
+        }
+    }
+    match out {
+        Some(mut out) => {
+            out.push_str(&markup[copied..]);
+            Cow::Owned(out)
+        }
+        None => Cow::Borrowed(markup),
+    }
+}
+
+/// `attributes` is the inside of a sanitized `<img …>` tag.
+fn is_tracking_pixel(attributes: &str) -> bool {
+    let mut src = None;
+    let mut style = "";
+    let (mut width, mut height) = (None, None);
+    let mut addressable = false;
+    let mut rest = attributes;
+    // ` name="value"` pairs, as the serializer writes them.
+    while let Some((name, after)) = rest.trim_start().split_once("=\"") {
+        let Some((value, after)) = after.split_once('"') else {
+            break;
+        };
+        match name.trim() {
+            "src" => src = Some(value),
+            "style" => style = value,
+            "width" => width = css_pixels(value),
+            "height" => height = css_pixels(value),
+            "class" | "id" => addressable |= !value.trim().is_empty(),
+            _ => {}
+        }
+        rest = after;
+    }
+    if !matches!(src.and_then(url_scheme).as_deref(), Some("http" | "https")) {
+        return false;
+    }
+    let mut hidden = false;
+    for declaration in style.split(';') {
+        let Some((name, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let value = value.to_ascii_lowercase();
+        let value = value.replace("!important", "");
+        let value = value.trim();
+        match name.trim().to_ascii_lowercase().as_str() {
+            "display" => hidden |= value == "none",
+            "visibility" => hidden |= value == "hidden",
+            // The style wins over the attribute, as it does on screen.
+            "width" | "max-width" => width = css_pixels(value).or(width),
+            "height" | "max-height" => height = css_pixels(value).or(height),
+            _ => {}
+        }
+    }
+    let tiny = |size: Option<f64>| size.is_some_and(|px| px <= PIXEL_MAX_SIZE);
+    (tiny(width) && tiny(height)) || (hidden && !addressable)
+}
+
+/// A length in CSS pixels: `1`, `1px`, `0`. None for anything relative
+/// (`1%`, `1em`) or not a number.
+fn css_pixels(value: &str) -> Option<f64> {
+    let value = value.trim().to_ascii_lowercase();
+    let number = value.strip_suffix("px").unwrap_or(&value).trim();
+    let px: f64 = number.parse().ok()?;
+    (px.is_finite() && px >= 0.0).then_some(px)
+}
+
+/// Elements that start a new line when a body is read as text.
+const LINE_BREAKING_ELEMENTS: &[&str] = &[
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "br",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "footer",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "li",
+    "main",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "table",
+    "tr",
+    "ul",
+];
+
+/// A body too large to parse, as its text: the tags left out (script and
+/// style with their content), block elements turned into line breaks,
+/// white space collapsed the way a browser would. No DOM is built — one
+/// pass over the bytes — and nothing of the input's markup survives: the
+/// only tags in the result are the `<div>` around it and `<br>`.
+fn oversized_as_text(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut text = String::with_capacity(input.len() / 4);
+    // Whether a space / a line break is owed before the next character.
+    let (mut space, mut line_break) = (false, false);
+    let mut at = 0;
+    while at < input.len() {
+        let rest = &input[at..];
+        if rest.starts_with('<') {
+            let name_at = at + 1 + usize::from(rest[1..].starts_with('/'));
+            if rest.starts_with("<!--") {
+                at = rest.find("-->").map_or(input.len(), |i| at + i + 3);
+                continue;
+            }
+            if bytes.get(name_at).is_some_and(u8::is_ascii_alphabetic) {
+                let name_len = bytes[name_at..]
+                    .iter()
+                    .position(|b| b.is_ascii_whitespace() || matches!(b, b'/' | b'>'))
+                    .unwrap_or(bytes.len() - name_at);
+                let name = &input[name_at..name_at + name_len];
+                let after = tag_end(bytes, name_at + name_len).unwrap_or(input.len());
+                at = after;
+                let start_tag = !rest[1..].starts_with('/');
+                if names(LINE_BREAKING_ELEMENTS, name) {
+                    line_break = true;
+                } else if start_tag && names(RAW_TEXT_ELEMENTS, name) {
+                    // Its content is not for reading.
+                    let end = format!("</{}", name.to_ascii_lowercase());
+                    at = find_ignore_ascii_case(&input[after..], &end)
+                        .map_or(input.len(), |i| after + i);
+                }
+                continue;
+            }
+            if rest[1..].starts_with(['!', '?']) {
+                at = rest.find('>').map_or(input.len(), |i| at + i + 1);
+                continue;
+            }
+        }
+        let c = rest.chars().next().unwrap_or(' ');
+        at += c.len_utf8();
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if line_break && !text.is_empty() {
+            text.push_str("<br>");
+        } else if space && !text.is_empty() {
+            text.push(' ');
+        }
+        (space, line_break) = (false, false);
+        match c {
+            '<' => text.push_str("&lt;"),
+            '>' => text.push_str("&gt;"),
+            // An entity stays one; a bare `&` becomes one.
+            '&' if !starts_entity(&input[at..]) => text.push_str("&amp;"),
+            c => text.push(c),
+        }
+    }
+    let wrapped = format!("<div>{text}</div>");
+    // Small enough now (it usually is: markup is most of such a body), it
+    // goes through the sanitizer proper, which also makes it read the same
+    // on any later pass.
+    if wrapped.len() <= MAX_INPUT_BYTES {
+        html(&wrapped)
+    } else {
+        wrapped
+    }
+}
+
+/// Whether what follows an `&` makes it a character reference
+/// (`amp;`, `#39;`, `#x27;`).
+fn starts_entity(after: &str) -> bool {
+    let Some(end) = after.bytes().take(32).position(|b| b == b';') else {
+        return false;
+    };
+    let name = &after[..end];
+    match name.strip_prefix('#') {
+        Some(number) => {
+            let digits = number.strip_prefix(['x', 'X']);
+            match digits {
+                Some(hex) => !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()),
+                None => !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()),
+            }
+        }
+        None => !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()),
+    }
 }
 
 /// Append sanitized `markup` to `out`, with the line break the HTML
@@ -1661,6 +1906,134 @@ mod tests {
             html("<pre class=\"x\">\n\n\na</pre><p>\nb</p>"),
             "<pre class=\"x\">\n\n\na</pre><p>\nb</p>"
         );
+    }
+
+    #[test]
+    fn tracking_pixels_become_markers_and_pictures_stay() {
+        let pixels = [
+            r#"<img src="https://track.example/open?u=42&c=7" width="1" height="1" alt="">"#,
+            r#"<img src="http://track.example/o.gif" width="0" height="0">"#,
+            r#"<img src="https://track.example/o.gif" height="2" width="2px" border="0">"#,
+            r#"<img src="https://track.example/o" style="width:1px;height:1px">"#,
+            r#"<img src="https://track.example/o" style="WIDTH: 1px !important; HEIGHT: 0">"#,
+            r#"<img src="https://track.example/o" width="1" style="height:1px">"#,
+            r#"<img src="https://track.example/o" style="max-width:1px;max-height:1px">"#,
+            r#"<img src="https://track.example/o" width="600" height="400" style="width:1px;height:1px">"#,
+            r#"<img src="https://track.example/o" style="display:none">"#,
+            r#"<img src="https://track.example/o" style="display: none !important" width="50">"#,
+            r#"<img src="https://track.example/o" style="visibility:hidden">"#,
+            r#"<IMG SRC="HTTPS://TRACK.EXAMPLE/O" WIDTH=1 HEIGHT=1>"#,
+        ];
+        for pixel in pixels {
+            let out = html(&format!("<p>before</p>{pixel}<p>after</p>"));
+            assert_eq!(
+                out,
+                format!("<p>before</p>{TRACKER_MARKER}<p>after</p>"),
+                "{pixel}"
+            );
+        }
+
+        let pictures = [
+            // Seen: any size that is not tiny both ways.
+            r#"<img src="https://cdn.example/hero.jpg" width="600" height="300">"#,
+            r#"<img src="https://cdn.example/rule.gif" width="1" height="600">"#,
+            r#"<img src="https://cdn.example/spacer.gif" width="20" height="1">"#,
+            r#"<img src="https://cdn.example/a.png" width="1">"#,
+            r#"<img src="https://cdn.example/a.png" style="width:100%;height:auto">"#,
+            r#"<img src="https://cdn.example/a.png" width="1%" height="1%">"#,
+            r#"<img src="https://cdn.example/a.png">"#,
+            // Hidden until a style sheet shows it on a narrow screen.
+            r#"<img src="https://cdn.example/mobile.png" class="mobile-only" style="display:none">"#,
+            r#"<img src="https://cdn.example/mobile.png" id="m" style="display:none">"#,
+            // Part of the mail: nothing is loaded from anywhere.
+            r#"<img src="cid:pixel@x" width="1" height="1">"#,
+            r#"<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="1" height="1">"#,
+            r#"<img src="cid:logo@x" style="display:none">"#,
+            // Not addressed to the web at all.
+            r#"<img src="spacer.gif" width="1" height="1">"#,
+            r#"<img width="1" height="1" alt="">"#,
+        ];
+        for picture in pictures {
+            let out = html(picture);
+            assert_eq!(out, picture, "left as it is");
+            assert!(!out.contains("hp-tracker"));
+        }
+    }
+
+    #[test]
+    fn trackers_are_counted_once_however_often_the_body_is_sanitized() {
+        let input = newsletter();
+        let once = html(&input);
+        assert_eq!(once.matches(TRACKER_MARKER).count(), 1);
+        assert!(!once.contains("track.example"));
+        // The pictures that show are all still there.
+        assert_eq!(once.matches("<img ").count(), 41);
+        let twice = html(&once);
+        assert_eq!(twice, once);
+        assert_eq!(twice.matches("hp-tracker").count(), 1);
+        // The marker is ordinary allowed markup: it survives on its own.
+        assert_eq!(html(TRACKER_MARKER), TRACKER_MARKER);
+    }
+
+    #[test]
+    fn a_body_too_large_to_parse_comes_out_as_its_text() {
+        let unit = concat!(
+            "<tr><td onclick=\"steal()\"><p>Row &amp; column &copy; 2 < 3 & more</p>",
+            "<a href=\"javascript:alert(1)\">link text</a><br>next line",
+            "<script>alert('never shown')</script><style>p{color:red}</style>",
+            "<img src=\"https://track.example/o\" width=\"1\" height=\"1\"></td></tr>\n",
+        );
+        let mut input = String::from("<html><head><title>Title</title></head><body><table>");
+        while input.len() <= MAX_INPUT_BYTES {
+            input.push_str(unit);
+        }
+        input.push_str("</table><p>The end.</p></body></html>");
+
+        let out = html(&input);
+        // Only the wrapper and line breaks are markup.
+        assert!(
+            out.starts_with("<div>Row &amp; column © 2 &lt; 3 &amp; more<br>"),
+            "{}",
+            &out[..120]
+        );
+        assert!(
+            out.ends_with("<br>The end.</div>"),
+            "{}",
+            &out[out.len() - 80..]
+        );
+        let tags: Vec<&str> = out
+            .split('<')
+            .skip(1)
+            .map(|t| &t[..t.find('>').unwrap_or(0)])
+            .collect();
+        assert!(tags.iter().all(|t| matches!(*t, "div" | "/div" | "br")));
+        for gone in [
+            "never shown",
+            "color:red",
+            "Title",
+            "javascript",
+            "onclick",
+            "track.example",
+        ] {
+            assert!(!out.contains(gone), "{gone}");
+        }
+        assert!(out.contains("link text<br>next line"));
+        // Far smaller than what came in, and stable.
+        assert!(out.len() < input.len() / 2);
+        assert_eq!(html(&out), out);
+
+        // Text alone can be too large as well: it is escaped, not parsed,
+        // and a second pass leaves it as it is.
+        let text = "words & <b>bold</b> ".repeat(MAX_INPUT_BYTES / 16);
+        let out = oversized_as_text(&text);
+        assert!(out.len() > MAX_INPUT_BYTES);
+        assert!(out.starts_with("<div>words &amp; bold words &amp; bold"));
+        assert!(!out[5..out.len() - 6].contains('<'));
+        assert_eq!(oversized_as_text(&out), out);
+        assert_eq!(html(&out), out);
+
+        // Just under the bound: parsed as usual.
+        assert_eq!(html("<p onclick=\"x()\">small</p>"), "<p>small</p>");
     }
 
     #[test]

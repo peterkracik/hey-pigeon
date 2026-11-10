@@ -685,6 +685,31 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// Inbox threads of `account_id` whose list sender (`last_from_addr`)
+    /// is one of `senders` (lowercase addresses), reminders and "needs
+    /// reply" ones included: the candidates for the block rule
+    /// (`rules::apply`). The default walks the account's inbox page by
+    /// page; the SQLite adapter asks for exactly these.
+    fn inbox_threads_from(
+        &self,
+        account_id: &AccountId,
+        senders: &[String],
+    ) -> Result<Vec<Thread>, StoreError> {
+        let mut found = Vec::new();
+        let mut before = None;
+        loop {
+            let page = self.list_threads(Some(account_id), &ThreadFilter::All, before, 500)?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            before = Some(last.last_msg_at);
+            found.extend(page.into_iter().filter(|t| {
+                t.is_inbox && !t.is_archived && senders.contains(&t.last_from_addr.to_lowercase())
+            }));
+        }
+        Ok(found)
+    }
+
     /// Thread counts per bundle id, for the Bundles list. A bundle with no
     /// threads may be missing from the map. The default reads every
     /// bundle's threads; the SQLite adapter counts them in one query.
@@ -824,22 +849,32 @@ pub trait Store {
     fn outbox_delete(&self, id: i64) -> Result<(), StoreError>;
     fn outbox_bump_attempts(&self, id: i64) -> Result<(), StoreError>;
 
-    /// The next page of rows the drain should try: ids above `after_id`,
-    /// oldest first, leaving out rows the provider refused `max_attempts`
-    /// times (parked: kept, never retried on their own). Paging by id is
-    /// what stops rows that cannot go out now from blocking the rest.
-    fn outbox_list_due(
+    /// The next page of rows the drain should try — `(id, account)` each:
+    /// ids above `after_id`, oldest first, leaving out rows the provider
+    /// refused `max_attempts` times (parked: kept, never retried on their
+    /// own). Paging by id is what stops rows that cannot go out now from
+    /// blocking the rest. Only ids: a row is read whole (`outbox_get`)
+    /// when its turn comes, one at a time — a page of queued sends used
+    /// to be in memory at once, attachments and all.
+    fn outbox_due(
         &self,
         after_id: i64,
         limit: u32,
         max_attempts: i64,
-    ) -> Result<Vec<OutboxItem>, StoreError> {
+    ) -> Result<Vec<(i64, AccountId)>, StoreError> {
         Ok(self
             .outbox_list(u32::MAX)?
             .into_iter()
             .filter(|i| i.id > after_id && i.attempts < max_attempts)
             .take(limit as usize)
+            .map(|i| (i.id, i.account_id))
             .collect())
+    }
+
+    /// One queued row, whole. None when it is no longer queued (sent, or
+    /// discarded since the page was read).
+    fn outbox_get(&self, id: i64) -> Result<Option<OutboxItem>, StoreError> {
+        Ok(self.outbox_list(u32::MAX)?.into_iter().find(|i| i.id == id))
     }
 
     /// `(waiting, parked)`: rows the drain will still try, and rows that
@@ -848,6 +883,33 @@ pub trait Store {
         let items = self.outbox_list(u32::MAX)?;
         let parked = items.iter().filter(|i| i.attempts >= max_attempts).count();
         Ok(((items.len() - parked) as u32, parked as u32))
+    }
+
+    /// Record why the last drain could not send this row (shown in the
+    /// outbox view). Default: not kept.
+    fn outbox_set_error(&self, id: i64, error: &str) -> Result<(), StoreError> {
+        let _ = (id, error);
+        Ok(())
+    }
+
+    /// Give a row a fresh start: attempts back to zero (a parked row is
+    /// due again) and its last error forgotten. Ok(false) = no such row.
+    fn outbox_reset(&self, id: i64) -> Result<bool, StoreError> {
+        let _ = id;
+        Err(StoreError(
+            "outbox retry not supported by this store".into(),
+        ))
+    }
+
+    /// Every queued row, oldest first, as a list shows it. The default
+    /// reads the rows whole; the SQLite adapter reads only the fields
+    /// the summary needs.
+    fn outbox_summaries(&self) -> Result<Vec<OutboxSummary>, StoreError> {
+        Ok(self
+            .outbox_list(u32::MAX)?
+            .iter()
+            .map(OutboxSummary::of)
+            .collect())
     }
 
     /// Is this row still queued (not yet accepted by the provider)?

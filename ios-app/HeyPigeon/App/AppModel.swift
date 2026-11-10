@@ -156,6 +156,9 @@ final class AppModel {
     private(set) var counts: [String: Int] = [:]
     /// Changes still waiting to reach Gmail, as of the last reload.
     private(set) var queuedChanges = 0
+    /// Changes Gmail refused until the engine stopped trying: they sit in
+    /// the outbox until the user retries or discards them (OutboxView).
+    private(set) var failedChanges = 0
     private(set) var aiConfigured = false
     /// Accounts, bundles and triage label names by id. Every row looks
     /// these up on each render, and each changes only when its source does
@@ -436,6 +439,11 @@ final class AppModel {
         static let snippets = "compose.snippets"
         /// How long a send waits for Undo, in seconds, as a string.
         static let sendUndo = "send.undo_seconds"
+        /// Muted thread ids and blocked sender addresses. The core reads
+        /// the same two prefs at the end of every sync round and keeps
+        /// their mail out of the inbox (ffi: mail rules).
+        static let mutedThreads = "mute.threads"
+        static let blockedSenders = "block.senders"
     }
 
     /// The user's order of the triage labels, by id. The core lists them
@@ -697,6 +705,8 @@ final class AppModel {
         if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
         if let v = prefs[PrefName.snippets] as? String { snippets = SnippetStore.decode(v) }
         if let v = (prefs[PrefName.sendUndo] as? String).flatMap(Int.init), Self.sendUndoChoices.contains(v) { sendUndoSeconds = v }
+        if let v = prefs[PrefName.mutedThreads] as? [String] { mutedThreads = v }
+        if let v = prefs[PrefName.blockedSenders] as? [String] { blockedSenders = v }
         adoptingPrefs = false
     }
 
@@ -735,6 +745,9 @@ final class AppModel {
         // What was scheduled to send before the last quit; the first tick
         // sends whatever came due meanwhile.
         if persistsScheduledSends { scheduledSends = ScheduledSendStore.load() }
+        // Crash and hang reports the system hands over, kept on the device
+        // (Settings › Diagnostics). Not in the sample inbox or the tests.
+        if !(engine is MockEngine) { DiagnosticsCollector.shared.start() }
         clock = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -797,7 +810,9 @@ final class AppModel {
     /// actions, whose result should be on screen when the call returns.
     /// The engine's change notices go through `reloadSoon` instead.
     func reload() {
-        apply(Self.readList(MainActorStoreReader(engine: engine), listRequest))
+        Trace.interval("reload") {
+            apply(Self.readList(MainActorStoreReader(engine: engine), listRequest))
+        }
     }
 
     /// A tab, folder or account switch: the new list's rows now, on the
@@ -853,7 +868,7 @@ final class AppModel {
             reloadRequested = true
             return
         }
-        apply(snapshot)
+        Trace.interval("reload.apply") { apply(snapshot) }
     }
 
     /// What a reload asks the store for now. The pages on screen, whole:
@@ -926,6 +941,8 @@ final class AppModel {
         if !hasLoadedOnce { hasLoadedOnce = true }
         let queued = engine.pendingChanges()
         if queued != queuedChanges { queuedChanges = queued }
+        let failed = engine.failedChanges()
+        if failed != failedChanges { failedChanges = failed }
         refreshOpenThread()
         // Only while the results are on screen: on the phone the query
         // stays in the Search tab, and every reload used to search again
@@ -1022,7 +1039,9 @@ final class AppModel {
         searchTask = Task { [weak self] in
             if pause > .zero { try? await Task.sleep(for: pause) }
             guard !Task.isCancelled, let engine = self?.engine else { return }
+            let searching = Trace.begin("search")
             let rows = await engine.searchInBackground(query, limit: Self.searchLimit)
+            Trace.end("search", searching)
             guard !Task.isCancelled, let self else { return }
             landSearch(Self.unique(rows))
             isSearchPending = false
@@ -1253,6 +1272,8 @@ final class AppModel {
         // triage at its end picks the right one.
         engine.refreshAIProviders()
         do {
+            let syncing = Trace.begin("sync")
+            defer { Trace.end("sync", syncing) }
             let changed = try await engine.syncAll()
             lastSyncAt = Date()
             reloadAccounts()
@@ -1733,6 +1754,94 @@ final class AppModel {
         markDone(row)
     }
 
+    // MARK: Mute and block (local rules, synced with the prefs)
+
+    /// The most of each the prefs hold; the oldest muted thread goes first.
+    static let ruleLimit = 500
+
+    /// Threads whose new mail skips the inbox, newest last. Gmail's API
+    /// has no mute, so this is the app's own: the core marks a muted
+    /// thread done again whenever a sync brings it new mail, on every
+    /// device (the list syncs with the other prefs).
+    private(set) var mutedThreads: [String] = [] {
+        didSet { if mutedThreads != oldValue { savePref(PrefName.mutedThreads, mutedThreads) } }
+    }
+
+    /// Addresses whose mail goes to Spam on arrival, lowercase.
+    private(set) var blockedSenders: [String] = [] {
+        didSet { if blockedSenders != oldValue { savePref(PrefName.blockedSenders, blockedSenders) } }
+    }
+
+    func isMuted(_ row: ThreadRow) -> Bool { mutedThreads.contains(row.id) }
+    func isBlocked(_ address: String) -> Bool { blockedSenders.contains(address.lowercased()) }
+
+    /// Mute: the thread is marked done now and stays out of the inbox as
+    /// replies come in. Undo unmutes it and brings it back.
+    func mute(_ row: ThreadRow) {
+        guard !isMuted(row) else { return }
+        mutedThreads = Array((mutedThreads + [row.id]).suffix(Self.ruleLimit))
+        if !row.isDone { perform(.archive(threadId: row.id), on: row) }
+        show("Muted · new replies will skip the inbox") { [weak self] in
+            self?.unmute(threadId: row.id)
+            self?.perform(.unarchive(threadId: row.id), on: row)
+            self?.restoreFlags(row)
+        }
+    }
+
+    func unmute(threadId: String) {
+        mutedThreads.removeAll { $0 == threadId }
+    }
+
+    /// Block: the sender's mail goes to Spam from now on, this thread
+    /// with it. Undo unblocks and brings the thread back.
+    func block(sender address: String, row: ThreadRow?) {
+        let address = address.lowercased()
+        guard !address.isEmpty, !isBlocked(address) else { return }
+        // Never one's own address: a reply would block the account itself.
+        guard !accounts.contains(where: { EmailAddress.same($0.email, address) }) else {
+            show("That is your own address")
+            return
+        }
+        blockedSenders = Array((blockedSenders + [address]).suffix(Self.ruleLimit))
+        if let row { perform(.markSpam(threadId: row.id, spam: true), on: row) }
+        show("Blocked \(address) · their mail goes to Spam") { [weak self] in
+            self?.unblock(address)
+            if let row {
+                self?.perform(.markSpam(threadId: row.id, spam: false), on: row)
+                self?.reloadSoon()
+            }
+        }
+    }
+
+    func unblock(_ address: String) {
+        blockedSenders.removeAll { $0 == address.lowercased() }
+    }
+
+    // MARK: Outbox
+
+    /// What is waiting to reach Gmail, and what Gmail refused.
+    func outbox() -> [QueuedChange] { engine.outbox() }
+
+    /// Try a stuck change again now.
+    func retryQueued(_ change: QueuedChange) async {
+        do {
+            try await engine.retryOutbox(id: change.id)
+            show("Sent to Gmail")
+        } catch {
+            show("Still not accepted: \(error.localizedDescription)")
+        }
+        reloadSoon()
+    }
+
+    /// Drop a change that will not go through. What it did on this device
+    /// stays until the next sync brings Gmail's state back.
+    func discardQueued(_ change: QueuedChange) {
+        do {
+            try engine.discardOutbox(id: change.id)
+            reload()
+        } catch { show(error.localizedDescription) }
+    }
+
     /// Report spam: the thread goes to Gmail's Spam (and trains its
     /// filter); Undo brings it back.
     func markSpam(_ row: ThreadRow) {
@@ -2106,7 +2215,10 @@ final class AppModel {
     func show(_ text: String, duration: Duration = .seconds(5), holds: Bool = false, undo: (() -> Void)? = nil) -> UUID {
         let next = Toast(text: text, undo: undo, duration: duration, holds: holds)
         if !holds, toast?.holds == true { sideToast = next } else { toast = next }
-        if let undo { lastUndo = (undo, Date()) }
+        if let undo {
+            undoStack.append(UndoEntry(id: next.id, run: undo, at: Date()))
+            if undoStack.count > Self.undoDepth { undoStack.removeFirst(undoStack.count - Self.undoDepth) }
+        }
         return next.id
     }
 
@@ -2119,27 +2231,54 @@ final class AppModel {
         if sideToast?.id == id { sideToast = nil }
     }
 
-    /// The last action's Undo, kept after its toast has gone: the Mac's
-    /// `z` and Edit › Undo run it for a while longer than the five seconds
-    /// the toast shows.
-    @ObservationIgnored private var lastUndo: (run: () -> Void, at: Date)?
+    /// The actions that offered an Undo, oldest first, kept after their
+    /// toasts have gone: `z` (and Edit › Undo on the Mac) takes them back
+    /// one at a time, the newest first, for a while longer than a toast
+    /// shows. A toast's own Undo button takes its entry off the stack, so
+    /// nothing is undone twice.
+    private struct UndoEntry {
+        /// The id of the toast that offered it.
+        let id: UUID
+        let run: () -> Void
+        let at: Date
+    }
+    @ObservationIgnored private var undoStack: [UndoEntry] = []
     static let undoLifetime: TimeInterval = 120
+    static let undoDepth = 20
+
+    /// Forget the actions too old to be what an undo means.
+    private func pruneUndo() {
+        let now = Date()
+        undoStack.removeAll { now.timeIntervalSince($0.at) >= Self.undoLifetime }
+    }
 
     /// Whether `undoLast` has something to take back.
     var canUndoLast: Bool {
-        guard let last = lastUndo else { return false }
-        return Date().timeIntervalSince(last.at) < Self.undoLifetime
+        pruneUndo()
+        return !undoStack.isEmpty
     }
 
-    /// Take back the last action that offered an Undo. False when there
-    /// is none (or it is too old to be what the user means).
+    /// Take back the newest action that offered an Undo; again for the
+    /// one before it. False when there is none (or it is too old).
     @discardableResult
     func undoLast() -> Bool {
-        guard canUndoLast, let last = lastUndo else { return false }
-        lastUndo = nil
-        if toast?.undo != nil { toast = nil }
+        pruneUndo()
+        guard let last = undoStack.popLast() else { return false }
+        dismissToast(last.id)
         last.run()
         return true
+    }
+
+    /// A toast's Undo button: that action is taken back and leaves the
+    /// stack, wherever in it it was.
+    func undo(toast id: UUID) {
+        let offered = toasts.first { $0.id == id }?.undo
+        dismissToast(id)
+        if let index = undoStack.lastIndex(where: { $0.id == id }) {
+            undoStack.remove(at: index).run()
+        } else {
+            offered?()
+        }
     }
 
     // MARK: Bundles (docs/bundles.md)

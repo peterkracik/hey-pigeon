@@ -164,6 +164,8 @@ final class RustEngine: MailEngine {
         }
         draft.replyToThreadId = d.replyToThread
         draft.fromAccountId = d.accountId
+        // The alias it was written from, when not the account's own address.
+        draft.fromAddress = d.fromAddr
         draft.draftKey = d.messageId
         draft.draftSaved = true
         return draft

@@ -614,6 +614,9 @@ pub struct DraftContent {
     pub body_text: Option<String>,
     pub body_html: Option<String>,
     pub attachments: Vec<OutAttachment>,
+    /// The bare address in the draft's `From` header, when it has one:
+    /// the alias it was written from, or the account's own address.
+    pub from_addr: Option<String>,
 }
 
 // Log hygiene: addresses, subject and body stay out of Debug output.

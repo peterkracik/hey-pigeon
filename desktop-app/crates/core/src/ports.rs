@@ -793,6 +793,39 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// The tracking links found in a thread's bodies when they were last
+    /// read for it (`bundles::refresh_tracking_links`), with the signature
+    /// of the state they were read in. Default: never kept.
+    fn thread_links(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<(String, Vec<String>)>, StoreError> {
+        let _ = thread_id;
+        Ok(None)
+    }
+
+    /// Keep a thread's tracking links, with the signature of the state
+    /// they were read in. Default: not kept.
+    fn set_thread_links(
+        &self,
+        thread_id: &ThreadId,
+        signature: &str,
+        links: &[String],
+    ) -> Result<(), StoreError> {
+        let _ = (thread_id, signature, links);
+        Ok(())
+    }
+
+    /// How many of a thread's stored messages have a body. The default
+    /// reads them; the SQLite adapter counts without reading any.
+    fn thread_body_count(&self, thread_id: &ThreadId) -> Result<i64, StoreError> {
+        Ok(self
+            .list_messages(thread_id)?
+            .iter()
+            .filter(|m| m.body_html.is_some() || m.body_text.is_some())
+            .count() as i64)
+    }
+
     /// Every thread (by id) carrying any of `anchors`, with the anchors it
     /// carries from that list.
     fn threads_with_anchors(

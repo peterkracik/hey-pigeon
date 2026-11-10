@@ -405,6 +405,10 @@ pub struct DraftContent {
     pub attachments: Vec<OutAttachment>,
     /// The thread it replies to; None for a stand-alone draft.
     pub reply_to_thread: Option<String>,
+    /// The address the draft was written from, when that is not the
+    /// account's own: one of its send-as aliases (`list_send_as`), to put
+    /// back in the composer's From. None for the account's own address.
+    pub from_addr: Option<String>,
 }
 
 /// A local, optimistic change queued for Gmail (outbox pattern) — the same

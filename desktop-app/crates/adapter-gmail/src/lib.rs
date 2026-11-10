@@ -732,15 +732,13 @@ impl GmailProvider {
     async fn post_upload_rfc822(
         &self,
         account_id: &AccountId,
-        metadata: &serde_json::Value,
-        rfc822: &str,
+        body: bytes::Bytes,
     ) -> Result<(), MailError> {
         self.upload_rfc822(
             account_id,
             reqwest::Method::POST,
             &format!("{UPLOAD_API}/messages/send?uploadType=multipart"),
-            metadata,
-            rfc822,
+            body,
         )
         .await
         .map(|_| ())
@@ -753,17 +751,11 @@ impl GmailProvider {
         account_id: &AccountId,
         method: reqwest::Method,
         url: &str,
-        metadata: &serde_json::Value,
-        rfc822: &str,
+        body: bytes::Bytes,
     ) -> Result<serde_json::Value, MailError> {
-        // '-' is not in the base64 alphabet and the inner MIME uses distinct
-        // boundary strings, so this outer boundary cannot be forged.
-        const B: &str = "hp_rel_7MA4YWxkTrZu0gW";
+        const B: &str = RELATED_BOUNDARY;
         self.wait_cooldown(account_id).await;
         let token = self.access_token(account_id).await?;
-        let body = format!(
-            "--{B}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n--{B}\r\nContent-Type: message/rfc822\r\n\r\n{rfc822}\r\n--{B}--\r\n"
-        );
         let resp = self
             .http
             .request(method, url)
@@ -826,14 +818,9 @@ impl GmailProvider {
         &self,
         account_id: &AccountId,
         key: &str,
-        rfc822: &str,
-        reply_to_thread: Option<&ThreadId>,
+        body: bytes::Bytes,
     ) -> Result<(), MailError> {
         let existing = self.find_draft(account_id, key).await?;
-        let mut message = serde_json::json!({});
-        if let Some(tid) = reply_to_thread {
-            message["threadId"] = serde_json::json!(tid);
-        }
         let (method, url) = match &existing {
             Some(id) => (
                 reqwest::Method::PUT,
@@ -844,9 +831,9 @@ impl GmailProvider {
                 format!("{UPLOAD_API}/drafts?uploadType=multipart"),
             ),
         };
-        let meta = serde_json::json!({ "message": message });
+        // (`body.clone()` shares the bytes: the retry below needs them.)
         let saved = match self
-            .upload_rfc822(account_id, method, &url, &meta, rfc822)
+            .upload_rfc822(account_id, method, &url, body.clone())
             .await
         {
             // Deleted elsewhere (e.g. in Gmail) since the last save: start over.
@@ -856,7 +843,7 @@ impl GmailProvider {
                     .await
                     .remove(&(account_id.clone(), key.to_string()));
                 let url = format!("{UPLOAD_API}/drafts?uploadType=multipart");
-                self.upload_rfc822(account_id, reqwest::Method::POST, &url, &meta, rfc822)
+                self.upload_rfc822(account_id, reqwest::Method::POST, &url, body)
                     .await?
             }
             r => r?,
@@ -1614,7 +1601,68 @@ fn build_mime(
     attachments: &[OutAttachment],
     extra: &MimeExtra<'_>,
 ) -> String {
-    let mut mime = String::new();
+    let mut mime = String::with_capacity(mime_capacity(
+        &[to, cc, bcc],
+        subject,
+        body,
+        body_html,
+        attachments,
+    ));
+    write_mime(
+        &mut mime,
+        to,
+        cc,
+        bcc,
+        subject,
+        body,
+        body_html,
+        attachments,
+        extra,
+    );
+    mime
+}
+
+/// Room for the message `write_mime` writes: the attachments as they
+/// are, the bodies as base64, and the headers around each. An upper
+/// bound, so the buffer is allocated once — one that grows by doubling
+/// copies a 20 MB attachment several times on the way.
+fn mime_capacity(
+    recipients: &[&[String]],
+    subject: &str,
+    body: &str,
+    body_html: Option<&str>,
+    attachments: &[OutAttachment],
+) -> usize {
+    let base64_len = |len: usize| len.div_ceil(3) * 4;
+    let headers: usize = recipients
+        .iter()
+        .flat_map(|list| list.iter())
+        .map(|address| address.len() + 2)
+        .sum::<usize>()
+        + base64_len(subject.len());
+    let bodies = headers + base64_len(body.len()) + body_html.map_or(0, |h| base64_len(h.len()));
+    let attached: usize = attachments
+        .iter()
+        .map(|a| a.data_b64.len() + 2 * a.filename.len() + a.mime_type.len() + 256)
+        .sum();
+    4096 + bodies + attached
+}
+
+/// `build_mime`, appended to `mime`: the caller's buffer may already hold
+/// what goes around the message (the upload's multipart envelope), so the
+/// message is written once, in place.
+#[allow(clippy::too_many_arguments)]
+fn write_mime(
+    mime: &mut String,
+    to: &[String],
+    cc: &[String],
+    bcc: &[String],
+    subject: &str,
+    body: &str,
+    body_html: Option<&str>,
+    attachments: &[OutAttachment],
+    extra: &MimeExtra<'_>,
+) {
     if let Some(from) = &extra.from {
         mime.push_str(&format!("From: {from}\r\n"));
     }
@@ -1633,36 +1681,40 @@ fn build_mime(
         mime.push_str(&format!("References: {refs}\r\n"));
     }
     mime.push_str("MIME-Version: 1.0\r\n");
+    const MIX: &str = "hp.mix.7MA4YWxkTrZu0gW";
+    if !attachments.is_empty() {
+        mime.push_str(&format!(
+            "Content-Type: multipart/mixed; boundary=\"{MIX}\"\r\n\r\n--{MIX}\r\n"
+        ));
+    }
     // base64 bodies sidestep line-length and bare-CRLF pitfalls entirely
     // (and '-' is outside the base64 alphabet, so a part can never fake a
-    // boundary line).
-    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    // boundary line). Encoded straight into the message.
+    let part = |mime: &mut String, ctype: &str, text: &str| {
+        mime.push_str(&format!(
+            "Content-Type: {ctype}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+        ));
+        base64::engine::general_purpose::STANDARD.encode_string(text, mime);
+        mime.push_str("\r\n");
+    };
     // Body block: headers + content, without the top-level message headers.
-    let body_block = match body_html {
-        None => format!(
-            "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
-            b64(body)
-        ),
+    match body_html {
+        None => part(mime, "text/plain", body),
         Some(html) => {
             const ALT: &str = "hp.alt.7MA4YWxkTrZu0gW";
-            let mut s = format!("Content-Type: multipart/alternative; boundary=\"{ALT}\"\r\n\r\n");
-            for (ctype, part) in [("text/plain", body), ("text/html", html)] {
-                s.push_str(&format!("--{ALT}\r\nContent-Type: {ctype}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n", b64(part)));
+            mime.push_str(&format!(
+                "Content-Type: multipart/alternative; boundary=\"{ALT}\"\r\n\r\n"
+            ));
+            for (ctype, text) in [("text/plain", body), ("text/html", html)] {
+                mime.push_str(&format!("--{ALT}\r\n"));
+                part(mime, ctype, text);
             }
-            s.push_str(&format!("--{ALT}--\r\n"));
-            s
+            mime.push_str(&format!("--{ALT}--\r\n"));
         }
-    };
-    if attachments.is_empty() {
-        mime.push_str(&body_block);
-        return mime;
     }
-    const MIX: &str = "hp.mix.7MA4YWxkTrZu0gW";
-    mime.push_str(&format!(
-        "Content-Type: multipart/mixed; boundary=\"{MIX}\"\r\n\r\n"
-    ));
-    mime.push_str(&format!("--{MIX}\r\n"));
-    mime.push_str(&body_block);
+    if attachments.is_empty() {
+        return;
+    }
     for a in attachments {
         // ponytail: quoted UTF-8 filename, no RFC 2231 encoding — modern
         // clients tolerate it; add encoding if a client mangles names.
@@ -1686,7 +1738,32 @@ fn build_mime(
         mime.push_str("\r\n");
     }
     mime.push_str(&format!("--{MIX}--\r\n"));
-    mime
+}
+
+/// The boundary of the upload's multipart/related envelope. '-' is not
+/// in the base64 alphabet and the inner MIME uses distinct boundary
+/// strings, so this outer one cannot be forged.
+const RELATED_BOUNDARY: &str = "hp_rel_7MA4YWxkTrZu0gW";
+
+/// The body of a media upload (send with attachments, drafts):
+/// multipart/related with the JSON `metadata` first and then the rfc822
+/// message, which `write_message` appends. One buffer of `capacity` for
+/// all of it: the message used to be built in a buffer of its own and
+/// copied into the envelope (and, for a draft, once more to put its
+/// Message-ID in front).
+fn related_body(
+    metadata: &serde_json::Value,
+    capacity: usize,
+    write_message: impl FnOnce(&mut String),
+) -> bytes::Bytes {
+    const B: &str = RELATED_BOUNDARY;
+    let mut body = String::with_capacity(capacity + 512);
+    body.push_str(&format!(
+        "--{B}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n--{B}\r\nContent-Type: message/rfc822\r\n\r\n"
+    ));
+    write_message(&mut body);
+    body.push_str(&format!("\r\n--{B}--\r\n"));
+    bytes::Bytes::from(body)
 }
 
 // ----------------------------------------------------------------- provider
@@ -1995,17 +2072,17 @@ impl MailProvider for GmailProvider {
                 in_reply_to: in_reply_to.as_deref(),
                 references: references.as_deref(),
             };
-            let mime = build_mime(
-                to,
-                cc,
-                bcc,
-                subject,
-                body_text,
-                body_html.as_deref(),
-                attachments,
-                &extra,
-            );
             if attachments.is_empty() {
+                let mime = build_mime(
+                    to,
+                    cc,
+                    bcc,
+                    subject,
+                    body_text,
+                    body_html.as_deref(),
+                    attachments,
+                    &extra,
+                );
                 let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime);
                 let mut payload = serde_json::json!({ "raw": raw });
                 if let Some(tid) = reply_to_thread {
@@ -2022,7 +2099,30 @@ impl MailProvider for GmailProvider {
             if let Some(tid) = reply_to_thread {
                 meta["threadId"] = serde_json::json!(tid);
             }
-            return self.post_upload_rfc822(account_id, &meta, &mime).await;
+            let body = related_body(
+                &meta,
+                mime_capacity(
+                    &[to, cc, bcc],
+                    subject,
+                    body_text,
+                    body_html.as_deref(),
+                    attachments,
+                ),
+                |message| {
+                    write_mime(
+                        message,
+                        to,
+                        cc,
+                        bcc,
+                        subject,
+                        body_text,
+                        body_html.as_deref(),
+                        attachments,
+                        &extra,
+                    )
+                },
+            );
+            return self.post_upload_rfc822(account_id, body).await;
         }
         if let Mutation::SaveDraft {
             key,
@@ -2047,20 +2147,35 @@ impl MailProvider for GmailProvider {
                 in_reply_to: in_reply_to.as_deref(),
                 references: references.as_deref(),
             };
-            let mut mime = format!("Message-ID: {}\r\n", draft_message_id(key));
-            mime.push_str(&build_mime(
-                to,
-                cc,
-                bcc,
-                subject,
-                body_text,
-                body_html.as_deref(),
-                attachments,
-                &extra,
-            ));
-            return self
-                .save_draft(account_id, key, &mime, reply_to_thread.as_ref())
-                .await;
+            let mut message = serde_json::json!({});
+            if let Some(tid) = reply_to_thread {
+                message["threadId"] = serde_json::json!(tid);
+            }
+            let body = related_body(
+                &serde_json::json!({ "message": message }),
+                mime_capacity(
+                    &[to, cc, bcc],
+                    subject,
+                    body_text,
+                    body_html.as_deref(),
+                    attachments,
+                ),
+                |mime| {
+                    mime.push_str(&format!("Message-ID: {}\r\n", draft_message_id(key)));
+                    write_mime(
+                        mime,
+                        to,
+                        cc,
+                        bcc,
+                        subject,
+                        body_text,
+                        body_html.as_deref(),
+                        attachments,
+                        &extra,
+                    )
+                },
+            );
+            return self.save_draft(account_id, key, body).await;
         }
         if let Mutation::DeleteDraft { key } = mutation {
             return self.delete_draft(account_id, key).await;
@@ -2195,6 +2310,9 @@ fn to_draft(w: &WireMessage) -> DraftContent {
         body_text: m.body_text,
         body_html: m.body_html.as_deref().map(sanitize::html),
         attachments: Vec::new(),
+        from_addr: payload
+            .and_then(|p| header(p, "From"))
+            .and_then(|v| header_addresses(v).into_iter().next()),
     }
 }
 
@@ -3293,6 +3411,7 @@ mod tests {
         serde_json::json!({
             "id": "m1", "labelIds": ["INBOX"], "internalDate": "1",
             "payload": {"mimeType": "multipart/alternative", "headers": [
+                {"name": "From", "value": "Alias Name <alias@y.com>"},
                 {"name": "To", "value": "a@x.com"},
                 {"name": "Subject", "value": "Hi"}
             ], "parts": [
@@ -3334,5 +3453,83 @@ mod tests {
         assert_eq!(draft.body_html.as_deref(), Some(CLEAN_HTML));
         assert_eq!(draft.body_text.as_deref(), Some("Hello <b>link</b> & more"));
         assert_eq!(draft.subject, "Hi");
+        // The address it was written from, for the composer's From.
+        assert_eq!(draft.from_addr.as_deref(), Some("alias@y.com"));
+    }
+
+    /// An upload is one buffer: the envelope, then the message written in
+    /// place — the same bytes as the message built on its own and wrapped,
+    /// and room for all of it reserved up front (an attachment is not
+    /// copied again because a buffer had to grow).
+    #[test]
+    fn an_upload_is_the_envelope_around_the_message_written_once() {
+        let to = vec!["Ana <ana@x.com>".to_string(), "bo@x.com".to_string()];
+        let cc = vec!["cy@x.com".to_string()];
+        let attachments = vec![
+            OutAttachment {
+                filename: "report \"final\".pdf".to_string(),
+                mime_type: "application/pdf".to_string(),
+                data_b64: "QUJD".repeat(300_000),
+            },
+            OutAttachment {
+                filename: "notes.txt".to_string(),
+                mime_type: String::new(),
+                data_b64: "bm90ZXM=".to_string(),
+            },
+        ];
+        let extra = MimeExtra {
+            from: Some(format_from("Me", "alias@y.com")),
+            in_reply_to: Some("<a@x.com>"),
+            references: Some("<a@x.com>"),
+        };
+        let html = "<p>Žltý kôň</p>".repeat(2_000);
+        let message = build_mime(
+            &to,
+            &cc,
+            &[],
+            "Správa o stave",
+            "Žltý kôň",
+            Some(&html),
+            &attachments,
+            &extra,
+        );
+        let capacity = mime_capacity(
+            &[&to, &cc, &[]],
+            "Správa o stave",
+            "Žltý kôň",
+            Some(&html),
+            &attachments,
+        );
+        assert!(message.len() <= capacity, "{} > {capacity}", message.len());
+        // Not wildly more than it needs, either.
+        assert!(capacity < message.len() + 16 * 1024);
+
+        let meta = serde_json::json!({ "threadId": "t1" });
+        let body = related_body(&meta, capacity, |out| {
+            out.push_str("Message-ID: <draft-k@heypigeon.app>\r\n");
+            write_mime(
+                out,
+                &to,
+                &cc,
+                &[],
+                "Správa o stave",
+                "Žltý kôň",
+                Some(&html),
+                &attachments,
+                &extra,
+            );
+        });
+        let expected = format!(
+            "--{B}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{{\"threadId\":\"t1\"}}\r\n\
+             --{B}\r\nContent-Type: message/rfc822\r\n\r\n\
+             Message-ID: <draft-k@heypigeon.app>\r\n{message}\r\n--{B}--\r\n",
+            B = RELATED_BOUNDARY
+        );
+        assert_eq!(body.len(), expected.len());
+        assert!(body == expected.as_bytes());
+        // The attachment is in there exactly once, as it came.
+        assert_eq!(message.matches(&attachments[0].data_b64).count(), 1);
+        assert!(message.contains("filename=\"report final.pdf\""));
+        assert!(message.contains("Content-Type: application/octet-stream; name=\"notes.txt\""));
     }
 }

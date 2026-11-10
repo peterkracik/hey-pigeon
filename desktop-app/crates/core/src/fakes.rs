@@ -58,6 +58,7 @@ struct MemStoreInner {
     bundle_exclusions: std::collections::HashSet<(String, ThreadId)>,
     thread_anchors: HashMap<ThreadId, Vec<String>>,
     anchor_versions: HashMap<ThreadId, i64>,
+    thread_links: HashMap<ThreadId, (String, Vec<String>)>,
     bundling_versions: HashMap<ThreadId, i64>,
 }
 
@@ -551,6 +552,33 @@ impl Store for MemStore {
     fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
         let g = self.inner.lock().unwrap();
         Ok(g.thread_anchors.get(thread_id).cloned().unwrap_or_default())
+    }
+
+    fn thread_links(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<(String, Vec<String>)>, StoreError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .thread_links
+            .get(thread_id)
+            .cloned())
+    }
+
+    fn set_thread_links(
+        &self,
+        thread_id: &ThreadId,
+        signature: &str,
+        links: &[String],
+    ) -> Result<(), StoreError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .thread_links
+            .insert(thread_id.clone(), (signature.to_string(), links.to_vec()));
+        Ok(())
     }
 
     fn threads_with_anchors(

@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
-use crate::domain::{now_ms, Bundle, BundleOrigin, BundleSource, BundleStatus, ThreadId};
+use crate::domain::{now_ms, Bundle, BundleOrigin, BundleSource, BundleStatus, Thread, ThreadId};
 use crate::ports::{Store, StoreError};
 
 /// What an anchor identifies. Decides how the bundle view labels the fact.
@@ -575,10 +575,19 @@ pub struct BundleFact {
 /// kind (flights first, tracking last), then oldest first so a trip reads
 /// in order.
 pub fn bundle_facts<S: Store>(store: &S, bundle_id: &str) -> Result<Vec<BundleFact>, StoreError> {
+    bundle_facts_of(store, &store.list_bundle_threads(bundle_id)?)
+}
+
+/// `bundle_facts` for a bundle whose threads (newest first) the caller
+/// already holds.
+pub fn bundle_facts_of<S: Store>(
+    store: &S,
+    threads: &[Thread],
+) -> Result<Vec<BundleFact>, StoreError> {
     // Threads come newest first, so the first sighting of an anchor is its
     // newest source.
     let mut seen: BTreeMap<Anchor, (ThreadId, i64)> = BTreeMap::new();
-    for t in store.list_bundle_threads(bundle_id)? {
+    for t in threads {
         for raw in store.thread_anchors(&t.id)? {
             if let Some(a) = Anchor::parse(&raw) {
                 seen.entry(a)
@@ -596,6 +605,82 @@ pub fn bundle_facts<S: Store>(store: &S, bundle_id: &str) -> Result<Vec<BundleFa
         .collect();
     facts.sort_by(|a, b| a.anchor.kind.cmp(&b.anchor.kind).then(a.at.cmp(&b.at)));
     Ok(facts)
+}
+
+/// Most tracking links kept for one thread.
+const MAX_THREAD_LINKS: usize = 5;
+
+/// The tracking numbers among a thread's anchors.
+pub fn tracking_numbers<S: Store>(
+    store: &S,
+    thread_id: &ThreadId,
+) -> Result<Vec<String>, StoreError> {
+    Ok(store
+        .thread_anchors(thread_id)?
+        .iter()
+        .filter_map(|a| Anchor::parse(a))
+        .filter(|a| a.kind == AnchorKind::Tracking)
+        .map(|a| a.value)
+        .collect())
+}
+
+/// What a thread's tracking links depend on: how many messages it has,
+/// how many of them have a body in the store (links are in bodies, and
+/// bodies arrive when the thread is opened), and its tracking numbers.
+/// Links read in one state are good for as long as it lasts.
+fn links_signature<S: Store>(
+    store: &S,
+    thread: &Thread,
+    numbers: &[String],
+) -> Result<String, StoreError> {
+    Ok(format!(
+        "{}|{}|{}",
+        thread.msg_count,
+        store.thread_body_count(&thread.id)?,
+        numbers.join(",")
+    ))
+}
+
+/// The thread's tracking links as last read from its bodies, if that was
+/// in the state the thread is in now. None means they have to be read
+/// again (`refresh_tracking_links`). Costs three small queries and no
+/// body: the bundle view asks this for every thread it lists.
+pub fn stored_tracking_links<S: Store>(
+    store: &S,
+    thread: &Thread,
+    numbers: &[String],
+) -> Result<Option<Vec<String>>, StoreError> {
+    let signature = links_signature(store, thread, numbers)?;
+    Ok(store
+        .thread_links(&thread.id)?
+        .filter(|(stored, _)| *stored == signature)
+        .map(|(_, links)| links))
+}
+
+/// Read the thread's bodies for tracking links and keep the result. This
+/// is the part that loads mail — every stored message's HTML — so it
+/// runs where bodies are already at hand (they were just fetched) or on
+/// a background thread, never while a view waits. Each body is scanned
+/// where it is; nothing is joined or copied.
+pub fn refresh_tracking_links<S: Store>(
+    store: &S,
+    thread: &Thread,
+    numbers: &[String],
+) -> Result<Vec<String>, StoreError> {
+    // The signature first: a body that lands while this reads makes the
+    // stored result stale rather than wrongly current.
+    let signature = links_signature(store, thread, numbers)?;
+    let mut links: Vec<String> = Vec::new();
+    for m in store.list_messages(&thread.id)? {
+        let text = m.body_html.as_deref().or(m.body_text.as_deref());
+        for url in tracking_links(text.unwrap_or_default(), numbers) {
+            if links.len() < MAX_THREAD_LINKS && !links.contains(&url) {
+                links.push(url);
+            }
+        }
+    }
+    store.set_thread_links(&thread.id, &signature, &links)?;
+    Ok(links)
 }
 
 /// A new bundle row, active, stamped now.

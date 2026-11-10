@@ -123,6 +123,9 @@ pub struct Engine {
     /// that brought its bodies. `list_attachments` used to download the
     /// whole thread a second time on every open to answer this.
     attachments: Mutex<HashMap<ThreadId, (i64, Vec<AttachmentRef>)>>,
+    /// Threads whose tracking links a background thread is reading right
+    /// now (bundles.rs), so two views asking do not start two reads.
+    pub(crate) links_pending: Mutex<HashSet<ThreadId>>,
     /// The people the stored mail is from and to, ranked, for recipient
     /// suggestions (contacts.rs).
     pub(crate) correspondents: Mutex<Option<crate::contacts::Correspondents>>,
@@ -196,6 +199,7 @@ impl Engine {
             drain_queued: AtomicBool::new(false),
             drain_failures: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
+            links_pending: Mutex::new(HashSet::new()),
             correspondents: Mutex::new(None),
         }))
     }
@@ -317,7 +321,9 @@ impl Engine {
             .collect())
     }
 
-    /// Local FTS5 search (Gmail-style operators + bare text), ranked.
+    /// Local FTS5 search, ranked: bare text (subject, sender, recipients
+    /// — To and Cc — and body), plus the operators `from:`, `to:`, `cc:`,
+    /// `account:` and `is:unread`.
     pub fn search(&self, query: String, limit: u32) -> Result<Vec<SearchHit>, EngineError> {
         let parsed = heypigeon_core::search::parse(&query);
         Ok(self
@@ -513,6 +519,14 @@ impl Engine {
             .iter()
             .any(|m| !is_draft(m))
             .then(|| thread_id.clone());
+        // The account's own address is the default From, not an alias.
+        let own_email = self
+            .store
+            .list_accounts()?
+            .into_iter()
+            .find(|a| a.id == thread.account_id)
+            .map(|a| a.email)
+            .unwrap_or_else(|| thread.account_id.clone());
         Ok(Some(DraftContent {
             message_id: d.message_id,
             account_id: thread.account_id,
@@ -524,6 +538,7 @@ impl Engine {
             body_html: d.body_html,
             attachments: d.attachments.into_iter().map(Into::into).collect(),
             reply_to_thread,
+            from_addr: alias_of(d.from_addr, &own_email),
         }))
     }
 
@@ -1268,6 +1283,14 @@ impl Engine {
             t.has_attachment = has_attachment;
             self.store.upsert_thread(&t).map_err(store_err)?;
         }
+        // A bundled thread's tracking links are read from its bodies now,
+        // while this is off the caller's thread and they were just
+        // written, so the bundle view finds them ready.
+        if thread.bundle_id.is_some() {
+            if let Err(e) = self.refresh_links(thread) {
+                log::warn!("bundles: links of {} not read: {e}", thread.id);
+            }
+        }
         if full.whole_thread {
             let count = (full.messages.len() as i64).max(thread.msg_count);
             self.remember_attachments(&thread.id, count, full.attachments);
@@ -1502,6 +1525,15 @@ impl Engine {
             Err(e) => log::warn!("devsync: cannot pick the app-wide account: {e}"),
         }
     }
+}
+
+/// The From address of a draft as the composer needs it: the alias it
+/// was written from, or None when it is the account's own address (or
+/// the draft names none).
+fn alias_of(from_addr: Option<String>, own_email: &str) -> Option<String> {
+    from_addr
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty() && !a.eq_ignore_ascii_case(own_email))
 }
 
 /// Cache directory name for one attachment: a hash of its coordinates
@@ -2182,6 +2214,18 @@ mod tests {
             Some("hi there, full text")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_from_of_a_draft_is_an_alias_or_nothing() {
+        let own = "me@x.com";
+        assert_eq!(
+            alias_of(Some("alias@y.com".into()), own).as_deref(),
+            Some("alias@y.com")
+        );
+        assert_eq!(alias_of(Some("Me@X.com".into()), own), None);
+        assert_eq!(alias_of(Some("  ".into()), own), None);
+        assert_eq!(alias_of(None, own), None);
     }
 
     #[test]

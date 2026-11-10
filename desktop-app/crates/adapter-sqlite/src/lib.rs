@@ -433,6 +433,95 @@ const MIGRATIONS: &[&str] = &[
     // v27 — why a queued change has not gone out: the last drain's error,
     // in words, for the outbox view. NULL until a drain fails on the row.
     "ALTER TABLE outbox ADD COLUMN last_error TEXT;",
+    // v28 — search finds who was Cc'd. The index's recipients column now
+    // holds To and Cc together (bare text matches a name in either;
+    // `cc:` itself reads the `cc_addrs` column, as `to:` reads `to_addrs`),
+    // so the index keeps its shape and nothing is rebuilt: only the
+    // messages that have a Cc are taken out — with exactly the values
+    // they went in with, which an external-content index insists on —
+    // and put back with it. The view and the triggers say the same thing
+    // from here on; a message without Cc is indexed as before, to the
+    // byte, so its entry needs no touching.
+    "
+    INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+    SELECT 'delete', m.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
+                m.from_addr,
+                m.to_addrs,
+                COALESCE(m.body_text, m.snippet, '')
+      FROM messages m WHERE m.cc_addrs <> '[]';
+    DROP VIEW messages_fts_content;
+    CREATE VIEW messages_fts_content AS
+      SELECT m.rowid AS rowid,
+             COALESCE((SELECT subject FROM threads t WHERE t.id = m.thread_id), '') AS subject,
+             m.from_addr AS from_addr,
+             CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END AS to_addrs,
+             COALESCE(m.body_text, m.snippet, '') AS body_text
+      FROM messages m;
+    DROP TRIGGER messages_fts_ai;
+    DROP TRIGGER messages_fts_au;
+    DROP TRIGGER messages_fts_ad;
+    CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+        VALUES (new.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
+                new.from_addr,
+                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+                COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages
+    WHEN old.from_addr IS NOT new.from_addr
+      OR old.to_addrs IS NOT new.to_addrs
+      OR old.cc_addrs IS NOT new.cc_addrs
+      OR COALESCE(old.body_text, old.snippet, '') IS NOT COALESCE(new.body_text, new.snippet, '')
+    BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+        VALUES ('delete', old.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
+                old.from_addr,
+                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+                COALESCE(old.body_text, old.snippet, ''));
+        INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+        VALUES (new.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = new.thread_id), ''),
+                new.from_addr,
+                CASE WHEN new.cc_addrs = '[]' THEN new.to_addrs ELSE new.to_addrs || ' ' || new.cc_addrs END,
+                COALESCE(new.body_text, new.snippet, ''));
+    END;
+    CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, subject, from_addr, to_addrs, body_text)
+        VALUES ('delete', old.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = old.thread_id), ''),
+                old.from_addr,
+                CASE WHEN old.cc_addrs = '[]' THEN old.to_addrs ELSE old.to_addrs || ' ' || old.cc_addrs END,
+                COALESCE(old.body_text, old.snippet, ''));
+    END;
+    INSERT INTO messages_fts(rowid, subject, from_addr, to_addrs, body_text)
+    SELECT m.rowid,
+                COALESCE((SELECT subject FROM threads WHERE id = m.thread_id), ''),
+                m.from_addr,
+                CASE WHEN m.cc_addrs = '[]' THEN m.to_addrs ELSE m.to_addrs || ' ' || m.cc_addrs END,
+                COALESCE(m.body_text, m.snippet, '')
+      FROM messages m WHERE m.cc_addrs <> '[]';
+    ",
+    // v29 — the tracking links of a thread, as last read from its bodies
+    // (`bundles::refresh_tracking_links`). The bundle view lists them for
+    // up to fifteen threads, and used to load every one of those threads'
+    // HTML bodies to find them, each time it opened, on the thread that
+    // drew it. `sig` is the state they were read in (message count,
+    // bodies stored, tracking numbers): a row with another signature is
+    // stale and read again in the background. A cache — nothing to
+    // backfill, and it goes with its thread.
+    "
+    CREATE TABLE thread_links (
+        thread_id TEXT PRIMARY KEY,
+        sig       TEXT NOT NULL,
+        links     TEXT NOT NULL
+    ) WITHOUT ROWID;
+    CREATE TRIGGER threads_links_ad AFTER DELETE ON threads BEGIN
+        DELETE FROM thread_links WHERE thread_id = old.id;
+    END;
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1863,8 +1952,51 @@ impl Store for SqliteStore {
         })
     }
 
-    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+    fn thread_links(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Option<(String, Vec<String>)>, StoreError> {
+        let row: Option<(String, String)> = self.read(|c| {
+            c.prepare_cached("SELECT sig, links FROM thread_links WHERE thread_id = ?1")?
+                .query_row(params![thread_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()
+        })?;
+        Ok(row.map(|(sig, links)| (sig, serde_json::from_str(&links).unwrap_or_default())))
+    }
+
+    fn set_thread_links(
+        &self,
+        thread_id: &ThreadId,
+        signature: &str,
+        links: &[String],
+    ) -> Result<(), StoreError> {
+        let links = serde_json::to_string(links).map_err(err)?;
         self.with(|c| {
+            c.execute(
+                "INSERT INTO thread_links (thread_id, sig, links) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(thread_id) DO UPDATE SET sig = excluded.sig, links = excluded.links",
+                params![thread_id, signature, links],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Counted from each row's header: a NULL check does not read the
+    /// body it is about.
+    fn thread_body_count(&self, thread_id: &ThreadId) -> Result<i64, StoreError> {
+        self.read(|c| {
+            c.prepare_cached(
+                "SELECT COUNT(*) FROM messages
+                  WHERE thread_id = ?1 AND (body_html IS NOT NULL OR body_text IS NOT NULL)",
+            )?
+            .query_row(params![thread_id], |r| r.get(0))
+        })
+    }
+
+    /// (On a reader: the bundle view asks this for every thread it shows,
+    /// and must not wait for a sync page to commit.)
+    fn thread_anchors(&self, thread_id: &ThreadId) -> Result<Vec<String>, StoreError> {
+        self.read(|c| {
             let mut stmt = c.prepare_cached(
                 "SELECT anchor FROM thread_anchors WHERE thread_id = ?1 ORDER BY anchor",
             )?;
@@ -2120,6 +2252,7 @@ impl Store for SqliteStore {
                      JOIN threads t ON t.id = m.thread_id
                      WHERE (?5 IS NULL OR instr(lower(m.from_addr), ?5) > 0)
                        AND (?6 IS NULL OR instr(lower(m.to_addrs), ?6) > 0)
+                       AND (?11 IS NULL OR instr(lower(m.cc_addrs), ?11) > 0)
                        AND (?7 = 0 OR t.is_read = 0)
                        AND (?8 IS NULL OR instr(lower(t.account_id), ?8) > 0)
                        AND {not_junk}
@@ -2140,7 +2273,8 @@ impl Store for SqliteStore {
                         q.unread_only,
                         q.account_contains,
                         limit,
-                        candidate_cap
+                        candidate_cap,
+                        q.cc_contains
                     ],
                     |r| {
                         Ok(SearchResult {
@@ -2163,6 +2297,9 @@ impl Store for SqliteStore {
                        AND (?4 IS NULL OR EXISTS (
                              SELECT 1 FROM messages m WHERE m.thread_id = t.id
                                AND instr(lower(m.to_addrs), ?4) > 0))
+                       AND (?6 IS NULL OR EXISTS (
+                             SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                               AND instr(lower(m.cc_addrs), ?6) > 0))
                        AND {not_junk}
                      ORDER BY t.last_msg_at DESC
                      LIMIT ?5",
@@ -2174,7 +2311,8 @@ impl Store for SqliteStore {
                         q.account_contains,
                         q.from_contains,
                         q.to_contains,
-                        limit
+                        limit,
+                        q.cc_contains
                     ],
                     |r| {
                         let thread = row_to_thread(r)?;
@@ -5615,5 +5753,183 @@ mod tests {
             .inbox_threads_from(&"a1".to_string(), &[])
             .unwrap()
             .is_empty());
+    }
+
+    // ---- v28: Cc in search
+
+    fn fts_is_consistent(s: &SqliteStore) -> bool {
+        // FTS5's own check of an external-content index against its
+        // content (the view): fails if any entry was added or removed
+        // with values other than the ones the view gives.
+        s.with(|c| {
+            c.execute(
+                "INSERT INTO messages_fts(messages_fts, rank) VALUES ('integrity-check', 1)",
+                [],
+            )
+        })
+        .is_ok()
+    }
+
+    fn found(s: &SqliteStore, q: &str) -> Vec<String> {
+        let mut ids: Vec<String> = search(s, q).into_iter().map(|r| r.thread.id).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn search_finds_the_cc_line_and_cc_is_an_operator() {
+        let s = store();
+        seed_thread(
+            &s,
+            "t1",
+            "Budget",
+            "Priya <priya@x.com>",
+            "numbers",
+            1000,
+            false,
+        );
+        seed_thread(
+            &s,
+            "t2",
+            "Lunch",
+            "Priya <priya@x.com>",
+            "friday",
+            2000,
+            false,
+        );
+        let t1 = "t1".to_string();
+        // Cc arrives with the message (or, for old mail, its full fetch).
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        m.cc_addrs = vec!["Samira Okafor <samira@partner.example>".to_string()];
+        s.upsert_message(&m).unwrap();
+
+        // A name or an address that is only in Cc is found…
+        assert_eq!(found(&s, "samira"), vec!["t1"]);
+        assert_eq!(found(&s, "okafor budget"), vec!["t1"]);
+        assert_eq!(found(&s, "partner.example"), vec!["t1"]);
+        // …and `cc:` narrows by it, like `to:` (which does not see Cc).
+        assert_eq!(found(&s, "cc:samira"), vec!["t1"]);
+        assert_eq!(found(&s, "cc:Partner.Example numbers"), vec!["t1"]);
+        assert!(found(&s, "cc:priya").is_empty());
+        assert!(found(&s, "to:samira").is_empty());
+        assert!(found(&s, "cc:samira friday").is_empty());
+        assert!(fts_is_consistent(&s));
+
+        // The index follows the message: Cc changed, then the mail gone.
+        m.cc_addrs = vec!["lee@x.com".to_string()];
+        s.upsert_message(&m).unwrap();
+        assert!(found(&s, "samira").is_empty());
+        assert_eq!(found(&s, "cc:lee"), vec!["t1"]);
+        s.delete_thread(&t1).unwrap();
+        assert!(found(&s, "lee").is_empty());
+        assert!(fts_is_consistent(&s));
+    }
+
+    /// The upgrade re-indexes exactly the messages that have a Cc; the
+    /// rest of the index is left as it is, and it is whole afterwards.
+    #[test]
+    fn v28_upgrade_indexes_the_cc_already_stored() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v28-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v27.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 27).unwrap();
+            s.upsert_account(&sample_account("a1")).unwrap();
+            seed_thread(
+                &s,
+                "t1",
+                "Budget",
+                "Priya <priya@x.com>",
+                "numbers",
+                1000,
+                false,
+            );
+            seed_thread(
+                &s,
+                "t2",
+                "Lunch",
+                "Priya <priya@x.com>",
+                "friday",
+                2000,
+                false,
+            );
+            let mut m = s.list_messages(&"t1".to_string()).unwrap().remove(0);
+            m.cc_addrs = vec!["Samira Okafor <samira@partner.example>".to_string()];
+            s.upsert_message(&m).unwrap();
+            // Before: stored, not searchable.
+            assert!(search(&s, "samira").is_empty());
+            assert_eq!(search(&s, "numbers").len(), 1);
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v28
+        assert_eq!(found(&s, "samira"), vec!["t1"]);
+        assert_eq!(found(&s, "cc:samira"), vec!["t1"]);
+        assert_eq!(found(&s, "numbers"), vec!["t1"]);
+        assert_eq!(found(&s, "friday"), vec!["t2"]);
+        assert_eq!(found(&s, "priya"), vec!["t1", "t2"]);
+        assert!(fts_is_consistent(&s));
+        // And it stays whole through the writes that follow.
+        let mut m = s.list_messages(&"t2".to_string()).unwrap().remove(0);
+        m.cc_addrs = vec!["lee@x.com".to_string()];
+        m.body_text = Some("saturday".to_string());
+        s.upsert_message(&m).unwrap();
+        s.delete_thread(&"t1".to_string()).unwrap();
+        assert_eq!(found(&s, "lee saturday"), vec!["t2"]);
+        assert!(found(&s, "samira").is_empty());
+        assert!(fts_is_consistent(&s));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- v29: tracking links kept per thread
+
+    #[test]
+    fn thread_links_are_kept_with_their_signature_and_go_with_the_thread() {
+        let s = store();
+        seed_thread(&s, "t1", "Shipped", "shop@x.com", "on its way", 1000, false);
+        let t1 = "t1".to_string();
+        assert_eq!(s.thread_links(&t1).unwrap(), None);
+        // One message, with a body (seed_thread stores its text).
+        assert_eq!(s.thread_body_count(&t1).unwrap(), 1);
+        assert_eq!(s.thread_body_count(&"nope".to_string()).unwrap(), 0);
+
+        let links = vec!["https://track.example/a?x=1&y=2".to_string()];
+        s.set_thread_links(&t1, "1|1|", &links).unwrap();
+        assert_eq!(
+            s.thread_links(&t1).unwrap(),
+            Some(("1|1|".to_string(), links))
+        );
+        // Read again in another state: the row is replaced.
+        s.set_thread_links(&t1, "2|2|TRACK1", &[]).unwrap();
+        assert_eq!(
+            s.thread_links(&t1).unwrap(),
+            Some(("2|2|TRACK1".to_string(), vec![]))
+        );
+
+        // What the bundle view goes through, on the stored state.
+        let thread = s.get_thread(&t1).unwrap().unwrap();
+        assert_eq!(
+            heypigeon_core::bundles::stored_tracking_links(&s, &thread, &[]).unwrap(),
+            None,
+            "kept for another state"
+        );
+        let mut m = s.list_messages(&t1).unwrap().remove(0);
+        m.body_html = Some(r#"<a href="https://track.example/p/1">Track</a>"#.to_string());
+        s.upsert_message(&m).unwrap();
+        let read = heypigeon_core::bundles::refresh_tracking_links(&s, &thread, &[]).unwrap();
+        assert_eq!(read, vec!["https://track.example/p/1"]);
+        assert_eq!(
+            heypigeon_core::bundles::stored_tracking_links(&s, &thread, &[]).unwrap(),
+            Some(read)
+        );
+        // Other tracking numbers are another state.
+        assert_eq!(
+            heypigeon_core::bundles::stored_tracking_links(&s, &thread, &["Z9".to_string()])
+                .unwrap(),
+            None
+        );
+
+        s.delete_thread(&t1).unwrap();
+        assert_eq!(s.thread_links(&t1).unwrap(), None);
     }
 }

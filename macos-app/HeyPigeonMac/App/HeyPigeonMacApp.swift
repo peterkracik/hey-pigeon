@@ -37,35 +37,15 @@ struct HeyPigeonMacApp: App {
     private let updater = MacUpdater()
 
     init() {
-        let engine = Self.makeEngine()
+        let engine = AppBootstrap.makeEngine(clientIdKey: "GoogleMacClientID")
         let model = AppModel(engine: engine)
         _model = State(initialValue: model)
-        Self.installWidgetActions()
+        // The widget buttons reach the model (the shared AppBootstrap).
+        AppBootstrap.installWidgetActions()
         // Spotlight asks the app for items it should re-index, and the
         // search tool reads full items back through the same door.
         SpotlightIndexer.installDelegate()
         MacSyncLoop.shared.start(model)
-    }
-
-    /// Widget buttons that reach the app as intents (Shortcuts can run
-    /// them on the Mac too); the Mac widgets themselves use heypigeon://
-    /// links, which land in `onOpenURL` below.
-    private static func installWidgetActions() {
-        WidgetActions.handler = { action in
-            guard let model = AppModel.current else { return }
-            switch action {
-            case .markDone(let id):
-                if let row = try? model.engine.threadRow(id: id), !row.isDone { model.markDone(row) }
-            case .snooze(let id, let hours):
-                model.snooze(threadId: id, hours: hours)
-            case .open(let target):
-                model.handle(DeepLink(target))
-            case .cancelTriage:
-                TriageAgent.current?.cancel()
-            }
-            try? await Task.sleep(for: .milliseconds(50))
-            model.reload()
-        }
     }
 
     private var scheme: ColorScheme? { Appearance(rawValue: appearance)?.scheme }
@@ -136,25 +116,5 @@ struct HeyPigeonMacApp: App {
                 .environment(model)
         }
         .menuBarExtraStyle(.window)
-    }
-
-    /// Real engine unless the scheme asks for the mock (HEYPIGEON_MOCK=1) or
-    /// no OAuth client id is configured — then the sample inbox, so the UI
-    /// is always runnable (and CI builds without secrets).
-    private static func makeEngine() -> MailEngine {
-        let env = ProcessInfo.processInfo.environment
-        let clientId = (Bundle.main.object(forInfoDictionaryKey: "GoogleMacClientID") as? String) ?? ""
-        if env["HEYPIGEON_MOCK"] == "1" || clientId.isEmpty || clientId.hasPrefix("$(") {
-            return MockEngine()
-        }
-        do {
-            let dir = try FileManager.default.url(
-                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-            ).appendingPathComponent("HeyPigeon", isDirectory: true)
-            return try RustEngine(dataDir: dir, clientId: clientId)
-        } catch {
-            assertionFailure("engine failed to open: \(error)")
-            return MockEngine()
-        }
     }
 }

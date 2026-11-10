@@ -212,8 +212,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   reads state captured on the main actor beforehand (`OAuthCoordinator`).
 - **Copy says "Mac" through `Device.name`**, and Settings sections that
   differ (Default email app, Notifications, Siri & Search, the swipe
-  titles) branch on `#if os(macOS)` inside `SettingsView` with their own
-  footer strings — the privacy sentence must stay true on both.
+  titles, Appearance's *Show in the menu bar*) branch on `#if os(macOS)`
+  inside `SettingsView` with their own footer strings — the privacy
+  sentence must stay true on both.
+- **A row action has one name, glyph and colour.** `RowAction.label(for:)`,
+  `shortLabel(for:)`, `glyph(for:)` and `tint` are the shared shell's
+  (`../ios-app/HeyPigeon/Shared/RowActionPresentation.swift`): the hover
+  bar, the trackpad swipes, the palette and the phone's swipes and menus
+  read them. Only `command` and `key` are the Mac's (`WindowState.swift`).
 
 ## Building and testing
 

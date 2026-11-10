@@ -193,11 +193,11 @@ struct ThreadView: View {
             ToolbarItem(placement: .barTrailing) {
                 Menu {
                     Button { model.togglePin(current) } label: {
-                        Label(current.isPinned ? "Unpin" : "Pin", systemImage: current.isPinned ? "pin.slash" : "pin")
+                        Label(RowAction.pin.label(for: current), systemImage: RowAction.pin.glyph(for: current))
                     }
                     Button { model.toggleRead(current); onClose() } label: { Label("Mark unread", systemImage: "envelope.badge") }
                     Button { model.pendingRemind = current } label: {
-                        Label(current.scheduledAt == nil ? "Remind me" : "Change reminder", systemImage: "clock")
+                        Label(RowAction.remindSheetLabel(for: current), systemImage: "clock")
                     }
                     Button { model.pendingBundlePick = current } label: {
                         Label(current.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
@@ -225,7 +225,9 @@ struct ThreadView: View {
                     }
                     Divider()
                     FolderMoveItem(row: current) { onClose() }
-                    Button(role: .destructive) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() } label: { Label("Delete", systemImage: "trash") }
+                    Button(role: .destructive) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() } label: {
+                        Label(RowAction.delete.label(for: current), systemImage: RowAction.delete.glyph(for: current))
+                    }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("More")
             }
@@ -484,28 +486,29 @@ struct ThreadView: View {
         .accessibilityLabel("Draft a reply with AI")
     }
 
-    /// The five triage buttons. Each toggle shows its state: filled icon
+    /// The five triage buttons, in the row actions' words
+    /// (Shared/RowActionPresentation.swift). Each toggle shows its state: filled icon
     /// in the state's colour. With a hardware keyboard (iPad, the Mac)
     /// the desktop's keys run them: e · h · n · s · ⌘⌫.
     @ViewBuilder private var triageButtons: some View {
-        bar(current.isDone ? "Mark not done" : "Mark done", current.isDone ? "checkmark.circle.fill" : "checkmark",
+        bar(RowAction.done.label(for: current), current.isDone ? "checkmark.circle.fill" : "checkmark",
             tint: current.isDone ? Theme.tagForeground(Self.doneTone) : nil, key: "e") {
             if !current.isDone { IntentDonations.archived(current, in: model) }
             model.toggleDone(current); onClose()
         }
-        bar(current.scheduledAt == nil ? "Remind me" : "Change reminder", current.scheduledAt == nil ? "clock" : "clock.fill",
+        bar(RowAction.remindSheetLabel(for: current), current.scheduledAt == nil ? "clock" : "clock.fill",
             tint: current.scheduledAt == nil ? nil : Theme.tagForeground(Self.remindTone), key: "h") {
             model.pendingRemind = current
         }
-        bar(current.needsReply ? "Clear need reply" : "Need reply",
+        bar(RowAction.needReply.label(for: current),
             current.needsReply ? "arrowshape.turn.up.left.fill" : "arrowshape.turn.up.left",
             tint: current.needsReply ? Theme.tagForeground(Self.replyTone) : nil, key: "n") {
             model.toggleNeedsReply(current)
         }
-        bar(current.isPinned ? "Unpin" : "Pin", current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
+        bar(RowAction.pin.label(for: current), current.isPinned ? "pin.fill" : "pin", tint: current.isPinned ? Theme.pin : nil, key: "s") {
             model.togglePin(current)
         }
-        bar("Delete", "trash", tint: Color(hex: 0xB34E2E), key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
+        bar(RowAction.delete.label(for: current), RowAction.delete.glyph(for: current), tint: Theme.danger, key: .delete, modifiers: .command) { IntentDonations.deleted(current, in: model); model.delete(current); onClose() }
     }
 
     /// Superhuman's reply button: the chevron picks Reply · Reply all ·
@@ -716,7 +719,7 @@ private struct DraftRow: View {
             HStack(spacing: 8) {
                 Button(action: onEdit) { Label("Edit", systemImage: "square.and.pencil") }
                 Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
-                    .tint(Color(hex: 0xB34E2E))
+                    .tint(Theme.danger)
                 Spacer()
             }
             .font(.footnote.weight(.semibold))

@@ -206,7 +206,10 @@ archive), **Pin** (`s`, the Gmail star), **Remind me** (`h`), **Need reply**
 | `?` | — | Not needed; gestures are discoverable |
 
 Which action sits on which tier is **Settings › Inbox › Swipe actions** —
-the desktop's "Hover actions", translated to the phone's gesture.
+the desktop's "Hover actions", translated to the phone's gesture. What an
+action is called, its glyph and its colour are defined once
+(`Shared/RowActionPresentation.swift`) for the swipes, the long-press
+menu, the thread's bar, the Mac's hover bar and the command palette.
 
 Multi-select: the native List edit mode (Edit button, or two-finger drag
 down the rows) shows a bottom bar with Archive · Read · Remind · Trash.
@@ -344,8 +347,8 @@ The desktop's sections, same order, same wording:
   words (both synced), and the run-and-journal screen for "Hey Siri, triage
   my inbox".
 - **Inbox** — Pinned list; Swipe actions (the four tiers).
-- **Appearance** — System · Light · Dark (iOS only; the desktop follows
-  the system).
+- **Appearance** — System · Light · Dark; on the Mac also *Show in the
+  menu bar* (the menu bar extra with the unread count).
 - **About** — version, links. Updates come through TestFlight / App Store.
 
 ### Compose
@@ -361,7 +364,9 @@ only when formatting was applied.
 ### States and motion
 
 - Empty inbox is a designed moment: the pigeon, "All clear", the time of the
-  last sync. Not a shrug.
+  last sync. Not a shrug. With no account connected the same place is the
+  way in: "Connect your Gmail" and one *Add Google account* button
+  (`EmptyState`'s `connect`), on the phone and in the Mac window.
 - Loading is skeleton rows, never a spinner in the list.
 - The only animation of note is archive: the row slides out in ~150 ms with
   a light haptic. Everything else is the system's.

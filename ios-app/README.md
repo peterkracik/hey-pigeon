@@ -155,7 +155,7 @@ name on the `ios` GitHub environment for CI builds) bakes the relay into the
 build, like the OAuth client. The URL is never shown in the UI: Settings →
 Notifications has the on/off toggle (on by default) with one status line
 under it — registration state and until when the mailbox is watched. A build
-without a relay shows the toggle disabled ("Not available in this build").
+without a relay shows no Notifications section on the phone.
 Xcode builds register `sandbox` tokens, TestFlight / App Store builds
 `production` ones; the relay routes per token.
 

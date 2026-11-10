@@ -279,20 +279,22 @@ struct CommandPalette: View {
         }
         var out: [PaletteItem] = []
         if let row {
-            let threadItems: [(String, String, String, MailCommand)] = [
-                (row.isDone ? "Mark not done" : "Mark done", row.isDone ? "arrow.uturn.backward" : "checkmark", "E", .markDone),
-                (row.scheduledAt == nil ? "Remind me" : "Remove reminder", "clock", "H", .remind),
-                (row.needsReply ? "Clear need reply" : "Need reply", "arrowshape.turn.up.left", "N", .needReply),
-                (row.isPinned ? "Unpin" : "Pin", row.isPinned ? "pin.slash" : "pin", "S", .pin),
-                (row.isRead ? "Mark unread" : "Mark read", row.isRead ? "envelope.badge" : "envelope.open", "U", .toggleRead),
+            // The row actions in their own words, glyphs and keys (the
+            // hover bar's and the phone's: RowActionPresentation.swift).
+            let rowActions: [RowAction] = [.done, .remind, .needReply, .pin, .read]
+            let actionItems: [(String, String, String, MailCommand)] = rowActions.map { action in
+                (action.label(for: row), action.glyph(for: row), action.key, action.command)
+            }
+            let otherItems: [(String, String, String, MailCommand)] = [
                 ("Reply", "arrowshape.turn.up.left", "R", .reply),
                 ("Reply all", "arrowshape.turn.up.left.2", "A", .replyAll),
                 ("Forward", "arrowshape.turn.up.right", "F", .forward),
                 ("Open", "arrow.right.circle", "↩", .open),
                 ("Open in new window", "macwindow", "⌘↩", .openInWindow),
                 ("Print or save as PDF…", "printer", "⌘P", .print),
-                ("Delete", "trash", "#", .delete),
+                (RowAction.delete.label(for: row), RowAction.delete.glyph(for: row), RowAction.delete.key, .delete),
             ]
+            let threadItems = actionItems + otherItems
             // Report spam, or the way back out of Spam and Trash.
             switch model.view {
             case .spam:

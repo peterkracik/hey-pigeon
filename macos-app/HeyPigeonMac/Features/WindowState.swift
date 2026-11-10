@@ -582,7 +582,9 @@ final class WindowState: Equatable {
                 close()
             } else if expanded != nil {
                 expanded = nil
-            } else if searching || model.isSearching {
+            } else if model.isSearching {
+                // The panel is gone (handled above) and its search is still
+                // in the list.
                 endSearch(in: model)
             } else if !selection.isEmpty {
                 selection = []
@@ -816,40 +818,8 @@ extension RowAction {
         }
     }
 
-    /// The glyph for a row's current state (the phone's swipe panel words).
-    func glyph(for row: ThreadRow) -> String {
-        switch self {
-        case .done: row.isDone ? "arrow.uturn.backward" : "checkmark"
-        case .delete: "trash"
-        case .remind: row.scheduledAt == nil ? "clock" : "clock.badge.xmark"
-        case .needReply: "arrowshape.turn.up.left"
-        case .pin: row.isPinned ? "pin.slash" : "pin"
-        case .read: row.isRead ? "envelope.badge" : "envelope.open"
-        }
-    }
-
-    func label(for row: ThreadRow) -> String {
-        switch self {
-        case .done: row.isDone ? "Mark not done" : "Mark done"
-        case .delete: "Delete"
-        case .remind: row.scheduledAt == nil ? "Remind me" : "Remove reminder"
-        case .needReply: row.needsReply ? "Clear need reply" : "Need reply"
-        case .pin: row.isPinned ? "Unpin" : "Pin"
-        case .read: row.isRead ? "Mark unread" : "Mark read"
-        }
-    }
-
-    /// The swipe panel's colour, as on the phone.
-    var tint: Color {
-        switch self {
-        case .done: Theme.accent
-        case .delete: Color(hex: 0xB34E2E)
-        case .remind: Theme.navy700
-        case .needReply: Color(hex: 0x2A6BAE)
-        case .pin: Color(hex: 0xA9761E)
-        case .read: Theme.navy500
-        }
-    }
+    // The words, the glyph and the colour are the phone's too:
+    // ios-app/HeyPigeon/Shared/RowActionPresentation.swift.
 
     /// The bare key that runs it (the shortcuts sheet and tooltips).
     var key: String {

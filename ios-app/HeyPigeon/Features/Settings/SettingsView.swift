@@ -16,6 +16,12 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var removing: MailAccount?
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
+    #if os(macOS)
+    /// The menu bar extra (macos-app HeyPigeonMacApp reads the same key).
+    /// Without a switch here, an icon dragged out of the menu bar had no
+    /// way back.
+    @AppStorage("menuBarExtra") private var menuBarExtra = true
+    #endif
 
     var body: some View {
         @Bindable var model = model
@@ -81,6 +87,7 @@ struct SettingsView: View {
                         ForEach(Appearance.allCases) { a in Text(a.title).tag(a.rawValue) }
                     }
                     .pickerStyle(.segmented)
+                    menuBarToggle
                 }
                 .menuCard()
                 Section {
@@ -108,6 +115,21 @@ struct SettingsView: View {
             }
         }
         .menuSheet()
+    }
+
+    /// Appearance › "Show in the menu bar", on the Mac; nothing on the
+    /// phone. Its own builder so the `#if` does not sit behind the
+    /// picker's modifier.
+    @ViewBuilder private var menuBarToggle: some View {
+        #if os(macOS)
+        Toggle(isOn: $menuBarExtra) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show in the menu bar")
+                Text("The unread count in the menu bar, with what is due and what needs a reply a click away.")
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        #endif
     }
 
     // MARK: Accounts
@@ -826,7 +848,8 @@ private struct TriageSection: View {
                         .font(.caption).foregroundStyle(Theme.textTertiary)
                 }
                 NavigationLink { TriageJournalView() } label: {
-                    Label(model.triageAgent == nil ? "Siri triage and journal" : "Siri triage · \(model.triageAgent!.phase.title)", systemImage: "list.bullet.rectangle")
+                    Label(model.triageAgent.map { "Siri triage · \($0.phase.title)" } ?? "Siri triage and journal",
+                          systemImage: "list.bullet.rectangle")
                 }
             }
             // The labels: the categories the classifier sorts mail into, and the
@@ -976,8 +999,25 @@ private struct NotificationsSection: View {
     /// relay: one local switch, on by default (HeyPigeonMacApp reads it).
     @AppStorage("newMailNotifications") private var newMailNotifications = true
 
+    /// The Mac always has its local switch. The phone's only row is the
+    /// relay's, so a build without the relay shows no section at all: it
+    /// used to show a switch that was off and could not be turned on.
+    private static func showsSection(canEnablePush: Bool) -> Bool {
+        #if os(macOS)
+        true
+        #else
+        canEnablePush
+        #endif
+    }
+
     var body: some View {
         let push = model.push
+        if Self.showsSection(canEnablePush: push.canEnable) {
+            section(push)
+        }
+    }
+
+    private func section(_ push: PushController) -> some View {
         Section {
             #if os(macOS)
             Toggle(isOn: $newMailNotifications) {
@@ -999,16 +1039,6 @@ private struct NotificationsSection: View {
                     }
                 }
                 .disabled(push.busy)
-            } else {
-                #if os(iOS)
-                Toggle(isOn: .constant(false)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("New mail (push)")
-                        Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                .disabled(true)
-                #endif
             }
             if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(.red) }
         } header: {
@@ -1031,7 +1061,6 @@ private struct NotificationsSection: View {
     /// One line under the toggle: state, then the sync lease when there is one.
     private var statusLine: String {
         let push = model.push
-        if !push.canEnable { return "Not available in this build" }
         if push.busy { return "Working…" }
         if !push.enabled { return "Off" }
         guard push.status?.enabled == true else {

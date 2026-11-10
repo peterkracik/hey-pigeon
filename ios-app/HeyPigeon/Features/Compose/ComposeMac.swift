@@ -761,7 +761,7 @@ struct MacAIPanel: View {
                 prompt
             }
             if let error {
-                Text(error).font(.footnote).foregroundStyle(Color(hex: 0xB34E2E))
+                Text(error).font(.footnote).foregroundStyle(Theme.danger)
             }
         }
         .padding(12)

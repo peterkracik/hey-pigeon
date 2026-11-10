@@ -181,7 +181,7 @@ struct MailRow: View {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
         }
         if row.needsReply {
-            RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Color(hex: 0x2A6BAE))
+            RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Theme.needReply)
         }
         if let at = row.scheduledAt {
             RowChip(text: Formatters.rowTime(at), systemImage: row.isFollowUp ? "arrow.uturn.left.circle" : "clock",

@@ -357,3 +357,39 @@ struct PrivateCloudComputeGateTests {
         #expect(TriageProfile.current().decideProvider.id == SystemModelProvider().id)
     }
 }
+
+struct RowActionPresentationTests {
+    /// One vocabulary for every surface that names a row action: the
+    /// phone's swipes and menus, the thread's bar, the Mac's hover bar and
+    /// the command palette read these.
+    @Test func labelsFollowTheRowsState() {
+        let fresh = makeRow(read: false)
+        #expect(RowAction.allCases.map { $0.label(for: fresh) }
+            == ["Mark done", "Delete", "Remind me", "Need reply", "Pin", "Mark read"])
+        let handled = makeRow(read: true, archived: true, scheduledAt: Date().addingTimeInterval(3600),
+                              needsReply: true, starred: true)
+        #expect(RowAction.allCases.map { $0.label(for: handled) }
+            == ["Mark not done", "Delete", "Remove reminder", "Clear need reply", "Unpin", "Mark unread"])
+    }
+
+    @Test func shortLabelsAndGlyphsFollowIt() {
+        let fresh = makeRow(read: false)
+        #expect(RowAction.allCases.map { $0.shortLabel(for: fresh) }
+            == ["Done", "Delete", "Remind me", "Need reply", "Pin", "Read"])
+        #expect(RowAction.allCases.map { $0.glyph(for: fresh) }
+            == ["checkmark", "trash", "clock", "arrowshape.turn.up.left", "pin", "envelope.open"])
+        let handled = makeRow(read: true, archived: true, scheduledAt: Date().addingTimeInterval(3600),
+                              needsReply: true, starred: true)
+        #expect(RowAction.allCases.map { $0.shortLabel(for: handled) }
+            == ["Not done", "Delete", "Remove reminder", "Clear reply", "Unpin", "Unread"])
+        #expect(RowAction.allCases.map { $0.glyph(for: handled) }
+            == ["arrow.uturn.backward", "trash", "clock.badge.xmark", "arrowshape.turn.up.left", "pin.slash", "envelope.badge"])
+    }
+
+    /// The swipe removes a set reminder; the items that open the sheet
+    /// change it, and say so.
+    @Test func theSheetsItemChangesAReminder() {
+        #expect(RowAction.remindSheetLabel(for: makeRow()) == "Remind me")
+        #expect(RowAction.remindSheetLabel(for: makeRow(scheduledAt: Date().addingTimeInterval(3600))) == "Change reminder")
+    }
+}

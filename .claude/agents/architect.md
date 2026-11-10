@@ -168,6 +168,10 @@ the wrong layer.
 
 **5. Verify** (below) — always, including when someone else implemented.
 
+When you can delegate, have the `performance` agent review the change
+(speed, crash paths, needless complexity) before you call it verified;
+otherwise apply `.claude/agents/performance.md`'s checklist yourself.
+
 **6. Record.** Set the spec's status, tick the acceptance criteria, and
 update any guide the change made untrue (`CLAUDE.md` files, `docs/`,
 READMEs, privacy copy).

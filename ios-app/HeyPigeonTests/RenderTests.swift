@@ -143,6 +143,17 @@ struct SanitizedMailRenderTests {
         #expect(shown == "2")
     }
 
+    /// A received body on its way into a composer (the Mac's forward)
+    /// leaves the app's own marks behind: they are for this app's view.
+    @Test func aForwardedBodyCarriesNoMarkerAndNoSeal() {
+        let clean = MailHTML.sanitize(Self.newsletter)
+        #expect(clean.contains(MailDocument.trackerMarker))
+        let outgoing = ComposerHTML.clean(clean)
+        #expect(!outgoing.contains("hp-tracker"))
+        #expect(!outgoing.contains("hp-seal"))
+        #expect(outgoing.contains("Sale ends"))
+    }
+
     @Test func theStatusLineShowsTheHostFirstAndNoUserPart() {
         #expect(MailDocument.hoverText(for: "https://shop.example/sale?id=2") == "shop.example/sale?id=2")
         #expect(MailDocument.hoverText(for: "https://accounts.google.com:signin@evil.example/x") == "evil.example/x")

@@ -149,17 +149,16 @@ struct MainWindow: View {
         // Keys that reach the window itself (nothing else has focus): the
         // same map the list and the thread handle.
         .onKeyPress(phases: .down) { press in state.handle(press, model: model) }
-        .overlay(alignment: .bottom) { MacToast() }
+        .overlay(alignment: .bottom) { ToastStack() }
+        // Remind me, Add to bundle, the summary (the shared RootChrome).
         // The phone's Bundles cover presents these itself while it is up
         // (AppModel.modal, BundleSheetPresenters); here Bundles are a page
         // of the window, so the root presents them for that page too.
-        .sheet(item: model.modal(\.pendingRemind, inBundles: false)) { row in RemindSheet(row: row) }
-        .sheet(item: model.modal(\.pendingBundlePick, inBundles: false)) { row in AddToBundleSheet(row: row) }
+        .sharedSheets(inBundles: false)
         .sheet(item: composeSheet) { draft in
             ComposeView(draft: draft)
                 .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)
         }
-        .sheet(item: model.modal(\.summarySheet, inBundles: false)) { p in SummarySheet(presentation: p) }
         .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
         .sheet(isPresented: $state.showShortcuts) { ShortcutsSheet() }
         .sheet(isPresented: $state.showTriage) {
@@ -167,19 +166,7 @@ struct MainWindow: View {
                 .frame(minWidth: 560, idealWidth: 620, minHeight: 560, idealHeight: 680)
                 .background(Theme.canvas)
         }
-        .alert(
-            "Account disconnected",
-            isPresented: Binding(get: { model.disconnectedAccountId != nil },
-                                 set: { if !$0 { model.disconnectedAccountId = nil } })
-        ) {
-            Button("Reconnect") {
-                let id = model.disconnectedAccountId
-                Task { await model.addAccount(loginHint: id) }
-            }
-            Button("Later", role: .cancel) {}
-        } message: {
-            Text("\(model.disconnectedAccountId ?? "") needs to sign in again. Mail for it is stale until then.")
-        }
+        .disconnectedAlert()
         // The model's sheet flags are the phone's; here Settings is a page
         // of the window (⌘,, the palette) and the sidebar the drawer.
         .onChange(of: model.showSettings, initial: true) { _, show in
@@ -229,39 +216,6 @@ struct MainWindow: View {
             state.run(.go(view), in: model)
         }
         if model.pendingThreadId == nil, let thread { model.pendingThreadId = thread }
-    }
-}
-
-/// Bottom toast with an optional Undo — the archive action's safety net.
-/// A bordered panel at the bottom edge, as the Claude app's notices are.
-struct MacToast: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        // Two at most: a send's Undo keeps its place, and what is said
-        // during its window shows above it (AppModel.show).
-        VStack(spacing: 8) {
-            ForEach(model.toasts) { toast in
-                HStack(spacing: 12) {
-                    Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(2)
-                    if let undo = toast.undo {
-                        Button("Undo") { undo(); model.dismissToast(toast.id) }
-                            .buttonStyle(.plain)
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Theme.accent)
-                    }
-                }
-                .padding(.horizontal, 16).padding(.vertical, 11)
-                .macPanel()
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .task(id: toast.id) {
-                    try? await Task.sleep(for: toast.duration)
-                    guard !Task.isCancelled else { return }
-                    withAnimation { model.dismissToast(toast.id) }
-                }
-            }
-        }
-        .padding(.bottom, 18)
     }
 }
 

@@ -147,10 +147,10 @@ struct RootView: View {
             .preferredColorScheme(Appearance(rawValue: appearance)?.scheme)
             .sheet(isPresented: $model.showSidebar, onDismiss: { Keyboard.dismiss() }) { SidebarSheet() }
             .sheet(isPresented: $model.showSettings, onDismiss: { Keyboard.dismiss() }) { SettingsView() }
+            // Remind me, Add to bundle, the summary (Shared/RootChrome).
             // While the Bundles sheet is open it presents these itself
             // (AppModel.modal, BundleSheetPresenters).
-            .sheet(item: model.modal(\.pendingRemind, inBundles: false), onDismiss: { Keyboard.dismiss() }) { row in RemindSheet(row: row) }
-            .sheet(item: model.modal(\.pendingBundlePick, inBundles: false), onDismiss: { Keyboard.dismiss() }) { row in AddToBundleSheet(row: row) }
+            .sharedSheets(inBundles: false, dismissesKeyboard: true)
             .coverScreen(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
                 BundlesSheet(initialBundleId: model.bundlesStartId)
             }
@@ -163,52 +163,8 @@ struct RootView: View {
             .fullScreenCover(item: Binding(get: { model.composeFullScreen && !model.showBundles ? model.composeDraft : nil },
                                            set: { if $0 == nil && model.composeFullScreen { model.composeDraft = nil } }),
                              onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
-            .sheet(item: model.modal(\.summarySheet, inBundles: false)) { p in SummarySheet(presentation: p) }
             .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
-            .overlay(alignment: .bottom) { ToastView() }
-            .alert(
-                "Account disconnected",
-                isPresented: Binding(get: { model.disconnectedAccountId != nil },
-                                     set: { if !$0 { model.disconnectedAccountId = nil } })
-            ) {
-                Button("Reconnect") {
-                    let id = model.disconnectedAccountId
-                    Task { await model.addAccount(loginHint: id) }
-                }
-                Button("Later", role: .cancel) {}
-            } message: {
-                Text("\(model.disconnectedAccountId ?? "") needs to sign in again. Mail for it is stale until then.")
-            }
-    }
-}
-
-/// Bottom toast with an optional Undo — the archive gesture's safety net.
-struct ToastView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        // Two at most: a send's Undo keeps its place, and what is said
-        // during its window shows above it (AppModel.show).
-        VStack(spacing: 8) {
-            ForEach(model.toasts) { toast in
-                HStack(spacing: 12) {
-                    Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(2)
-                    if let undo = toast.undo {
-                        Button("Undo") { undo(); model.dismissToast(toast.id) }
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Theme.accent)
-                    }
-                }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .task(id: toast.id) {
-                    try? await Task.sleep(for: toast.duration)
-                    guard !Task.isCancelled else { return }
-                    withAnimation { model.dismissToast(toast.id) }
-                }
-            }
-        }
-        .padding(.bottom, 72) // clears the floating tab bar
+            .overlay(alignment: .bottom) { ToastStack() }
+            .disconnectedAlert()
     }
 }

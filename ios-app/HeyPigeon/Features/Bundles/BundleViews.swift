@@ -195,10 +195,8 @@ struct BundleSheetPresenters: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: model.modal(\.pendingRemind, inBundles: true)) { row in RemindSheet(row: row) }
-            .sheet(item: model.modal(\.pendingBundlePick, inBundles: true)) { row in AddToBundleSheet(row: row) }
+            .sharedSheets(inBundles: true)
             .sheet(item: model.modal(\.composeDraft, inBundles: true)) { draft in ComposeView(draft: draft) }
-            .sheet(item: model.modal(\.summarySheet, inBundles: true)) { p in SummarySheet(presentation: p) }
     }
 }
 

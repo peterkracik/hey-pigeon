@@ -25,7 +25,7 @@ struct SummarySheet: View {
                     if let s = summary, let text = s.text {
                         SummaryTextView(text: text).font(.body).foregroundStyle(Theme.textPrimary)
                     } else if let s = summary, let error = s.error {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+                        Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.dangerText)
                     } else {
                         HStack(spacing: 10) {
                             ProgressView()

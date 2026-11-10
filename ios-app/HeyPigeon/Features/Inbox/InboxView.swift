@@ -132,13 +132,26 @@ struct ListTitle: View {
     }
 
     var body: some View {
+        let spoken = Self.spoken(title: title, count: count, tab: tab)
         if model.accounts.count > 1 {
             Menu { accountMenu } label: { label }
-                .accessibilityLabel("\(title), \(count) unread. Switch account")
+                .accessibilityLabel("\(spoken). Switch account")
         } else {
             label.accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(title), \(count) unread")
+                .accessibilityLabel(spoken)
                 .accessibilityAddTraits(.isHeader)
+        }
+    }
+
+    /// The title for VoiceOver. The number beside it is unread mail in the
+    /// inbox's folders, but reminders in Remind me and threads in Need
+    /// reply: all three used to be read as "unread".
+    static func spoken(title: String, count: Int, tab: MainTab) -> String {
+        guard count > 0 else { return title }
+        switch tab {
+        case .scheduled: return "\(title), \(count) \(count == 1 ? "reminder" : "reminders")"
+        case .needReply: return "\(title), \(count) waiting for a reply"
+        case .inbox, .search: return "\(title), \(count) unread"
         }
     }
 

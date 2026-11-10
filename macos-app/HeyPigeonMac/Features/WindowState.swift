@@ -141,7 +141,7 @@ final class WindowState: Equatable {
     /// a window wide enough; MainWindow keeps this current). A click or
     /// Space then opens the thread beside the list instead of in the row.
     var readingPane = false
-    /// Settings in the content area, from the top bar's gear or ⌘,.
+    /// Settings in the content area, from ⌘, or the palette.
     var showSettings = false
     /// Bundles — the list, one bundle, an email in it — as a page of the
     /// window in the list's place, as Settings is: the phone covers its

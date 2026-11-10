@@ -85,7 +85,7 @@ struct AIEditSheet: View {
                 case .write: writeSections
                 case .edit: editSections
                 }
-                if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
+                if let error { Section { Text(error).foregroundStyle(Theme.dangerText).font(.footnote) } }
             }
             .navigationTitle(mode == .write ? "Write with AI" : "Edit with AI")
             .inlineNavigationTitle()

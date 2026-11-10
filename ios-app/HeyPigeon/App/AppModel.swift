@@ -2048,6 +2048,39 @@ final class AppModel {
         }
     }
 
+    /// The composer's trash: the message is gone at once — its Gmail draft
+    /// too, when one was saved (`savedFrom`) — and the toast's Undo opens
+    /// the composer on it again, as an undone send does. It comes back
+    /// unsaved, so closing the composer saves it anew. The trash sits
+    /// beside Send and used to delete without a word.
+    func discardDraft(_ draft: SendDraft, savedFrom accountId: String?) {
+        if let accountId { deleteDraft(draft.draftKey, from: accountId) }
+        let kept = Self.unsaved(draft)
+        show("Draft discarded") { [weak self] in
+            Keyboard.dismiss()
+            self?.composeDraft = kept
+        }
+    }
+
+    /// A draft deleted from under its thread: gone at once, and Undo saves
+    /// it back as a Gmail draft (a save under a key Gmail no longer has
+    /// creates the draft again: adapter-gmail `save_draft`). `draft` is
+    /// the whole draft — recipients, body, attachments — which is why the
+    /// thread reads it before it deletes.
+    func discardSavedDraft(_ draft: SendDraft, from accountId: String) {
+        deleteDraft(draft.draftKey, from: accountId)
+        show("Draft deleted") { [weak self] in
+            self?.saveDraft(draft, from: accountId)
+        }
+    }
+
+    /// The draft as one no Gmail draft stands behind.
+    static func unsaved(_ draft: SendDraft) -> SendDraft {
+        var d = draft
+        d.draftSaved = false
+        return d
+    }
+
     /// Pull a draft change into the store (Gmail's push only covers the
     /// inbox), then let the open thread reload. A draft saved again while
     /// this ran stays shown until its own sync.
@@ -2080,7 +2113,8 @@ final class AppModel {
         if case .markSpam(_, let spam) = action, spam || view == .spam { leaves = true }
         if case .untrash = action, view == .trash { leaves = true }
         if leaves {
-            withAnimation(.easeOut(duration: 0.15)) { rows.removeAll { $0.id == row.id } }
+            // The one animation of note; with Reduce Motion the row just goes.
+            withAnimation(Motion.animation(.easeOut(duration: 0.15))) { rows.removeAll { $0.id == row.id } }
         }
         Task {
             do {
@@ -2104,10 +2138,25 @@ final class AppModel {
     /// then went out with nothing left to stop it.
     @discardableResult
     func show(_ text: String, duration: Duration = .seconds(5), holds: Bool = false, undo: (() -> Void)? = nil) -> UUID {
-        let next = Toast(text: text, undo: undo, duration: duration, holds: holds)
+        let next = Toast(text: text, undo: undo, duration: Self.toastDuration(duration, holds: holds, voiceOver: VoiceOver.isRunning),
+                         holds: holds)
         if !holds, toast?.holds == true { sideToast = next } else { toast = next }
         if let undo { lastUndo = (undo, Date()) }
+        // The toast appears far from VoiceOver's cursor and was never
+        // spoken: an action's only confirmation, and its Undo, went by
+        // unheard.
+        VoiceOver.announce(undo == nil ? text : "\(text). Undo available.")
         return next.id
+    }
+
+    /// How long a toast stays with VoiceOver on: five seconds is gone
+    /// before the cursor can reach its Undo.
+    static let voiceOverToastDuration: Duration = .seconds(20)
+
+    /// A toast's time on screen. A send's toast (`holds`) keeps its own:
+    /// it shows exactly as long as the send can still be undone.
+    static func toastDuration(_ asked: Duration, holds: Bool, voiceOver: Bool) -> Duration {
+        voiceOver && !holds ? max(asked, voiceOverToastDuration) : asked
     }
 
     /// The toasts on screen, top to bottom.

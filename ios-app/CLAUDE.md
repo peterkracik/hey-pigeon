@@ -54,6 +54,12 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   maps (`account(for:)`, `bundle(id:)`, `triageLabelName`), which change
   only when their source does, so a reload that moved nothing redraws no
   row. No `.animation(value:)` keyed on the rows on a `List`.
+- **The roots share their chrome.** The toast (`ToastStack`), the
+  disconnected alert and the row sheets (`sharedSheets`) are
+  `Shared/RootChrome.swift`, used by the phone's root, the Mac window and
+  the Bundles cover. Something undoable gets `show(_:undo:)`, not a
+  dialog: a discarded draft comes back through `discardDraft` /
+  `discardSavedDraft`.
 - **A banner's buttons act through the model.** Mark Done, Remind Me in 1
   Hour and Reply (`NotificationActions`) are registered and acted on in
   `NewMailNotifier` (`registerActions`, `perform`) for both apps; each
@@ -69,7 +75,10 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
 - **Platform code goes in `Shared/Platform.swift`.** Haptics, keyboard,
   clipboard, app state, system settings, APNs registration, toolbar
   placements (`.barLeading` / `.barTrailing`), `inlineNavigationTitle()`,
-  `plainInput(_:)`, `Color(light:dark:)` and `Device.name`. Do not import
+  `plainInput(_:)`, `Color(light:dark:)` and `Device.name`; Reduce Motion
+  (`Motion.animation`, for anything the app animates itself), VoiceOver
+  (`VoiceOver.announce`; `AppModel.show` speaks every toast) and
+  `tapArea` for a control drawn smaller than 44 pt. Do not import
   UIKit in a feature file for these. Copy that names the device uses
   `Device.name` ("On this \(Device.name)"), never a literal "iPhone".
 - **Privacy copy must be true.** Settings and sheet footers say what

@@ -124,6 +124,60 @@ enum Haptics {
     }
 }
 
+/// Reduce Motion (Settings › Accessibility › Motion on the phone, System
+/// Settings › Accessibility › Display on the Mac), for what the app
+/// animates itself: the row that slides out on Mark done, the swipe's
+/// spring back, the toast. Read where the animation starts, so a change
+/// of the setting holds from the next gesture on. The Mac window's own
+/// pages read the environment value instead (macos-app MainWindow).
+@MainActor
+enum Motion {
+    static var isReduced: Bool {
+        #if canImport(UIKit)
+        return UIAccessibility.isReduceMotionEnabled
+        #elseif canImport(AppKit)
+        return NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #endif
+    }
+
+    /// `animation`, or none while Reduce Motion is on: the change still
+    /// happens, without the slide.
+    static func animation(_ animation: Animation) -> Animation? {
+        isReduced ? nil : animation
+    }
+
+    /// A transition that moves: under Reduce Motion `calm` (a fade) stands
+    /// in for it.
+    static func transition(_ moving: AnyTransition, calm: AnyTransition = .opacity) -> AnyTransition {
+        isReduced ? calm : moving
+    }
+}
+
+/// VoiceOver: whether it is running, and a line spoken without moving
+/// its cursor (a toast — "Marked done" — which appears at the bottom of
+/// the screen, far from where the user is).
+@MainActor
+enum VoiceOver {
+    static var isRunning: Bool {
+        #if canImport(UIKit)
+        return UIAccessibility.isVoiceOverRunning
+        #elseif canImport(AppKit)
+        return NSWorkspace.shared.isVoiceOverEnabled
+        #endif
+    }
+
+    static func announce(_ text: String) {
+        guard isRunning else { return }
+        #if canImport(UIKit)
+        UIAccessibility.post(notification: .announcement, argument: text)
+        #elseif canImport(AppKit)
+        guard let window = NSApp.mainWindow ?? NSApp.keyWindow else { return }
+        NSAccessibility.post(element: window, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        #endif
+    }
+}
+
 @MainActor
 enum Clipboard {
     static func copy(_ text: String) {
@@ -348,6 +402,62 @@ extension ToolbarItemPlacement {
         return .topBarTrailing
         #else
         return .primaryAction
+        #endif
+    }
+}
+
+// MARK: - Small targets
+
+extension View {
+    /// A larger tap area around a small drawing (a chip's ×, a message's
+    /// •••) without moving or resizing it: the padding widens what takes
+    /// the tap, and the same padding taken off again leaves the layout as
+    /// it was. Goes on a button's label. 44 pt is the phone's minimum.
+    func tapArea(horizontal: CGFloat = 0, vertical: CGFloat = 0) -> some View {
+        padding(.horizontal, horizontal).padding(.vertical, vertical)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -horizontal).padding(.vertical, -vertical)
+    }
+}
+
+// MARK: - The toast
+
+/// Where the toast sits: above the phone's floating tab bar; near the
+/// bottom edge of the Mac window.
+enum ToastMetrics {
+    #if os(iOS)
+    static let bottomInset: CGFloat = 72
+    static let verticalPadding: CGFloat = 12
+    #else
+    static let bottomInset: CGFloat = 18
+    static let verticalPadding: CGFloat = 11
+    #endif
+}
+
+extension View {
+    /// The toast's surface: the phone's glass capsule; on the Mac the
+    /// window's bordered panel with its one soft shadow (macos-app
+    /// `macPanel`, spelled out here so the shared shell does not reach
+    /// into the Mac folder).
+    @ViewBuilder
+    func toastSurface() -> some View {
+        #if os(iOS)
+        glassEffect(.regular.interactive(), in: .capsule)
+        #else
+        background(Theme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
+            .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        #endif
+    }
+
+    /// The toast's Undo: the phone's text button as it is; plain on the
+    /// Mac, where a default button draws a bezel.
+    @ViewBuilder
+    func toastButton() -> some View {
+        #if os(iOS)
+        self
+        #else
+        buttonStyle(.plain)
         #endif
     }
 }

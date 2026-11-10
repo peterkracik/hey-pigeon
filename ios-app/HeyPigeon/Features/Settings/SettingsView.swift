@@ -219,14 +219,16 @@ private struct AccountRow: View {
                         Button { model.updateAccount(account, color: c) } label: {
                             Circle().fill(Theme.tagForeground(c)).frame(width: 22, height: 22)
                                 .overlay { if c == account.color { Circle().stroke(Theme.textPrimary, lineWidth: 2).padding(-3) } }
+                                .tapArea(horizontal: 5, vertical: 11)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(c.rawValue)
+                        .accessibilityAddTraits(c == account.color ? .isSelected : [])
                     }
                 }
             }
             LabeledContent("Sync") {
-                Text(syncLine).font(.footnote).foregroundStyle(syncWarn ? .red : Theme.textSecondary)
+                Text(syncLine).font(.footnote).foregroundStyle(syncWarn ? Theme.dangerText : Theme.textSecondary)
                     .multilineTextAlignment(.trailing)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -256,7 +258,7 @@ private struct AccountRow: View {
                     Text(account.displayName).font(.body.weight(.medium))
                     Text(account.email).font(.caption).foregroundStyle(Theme.textTertiary)
                     if disconnected {
-                        Text("Disconnected — mail stops syncing until you sign in again").font(.caption).foregroundStyle(.red)
+                        Text("Disconnected — mail stops syncing until you sign in again").font(.caption).foregroundStyle(Theme.dangerText)
                     }
                 }
             }
@@ -391,7 +393,7 @@ private struct AISection: View {
                     }
                 }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("AI")
         } footer: {
@@ -521,7 +523,7 @@ private struct KeyedProviderControls: View {
                         .font(.footnote.weight(.semibold))
                 }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         }
         .task(id: provider) { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
@@ -825,7 +827,7 @@ private struct TriageSection: View {
                     AnalysisProgressRow(progress: model.analysis)
                 }
                 if let last = status?.lastError {
-                    Text("Last run failed: \(last)").font(.footnote).foregroundStyle(.red)
+                    Text("Last run failed: \(last)").font(.footnote).foregroundStyle(Theme.dangerText)
                 }
             }
             // "Hey Siri, triage my inbox": the agentic run over the engine
@@ -870,7 +872,7 @@ private struct TriageSection: View {
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
                     .font(.footnote.weight(.semibold))
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("Triage")
         } footer: {
@@ -1040,7 +1042,7 @@ private struct NotificationsSection: View {
                 }
                 .disabled(push.busy)
             }
-            if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(.red) }
+            if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("Notifications")
         } footer: {

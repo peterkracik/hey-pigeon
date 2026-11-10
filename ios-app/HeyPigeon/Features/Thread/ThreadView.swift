@@ -38,8 +38,12 @@ struct ThreadView: View {
     /// The invitation an .ics attachment of the thread holds, read on the
     /// device once the attachments are listed (InviteCard).
     @State private var invite: CalendarInvite?
-    /// The draft the delete confirmation is asking about.
+    /// The draft the delete confirmation is asking about: one whose
+    /// content could not be read first, so its delete has no Undo.
     @State private var deletingDraft: ThreadDraft?
+    /// Stored drafts being deleted: off the screen at once, while the
+    /// draft is read for the Undo and the delete syncs back.
+    @State private var discardedDrafts: Set<String> = []
     /// The scroll view's height: room under an inline reply, so it can
     /// sit in the middle of the view.
     @State private var viewportHeight: CGFloat = 0
@@ -74,7 +78,7 @@ struct ThreadView: View {
     private var drafts: [ThreadDraft] {
         let local = model.unsyncedDrafts[row.id]
         var out = (detail?.drafts ?? [])
-            .filter { $0.id != local?.draftKey }
+            .filter { $0.id != local?.draftKey && !discardedDrafts.contains($0.id) }
             .map { ThreadDraft(stored: $0, accountId: current.accountId) }
         if let local { out.append(ThreadDraft(unsynced: local, accountId: current.accountId)) }
         return out
@@ -126,7 +130,7 @@ struct ThreadView: View {
                         if !pending.isEmpty {
                             VStack(spacing: 8) {
                                 ForEach(pending) { d in
-                                    DraftRow(draft: d) { edit(d) } onDelete: { deletingDraft = d }
+                                    DraftRow(draft: d) { edit(d) } onDelete: { discard(d) }
                                 }
                             }
                             .padding(.horizontal, 12).padding(.top, 10)
@@ -279,7 +283,18 @@ struct ThreadView: View {
         }
         // A draft was saved, edited or deleted and is now in the store.
         .onChange(of: model.draftsRevision) { _, _ in
-            Task { if let fresh = try? await model.engine.thread(id: row.id) { detail = fresh } }
+            Task {
+                if let fresh = try? await model.engine.thread(id: row.id) {
+                    detail = fresh
+                    // A delete that has landed needs no hiding any more;
+                    // left in, it would hide the draft an Undo saved back.
+                    discardedDrafts.formIntersection(fresh.drafts.map(\.id))
+                }
+            }
+        }
+        // Undo saved a discarded draft back: show it again.
+        .onChange(of: model.unsyncedDrafts[row.id]?.draftKey) { _, key in
+            if let key { discardedDrafts.remove(key) }
         }
     }
 
@@ -641,6 +656,30 @@ struct ThreadView: View {
         if let local = d.unsynced { model.composeDraft = local } else { model.openDraft(current) }
     }
 
+    /// Delete a draft at once, with Undo in the toast
+    /// (AppModel.discardSavedDraft). Undo saves the draft back, so its
+    /// whole content must be in hand first: the composer's own copy, or
+    /// the stored draft read from Gmail. When that cannot be read
+    /// (offline, or the thread's other draft came back), the delete could
+    /// not be undone, so it asks first as it always did.
+    private func discard(_ d: ThreadDraft) {
+        if let local = d.unsynced {
+            model.discardSavedDraft(local, from: d.accountId)
+            return
+        }
+        discardedDrafts.insert(d.id)
+        let threadId = row.id
+        Task {
+            if let full = try? await model.engine.draft(threadId: threadId), full.draftKey == d.id {
+                model.discardSavedDraft(full, from: d.accountId)
+            } else {
+                discardedDrafts.remove(d.id)
+                deletingDraft = d
+            }
+        }
+    }
+
+    /// The confirmed delete of a draft that has no Undo.
     private func deleteDraft(_ d: ThreadDraft) {
         model.deleteDraft(d.id, from: d.accountId)
         if let detail {
@@ -840,7 +879,9 @@ struct MessageRow: View {
             }
         } label: {
             Image(systemName: "ellipsis").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                .frame(width: 28, height: 22).contentShape(Rectangle())
+                .frame(width: 28, height: 22)
+                // 28 × 22 as drawn; 44 × 44 to the finger.
+                .tapArea(horizontal: 8, vertical: 11)
         }
         .labelOnlyMenu()
         .accessibilityLabel("Actions for this message")

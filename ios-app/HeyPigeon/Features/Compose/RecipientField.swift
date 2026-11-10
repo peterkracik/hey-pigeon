@@ -45,8 +45,12 @@ struct RecipientField<Field: Hashable>: View {
                         Text(a).font(.footnote).lineLimit(1)
                         Button { addresses.removeAll { $0 == a } } label: {
                             Image(systemName: "xmark").font(.caption2.weight(.bold))
+                                // As tall as its chip and no taller: the next
+                                // line of chips and the field are right below.
+                                .tapArea(horizontal: 8, vertical: 6)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(a)")
                     }
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 8).padding(.vertical, 2)

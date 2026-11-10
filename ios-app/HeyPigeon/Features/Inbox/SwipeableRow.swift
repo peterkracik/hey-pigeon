@@ -29,6 +29,14 @@ struct SwipeableRow<Content: View>: View {
     @State private var dragging = false
 
 
+    /// The tiers as VoiceOver's actions, each once: a folded bundle row
+    /// has the same action on all four tiers, and read "Mark all done"
+    /// four times.
+    private var spokenActions: [SwipeAction] {
+        var seen = Set<String>()
+        return (leading + trailing).filter { seen.insert($0.title).inserted }
+    }
+
     private var armed: SwipeAction? {
         switch tier {
         case 1: leading.first
@@ -57,7 +65,7 @@ struct SwipeableRow<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(action.tint)
                 .transition(.opacity)
-                .animation(.easeOut(duration: 0.12), value: tier)
+                .animation(Motion.animation(.easeOut(duration: 0.12)), value: tier)
             }
             // The row itself tracks the finger; only the revealed action animates.
             content()
@@ -82,7 +90,8 @@ struct SwipeableRow<Content: View>: View {
                 }
                 .onEnded { _ in
                     let action = armed
-                    withAnimation(.spring(duration: 0.3)) {
+                    // With Reduce Motion the row is back in place at once.
+                    withAnimation(Motion.animation(.spring(duration: 0.3))) {
                         offset = 0
                         tier = 0
                     }
@@ -91,7 +100,7 @@ struct SwipeableRow<Content: View>: View {
                 }
         )
         .accessibilityActions {
-            ForEach(Array((leading + trailing).enumerated()), id: \.offset) { _, a in
+            ForEach(Array(spokenActions.enumerated()), id: \.offset) { _, a in
                 Button(a.title, action: a.perform)
             }
         }

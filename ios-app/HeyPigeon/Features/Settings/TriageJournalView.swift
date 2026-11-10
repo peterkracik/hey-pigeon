@@ -66,7 +66,7 @@ struct TriageJournalView: View {
                         Button("Stop") { agent.cancel() }.font(.footnote.weight(.semibold))
                     }
                 }
-                if let error = agent.error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if let error = agent.error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
                 if !agent.plan.note.isEmpty { Text(agent.plan.note).font(.footnote).foregroundStyle(Theme.textSecondary) }
                 ForEach(agent.plan.proposals) { p in Text(p.line).font(.footnote) }
                 if agent.phase == .confirm {

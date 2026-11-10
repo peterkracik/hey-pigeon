@@ -1,7 +1,7 @@
 // The window's root page, under the window's toolbar (MainToolbar): the
 // list, full width up to a readable maximum, in the first desktop
-// client's shape — single-line rows with a done circle, like a to-do list
-// (MailRow), the day groups between them, a click opening the row's
+// client's shape — single-line rows, like a to-do list, with Done first
+// in the hover bar (MailRow), the day groups between them, a click opening the row's
 // latest message in place as a card with "Open full thread ›". ⌘-click
 // and ⇧-click gather rows for the batch bar. Search results, the From /
 // To / Unread / account filters and the recent searches are the phone's

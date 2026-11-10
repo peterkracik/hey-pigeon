@@ -1,7 +1,7 @@
 // The Mac window's look, after the first desktop client (desktop-app, the
 // Svelte one): quiet and flat under the standard Mac toolbar. A grey
-// sidebar; single-line rows with a done circle, like a to-do list, that
-// only tint on hover; the open row as a card; the batch bar and the toast
+// sidebar; single-line rows, like a to-do list, that only tint on hover
+// (Done is the first hover action); the open row as a card; the batch bar and the toast
 // on a bordered panel with a soft shadow. Liquid Glass is kept for what
 // floats over the content like the phone's: the triage label pill and the
 // Spotlight search panel. The phone's tokens (Theme) stay the source for text

@@ -122,24 +122,29 @@ floating "splits" pill above the tab bar. Here that maps to:
 
 ### Rows
 
-Three lines, flat, hairline separators, no cards and no avatar — about
-86 pt per row, so six rows are visible above the bars:
+Three lines, flat, a 1 pt gap between rows, no cards and no avatar — and
+a fourth line of chips (the bundle, up to two Jev labels) only when there
+is something to say:
 
 ```text
-● Sender name  3                                ⏰ 10:42
-  Subject line                              [medium] 📎
-  First line of the snippet…
+▌Sender name  3                                ⏰ 10:42
+▌Subject line                          [Suggested] 📎
+▌First line of the snippet…
 ```
 
-- The dot is the unread mark: account-coloured in the unified view, accent
-  when filtered to one account; a read row has no dot.
-- Sender in semibold (15 pt Manrope), subject semibold when unread, one
-  line of snippet in grey.
-- Reminder, need-reply and star marks sit next to the time; priority chip
-  and attachment clip sit at the end of the subject line, only when present.
-- No day-group headers in the inbox (the time column carries the date);
-  Scheduled keeps its due buckets (Overdue · Today · Tomorrow · This week ·
-  Later).
+- The unread mark is a 3 pt bar on the row's left edge (the accent on
+  light, white on dark) and the bolder sender; a read row has neither. In
+  the unified view the sender's first letter takes the account's colour.
+  VoiceOver reads the row with "Unread" as its value and the marks by
+  name (Reminder, Need reply, Pinned, Done).
+- Sender in semibold (14 pt Manrope, bold when unread), subject semibold
+  when unread, one line of snippet in grey.
+- Reminder, need-reply, pin and done marks sit next to the time; the AI's
+  suggestion, a Draft chip and the attachment clip sit at the end of the
+  subject line, only when present.
+- Day groups have a small grey header (Pinned · Today · Last 7 days ·
+  Older); Remind me has its due buckets (Overdue · Today · Tomorrow ·
+  This week · Later).
 - Pagination is keyset (`before = last row's last_msg_at`), 50 rows a page.
   Scheduled and Need reply are bounded lists and come back whole (never
   paged). The loaded rows never hold a thread twice, whatever the engine
@@ -211,8 +216,11 @@ action is called, its glyph and its colour are defined once
 (`Shared/RowActionPresentation.swift`) for the swipes, the long-press
 menu, the thread's bar, the Mac's hover bar and the command palette.
 
-Multi-select: the native List edit mode (Edit button, or two-finger drag
-down the rows) shows a bottom bar with Archive · Read · Remind · Trash.
+Multi-select is not built on the phone (the Mac has it: ⌘/⇧-click, ⇧J /
+⇧K / X and a batch bar). The plan was the native List edit mode with a
+bottom bar; it waits for a selection model in `ThreadList`.
+
+A swipe's tiers are VoiceOver's custom actions on the row, each once.
 
 Pull-to-refresh runs `sync_all`. The app also syncs on every foreground.
 
@@ -273,16 +281,14 @@ messages before the last two stays visible.
 
 ### Compose and reply
 
-Full-screen sheet. From-account picker at the top, defaulting to the account
-that received the thread. Recipient field with People-API suggestions (the
-core already does the lookups). Plain text in v1 — rich text and inline
-images follow once the desktop composer's HTML path is proven on the phone.
-The sparkle in the footer (when a provider is configured) opens the AI
+A sheet, or full screen (its corner button switches). The fields, the
+rich-text body and the footer are in "Compose" below. The sparkle in the footer (when a provider is configured) opens the AI
 sheet — the desktop `Cmd+J` popover with a second mode: **Edit** (tone and
 edit presets, a free instruction, against the selection or the whole body)
 and **Write** (a brief, or notes for a reply, that the AI turns into the
 whole message; the sheet opens there when the body is empty). Attachments
-via the Photos picker and the Files picker; 25 MB guard. **Send waits 5 s**
+via the Photos picker and the Files picker, 18 MB a message. **Send waits
+5 s** (Settings › Compose › Undo send: 5 · 10 · 20 · 30)
 in the toast with Undo — the desktop's deferred commit — and only then goes
 through the outbox, with the same retry semantics as desktop; Undo reopens
 the composer with the draft. Backgrounding the app inside the window sends
@@ -290,7 +296,12 @@ at once rather than risk losing the message. The composer has no Cancel:
 its **X** (or a swipe down, or leaving the app) saves the message as a
 Gmail draft — created on the first save, updated after that, skipped while
 nothing changed — and the trash next to Send discards it, deleting that
-draft. A send deletes it too once it commits.
+draft, with Undo in the toast: Undo opens the composer on the message
+again (`AppModel.discardDraft`). A send deletes the draft too once it
+commits. A draft deleted from under its thread goes at once as well, and
+its Undo saves it back (`discardSavedDraft`); only when the draft cannot
+be read first — offline — does the delete ask, because it could not be
+undone.
 
 A reply shows the conversation it answers under the editor
 (`ComposeThreadHistory`): the latest message open, earlier ones a line
@@ -363,13 +374,17 @@ only when formatting was applied.
 
 ### States and motion
 
+- The toast (`ToastStack`, one view for the phone and the Mac) is spoken
+  by VoiceOver as it appears and stays 20 s while VoiceOver runs.
+- Reduce Motion: the row leaves without the slide, a swiped row is back
+  in place at once and the toast fades (`Motion` in Platform.swift).
 - Empty inbox is a designed moment: the pigeon, "All clear", the time of the
   last sync. Not a shrug. With no account connected the same place is the
   way in: "Connect your Gmail" and one *Add Google account* button
   (`EmptyState`'s `connect`), on the phone and in the Mac window.
 - Loading is skeleton rows, never a spinner in the list.
 - The only animation of note is archive: the row slides out in ~150 ms with
-  a light haptic. Everything else is the system's.
+  a haptic. Everything else is the system's.
 - Dark mode from day one, following the system. Colours come from the same
   tokens as `desktop-app/src/styles/colors.css` (navy scale, pink accent,
   five account tags).

@@ -150,6 +150,10 @@ final class WindowState: Equatable {
     /// The Bundles page's stack (BundlesStack): a bundle, then an email in
     /// it. The window's, so the open email is the window's open thread.
     var bundlePath: [BundleRoute] = []
+    /// The bundle whose Emails page is on screen (BundleEmailList sets it
+    /// while it is up): the page then stands on the list's background, to
+    /// the window's edges, as the inbox's cards do (BundlesPage).
+    var bundleEmailsOf: String?
     /// The header shows the search field (`/`, the magnifier).
     var searching = false
     var showPalette = false
@@ -298,6 +302,14 @@ final class WindowState: Equatable {
     /// its row so Esc lands where the reader left. A draft opens the
     /// composer instead.
     func open(_ row: ThreadRow, in model: AppModel) {
+        // An email of the bundle on screen opens in the page's stack, over
+        // its bundle (in place of another email of it), and is the
+        // window's open thread there. The list's cursor stays where it is.
+        if showBundles, case .bundle(let id)? = bundlePath.first, row.bundleId == id {
+            if !row.isRead { model.markRead(row) }
+            bundlePath = [.bundle(id), .thread(row)]
+            return
+        }
         select(row.id, in: model)
         if model.view == .drafts { model.openDraft(row); return }
         if !row.isRead { model.markRead(row) }
@@ -310,11 +322,13 @@ final class WindowState: Equatable {
     /// phone's tap), or closes when it was the open one. A draft opens the
     /// composer instead.
     func expand(_ row: ThreadRow, in model: AppModel) {
-        // Beside the list there is room for the whole thread.
-        if readingPane { open(row, in: model); return }
-        select(row.id, in: model)
+        // Beside the list there is room for the whole thread. The Bundles
+        // page has no pane and no cursor, and its rows are never the
+        // Drafts folder's, whatever the list under the page shows.
+        if readingPane && !showBundles { open(row, in: model); return }
+        if !showBundles { select(row.id, in: model) }
         if expanded == row.id { expanded = nil; return }
-        if model.view == .drafts { model.openDraft(row); return }
+        if model.view == .drafts && !showBundles { model.openDraft(row); return }
         if !row.isRead { model.markRead(row) }
         expanded = row.id
     }
@@ -339,6 +353,9 @@ final class WindowState: Equatable {
         showSettings = false
         searching = false
         showPalette = false
+        // A row's open card is its page's: the list's does not follow
+        // into a bundle, nor a bundle's back to the list.
+        expanded = nil
         bundlePath = id.map { [.bundle($0)] } ?? []
         showBundles = true
     }
@@ -348,6 +365,8 @@ final class WindowState: Equatable {
     func closeBundles() {
         showBundles = false
         bundlePath = []
+        bundleEmailsOf = nil
+        expanded = nil
         listFocusRequest += 1
     }
 
@@ -355,6 +374,12 @@ final class WindowState: Equatable {
     /// its root the list.
     private func backInBundles() {
         if bundlePath.isEmpty { closeBundles() } else { bundlePath.removeLast() }
+    }
+
+    /// Esc on the Bundles page: a row's open card closes first, as in the
+    /// list; then one step back.
+    private func escapeInBundles() {
+        if case .bundle? = bundlePath.last, expanded != nil { expanded = nil } else { backInBundles() }
     }
 
     /// The Bundles page's name for the toolbar: the bundle's, "Bundles" on
@@ -579,7 +604,7 @@ final class WindowState: Equatable {
                 showSettings = false
                 listFocusRequest += 1
             } else if showBundles {
-                backInBundles()
+                escapeInBundles()
             } else if isThreadOpen {
                 close()
             } else if expanded != nil {
@@ -696,7 +721,7 @@ final class WindowState: Equatable {
     /// the composer itself; and an email open on the Bundles page is
     /// written under there.
     private func showThread(_ row: ThreadRow, in model: AppModel) {
-        guard model.view != .drafts, openThread?.id != row.id else { return }
+        guard showBundles || model.view != .drafts, openThread?.id != row.id else { return }
         open(row, in: model)
     }
 

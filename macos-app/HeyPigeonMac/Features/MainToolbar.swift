@@ -201,38 +201,26 @@ struct ViewTabs: View {
 
     private func tab(_ view: MailView) -> some View {
         let on = !state.showSettings && !state.showBundles && !model.isSearching && model.view == view
-        return Button { state.run(.go(view), in: model) } label: {
-            HStack(spacing: 5) {
-                Text(view.title).font(.system(size: 13, weight: on ? .semibold : .regular))
-                count(view)
-            }
-            .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(on ? MacTheme.selected : .clear, in: Capsule())
-            .contentShape(Capsule())
+        let badge = count(view)
+        return TabPill(title: view.title, count: badge?.number, countColor: badge?.color ?? Theme.textTertiary, on: on) {
+            state.run(.go(view), in: model)
         }
-        .buttonStyle(.plain)
-        .help(view.title)
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
-    @ViewBuilder private func count(_ view: MailView) -> some View {
+    /// The count beside a tab and its colour (Remind me's due count in
+    /// the accent); none when there is nothing to count.
+    private func count(_ view: MailView) -> (number: Int, color: Color)? {
         switch view {
         case .inbox:
             let n = model.engineUnread(accountId: model.selectedAccountId)
-            if n > 0 { number(n, Theme.textTertiary) }
+            return n > 0 ? (number: n, color: Theme.textTertiary) : nil
         case .scheduled:
-            if model.dueCount > 0 { number(model.dueCount, Theme.accent) }
-            else if model.scheduledCount > 0 { number(model.scheduledCount, Theme.textTertiary) }
+            if model.dueCount > 0 { return (number: model.dueCount, color: Theme.accent) }
+            return model.scheduledCount > 0 ? (number: model.scheduledCount, color: Theme.textTertiary) : nil
         case .needReply:
-            if model.needReplyCount > 0 { number(model.needReplyCount, Theme.textTertiary) }
+            return model.needReplyCount > 0 ? (number: model.needReplyCount, color: Theme.textTertiary) : nil
         default:
-            EmptyView()
+            return nil
         }
-    }
-
-    private func number(_ n: Int, _ color: Color) -> some View {
-        Text("\(n)").font(.system(size: 11, weight: .medium)).foregroundStyle(color).monospacedDigit()
     }
 }

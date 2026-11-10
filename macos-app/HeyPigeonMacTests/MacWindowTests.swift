@@ -274,6 +274,36 @@ struct WindowStateTests {
         #expect(!state.showBundles && state.bundlePath.isEmpty && model.view == .starred)
     }
 
+    @Test func aBundlesRowOpensInPlaceAndThenInThePagesStack() throws {
+        let t4 = try #require(model.row(forThreadId: "t4")) // in the Lisbon trip bundle, b1
+        let t1 = try #require(model.row(forThreadId: "t1"))
+        state.select("t1", in: model)
+        state.expand(t1, in: model)
+        // The list's open card does not follow into the page.
+        state.openBundles(at: "b1")
+        #expect(state.expanded == nil)
+        // A click on a bundle's row: its card, the list's cursor untouched.
+        state.expand(t4, in: model)
+        #expect(state.expanded == "t4" && state.selection == ["t1"] && state.bundlePath == [.bundle("b1")])
+        // Esc closes the card before it walks the stack back.
+        state.run(.escape, in: model)
+        #expect(state.expanded == nil && state.bundlePath == [.bundle("b1")])
+        // The row's arrow: the thread in the page's stack, not the window's.
+        state.open(t4, in: model)
+        #expect(state.showBundles && state.path.isEmpty && state.bundlePath == [.bundle("b1"), .thread(t4)])
+        #expect(state.openThread?.id == "t4" && state.selection == ["t1"])
+        // A reply from a row's card opens its thread there too.
+        state.bundlePath = [.bundle("b1")]
+        state.run(.reply, in: model, rows: [t4])
+        #expect(state.showBundles && state.path.isEmpty && state.openThread?.id == "t4")
+        // Another bundle picked in the sidebar takes the page, from its top.
+        state.openBundles(at: "b2")
+        #expect(state.bundlePath == [.bundle("b2")] && state.openThread == nil)
+        // An email that is not this bundle's opens in the window's stack.
+        state.open(t1, in: model)
+        #expect(!state.showBundles && state.path.map(\.id) == ["t1"])
+    }
+
     @Test func typingInAFieldIsNotAShortcut() {
         #expect(WindowState.isTyping(NSTextField()))
         #expect(WindowState.isTyping(NSTextView()))

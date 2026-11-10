@@ -6,7 +6,10 @@
 // the window's path, so the open email is the window's open thread for
 // every key, menu item and the inline reply; the stack's own toolbar
 // items (New bundle, the bundle's menu, the thread's) and its Back join
-// the window's toolbar, which names the page (MainToolbar).
+// the window's toolbar, which names the page (MainToolbar). A bundle's
+// Emails page and its Emails · Info switcher are the window's own
+// (BundleEmails.swift), handed to the shared screen: the inbox's rows on
+// their card, and the toolbar's capsule tabs.
 
 import SwiftUI
 
@@ -16,11 +19,17 @@ struct BundlesPage: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        BundlesStack(path: $state.bundlePath)
+        BundlesStack(path: $state.bundlePath, parts: BundleScreenParts(
+            switcher: { page, contents in AnyView(BundlePageTabs(page: page, openCount: contents.open.count)) },
+            emails: { contents in AnyView(BundleEmailList(contents: contents, state: state)) }
+        ))
             .scrollIndicators(.never)
             .frame(maxWidth: MacLayout.maxWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MacTheme.content)
+            // Behind a bundle's emails the list's background, to the
+            // window's edges, so their white card reads as the inbox's
+            // does; the canvas behind every other page of the stack.
+            .background(state.bundleEmailsOf == nil ? MacTheme.content : MacTheme.listBackground)
             // Focusable so the key map works after a click on the page, with
             // no ring drawn around it.
             .focusable()

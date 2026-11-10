@@ -18,10 +18,12 @@ narrative and attention line, auto-archive, folding on the Mac. Code:
 
 ## The bundle view (as built)
 
-Full screen on iPhone and iPad (a sheet read as a dialog), a sheet on the
-Mac. Two pages, swiped between on iOS (a segmented control switches them
-everywhere): **Emails** — the rows below — and **Info** — the summary,
-tracking links and key facts as one-line lists.
+Full screen on iPhone and iPad (a sheet read as a dialog), a page of the
+window on the Mac. Two pages, swiped between on iOS under a segmented
+control; on the Mac two capsule tabs, as the toolbar's are, on a glass
+capsule over the top of the page ("Emails" carries the open count):
+**Emails** — the rows below — and **Info** — the summary, tracking links
+and key facts as one-line lists.
 
 - **Summary** — the model's brief (`ai_summarize_bundle`): a STATUS line
   (where things stand, the latest decision or change) and up to three TO DO
@@ -45,6 +47,14 @@ tracking links and key facts as one-line lists.
 - **⊖ on each email** (and "Not part of …" in the row menu): the email
   leaves the bundle, never comes back to it, and its subject becomes a "not
   this" example the model sees for that bundle.
+- On the Mac the Emails page is the window's own list
+  (`macos-app` `BundleEmails.swift`): the inbox's single-line row on the
+  inbox's white card, with its hover bar (⊖ before the arrow), trackpad
+  swipes and context menu; a click opens the row in place and its arrow
+  opens the thread in the bundle's stack. The open emails have no title,
+  the done ones sit under "Done" (the fold's button past three). The
+  phone's rows with a ⊖ button on each were tried there first and read
+  as a different list from the inbox's.
 
 ## Automatic bundles (as built)
 

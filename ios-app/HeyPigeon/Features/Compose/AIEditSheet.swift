@@ -33,8 +33,6 @@ struct AIEditSheet: View {
     @State private var instruction = ""
     /// The request that is out and the result under review (AIAssist).
     @State private var runner = AIAssistRunner()
-    /// Who answers, for the footer; read once as the sheet opens.
-    @State private var destination = AIAssist.Destination.provider
     @FocusState private var briefFocused: Bool
 
     init(text: String, hasSelection: Bool, subject: String, history: String?,
@@ -56,9 +54,13 @@ struct AIEditSheet: View {
     private var instructionTrimmed: String { instruction.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     /// What a tap sends and to whom (AIAssist.footnote). The phone sends
-    /// no AIWriteContext.
+    /// no AIWriteContext. Who answers is read each time the footer is
+    /// drawn, not once as the sheet opens: a sync can change the active
+    /// provider while the sheet is up, and every request redraws it.
     private var footnote: String {
-        AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: false, destination: destination)
+        AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: false,
+                          destination: AIAssist.Destination(try? model.engine.aiStatus()),
+                          refining: runner.result != nil)
     }
 
     var body: some View {
@@ -98,7 +100,6 @@ struct AIEditSheet: View {
             .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .onAppear {
-                destination = AIAssist.Destination(try? model.engine.aiStatus())
                 if mode == .write { briefFocused = true }
             }
             // Closing the sheet stops the request with it.

@@ -43,7 +43,7 @@ struct AIAssistTests {
     /// Privacy copy: the pieces are what the engine's calls are handed.
     @Test func theFooterSaysWhatIsSentAndWhere() {
         let edit = AIAssist.footnote(mode: .edit, isReply: false, sendsWriter: false, destination: .provider)
-        #expect(edit == "On a tap, the text being edited and your instruction are sent to the AI provider picked in Settings.")
+        #expect(edit == "On a tap, the text being edited and your instruction are sent to your AI provider.")
         let reply = AIAssist.footnote(mode: .edit, isReply: true, sendsWriter: true, destination: .provider)
         #expect(reply.contains("the conversation you are replying to") && reply.contains("who is writing to whom"))
         let draft = AIAssist.footnote(mode: .write, isReply: true, sendsWriter: false, destination: .appleCloud)
@@ -52,6 +52,9 @@ struct AIAssistTests {
         let local = AIAssist.footnote(mode: .write, isReply: false, sendsWriter: false, destination: .device)
         #expect(local.contains("your brief and the subject") && local.contains("Nothing leaves the device"))
         #expect(AIAssist.Destination(nil) == .provider)
+        // A tone on a result under review sends that result, not the brief.
+        let tone = AIAssist.footnote(mode: .write, isReply: true, sendsWriter: false, destination: .provider, refining: true)
+        #expect(tone == "On a tap, the draft shown above, the tone you tap and the conversation you are replying to are sent to your AI provider.")
     }
 }
 

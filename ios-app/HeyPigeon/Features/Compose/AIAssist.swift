@@ -156,9 +156,15 @@ enum AIAssist {
     /// `build_draft_reply_prompt`). `sendsWriter` is the Mac's
     /// `AIWriteContext` — the sender's and recipients' names and
     /// addresses.
-    static func footnote(mode: Mode, isReply: Bool, sendsWriter: Bool, destination: Destination) -> String {
+    /// With a result under review (`refining`) a tap is a tone: it sends
+    /// that draft, not the brief or the original text.
+    static func footnote(mode: Mode, isReply: Bool, sendsWriter: Bool, destination: Destination,
+                         refining: Bool = false) -> String {
         var parts: [String]
         switch (mode, isReply) {
+        case _ where refining:
+            parts = ["the draft shown above", "the tone you tap"]
+            if isReply { parts.append("the conversation you are replying to") }
         case (.edit, true): parts = ["the text being edited", "your instruction", "the conversation you are replying to"]
         case (.edit, false): parts = ["the text being edited", "your instruction"]
         case (.write, true): parts = ["the conversation you are replying to", "its subject", "your notes"]
@@ -174,7 +180,7 @@ enum AIAssist {
         case .appleCloud:
             return "On a tap, \(what) go to Apple's Private Cloud Compute, which does not store them."
         case .provider:
-            return "On a tap, \(what) are sent to the AI provider picked in Settings."
+            return "On a tap, \(what) are sent to your AI provider."
         }
     }
 }

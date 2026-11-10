@@ -322,11 +322,15 @@ struct TextFormattingTests {
     /// A saved draft reopens with its formatting: the html part reads back
     /// into what wrote it. Anything else opens as plain text.
     @Test func aSavedDraftsHTMLReadsBackIntoTheEditor() throws {
+        // The phone's editor only: the Mac's loads the html part as it is
+        // (these tests also build for the Mac).
+        #if os(iOS)
         let html = "a &lt; b<br><b>bold</b> <i>it</i> <u>under</u> <s>gone</s> <a href=\"https://x.test/?a=1&amp;b=2\" rel=\"noopener noreferrer\">site</a>"
         let rich = try #require(RichText.attributed(html: html))
         #expect(String(rich.characters) == "a < b\nbold it under gone site")
         #expect(RichText.html(rich) == html.replacingOccurrences(of: " rel=\"noopener noreferrer\"", with: ""))
         #expect(RichText.attributed(html: "<div style=\"color:red\">from Gmail</div>") == nil)
+        #endif
         var draft = SendDraft()
         draft.bodyText = "plain"
         #expect(String(ComposeView.richBody(of: draft).characters) == "plain")

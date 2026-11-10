@@ -14,7 +14,9 @@ Each part has its own guide; read the one for the folder you work in.
 Agents (`.claude/agents/`): `architect` specifies a feature in `docs/specs/`
 (template in `docs/specs/README.md`), implements it and verifies it; a
 feature behaves the same on iPhone, iPad and Mac unless its spec lists the
-difference. `ux-ui` owns how the apps look, read and behave.
+difference. `apple-platform` knows what iOS, iPadOS and macOS offer and
+proposes and builds the newest system features that fit. `ux-ui` owns how
+the apps look, read and behave.
 
 CI: `rust-ci` (crates), `ios-ci` (iOS build + tests on PRs), `macos-ci`
 (native Mac build + tests on PRs), `publish-ios` (main → TestFlight),

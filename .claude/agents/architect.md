@@ -50,6 +50,7 @@ the source of truth.
 | `docs/porting-macos-ipados.md` | The platform layer, the iPad plan, rules while porting |
 | `docs/bundles.md`, `docs/ios-intelligence.md` | Existing feature designs — also the model for how a feature is written down here |
 | `.claude/agents/ux-ui.md` | The design idea and the interface rules; anything visible follows it |
+| `.claude/agents/apple-platform.md` | What the OS already provides; ask it (or read it) before specifying something the system may do for us |
 
 The layers, innermost first. **Put each piece of a feature in the
 innermost layer that can hold it** — that is what makes parity cheap,

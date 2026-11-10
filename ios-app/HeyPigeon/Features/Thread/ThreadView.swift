@@ -244,7 +244,11 @@ struct ThreadView: View {
             activity.appEntityIdentifier = EntityIdentifier(for: MailThreadEntity(current, account: model.account(for: current)))
             #endif
         }
-        .onAppear { model.showThread(row) }
+        .onAppear {
+            model.showThread(row)
+            // The account's aliases, for a reply's recipients (SendDraft.reply).
+            model.loadSendAliases()
+        }
         .onDisappear { model.hideThread(row) }
         .task(id: row.id) {
             // What the store already holds is on screen at once (a thread
@@ -609,7 +613,7 @@ struct ThreadView: View {
     }
 
     private func replyDraft(to m: MessageItem, all: Bool) -> SendDraft {
-        SendDraft.reply(to: m, in: current, all: all, history: transcript)
+        SendDraft.reply(to: m, in: current, all: all, history: transcript, mine: model.ownAddresses(of: current.accountId))
     }
 
     private func forward(_ m: MessageItem) {

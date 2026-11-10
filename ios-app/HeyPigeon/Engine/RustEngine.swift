@@ -156,6 +156,9 @@ final class RustEngine: MailEngine {
         draft.bcc = d.bcc
         draft.subject = d.subject
         draft.bodyText = d.bodyText ?? d.bodyHtml.map(Self.plainText) ?? ""
+        // The formatting too: without the html part a reopened draft lost
+        // its bold and its links, and was then sent as plain text.
+        draft.bodyHTML = d.bodyHtml
         // The size from the base64 length: decoding an 18 MB attachment
         // only to count its bytes cost a copy of it on every draft open.
         draft.attachments = d.attachments.map {
@@ -582,7 +585,8 @@ private extension MessageItem {
             isDraft: m.labelIds.contains("DRAFT"),
             cc: m.ccAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) },
             listUnsubscribe: m.listUnsubscribe,
-            unsubscribeOneClick: m.listUnsubscribeOneClick
+            unsubscribeOneClick: m.listUnsubscribeOneClick,
+            replyTo: m.replyToAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) }
         )
     }
 }

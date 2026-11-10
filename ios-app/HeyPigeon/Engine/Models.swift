@@ -137,6 +137,10 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     /// whether a POST to its https link is enough (RFC 8058 one-click).
     var listUnsubscribe: String?
     var unsubscribeOneClick = false
+    /// The Reply-To line, like `to`: where the sender asked replies to go
+    /// (a list, a booking system writing from a no-reply address). Empty
+    /// when it set none, and for mail stored before the header was kept.
+    var replyTo: [String] = []
 }
 
 /// An open thread: its row and every stored message, drafts included.
@@ -837,21 +841,30 @@ struct SendDraft: Hashable {
     /// A reply to one message of a thread: to its sender (or, for a message
     /// of ours, its recipients), everyone else in Cc for Reply all, the
     /// subject with one "Re:", from the thread's account. The thread view
-    /// and the Siri Reply intent build the same draft.
-    static func reply(to m: MessageItem, in thread: ThreadRow, all: Bool, history: String?) -> SendDraft {
+    /// and the Siri Reply intent build the same draft. `mine` is the
+    /// account's other addresses, lowercased ("Send mail as" aliases):
+    /// mail sent from one is the user's own, and none of them is a
+    /// recipient of the reply.
+    static func reply(to m: MessageItem, in thread: ThreadRow, all: Bool, history: String?,
+                      mine: Set<String> = []) -> SendDraft {
         var d = SendDraft()
-        func others(_ list: [String]) -> [String] { list.filter { $0 != "me" && !$0.isEmpty } }
-        if m.isMine {
+        func others(_ list: [String]) -> [String] {
+            list.filter { $0 != "me" && !$0.isEmpty && !mine.contains($0.lowercased()) }
+        }
+        if m.isMine || mine.contains(m.fromAddress.lowercased()) {
             // A reply to one's own message goes where that one went.
             d.to = others(m.to)
             if all { d.cc = others(m.cc) }
         } else {
-            d.to = [m.fromAddress]
+            // Where the sender asked for replies, when it did: the From of
+            // a list or a booking system is often a no-reply address.
+            let asked = others(m.replyTo)
+            d.to = asked.isEmpty ? [m.fromAddress] : asked
             // Reply all: everyone else the message went to, To and Cc
             // alike (the Cc line used to be dropped: the store did not
             // keep it), each once, the sender not again.
             if all {
-                var seen: Set<String> = [m.fromAddress.lowercased()]
+                var seen = Set(d.to.map { $0.lowercased() } + [m.fromAddress.lowercased()])
                 d.cc = (others(m.to) + others(m.cc)).filter { seen.insert($0.lowercased()).inserted }
             }
         }

@@ -384,6 +384,12 @@ pub struct Message {
     /// opened again.
     #[serde(default)]
     pub cc_addrs: Vec<String>,
+    /// The Reply-To header, entry by entry, in the same form. A reply goes
+    /// there instead of to the sender (a list, a booking system writing
+    /// from a no-reply address). Empty when the sender set none, and for
+    /// mail stored before the header was kept.
+    #[serde(default)]
+    pub reply_to_addrs: Vec<String>,
     /// Epoch milliseconds.
     pub date: i64,
     pub snippet: String,

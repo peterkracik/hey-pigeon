@@ -94,6 +94,22 @@ struct ThreadRowView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+        // Unread is a bar and a font weight, the marks are bare symbols:
+        // none of it was said aloud.
+        .accessibilityValue(spokenState)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The row's state in words, for VoiceOver.
+    private var spokenState: String {
+        var parts: [String] = []
+        if !row.isRead { parts.append("Unread") }
+        if row.scheduledAt != nil { parts.append(row.isFollowUp ? "Follow-up reminder" : "Reminder set") }
+        if row.needsReply { parts.append("Need reply") }
+        if row.isPinned { parts.append("Pinned") }
+        if row.isDone && model.view != .archive { parts.append("Done") }
+        if row.hasAttachment { parts.append("Has attachment") }
+        return parts.joined(separator: ", ")
     }
 
     /// The text with every search word underlined in the accent and lifted
@@ -139,7 +155,8 @@ struct ThreadRowView: View {
     }
 
     private func mark(_ name: String) -> some View {
-        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary)
+        // Said through the row's value (`spokenState`), not as symbol names.
+        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary).accessibilityHidden(true)
     }
 }
 

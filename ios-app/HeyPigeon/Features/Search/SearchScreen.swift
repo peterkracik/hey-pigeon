@@ -212,7 +212,8 @@ private struct FilterPillLabel: View {
         .foregroundStyle(isOn ? Theme.canvas : Theme.textPrimary)
         .padding(.leading, 12)
         .padding(.trailing, trailingPadding ?? 12)
-        .frame(height: 32)
+        // At least, not exactly: the title grows with the text size.
+        .frame(minHeight: 32)
         .background {
             if trailingPadding == nil {
                 Capsule().fill(isOn ? Theme.textPrimary : Theme.sunken)

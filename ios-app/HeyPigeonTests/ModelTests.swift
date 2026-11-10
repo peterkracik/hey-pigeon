@@ -181,6 +181,18 @@ struct ThreadModelTests {
         #expect(SendDraft.reply(to: theirs, in: makeRow(subject: "RE: Contract"), all: false, history: nil).subject == "RE: Contract")
     }
 
+    @Test func replyGoesWhereTheSenderAskedAndNeverToTheUsersOwnAlias() {
+        let row = makeRow(subject: "Booking")
+        var list = makeMessage("1", address: "no-reply@hotel.test", to: ["me", "marek@acme.test", "alias@work.test"])
+        list.replyTo = ["desk@hotel.test"]
+        #expect(SendDraft.reply(to: list, in: row, all: false, history: nil).to == ["desk@hotel.test"])
+        let all = SendDraft.reply(to: list, in: row, all: true, history: nil, mine: ["alias@work.test"])
+        #expect(all.to == ["desk@hotel.test"] && all.cc == ["marek@acme.test"])
+        // Mail sent from an alias is the user's own: the reply follows it.
+        let sent = makeMessage("2", address: "Alias@work.test", to: ["ana@acme.test"])
+        #expect(SendDraft.reply(to: sent, in: row, all: false, history: nil, mine: ["alias@work.test"]).to == ["ana@acme.test"])
+    }
+
     @Test func forwardQuotesTheMessageUnderOneFwd() {
         let m = makeMessage("1", from: "Ana", address: "ana@acme.test", text: "The deck.")
         let d = SendDraft.forward(of: m, in: makeRow(subject: "Deck"))
@@ -305,6 +317,19 @@ struct TextFormattingTests {
         link.link = URL(string: "https://x.test/?a=1&b=2")
         let html = RichText.html(AttributedString("a < b\n") + bold + AttributedString(" ") + link)
         #expect(html == "a &lt; b<br><b>bold</b> <a href=\"https://x.test/?a=1&amp;b=2\">site</a>")
+    }
+
+    /// A saved draft reopens with its formatting: the html part reads back
+    /// into what wrote it. Anything else opens as plain text.
+    @Test func aSavedDraftsHTMLReadsBackIntoTheEditor() throws {
+        let html = "a &lt; b<br><b>bold</b> <i>it</i> <u>under</u> <s>gone</s> <a href=\"https://x.test/?a=1&amp;b=2\" rel=\"noopener noreferrer\">site</a>"
+        let rich = try #require(RichText.attributed(html: html))
+        #expect(String(rich.characters) == "a < b\nbold it under gone site")
+        #expect(RichText.html(rich) == html.replacingOccurrences(of: " rel=\"noopener noreferrer\"", with: ""))
+        #expect(RichText.attributed(html: "<div style=\"color:red\">from Gmail</div>") == nil)
+        var draft = SendDraft()
+        draft.bodyText = "plain"
+        #expect(String(ComposeView.richBody(of: draft).characters) == "plain")
     }
 
     @Test func swipeTiersArmAtTheirDistances() {

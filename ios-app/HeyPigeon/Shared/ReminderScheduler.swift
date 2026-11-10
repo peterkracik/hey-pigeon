@@ -25,9 +25,6 @@ enum ReminderScheduler {
     /// sync.
     static func reschedule(_ threads: [ThreadRow], unread: Int) async {
         let center = UNUserNotificationCenter.current()
-        let pending = await center.pendingNotificationRequests()
-        center.removePendingNotificationRequests(withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(prefix) })
-
         let now = Date()
         // Reminders already due count toward every later badge.
         var dueByThen = threads.filter { t in t.scheduledAt.map { $0 <= now } ?? false }.count
@@ -35,6 +32,16 @@ enum ReminderScheduler {
             .compactMap { t in t.scheduledAt.map { (t, $0) } }
             .filter { $0.1 > now && $0.1 < now + horizon }
             .sorted { $0.1 < $1.1 }
+        // The same reminders with the same badges as last time: what is
+        // pending is already right. Every sync used to take them all off
+        // and add each one again.
+        let plan = ["\(unread)|\(dueByThen)"] + upcoming.map { t, at in
+            "\(t.id)|\(at.timeIntervalSince1970)|\(t.isFollowUp)|\(t.fromSummary)|\(t.subject)"
+        }
+        if await MainActor.run(body: { lastPlan == plan }) { return }
+        var scheduledAll = true
+        let pending = await center.pendingNotificationRequests()
+        center.removePendingNotificationRequests(withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(prefix) })
         for (t, at) in upcoming {
             dueByThen += 1
             let content = UNMutableNotificationContent()
@@ -52,7 +59,18 @@ enum ReminderScheduler {
             // land in the past for a reminder due within the minute, and iOS
             // then never fires it.
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, at.timeIntervalSince(now)), repeats: false)
-            try? await center.add(UNNotificationRequest(identifier: prefix + t.id, content: content, trigger: trigger))
+            do {
+                try await center.add(UNNotificationRequest(identifier: prefix + t.id, content: content, trigger: trigger))
+            } catch {
+                scheduledAll = false
+            }
         }
+        // A plan that did not go in whole (no permission yet) is tried
+        // again next time.
+        let done = scheduledAll ? plan : []
+        await MainActor.run { lastPlan = done }
     }
+
+    /// What `reschedule` last put in place, to tell when nothing moved.
+    @MainActor private static var lastPlan: [String] = []
 }

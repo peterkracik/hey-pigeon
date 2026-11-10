@@ -91,7 +91,7 @@ struct ComposeView: View {
         _showCc = State(initialValue: !draft.cc.isEmpty || !draft.bcc.isEmpty)
         _fromId = State(initialValue: draft.fromAccountId ?? "")
         _fromAddress = State(initialValue: draft.fromAddress)
-        _body_ = State(initialValue: draft.bodyRich ?? AttributedString(draft.bodyText))
+        _body_ = State(initialValue: Self.richBody(of: draft))
         _attachments = State(initialValue: draft.attachments)
         // A forward or a restored (undone) send arrives with a body the user
         // owns: switching From must not replace it with a signature.
@@ -284,7 +284,8 @@ struct ComposeView: View {
             HStack(alignment: .top, spacing: 12) {
                 Text(label)
                     .font(.subheadline).foregroundStyle(Theme.textTertiary)
-                    .frame(width: 56, alignment: .leading)
+                    // At least, not exactly: "Subject" was cut at larger text sizes.
+                    .frame(minWidth: 56, alignment: .leading)
                     .padding(.top, 2)
                 content()
             }
@@ -605,7 +606,7 @@ extension ComposeView {
         }
         pristine = false
     }
-    private func adoptBody(of d: SendDraft) { body_ = d.bodyRich ?? AttributedString(d.bodyText) }
+    private func adoptBody(of d: SendDraft) { body_ = Self.richBody(of: d) }
     private var footerBackground: Color { Theme.canvas }
 
     /// Under a reply's text: the conversation it answers, the latest
@@ -968,9 +969,91 @@ extension ComposeView {
 }
 #endif
 
+extension ComposeView {
+    /// The phone editor's text for a draft: as it was typed (an undone
+    /// send), else read back from the html part of a saved draft, else
+    /// the plain text.
+    static func richBody(of draft: SendDraft) -> AttributedString {
+        if let rich = draft.bodyRich { return rich }
+        #if os(iOS)
+        if let html = draft.bodyHTML, let rich = RichText.attributed(html: html) { return rich }
+        #endif
+        return AttributedString(draft.bodyText)
+    }
+}
+
 /// Serializes the editor's attributed body to the html part — only when
 /// some formatting was applied, else nil and the text part goes alone.
 enum RichText {
+    #if os(iOS)
+    /// `html(_:)` read back: the bold, italic, underline, strikethrough
+    /// and links of a draft this editor saved. Nil for anything else (a
+    /// draft written in Gmail's own editor, with its blocks and styles):
+    /// the composer then opens on the plain text, as before.
+    static func attributed(html: String) -> AttributedString? {
+        var out = AttributedString()
+        var bold = 0, italic = 0, underline = 0, strike = 0
+        var link: URL?
+        var rest = Substring(html)
+        func append(_ text: Substring) {
+            guard !text.isEmpty else { return }
+            var piece = AttributedString(unescape(String(text)))
+            var intent: InlinePresentationIntent = []
+            if bold > 0 { intent.insert(.stronglyEmphasized) }
+            if italic > 0 { intent.insert(.emphasized) }
+            if strike > 0 { intent.insert(.strikethrough) }
+            if !intent.isEmpty {
+                piece.inlinePresentationIntent = intent
+                // As the format bar sets them, so the editor shows them.
+                var font: Font = .body
+                if bold > 0 { font = font.bold() }
+                if italic > 0 { font = font.italic() }
+                piece.font = font
+                if strike > 0 { piece.strikethroughStyle = .single }
+            }
+            if underline > 0 || link != nil { piece.underlineStyle = .single }
+            if let link { piece.link = link }
+            out.append(piece)
+        }
+        while let open = rest.firstIndex(of: "<") {
+            append(rest[..<open])
+            guard let close = rest[open...].firstIndex(of: ">") else { return nil }
+            let tag = String(rest[rest.index(after: open)..<close])
+            let closing = tag.hasPrefix("/")
+            let name = tag.drop { $0 == "/" }.prefix { $0.isLetter }.lowercased()
+            switch name {
+            case "b", "strong": bold += closing ? -1 : 1
+            case "i", "em": italic += closing ? -1 : 1
+            case "u": underline += closing ? -1 : 1
+            case "s", "strike", "del": strike += closing ? -1 : 1
+            case "a": link = closing ? nil : href(in: tag)
+            case "br": out.append(AttributedString("\n"))
+            default: return nil
+            }
+            rest = rest[rest.index(after: close)...]
+        }
+        append(rest)
+        return out
+    }
+
+    private static func href(in tag: String) -> URL? {
+        guard let match = tag.range(of: #"href\s*=\s*"[^"]*""#, options: [.regularExpression, .caseInsensitive]),
+              let open = tag[match].firstIndex(of: "\"") else { return nil }
+        let value = tag[match][tag.index(after: open)...].dropLast()
+        return URL(string: unescape(String(value)))
+    }
+
+    /// `escape` backwards (and the two entities other editors write).
+    private static func unescape(_ s: String) -> String {
+        s.replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+    #endif
+
     static func html(_ text: AttributedString) -> String? {
         var out = ""
         var formatted = false

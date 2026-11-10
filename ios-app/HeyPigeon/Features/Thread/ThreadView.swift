@@ -195,14 +195,11 @@ struct ThreadView: View {
                 }
             }
             ToolbarItem(placement: .barTrailing) {
+                // What the bars do not hold. Pin and Remind me are in the
+                // triage bar (and on s · h), Unsubscribe is the chip under
+                // the subject: each used to be here as well.
                 Menu {
-                    Button { model.togglePin(current) } label: {
-                        Label(RowAction.pin.label(for: current), systemImage: RowAction.pin.glyph(for: current))
-                    }
                     Button { model.toggleRead(current); onClose() } label: { Label("Mark unread", systemImage: "envelope.badge") }
-                    Button { model.pendingRemind = current } label: {
-                        Label(RowAction.remindSheetLabel(for: current), systemImage: "clock")
-                    }
                     Button { model.pendingBundlePick = current } label: {
                         Label(current.bundleId == nil ? "Add to bundle…" : "Move to bundle…", systemImage: "square.stack")
                     }
@@ -223,9 +220,6 @@ struct ThreadView: View {
                     }
                     Button { if let last = detail?.mail.last { forward(last) } } label: {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
-                    }
-                    if let offer = unsubscribeOffer {
-                        Button { unsubscribe(offer) } label: { Label("Unsubscribe", systemImage: "hand.raised") }
                     }
                     Divider()
                     FolderMoveItem(row: current) { onClose() }

@@ -14,6 +14,26 @@ struct MailListScreen: View {
 
     private var isActive: Bool { model.tab == tab }
 
+    /// What the top bar shows for the AI: nothing, one circle, or the
+    /// sparkle menu holding both.
+    enum AIBarItem: Equatable {
+        case nothing, summarize, ask, menu
+    }
+
+    /// One door needs no menu around it.
+    static func aiBarItem(summarize: Bool, ask: Bool) -> AIBarItem {
+        switch (summarize, ask) {
+        case (true, true): .menu
+        case (true, false): .summarize
+        case (false, true): .ask
+        case (false, false): .nothing
+        }
+    }
+
+    private var aiItem: AIBarItem {
+        Self.aiBarItem(summarize: model.aiConfigured, ask: tab == .inbox && InboxAsk.isAvailable(model))
+    }
+
     /// With no account there is no mail to be clear of: the empty state
     /// offers the sign-in instead (the sidebar's "Add Google account").
     private var connect: (() -> Void)? {
@@ -51,14 +71,24 @@ struct MailListScreen: View {
                 // The context the screen was missing: folder, unread count,
                 // and which account — tap to switch account (desktop 0/1/2).
                 ToolbarItem(placement: .principal) { ListTitle(tab: tab) }
-                if model.aiConfigured {
+                // The AI's two doors — the view's summary and "Ask my
+                // inbox" (on-device questions over the Spotlight index) —
+                // behind one sparkle when both are there: with a circle
+                // each the bar held five controls.
+                if aiItem == .menu {
+                    ToolbarItem(placement: .barTrailing) {
+                        Menu {
+                            Button { model.openViewSummary() } label: { Label("Summarize this view", systemImage: "sparkles") }
+                            Button { model.askSheet = AskPresentation() } label: { Label("Ask my inbox", systemImage: "questionmark.bubble") }
+                        } label: { Image(systemName: "sparkles") }
+                        .accessibilityLabel("Summarize or ask")
+                    }
+                } else if aiItem == .summarize {
                     ToolbarItem(placement: .barTrailing) {
                         Button { model.openViewSummary() } label: { Image(systemName: "sparkles") }
                             .accessibilityLabel("Summarize this view")
                     }
-                }
-                // "Ask my inbox": on-device questions over the Spotlight index.
-                if tab == .inbox && InboxAsk.isAvailable(model) {
+                } else if aiItem == .ask {
                     ToolbarItem(placement: .barTrailing) {
                         Button { model.askSheet = AskPresentation() } label: { Image(systemName: "questionmark.bubble") }
                             .accessibilityLabel("Ask my inbox")

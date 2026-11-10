@@ -146,6 +146,8 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   timeout — not a sheet. `ComposeView` keeps the draft's lifecycle for
   both platforms (`withLifecycle`) and branches only in its two
   per-platform extensions; the phone's branches are what ship there.
+  The panel is a view over the shared `AIAssist` (the presets, the
+  requests, the runner with cancel and timeout), as the phone's sheet is.
   The AI's prompt carries who writes to whom (`AIWriteContext`) and the
   core keeps the draft's language. The list and the thread keep to
   `MacLayout.maxWidth`.

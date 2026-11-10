@@ -229,6 +229,14 @@ struct AppModelTests {
         #expect(model.unsyncedDrafts["t1"]?.bodyText == "On it.")
     }
 
+    /// The inbox bar's AI circle: a menu only when there are two things in it.
+    @Test func theInboxBarFoldsTheAIIntoOneCircle() {
+        #expect(MailListScreen.aiBarItem(summarize: true, ask: true) == .menu)
+        #expect(MailListScreen.aiBarItem(summarize: true, ask: false) == .summarize)
+        #expect(MailListScreen.aiBarItem(summarize: false, ask: true) == .ask)
+        #expect(MailListScreen.aiBarItem(summarize: false, ask: false) == .nothing)
+    }
+
     /// The list's title, as VoiceOver reads it: the number is reminders in
     /// Remind me and threads in Need reply, not "unread".
     @Test func theListTitleSaysWhatItsNumberCounts() {

@@ -1,19 +1,22 @@
-// The desktop AiEditPopover, plus a Write mode. Edit: tone presets, edit
-// presets, or a freeform instruction, run against the selection or the
-// whole body. Write: a brief the AI turns into the whole message — a reply
-// goes through the desktop's "Draft with AI" (the brief steers it as notes),
-// a new message through the edit endpoint with a compose instruction. The
-// sheet opens in Write when the body is empty. Content leaves the device on
-// an explicit tap only.
+// The desktop AiEditPopover, plus a Write mode, as the phone's sheet over
+// the shared assistant (AIAssist.swift: the presets, the requests, the
+// runner). Edit: the presets, a tone, or a freeform instruction, run
+// against the selection or the whole body. Write: a brief the AI turns
+// into the whole message — a reply goes through the desktop's "Draft with
+// AI" (the brief steers it as notes), a new message through the edit
+// endpoint with a compose instruction. The sheet opens in Write when the
+// body is empty.
+//
+// A request can always be cancelled and gives up after `AIAssist.timeout`,
+// and its result is shown for review — refined with a tone, discarded, or
+// applied — before it replaces anything, as on the Mac. The sheet used to
+// lock itself (Cancel too) until the provider answered and then replaced
+// the text at once, with nothing to take it back. Content leaves the
+// device on an explicit tap only; the footer says what and to whom.
 
 import SwiftUI
 
 struct AIEditSheet: View {
-    enum Mode: String, CaseIterable, Identifiable {
-        case write = "Write", edit = "Edit"
-        var id: String { rawValue }
-    }
-
     /// The selection, or the body without the signature.
     let text: String
     let hasSelection: Bool
@@ -25,11 +28,13 @@ struct AIEditSheet: View {
     let onWrite: (String) -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var mode: Mode
+    @State private var mode: AIAssist.Mode
     @State private var brief = ""
     @State private var instruction = ""
-    @State private var running: String?
-    @State private var error: String?
+    /// The request that is out and the result under review (AIAssist).
+    @State private var runner = AIAssistRunner()
+    /// Who answers, for the footer; read once as the sheet opens.
+    @State private var destination = AIAssist.Destination.provider
     @FocusState private var briefFocused: Bool
 
     init(text: String, hasSelection: Bool, subject: String, history: String?,
@@ -40,59 +45,77 @@ struct AIEditSheet: View {
         self.history = history
         self.onApply = onApply
         self.onWrite = onWrite
-        _mode = State(initialValue: Self.isBlank(text) ? .write : .edit)
+        _mode = State(initialValue: AIAssist.startMode(text: text))
     }
 
-    private static let tone: [(String, String)] = [
-        ("Warmer", "Make the tone warmer and friendlier, without changing the meaning."),
-        ("More formal", "Make the tone more formal and professional, without changing the meaning."),
-        ("More casual", "Make the tone more casual and relaxed, without changing the meaning."),
-        ("More confident", "Make the tone more confident and direct, without changing the meaning."),
-        ("Softer", "Soften the tone — more polite and less blunt — without changing the meaning."),
-        ("More concise", "Make it more concise without losing the key points."),
-    ]
-    private static let edits: [(String, String)] = [
-        ("Fix grammar", "Fix grammar and spelling mistakes. Keep the meaning and tone unchanged."),
-        ("Reformulate", "Rewrite this more clearly, keeping the same meaning and roughly the same length."),
-        ("Shorten", "Make this more concise without losing the key points."),
-        ("Expand", "Expand this with a bit more detail and context."),
-        ("More formal", "Rewrite this in a more formal, professional tone."),
-        ("More casual", "Rewrite this in a more casual, friendly tone."),
-    ]
-    /// `running` value for the Write action (presets use their instruction).
-    private static let writeRun = "\u{0}write"
-
-    private static func isBlank(_ s: String) -> Bool { s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var hasText: Bool { !Self.isBlank(text) }
+    private var running: Bool { runner.running }
+    private var hasText: Bool { !AIAssist.isBlank(text) }
     /// A reply: the thread transcript is there to draft against.
-    private var isReply: Bool { !Self.isBlank(history ?? "") }
+    private var isReply: Bool { !AIAssist.isBlank(history ?? "") }
     private var briefTrimmed: String { brief.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var instructionTrimmed: String { instruction.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// What a tap sends and to whom (AIAssist.footnote). The phone sends
+    /// no AIWriteContext.
+    private var footnote: String {
+        AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: false, destination: destination)
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                if hasText {
-                    Section {
-                        Picker("Mode", selection: $mode) {
-                            ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                if let result = runner.result {
+                    reviewSections(result)
+                } else {
+                    if hasText {
+                        Section {
+                            Picker("Mode", selection: $mode) {
+                                ForEach(AIAssist.Mode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(running)
                         }
-                        .pickerStyle(.segmented)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
                     }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
+                    switch mode {
+                    case .write: writeSections
+                    case .edit: editSections
+                    }
                 }
-                switch mode {
-                case .write: writeSections
-                case .edit: editSections
+                if running { workingSection }
+                if let error = runner.error {
+                    Section { Text(error).foregroundStyle(Theme.dangerText).font(.footnote) }
                 }
-                if let error { Section { Text(error).foregroundStyle(Theme.dangerText).font(.footnote) } }
+                // What a tap sends, and to whom: a footer with no rows.
+                Section {
+                    EmptyView()
+                } footer: {
+                    Text(footnote)
+                }
             }
             .navigationTitle(mode == .write ? "Write with AI" : "Edit with AI")
             .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .disabled(running != nil)
-            .overlay { if running != nil { ProgressView("Working…").padding(20).glassEffect() } }
-            .onAppear { if mode == .write { briefFocused = true } }
+            .onAppear {
+                destination = AIAssist.Destination(try? model.engine.aiStatus())
+                if mode == .write { briefFocused = true }
+            }
+            // Closing the sheet stops the request with it.
+            .onDisappear { runner.cancel() }
+        }
+    }
+
+    /// The request that is out: said in words, with the way to stop it.
+    private var workingSection: some View {
+        Section {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Working…").foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button("Cancel request") { runner.cancel() }
+                    .font(.subheadline.weight(.semibold))
+            }
         }
     }
 
@@ -105,20 +128,17 @@ struct AIEditSheet: View {
                       text: $brief, axis: .vertical)
                 .lineLimit(3...8)
                 .focused($briefFocused)
-            Button { write() } label: {
-                HStack {
-                    Label(isReply ? "Draft the reply" : "Write it", systemImage: "sparkles")
-                        .font(.body.weight(.semibold))
-                    Spacer()
-                    if running == Self.writeRun { ProgressView() }
-                }
+                .disabled(running)
+            Button { write(notes: briefTrimmed) } label: {
+                Label(isReply ? "Draft the reply" : "Write it", systemImage: "sparkles")
+                    .font(.body.weight(.semibold))
             }
             .foregroundStyle(Theme.accent)
-            .disabled((briefTrimmed.isEmpty && !isReply) || running != nil)
+            .disabled(running || !AIAssist.canRun(mode: .write, typed: briefTrimmed, hasText: hasText, isReply: isReply))
         } footer: {
             Text(isReply
-                 ? "Drafts an answer to the conversation; your notes steer it, or leave them empty. Replaces the message body."
-                 : "Writes the whole message from your brief. Replaces the message body.")
+                 ? "Drafts an answer to the conversation; your notes steer it, or leave them empty. You review it before it replaces the message."
+                 : "Writes the whole message from your brief. You review it before it replaces the message.")
         }
     }
 
@@ -128,70 +148,78 @@ struct AIEditSheet: View {
         Section {
             HStack {
                 TextField("Tell the AI what to change…", text: $instruction)
-                    .onSubmit { run(instruction) }
-                Button { run(instruction) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                    .disabled(instruction.trimmingCharacters(in: .whitespaces).isEmpty || running != nil)
+                    .onSubmit { edit(instructionTrimmed) }
+                    .disabled(running)
+                Button { edit(instructionTrimmed) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
+                    .disabled(running || !AIAssist.canRun(mode: .edit, typed: instructionTrimmed, hasText: hasText, isReply: isReply))
+                    .accessibilityLabel("Apply the instruction")
             }
         } footer: {
             Text(hasSelection ? "Applies to the selected text." : "Applies to the whole message.")
         }
-        Section("Tone") { ForEach(Self.tone, id: \.0) { preset($0) } }
-        Section("Edit") { ForEach(Self.edits, id: \.0) { preset($0) } }
+        Section("Edit") {
+            ForEach(AIAssist.edits) { p in
+                preset(p) { instruction in edit(instruction) }
+            }
+        }
+        Section("Tone") {
+            ForEach(AIAssist.tonesBeyondEdits) { p in
+                preset(p) { instruction in edit(instruction) }
+            }
+        }
     }
 
-    private func preset(_ p: (String, String)) -> some View {
-        Button { run(p.1) } label: {
-            HStack { Text(p.0); Spacer(); if running == p.1 { ProgressView() } }
+    private func preset(_ p: AIAssist.Preset, run: @escaping (String) -> Void) -> some View {
+        Button { run(p.instruction) } label: { Text(p.title) }
+            .foregroundStyle(Theme.textPrimary)
+            .disabled(running)
+    }
+
+    // MARK: Review
+
+    /// The result, before it replaces anything: read it, dial the tone in
+    /// (the tones chain), then use it or drop it.
+    @ViewBuilder private func reviewSections(_ r: AIAssist.Outcome) -> some View {
+        Section {
+            Text(r.text)
+                .font(.body)
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+        } header: {
+            Text(AIAssist.reviewTitle(r)).textCase(nil)
         }
-        .foregroundStyle(Theme.textPrimary)
+        Section {
+            Button { apply(r) } label: {
+                Label(AIAssist.applyTitle(r), systemImage: "checkmark")
+                    .font(.body.weight(.semibold))
+            }
+            .foregroundStyle(Theme.accent)
+            .disabled(running)
+            Button("Discard", role: .destructive) { runner.discard() }
+                .disabled(running)
+        }
+        Section("Tone") {
+            ForEach(AIAssist.tones) { tone in
+                preset(tone) { instruction in
+                    runner.refine(r, with: instruction, history: history, context: nil, in: model)
+                }
+            }
+        }
     }
 
     // MARK: Requests
 
-    private func run(_ instruction: String) {
-        guard hasText else { error = "Nothing to edit"; return }
-        running = instruction
-        error = nil
-        Task {
-            do {
-                let result = try await model.engine.aiEditText(instruction: instruction, text: text, history: history)
-                onApply(result)
-                dismiss()
-            } catch { self.error = error.localizedDescription }
-            running = nil
-        }
+    private func edit(_ instruction: String) {
+        guard !AIAssist.isBlank(instruction) else { return }
+        runner.edit(instruction, text: text, hasSelection: hasSelection, history: history, context: nil, in: model)
     }
 
-    private func write() {
-        let notes = briefTrimmed
-        running = Self.writeRun
-        error = nil
-        Task {
-            do {
-                let result: String
-                if isReply, let history {
-                    result = try await model.engine.aiDraftReply(subject: subject, history: history, notes: notes.isEmpty ? nil : notes)
-                } else {
-                    result = try await model.engine.aiEditText(instruction: Self.writeInstruction(subject: subject), text: notes, history: nil)
-                }
-                onWrite(result)
-                dismiss()
-            } catch { self.error = error.localizedDescription }
-            running = nil
-        }
+    private func write(notes: String) {
+        runner.write(notes: notes, subject: subject, history: history, context: nil, in: model)
     }
 
-    /// Opening words of the compose instruction (MockEngine keys on them).
-    static let writePrefix = "Write a complete email from the brief below"
-
-    /// The edit endpoint doubles as the writer for a new message: the brief
-    /// is the "text", and the instruction asks for a whole email built from
-    /// it, with the same guardrails as the desktop's draft-reply prompt.
-    static func writeInstruction(subject: String) -> String {
-        var s = writePrefix + ", in the first person as the sender. "
-        let subj = subject.trimmingCharacters(in: .whitespaces)
-        if !subj.isEmpty { s += "The subject line is \"\(subj)\". " }
-        s += "Be concise and natural. Never invent facts, dates, or commitments the brief does not support — put a short placeholder in square brackets where the sender must fill something in. Return ONLY the email body as plain text: no subject line, no markdown, and no signature block (the sender's signature is added separately)."
-        return s
+    private func apply(_ r: AIAssist.Outcome) {
+        if r.written { onWrite(r.text) } else { onApply(r.text) }
+        dismiss()
     }
 }

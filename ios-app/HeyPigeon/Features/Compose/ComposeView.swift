@@ -227,6 +227,8 @@ struct ComposeView: View {
             }
             #if os(iOS)
             .sheet(isPresented: $showAI) {
+                // What it writes is reviewed in the sheet before
+                // `applyAI` / `replaceBody` put it into the message.
                 AIEditSheet(text: selectedText ?? bodyWithoutSignature, hasSelection: selectedText != nil,
                             subject: draft.subject, history: draft.history,
                             onApply: applyAI, onWrite: replaceBody)

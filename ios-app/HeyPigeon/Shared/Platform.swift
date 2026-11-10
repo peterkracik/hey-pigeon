@@ -406,6 +406,20 @@ extension ToolbarItemPlacement {
     }
 }
 
+// MARK: - Settings
+
+/// How Settings is laid out. The phone and the iPad push AI and Triage
+/// as pages of their own from a short root; the Mac keeps one grouped
+/// form, as System Settings' panes are — its Settings is a page of the
+/// window, and a page pushed inside it would need the window's Back.
+enum SettingsLayout {
+    #if os(iOS)
+    static let pushesPages = true
+    #else
+    static let pushesPages = false
+    #endif
+}
+
 // MARK: - Small targets
 
 extension View {

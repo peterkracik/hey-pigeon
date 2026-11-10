@@ -1,5 +1,6 @@
 // Settings › Triage › "Siri triage": run a triage from the app (same agent
-// Siri uses, the confirmation as a list with Apply / Leave as is), and the
+// Siri uses, the confirmation as a list with Apply / Leave as is), its two
+// settings — the dry-run switch and the user's own rules — and the
 // journal — every run's tool calls, newest first — so what the model did
 // is never a mystery, and the rows worth keeping can become evaluation
 // cases.
@@ -11,8 +12,30 @@ struct TriageJournalView: View {
     private let journal = TriageJournal.shared
 
     var body: some View {
+        @Bindable var model = model
         List {
             runSection
+            // The run's two settings, beside the run they steer (they sat
+            // in Settings › Triage, between the classifier and the labels).
+            Section {
+                Toggle(isOn: $model.triageDryRun) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Dry run")
+                        Text("\"Triage my inbox\" only reports what it would do.").font(.caption).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your triage rules")
+                    TextEditor(text: $model.triageRules)
+                        .frame(minHeight: 60)
+                        .font(.subheadline)
+                    Text("In your words, one per line; they win over the built-in ones. \"Newsletters are done. Anything from the bank needs a reply.\"")
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            } header: {
+                Text("Rules")
+            }
+            .menuCard()
             if journal.entries.isEmpty {
                 Section { Text("No runs yet.").font(.footnote).foregroundStyle(Theme.textTertiary) }.menuCard()
             }

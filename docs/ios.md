@@ -113,8 +113,10 @@ floating "splits" pill above the tab bar. Here that maps to:
   where iOS 26's own Mail keeps it.
 - **Compose** is the top-right circle; with an AI provider connected a
   sparkle sits next to it and summarizes the current view (folder ·
-  label filter · account) in a sheet. A thread has the same sparkle in
-  its top bar.
+  label filter · account) in a sheet. When "Ask my inbox" is there too,
+  the one sparkle is a menu of the two (`MailListScreen.aiBarItem`), so
+  the bar never holds more than the sidebar, the title and two circles.
+  A thread has the summary sparkle in its top bar.
 - **Triage chips** (Jev labels + priority) appear inline on rows, not as a
   filter bar; a priority filter can join the account pill later.
 - **The thread view hides the tab bar** and shows two floating glass bars in
@@ -267,8 +269,10 @@ messages before the last two stays visible.
   Reply pill and the AI circle, and under it, as one glass bar,
   the triage bar: Done · Remind · Need reply · Pin · Delete. A set toggle
   shows a filled icon in its state colour (done mint, reminder lavender,
-  need reply sky, pin amber). Labels, Mark unread and Forward live in the
-  top-right More menu.
+  need reply sky, pin amber). Labels, Mark unread, Add to bundle, Forward,
+  Report spam and Delete live in the top-right More menu — only what the
+  bar does not hold: Pin and Remind me are the bar's, Unsubscribe is the
+  chip under the subject.
 - **Reply pill** works like Superhuman's: tapping it runs the default (Reply
   all when others are on the latest message, else Reply), the chevron picks
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
@@ -285,6 +289,10 @@ A sheet, or full screen (its corner button switches). The fields, the
 rich-text body and the footer are in "Compose" below. The sparkle in the footer (when a provider is configured) opens the AI
 sheet — the desktop `Cmd+J` popover with a second mode: **Edit** (tone and
 edit presets, a free instruction, against the selection or the whole body)
+(shared with the Mac's panel: `AIAssist.swift` — one list of presets and
+tones, every request cancellable and given up on after 90 s, the result
+shown for review, with tones to refine it, before it replaces anything,
+and a footer that says what the tap sends and to whom)
 and **Write** (a brief, or notes for a reply, that the AI turns into the
 whole message; the sheet opens there when the body is empty). Attachments
 via the Photos picker and the Files picker, 18 MB a message. **Send waits
@@ -318,7 +326,10 @@ label management (rename, colour, delete) stays in Settings.
 
 ### Settings
 
-The desktop's sections, same order, same wording:
+The desktop's sections, same wording. On the phone and the iPad the root
+is short: **AI** and **Triage** are a page each, pushed from two rows
+under Accounts (`SettingsLayout.pushesPages`); the Mac keeps one grouped
+form, as System Settings' panes are.
 
 - **Accounts** — avatar, name, email, connection state; Name, Color (the
   five tags), Sync (reminder sync over the account's Drive app folder),
@@ -348,15 +359,15 @@ The desktop's sections, same order, same wording:
   email" compose here. The app cannot read which app is the default, so
   there is no status line.
 - **Triage** — *Classifier*: On this iPhone · Apple's cloud · Jev (key,
-  verified); Auto-triage; Reanalyze all emails; the labels (add; swipe to
-  remove). Classification runs at the end of every sync round, bounded per
+  verified); Auto-triage; Reanalyze all emails; then *Labels*, a section
+  of their own (add; drag to reorder; swipe to remove). Classification runs at the end of every sync round, bounded per
   round, never on its own timer — except that a pass with mail left keeps
   going round after round while the app is in front, with its progress in
   the inbox, in Settings and (20+ emails) as a Live Activity. The labels are the bottom pill and the
   chips on rows; a thread's labels can be edited by hand (sticky until
-  Reanalyze). *Siri triage*: a dry-run switch, your own triage rules in your
-  words (both synced), and the run-and-journal screen for "Hey Siri, triage
-  my inbox".
+  Reanalyze). *Siri triage* opens one page for "Hey Siri, triage my
+  inbox": the run, its *Rules* (a dry-run switch and your own triage rules
+  in your words, both synced) and the journal.
 - **Inbox** — Pinned list; Swipe actions (the four tiers).
 - **Appearance** — System · Light · Dark; on the Mac also *Show in the
   menu bar* (the menu bar extra with the unread count).

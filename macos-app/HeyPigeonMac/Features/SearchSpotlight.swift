@@ -44,26 +44,9 @@ struct SearchSpotlight: View {
 
     /// The same search asked of Gmail itself: the list on this Mac holds
     /// what has been downloaded, Gmail everything (AppModel.searchGmail).
+    /// The phone's row (Features/Search GmailSearchRow), in the panel's size.
     private var gmailRow: some View {
-        Button { Task { await model.searchGmail() } } label: {
-            HStack(spacing: 8) {
-                if model.isSearchingGmail {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "tray.and.arrow.down")
-                }
-                Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail — older mail not on this \(Device.name) yet")
-                Spacer()
-            }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 20)
-            .frame(height: 36)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(model.isSearchingGmail)
-        .help("Ask Gmail for this search and add what it finds to the results")
+        GmailSearchRow(inPanel: true)
     }
 
     // MARK: The field
@@ -177,22 +160,10 @@ private struct ResultRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(row.fromSummary)
-                .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .frame(width: 160, alignment: .leading)
-            HStack(spacing: 8) {
-                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                    .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                Text(row.snippet)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-            }
+            // The window's row line (MailRow's MailLineSender, MailLineSubject),
+            // in the panel's narrower measures.
+            MailLineSender(row: row, width: 160)
+            MailLineSubject(row: row, gap: 8)
             Spacer(minLength: 8)
             Text(Formatters.rowTime(row.lastMessageAt))
                 .font(.system(size: 12))

@@ -584,7 +584,6 @@ private struct KeyedProviderControls: View {
     @State private var key = ""
     @State private var saving = false
     @State private var error: String?
-    @State private var confirmRemove = false
     @State private var models: [AIModel] = []
     @State private var selected: String?
 
@@ -598,27 +597,8 @@ private struct KeyedProviderControls: View {
 
     var body: some View {
         Group {
-            HStack(spacing: 12) {
-                mark(provider.mark)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(provider.title).font(.body.weight(.medium))
-                    Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
-                }
-                Spacer()
-                if hasKey {
-                    // Asks once, in the dialog an account's Remove uses (a
-                    // key is not kept anywhere to bring back): it was a
-                    // second tap on a button that had changed its words.
-                    Button("Remove") { confirmRemove = true }
-                        .font(.footnote.weight(.semibold))
-                        .confirmationDialog("Remove the \(provider.shortName) key?", isPresented: $confirmRemove,
-                                            titleVisibility: .visible) {
-                            Button("Remove key", role: .destructive) { remove() }
-                        } message: {
-                            Text("The key is deleted from this \(Device.name). \(provider.shortName) answers here again once you paste one.")
-                        }
-                }
-            }
+            KeyHolderRow(badge: provider.mark, title: provider.title, status: statusLine, hasKey: hasKey,
+                         name: provider.shortName, resumes: "\(provider.shortName) answers") { remove() }
             if hasKey {
                 Picker("Model", selection: Binding(
                     get: { selected ?? models.first?.id ?? "" },
@@ -628,14 +608,7 @@ private struct KeyedProviderControls: View {
                 }
                 .pickerStyle(.menu)
             } else {
-                HStack {
-                    SecureField(provider.keyPlaceholder, text: $key)
-                        .plainInput()
-                        .onSubmit { connect() }
-                    Button(saving ? "Verifying…" : "Connect") { connect() }
-                        .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                        .font(.footnote.weight(.semibold))
-                }
+                KeyFieldRow(placeholder: provider.keyPlaceholder, key: $key, saving: saving) { connect() }
             }
             if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
         }
@@ -655,7 +628,6 @@ private struct KeyedProviderControls: View {
     private func load() {
         models = (try? model.engine.aiModels(for: provider)) ?? []
         selected = (try? model.engine.aiSelectedModel(for: provider)) ?? nil
-        confirmRemove = false
     }
 
     private func connect() {
@@ -673,7 +645,6 @@ private struct KeyedProviderControls: View {
     }
 
     private func remove() {
-        confirmRemove = false
         do { try model.engine.removeAIKey(for: provider) } catch { self.error = error.localizedDescription }
         onChange()
     }
@@ -682,6 +653,65 @@ private struct KeyedProviderControls: View {
         do { try model.engine.setAIModel(id, for: provider) } catch { self.error = error.localizedDescription }
         load()
         onChange()
+    }
+}
+
+/// Whoever answers with a key the user pasted (ChatGPT, Claude, Gemini,
+/// Jev), as one row: its mark, name and state, and Remove once a key is
+/// there. Remove asks once, in the dialog an account's Remove uses — a
+/// key is not kept anywhere to bring back. The AI providers and Jev each
+/// spelled this row out.
+private struct KeyHolderRow: View {
+    /// The two or three letters on its tile.
+    let badge: String
+    let title: String
+    let status: String
+    let hasKey: Bool
+    /// The short name the dialog uses ("ChatGPT", "Jev").
+    let name: String
+    /// What starts again with a new key: "ChatGPT answers", "Jev classifies".
+    let resumes: String
+    let remove: () -> Void
+    @State private var confirmRemove = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            mark(badge)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.body.weight(.medium))
+                Text(status).font(.caption).foregroundStyle(Theme.textTertiary)
+            }
+            Spacer()
+            if hasKey {
+                Button("Remove") { confirmRemove = true }
+                    .font(.footnote.weight(.semibold))
+                    .confirmationDialog("Remove the \(name) key?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                        Button("Remove key", role: .destructive) { remove() }
+                    } message: {
+                        Text("The key is deleted from this \(Device.name). \(resumes) here again once you paste one.")
+                    }
+            }
+        }
+    }
+}
+
+/// The row a key is pasted into, with Connect (the key is verified
+/// before it is stored).
+private struct KeyFieldRow: View {
+    let placeholder: String
+    @Binding var key: String
+    let saving: Bool
+    let connect: () -> Void
+
+    var body: some View {
+        HStack {
+            SecureField(placeholder, text: $key)
+                .plainInput()
+                .onSubmit { connect() }
+            Button(saving ? "Verifying…" : "Connect") { connect() }
+                .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+                .font(.footnote.weight(.semibold))
+        }
     }
 }
 
@@ -866,7 +896,6 @@ private struct TriageSection: View {
     @State private var key = ""
     @State private var saving = false
     @State private var error: String?
-    @State private var confirmRemove = false
     @State private var newLabel = ""
     /// The triage label the Remove dialog is asking about.
     @State private var removing: TriageLabelItem?
@@ -897,33 +926,12 @@ private struct TriageSection: View {
                     KeyedProviderControls(provider: provider, hasKey: status?.isAvailable(current) == true) { load() }
                 }
             case .jev:
-                HStack(spacing: 12) {
-                    mark("TS")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Jev").font(.body.weight(.medium))
-                        Text(jevConfigured ? "Connected" : "Not connected")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                    Spacer()
-                    if jevConfigured {
-                        Button("Remove") { confirmRemove = true }
-                            .font(.footnote.weight(.semibold))
-                            .confirmationDialog("Remove the Jev key?", isPresented: $confirmRemove, titleVisibility: .visible) {
-                                Button("Remove key", role: .destructive) { remove() }
-                            } message: {
-                                Text("The key is deleted from this \(Device.name). Jev classifies here again once you paste one.")
-                            }
-                    }
-                }
+                // The rows every pasted key has (KeyHolderRow, KeyFieldRow:
+                // the AI providers' too).
+                KeyHolderRow(badge: "TS", title: "Jev", status: jevConfigured ? "Connected" : "Not connected",
+                             hasKey: jevConfigured, name: "Jev", resumes: "Jev classifies") { remove() }
                 if !jevConfigured {
-                    HStack {
-                        SecureField("API key", text: $key)
-                            .plainInput()
-                            .onSubmit { connect() }
-                        Button(saving ? "Verifying…" : "Connect") { connect() }
-                            .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                            .font(.footnote.weight(.semibold))
-                    }
+                    KeyFieldRow(placeholder: "API key", key: $key, saving: saving) { connect() }
                 }
             }
             if status?.configured == true && status?.isAvailable(current) != true {
@@ -1052,7 +1060,6 @@ private struct TriageSection: View {
     }
 
     private func remove() {
-        confirmRemove = false
         do { try model.engine.removeJevKey() } catch { self.error = error.localizedDescription }
         load()
     }

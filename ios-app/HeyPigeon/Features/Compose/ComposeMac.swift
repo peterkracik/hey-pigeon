@@ -598,16 +598,9 @@ struct EditorTools: View {
 
     private func button(_ label: String, _ systemImage: String, key: String?, tint: Color? = nil,
                         action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint ?? foreground)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(key.map { "\(label) (\($0))" } ?? label)
-        .accessibilityLabel(label)
+        // The Mac's icon button in its tool size (macos-app MacStyle).
+        IconButton(systemImage, help: key.map { "\(label) (\($0))" } ?? label, size: .tool,
+                   tint: tint ?? foreground, label: label, action: action)
     }
 }
 

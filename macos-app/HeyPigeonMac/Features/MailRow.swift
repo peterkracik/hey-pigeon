@@ -107,30 +107,11 @@ struct MailRow: View {
     private var line: some View {
         HStack(spacing: 12) {
             marker
-            HStack(spacing: 5) {
-                Text(row.fromSummary)
-                    .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
-                    .foregroundStyle(row.isRead && !expanded ? Theme.textSecondary : Theme.textPrimary)
-                    .lineLimit(1)
-                if row.isConversation {
-                    Text("\(row.messageCount)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                        .monospacedDigit()
-                }
-            }
-            .frame(width: state.readingPane && !inBundle ? MacLayout.paneSenderWidth : MacLayout.senderWidth, alignment: .leading)
-            HStack(spacing: 10) {
-                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                    .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                Text(row.snippet)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-            }
+            // The sender column and the subject · snippet, as the search
+            // panel's results draw them too (MailLineSender, MailLineSubject).
+            MailLineSender(row: row, width: state.readingPane && !inBundle ? MacLayout.paneSenderWidth : MacLayout.senderWidth,
+                           showsCount: true, dimmed: row.isRead && !expanded)
+            MailLineSubject(row: row, gap: 10)
             .strikethrough(completing, color: Theme.textTertiary)
             .opacity(completing ? 0.5 : 1)
             Spacer(minLength: 8)
@@ -260,7 +241,61 @@ struct MailRow: View {
     }
 }
 
+/// The sender column of a single-line row: the name in a fixed width,
+/// bolder while unread, and the thread's message count after it. The
+/// window's row and the search panel's result each give their own width.
+struct MailLineSender: View {
+    let row: ThreadRow
+    let width: CGFloat
+    /// The message count of a conversation, after the name.
+    var showsCount = false
+    /// A read row's name a step lighter (the window's list).
+    var dimmed = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(row.fromSummary)
+                .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
+                .foregroundStyle(dimmed ? Theme.textSecondary : Theme.textPrimary)
+                .lineLimit(1)
+            if showsCount && row.isConversation {
+                Text("\(row.messageCount)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                    .monospacedDigit()
+            }
+        }
+        .frame(width: width, alignment: .leading)
+    }
+}
+
+/// The subject, bolder while unread, and the snippet after it in grey,
+/// on one line; the subject keeps its width first.
+struct MailLineSubject: View {
+    let row: ThreadRow
+    /// The space between the subject and the snippet.
+    let gap: CGFloat
+
+    var body: some View {
+        HStack(spacing: gap) {
+            Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .layoutPriority(1)
+            Text(row.snippet)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+        }
+    }
+}
+
 /// A small tinted label: Reply, a reminder's time.
+/// (Not the phone's `Chip`: that one is a rounded rectangle in the text
+/// styles' sizes with its own fill and ink; this is an 11 pt capsule
+/// washed in its tint, sized for a 42 pt single-line row. They share no
+/// measure, so one component would be all parameters.)
 private struct RowChip: View {
     let text: String
     let systemImage: String
@@ -352,18 +387,9 @@ struct MailPreview: View {
                 if row.isConversation {
                     Text("\(row.messageCount) messages").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
                 }
-                Button { state.open(row, in: model) } label: {
-                    HStack(spacing: 4) {
-                        Text("Open full thread")
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 12).frame(height: 28)
-                    .background(MacTheme.selected, in: Capsule())
-                    .contentShape(Capsule())
+                PillButton(title: "Open full thread", trailingImage: "chevron.right", strong: true) {
+                    state.open(row, in: model)
                 }
-                .buttonStyle(.plain)
                 .help("Open the full thread (↩)")
             }
         }
@@ -389,23 +415,47 @@ struct MailPreview: View {
     }
 }
 
-/// Reply · Reply all · Forward under the preview.
+/// The pills under a row's preview: Reply · Reply all · Forward (quiet,
+/// an icon first, a stronger fill under the pointer) and "Open full
+/// thread ›" (`strong`: the one that goes somewhere — primary ink, the
+/// selected fill, its chevron after the words). One 28 pt capsule; the
+/// strong one was spelled out beside the others.
 private struct PillButton: View {
     let title: String
-    let systemImage: String
+    var systemImage: String? = nil
+    /// A symbol after the title (the strong pill's chevron).
+    var trailingImage: String? = nil
+    var strong = false
     let action: () -> Void
     @State private var hovering = false
 
+    private var fill: Color {
+        strong || hovering ? MacTheme.selected : MacTheme.hover
+    }
+
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 10).frame(height: 28)
-                .background(hovering ? MacTheme.selected : MacTheme.hover, in: Capsule())
+            content
+                .font(.system(size: 12, weight: strong ? .semibold : .medium))
+                .foregroundStyle(strong ? Theme.textPrimary : Theme.textSecondary)
+                .padding(.horizontal, strong ? 12 : 10).frame(height: 28)
+                .background(fill, in: Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder private var content: some View {
+        if let systemImage {
+            Label(title, systemImage: systemImage)
+        } else {
+            HStack(spacing: 4) {
+                Text(title)
+                if let trailingImage {
+                    Image(systemName: trailingImage).font(.system(size: 10, weight: .semibold))
+                }
+            }
+        }
     }
 }

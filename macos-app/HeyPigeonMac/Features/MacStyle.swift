@@ -46,42 +46,84 @@ enum MacLayout {
     static let paneMinWidth: CGFloat = 1000
 }
 
-/// One icon, no chrome until the pointer is on it: the batch bar's
-/// buttons and, in the smaller size, a row's hover bar. (The row had a
-/// copy of its own, `SmallIcon`, that differed only in its measures.)
+/// The Mac's icon button, in the four sizes the app uses, each with the
+/// measures its own copy had: the batch bar's, a row's hover bar, the
+/// editor's tools and the inline reply's header. (They were four
+/// implementations — `IconButton`, the row's `SmallIcon`, the editor
+/// tools' `button`, the composer's `headerButton` — that differed only in
+/// these numbers and in whether the pointer tints them.)
 struct IconButton: View {
-    /// The two sizes the window uses, each with the measures it had.
     enum Size {
-        /// 32 pt: a bar's button.
+        /// 32 pt: a bar's button; tints under the pointer.
         case regular
-        /// 26 pt: a row's own button, whose icon darkens under the pointer.
+        /// 26 pt: a row's own button; tints, and its icon darkens.
         case small
+        /// 28 pt: a formatting tool of the composer; no tint (the bar it
+        /// sits on is the surface).
+        case tool
+        /// 24 pt: the inline reply's window and close buttons; quiet, no
+        /// tint.
+        case header
 
-        var side: CGFloat { self == .regular ? 32 : 26 }
-        var symbol: CGFloat { self == .regular ? 15 : 12 }
-        var weight: Font.Weight { self == .regular ? .regular : .medium }
+        var side: CGFloat {
+            switch self {
+            case .regular: 32
+            case .small: 26
+            case .tool: 28
+            case .header: 24
+            }
+        }
+
+        var symbol: CGFloat {
+            switch self {
+            case .regular: 15
+            case .small, .tool: 12
+            case .header: 11
+            }
+        }
+
+        var weight: Font.Weight {
+            switch self {
+            case .regular: .regular
+            case .small: .medium
+            case .tool, .header: .semibold
+            }
+        }
+
         var cornerRadius: CGFloat { self == .regular ? 7 : 6 }
+        /// The pointer puts a tint behind the icon.
+        var tintsOnHover: Bool { self == .regular || self == .small }
         var darkensOnHover: Bool { self == .small }
+        var ink: Color { self == .header ? Theme.textTertiary : Theme.textSecondary }
     }
 
     let systemImage: String
     let help: String
     var size = Size.regular
+    /// The icon's colour when it is not the size's own (a tool that is
+    /// on, a tool on the dark floating bar).
+    var tint: Color? = nil
+    /// What VoiceOver says when the tooltip says more ("Bold (⌘B)").
+    var label: String? = nil
     var disabled = false
     let action: () -> Void
     @State private var hovering = false
 
-    init(_ systemImage: String, help: String, size: Size = .regular, disabled: Bool = false, action: @escaping () -> Void) {
+    init(_ systemImage: String, help: String, size: Size = .regular, tint: Color? = nil, label: String? = nil,
+         disabled: Bool = false, action: @escaping () -> Void) {
         self.systemImage = systemImage
         self.help = help
         self.size = size
+        self.tint = tint
+        self.label = label
         self.disabled = disabled
         self.action = action
     }
 
     private var ink: Color {
         if disabled { return Theme.textTertiary.opacity(0.6) }
-        return hovering && size.darkensOnHover ? Theme.textPrimary : Theme.textSecondary
+        if let tint { return tint }
+        return hovering && size.darkensOnHover ? Theme.textPrimary : size.ink
     }
 
     var body: some View {
@@ -90,7 +132,7 @@ struct IconButton: View {
                 .font(.system(size: size.symbol, weight: size.weight))
                 .foregroundStyle(ink)
                 .frame(width: size.side, height: size.side)
-                .background(hovering && !disabled ? MacTheme.selected : .clear,
+                .background(hovering && !disabled && size.tintsOnHover ? MacTheme.selected : .clear,
                             in: RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous))
                 .contentShape(Rectangle())
         }
@@ -98,7 +140,7 @@ struct IconButton: View {
         .disabled(disabled)
         .onHover { hovering = $0 }
         .help(help)
-        .accessibilityLabel(help)
+        .accessibilityLabel(label ?? help)
     }
 }
 

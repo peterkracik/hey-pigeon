@@ -411,7 +411,9 @@ only when formatting was applied.
 - Empty inbox is a designed moment: the pigeon, "All clear", the time of the
   last sync. Not a shrug. With no account connected the same place is the
   way in: "Connect your Gmail" and one *Add Google account* button
-  (`EmptyState`'s `connect`), on the phone and in the Mac window.
+  (`EmptyState`'s `connect`, from `AppModel.connectFirstAccount`), on the
+  phone, in the iPad's list column (its thread column stays blank until
+  there is mail) and in the Mac window.
 - Loading is skeleton rows, never a spinner in the list.
 - The only animation of note is archive: the row slides out in ~150 ms with
   a haptic. Everything else is the system's.

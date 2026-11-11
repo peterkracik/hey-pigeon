@@ -34,12 +34,6 @@ struct MailListScreen: View {
         Self.aiBarItem(summarize: model.aiConfigured, ask: tab == .inbox && InboxAsk.isAvailable(model))
     }
 
-    /// With no account there is no mail to be clear of: the empty state
-    /// offers the sign-in instead (the sidebar's "Add Google account").
-    private var connect: (() -> Void)? {
-        guard model.accounts.isEmpty else { return nil }
-        return { Task { await model.addAccount() } }
-    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -47,7 +41,7 @@ struct MailListScreen: View {
                 if !model.hasLoadedOnce {
                     SkeletonList()
                 } else if isActive && model.groupedRows.isEmpty {
-                    EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: connect)
+                    EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: model.connectFirstAccount)
                 } else if isActive {
                     ThreadList(path: $path)
                 } else {
@@ -587,6 +581,20 @@ struct SkeletonList: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .redacted(reason: .placeholder)
+    }
+}
+
+extension AppModel {
+    /// With no account there is no mail to be clear of: an empty list
+    /// offers the sign-in instead (`EmptyState`'s `connect`, the
+    /// sidebar's "Add Google account"). Nil once an account is connected.
+    /// One closure for the phone's list, the iPad's list column and the
+    /// Mac's window, which each had — or lacked — their own.
+    var connectFirstAccount: (() -> Void)? {
+        guard accounts.isEmpty else { return nil }
+        return { [weak self] in
+            Task { await self?.addAccount() }
+        }
     }
 }
 

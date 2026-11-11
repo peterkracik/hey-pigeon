@@ -116,7 +116,10 @@ private struct PadMailList: View {
             if !model.hasLoadedOnce {
                 SkeletonList()
             } else if model.groupedRows.isEmpty {
-                EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt)
+                // With no account: the sign-in, not "All clear" (the
+                // phone's list and the Mac's window offer the same).
+                EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt,
+                           connect: model.connectFirstAccount)
             } else {
                 PadThreadList(state: state)
             }
@@ -246,6 +249,11 @@ private struct PadDetailColumn: View {
                 if let row = state.openRow {
                     ThreadView(row: row) { state.closeOpen(in: model) }
                         .id(row.id)
+                } else if model.accounts.isEmpty {
+                    // No account yet: the list column offers the sign-in,
+                    // and "No thread open" beside it was a second empty
+                    // state about mail that is not there.
+                    Theme.canvas.ignoresSafeArea()
                 } else {
                     // No instruction here: beside an empty list there is
                     // nothing to pick, and most iPads have no keyboard.

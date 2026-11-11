@@ -640,7 +640,8 @@ final class MockEngine: MailEngine {
     func suggestedBundle(threadId: String) throws -> String? { nil }
 
     /// What the core's bundle summary would say about the sample trip.
-    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
+    func aiSummarizeBundle(id: String, expectedProvider: String?) async throws -> BundleBrief {
+        try refuseAChangedProvider(expectedProvider)
         try? await Task.sleep(for: .milliseconds(300))
         return BundleBrief(status: "Check-in for **LH1172** is open; the flight leaves **Saturday**.",
                            actions: ["Check in for LH1172"])

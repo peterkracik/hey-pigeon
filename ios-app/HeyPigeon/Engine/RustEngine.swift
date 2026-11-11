@@ -468,9 +468,14 @@ final class RustEngine: MailEngine {
     }
     func removeFromBundle(threadId: String) throws { try engine.removeFromBundle(threadId: threadId) }
     func suggestedBundle(threadId: String) throws -> String? { try engine.suggestBundle(threadId: threadId) }
-    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
-        let s = try await engine.aiSummarizeBundle(providerId: provider, bundleId: id)
-        return BundleBrief(status: s.status, actions: s.actions)
+    func aiSummarizeBundle(id: String, expectedProvider: String?) async throws -> BundleBrief {
+        do {
+            let s = try await engine.aiSummarizeBundle(providerId: provider, bundleId: id,
+                                                       expectedProviderId: expectedProvider)
+            return BundleBrief(status: s.status, actions: s.actions)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
     }
 }
 

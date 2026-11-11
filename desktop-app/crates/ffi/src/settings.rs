@@ -896,7 +896,7 @@ impl Engine {
     /// registered or a preference synced in meanwhile cannot slip between
     /// the check and the send. That is what keeps a sentence such as
     /// "Nothing leaves the device" true of the request made under it.
-    async fn complete_as(
+    pub(crate) async fn complete_as(
         &self,
         system: &str,
         user: String,

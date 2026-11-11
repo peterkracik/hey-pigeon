@@ -500,13 +500,19 @@ impl Engine {
 impl Engine {
     /// The bundle's status and what is left to do, from its newest emails
     /// (the text of each, fetched when the store has only its preview).
-    /// Like the other summaries it runs on the preferred provider when the
-    /// user asks (the bundle view asks on open only when that provider is
-    /// on this device or Apple's cloud, or auto-summarize is on).
+    /// Like the other summaries it runs on whichever provider answers when
+    /// the user asks. The bundle view also asks on open, with no tap, when
+    /// auto-summarize is on or the model is on this device; in the second
+    /// case it passes that provider as `expected_provider_id`, and when
+    /// another one would answer by now the call fails with
+    /// `EngineError::ProviderChanged` and nothing is sent — an untapped
+    /// summary must not reach a provider off the device because the model
+    /// went away between the check and the call. `None` asks for no check.
     pub async fn ai_summarize_bundle(
         &self,
         provider_id: String,
         bundle_id: String,
+        expected_provider_id: Option<String>,
     ) -> Result<BundleSummary, EngineError> {
         crate::settings::check_provider(&provider_id, &self.backend_ids())?;
         let b = self.require_bundle(&bundle_id)?;
@@ -545,7 +551,9 @@ impl Engine {
             b.description,
             items.join("\n\n")
         );
-        let answer = self.complete(BUNDLE_SUMMARY_PROMPT, user).await?;
+        let answer = self
+            .complete_as(BUNDLE_SUMMARY_PROMPT, user, expected_provider_id.as_deref())
+            .await?;
         Ok(parse_bundle_summary(&answer))
     }
 }
@@ -1193,6 +1201,57 @@ mod tests {
             e.get_thread_row("old".into()).unwrap().unwrap().bundle_id,
             None
         );
+    }
+
+    /// The bundle view asks for a brief on open because the model is on
+    /// this device: that request is answered on the device or not sent.
+    #[tokio::test]
+    async fn a_brief_asked_for_the_device_model_never_reaches_another_one() {
+        let e = open("brief-expected");
+        add(&e, "t1", "Your flight to Rome", 1_000, false);
+        let trip = e
+            .create_bundle(
+                "Rome trip".into(),
+                BundleKind::Trip,
+                String::new(),
+                vec!["t1".into()],
+            )
+            .unwrap();
+        let verdict = || TriageVerdict {
+            priority: Priority::Low,
+            label_ids: vec![],
+        };
+        let device =
+            crate::ai::fakes::ScriptedBackend::new("STATUS: Booked.\nACTION: none", verdict());
+        let cloud = crate::ai::fakes::ScriptedBackend::with_id(
+            "apple-cloud",
+            "STATUS: From the cloud.\nACTION: none",
+            verdict(),
+        );
+        e.add_ai_backend(device.clone());
+        e.add_ai_backend(cloud.clone());
+        let brief = |expected: Option<&str>| {
+            e.ai_summarize_bundle(
+                "openai".into(),
+                trip.id.clone(),
+                expected.map(str::to_string),
+            )
+        };
+
+        assert_eq!(brief(Some("apple")).await.unwrap().status, "Booked.");
+        assert_eq!(device.completions.lock().unwrap().len(), 1);
+
+        // The device model goes away between the view's check and the call.
+        e.remove_ai_backend("apple".into());
+        match brief(Some("apple")).await {
+            Err(EngineError::ProviderChanged(now)) => assert_eq!(now, "apple-cloud"),
+            other => panic!("expected ProviderChanged, got {other:?}"),
+        }
+        assert!(cloud.completions.lock().unwrap().is_empty());
+
+        // A tap, or auto-summarize: whoever answers now.
+        assert_eq!(brief(None).await.unwrap().status, "From the cloud.");
+        assert_eq!(cloud.completions.lock().unwrap().len(), 1);
     }
 
     #[test]

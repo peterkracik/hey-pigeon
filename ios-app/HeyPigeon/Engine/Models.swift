@@ -1289,7 +1289,10 @@ protocol MailEngine: AnyObject {
     /// The bundle to offer first in the picker, by a shared identifier.
     func suggestedBundle(threadId: String) throws -> String?
     /// The model's status and to-dos for a bundle, from its newest emails.
-    func aiSummarizeBundle(id: String) async throws -> BundleBrief
+    /// `expectedProvider` as for the writing calls: the brief asked for
+    /// with no tap because the model is on this device names that
+    /// provider, and is not sent (`AIProviderChanged`) to another one.
+    func aiSummarizeBundle(id: String, expectedProvider: String?) async throws -> BundleBrief
 }
 
 extension MailEngine {
@@ -1300,6 +1303,10 @@ extension MailEngine {
     /// The mock answers in memory: the reads run here, in place.
     func readInBackground<T: Sendable>(_ read: @escaping @Sendable (any StoreReader) throws -> T) async throws -> T {
         try read(MainActorStoreReader(engine: self))
+    }
+    /// A brief asked for on a tap, or under auto-summarize: whoever answers.
+    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
+        try await aiSummarizeBundle(id: id, expectedProvider: nil)
     }
     /// The writing calls without an expected provider: for a caller that
     /// shows no sentence naming who answers before the request.

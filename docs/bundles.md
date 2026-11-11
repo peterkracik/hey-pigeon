@@ -31,6 +31,9 @@ and key facts as one-line lists.
   brief"). It reads the newest eight emails, their text when stored (fetched
   for the summary otherwise). It runs on open when the model is on this
   device or auto-summarize is on, otherwise on a tap, like every summary.
+  The on-open request for the device model names it; if the model has
+  gone by the time of the call nothing is sent and the card waits for a
+  tap.
 - **Tracking** — links found in the bundle's mail whose address or link text
   says "track", or that carry a tracking number: one per email and host
   (an order with three "Track package" buttons is one row), never a picture

@@ -12,6 +12,9 @@ struct SummarySheet: View {
 
     /// What went to the provider, said accurately: a thread summary reads
     /// the messages' text, a list summary only subjects and previews.
+    /// It names no destination on purpose — "the AI provider" is whoever
+    /// answered, the model on this device included — so it stays true
+    /// when the provider changes between the request and this line.
     private var footnote: String {
         presentation.id.hasPrefix(AppModel.threadSummaryPrefix)
             ? "The messages' text (up to \(AppModel.threadSummaryCharsPerMessage.formatted()) characters each) was sent to the AI provider."

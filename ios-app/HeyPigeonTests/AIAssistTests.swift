@@ -97,7 +97,107 @@ struct AIAssistRunnerTests {
     @Test func anEmptyTextIsNotSent() {
         let runner = AIAssistRunner()
         runner.edit("Shorten", text: "  ", hasSelection: false, history: nil, context: nil,
-                    in: AppModel(engine: MockEngine()))
+                    shown: nil, in: AppModel(engine: MockEngine()))
         #expect(!runner.running && runner.error?.contains("Nothing to edit") == true)
+    }
+
+    /// Wait for the request that is out, for five seconds at most.
+    private func settle(_ runner: AIAssistRunner) async throws {
+        for _ in 0..<100 where runner.running {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    @Test func aRequestGoesToTheProviderTheFooterShowed() async throws {
+        let engine = MockEngine()
+        engine.onDeviceAI = true
+        let model = AppModel(engine: engine)
+        let shown = try engine.aiStatus()
+        #expect(AIAssist.Destination(shown) == .device)
+        #expect(AIAssist.expectedProvider(shown) == "apple")
+        let runner = AIAssistRunner()
+        runner.edit("Shorten", text: "A long text.", hasSelection: false, history: nil, context: nil,
+                    shown: shown, in: model)
+        try await settle(runner)
+        #expect(runner.error == nil && runner.result?.written == false)
+    }
+
+    /// The provider changes between the footer and the tap (a sync drops
+    /// the device model, the fallback reaches Apple's cloud): the request
+    /// is not sent under "Nothing leaves the device", nor retried.
+    @Test func aRequestIsNotSentWhenTheProviderChangedSinceTheFooter() async throws {
+        let engine = MockEngine()
+        engine.onDeviceAI = true
+        engine.cloudAI = true
+        let model = AppModel(engine: engine)
+        let shown = try engine.aiStatus()
+        #expect(AIAssist.Destination(shown) == .device)
+        engine.onDeviceAI = false
+        #expect(try engine.aiStatus().answersInAppleCloud)
+
+        let runner = AIAssistRunner()
+        let said = AIProviderChanged().errorDescription
+        runner.edit("Shorten", text: "A long text.", hasSelection: false, history: nil, context: nil,
+                    shown: shown, in: model)
+        try await settle(runner)
+        #expect(!runner.running && runner.result == nil && runner.error == said)
+        #expect(runner.error?.contains("not sent") == true)
+
+        runner.write(notes: "", subject: "Deck", history: "Priya: slides?", context: nil, shown: shown, in: model)
+        try await settle(runner)
+        #expect(runner.result == nil && runner.error == said)
+        runner.write(notes: "Ask for the deck", subject: "Deck", history: nil, context: nil, shown: shown, in: model)
+        try await settle(runner)
+        #expect(runner.result == nil && runner.error == said)
+
+        // The next tap is made under the redrawn footer and goes through;
+        // a tone on its result is refused when the provider moves again.
+        let redrawn = try engine.aiStatus()
+        #expect(AIAssist.Destination(redrawn) == .appleCloud)
+        runner.edit("Shorten", text: "A long text.", hasSelection: false, history: nil, context: nil,
+                    shown: redrawn, in: model)
+        try await settle(runner)
+        let result = try #require(runner.result)
+        #expect(runner.error == nil)
+        engine.onDeviceAI = true
+        runner.refine(result, with: "Warmer", history: nil, context: nil, shown: redrawn, in: model)
+        try await settle(runner)
+        #expect(runner.result == result && runner.error == said)
+    }
+
+    /// A footer drawn with no provider expects none: a provider that
+    /// turned up since does not get the request.
+    @Test func aFooterWithoutAProviderMatchesNone() async throws {
+        let engine = MockEngine()
+        let model = AppModel(engine: engine)
+        let shown = try engine.aiStatus()
+        #expect(shown.providerId == nil && AIAssist.expectedProvider(shown) == "")
+        #expect(AIAssist.expectedProvider(nil) == "")
+        engine.cloudAI = true
+        let runner = AIAssistRunner()
+        runner.edit("Shorten", text: "A long text.", hasSelection: false, history: nil, context: nil,
+                    shown: shown, in: model)
+        try await settle(runner)
+        #expect(runner.result == nil && runner.error == AIProviderChanged().errorDescription)
+    }
+
+    /// The engine's rule, on the mock: an expected provider that no longer
+    /// answers is refused; a call that names none goes to whoever answers.
+    @Test func theEngineRefusesAnotherProviderThanTheExpectedOne() async throws {
+        let engine = MockEngine()
+        engine.cloudAI = true
+        await #expect(throws: AIProviderChanged.self) {
+            _ = try await engine.aiEditText(instruction: "Shorten", text: "Hello", history: nil, context: nil,
+                                            expectedProvider: "apple")
+        }
+        await #expect(throws: AIProviderChanged.self) {
+            _ = try await engine.aiDraftReply(subject: "Deck", history: "Priya: slides?", notes: nil, context: nil,
+                                              expectedProvider: "apple")
+        }
+        let matched = try await engine.aiEditText(instruction: "Shorten", text: "Hello", history: nil, context: nil,
+                                                  expectedProvider: "apple-cloud")
+        let unchecked = try await engine.aiEditText(instruction: "Shorten", text: "Hello", history: nil)
+        #expect(matched == unchecked)
+        _ = try await engine.aiDraftReply(subject: "Deck", history: "Priya: slides?", notes: nil)
     }
 }

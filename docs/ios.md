@@ -297,7 +297,10 @@ edit presets, a free instruction, against the selection or the whole body)
 (shared with the Mac's panel: `AIAssist.swift` — one list of presets and
 tones, every request cancellable and given up on after 90 s, the result
 shown for review, with tones to refine it, before it replaces anything,
-and a footer that says what the tap sends and to whom)
+and a footer that says what the tap sends and to whom; the request
+carries the provider that footer was drawn with, and the core sends
+nothing when another one would answer by then — the sheet says the
+provider changed and the footer redraws)
 and **Write** (a brief, or notes for a reply, that the AI turns into the
 whole message; the sheet opens there when the body is empty). Attachments
 via the Photos picker and the Files picker, 18 MB a message. **Send waits

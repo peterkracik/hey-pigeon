@@ -569,6 +569,17 @@ picked per request by the core:
   same rule with Jev last. `RustEngine.refreshAIProviders` re-registers
   before every sync, so an offline cloud model drops out and the device
   model answers.
+- The provider is resolved again on every call, so it can change between
+  a privacy line being drawn and the tap under it. The composer's
+  assistant closes that: `ai_edit_text` and `ai_draft_reply` take an
+  `expected_provider_id` (the `provider_id` of the status the footer was
+  drawn from, empty when it showed none), the core resolves the provider
+  once, and when it is another one it returns
+  `EngineError::ProviderChanged` without sending anything
+  (`AIProviderChanged` in the shell; `AIAssistRunner` shows it and does
+  not retry, the footer redraws, the next tap is under the new sentence).
+  Calls that pass no expectation (summaries, triage, Ask, translation,
+  the one-tap reply draft) go to whoever answers now.
 - **Settings › AI** lists both Apple rows (answering · available · why
   not), *Prefer*, *If it can't answer* (private first · cloud first · stay
   on this iPhone) and a per-provider token line from `AiUsageLedger`

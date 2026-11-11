@@ -816,6 +816,11 @@ pub enum EngineError {
     /// An AI provider / Jev call failed (network, bad key, provider error).
     #[error("ai: {0}")]
     Ai(String),
+    /// The caller named the provider it had shown the user, and another
+    /// one would answer now. Nothing was sent; the payload is the id of
+    /// the provider that would have answered.
+    #[error("the AI provider changed to {0}; nothing was sent")]
+    ProviderChanged(String),
 }
 
 impl From<heypigeon_core::ports::StoreError> for EngineError {

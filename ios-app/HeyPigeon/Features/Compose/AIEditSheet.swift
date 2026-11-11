@@ -54,20 +54,24 @@ struct AIEditSheet: View {
     private var instructionTrimmed: String { instruction.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     /// What a tap sends and to whom (AIAssist.footnote). The phone sends
-    /// no AIWriteContext. Who answers is read each time the footer is
-    /// drawn, not once as the sheet opens: a sync can change the active
-    /// provider while the sheet is up, and every request redraws it.
-    private var footnote: String {
+    /// no AIWriteContext. `shown` is the body's one read of who answers,
+    /// the same value every button of that pass hands the runner: a sync
+    /// can change the active provider while the sheet is up, and the core
+    /// then refuses the request rather than send it under this sentence.
+    private func footnote(_ shown: AIStatus?) -> String {
         AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: false,
-                          destination: AIAssist.Destination(try? model.engine.aiStatus()),
+                          destination: AIAssist.Destination(shown),
                           refining: runner.result != nil)
     }
 
     var body: some View {
+        // Read once per draw: the footer and the requests must not get two
+        // reads that could disagree.
+        let shown = try? model.engine.aiStatus()
         NavigationStack {
             List {
                 if let result = runner.result {
-                    reviewSections(result)
+                    reviewSections(result, shown: shown)
                 } else {
                     if hasText {
                         Section {
@@ -81,8 +85,8 @@ struct AIEditSheet: View {
                         .listRowInsets(EdgeInsets())
                     }
                     switch mode {
-                    case .write: writeSections
-                    case .edit: editSections
+                    case .write: writeSections(shown)
+                    case .edit: editSections(shown)
                     }
                 }
                 if running { workingSection }
@@ -93,7 +97,7 @@ struct AIEditSheet: View {
                 Section {
                     EmptyView()
                 } footer: {
-                    Text(footnote)
+                    Text(footnote(shown))
                 }
             }
             .navigationTitle(mode == .write ? "Write with AI" : "Edit with AI")
@@ -122,7 +126,7 @@ struct AIEditSheet: View {
 
     // MARK: Write
 
-    @ViewBuilder private var writeSections: some View {
+    @ViewBuilder private func writeSections(_ shown: AIStatus?) -> some View {
         Section {
             TextField(isReply ? "Notes for the reply — what to say, agree to, or ask…"
                               : "What should the email say?",
@@ -130,7 +134,7 @@ struct AIEditSheet: View {
                 .lineLimit(3...8)
                 .focused($briefFocused)
                 .disabled(running)
-            Button { write(notes: briefTrimmed) } label: {
+            Button { write(notes: briefTrimmed, shown: shown) } label: {
                 Label(isReply ? "Draft the reply" : "Write it", systemImage: "sparkles")
                     .font(.body.weight(.semibold))
             }
@@ -145,13 +149,13 @@ struct AIEditSheet: View {
 
     // MARK: Edit
 
-    @ViewBuilder private var editSections: some View {
+    @ViewBuilder private func editSections(_ shown: AIStatus?) -> some View {
         Section {
             HStack {
                 TextField("Tell the AI what to change…", text: $instruction)
-                    .onSubmit { edit(instructionTrimmed) }
+                    .onSubmit { edit(instructionTrimmed, shown: shown) }
                     .disabled(running)
-                Button { edit(instructionTrimmed) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
+                Button { edit(instructionTrimmed, shown: shown) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                     .disabled(running || !AIAssist.canRun(mode: .edit, typed: instructionTrimmed, hasText: hasText, isReply: isReply))
                     .accessibilityLabel("Apply the instruction")
             }
@@ -160,12 +164,12 @@ struct AIEditSheet: View {
         }
         Section("Edit") {
             ForEach(AIAssist.edits) { p in
-                preset(p) { instruction in edit(instruction) }
+                preset(p) { instruction in edit(instruction, shown: shown) }
             }
         }
         Section("Tone") {
             ForEach(AIAssist.tonesBeyondEdits) { p in
-                preset(p) { instruction in edit(instruction) }
+                preset(p) { instruction in edit(instruction, shown: shown) }
             }
         }
     }
@@ -180,7 +184,7 @@ struct AIEditSheet: View {
 
     /// The result, before it replaces anything: read it, dial the tone in
     /// (the tones chain), then use it or drop it.
-    @ViewBuilder private func reviewSections(_ r: AIAssist.Outcome) -> some View {
+    @ViewBuilder private func reviewSections(_ r: AIAssist.Outcome, shown: AIStatus?) -> some View {
         Section {
             Text(r.text)
                 .font(.body)
@@ -202,7 +206,7 @@ struct AIEditSheet: View {
         Section("Tone") {
             ForEach(AIAssist.tones) { tone in
                 preset(tone) { instruction in
-                    runner.refine(r, with: instruction, history: history, context: nil, in: model)
+                    runner.refine(r, with: instruction, history: history, context: nil, shown: shown, in: model)
                 }
             }
         }
@@ -210,13 +214,14 @@ struct AIEditSheet: View {
 
     // MARK: Requests
 
-    private func edit(_ instruction: String) {
+    private func edit(_ instruction: String, shown: AIStatus?) {
         guard !AIAssist.isBlank(instruction) else { return }
-        runner.edit(instruction, text: text, hasSelection: hasSelection, history: history, context: nil, in: model)
+        runner.edit(instruction, text: text, hasSelection: hasSelection, history: history, context: nil,
+                    shown: shown, in: model)
     }
 
-    private func write(notes: String) {
-        runner.write(notes: notes, subject: subject, history: history, context: nil, in: model)
+    private func write(notes: String, shown: AIStatus?) {
+        runner.write(notes: notes, subject: subject, history: history, context: nil, shown: shown, in: model)
     }
 
     private func apply(_ r: AIAssist.Outcome) {

@@ -23,7 +23,7 @@ HeyPigeonMac/
               MacStyle (the look), SidebarColumn, InboxPage (list, search filters, batch bar), MailRow
               (the row and its in-place preview), ThreadPage (ThreadView; ThreadWindow), BundlesPage
               (the shared BundlesStack over the window's path), BundleEmails (a bundle's Emails page
-              and its Emails · Info tabs), WindowState,
+              and its Emails · Info tabs), BundleInfo (its Info page), WindowState,
               CommandPalette, ShortcutsSheet, MenuBarExtraView, ThreadPrinter (⌘P)
 HeyPigeonMacShare/   the share extension's NSViewController (the view is ../ios-app/HeyPigeonShare/ShareView.swift)
 HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
@@ -93,7 +93,20 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   `BundlePageTabs`: the toolbar's tabs (`TabPill`, shared with
   `ViewTabs`) on a glass capsule floating over the top of the page. A
   switcher in the window is `TabPill`s, never the system's segmented
-  control, whose selection is the system blue. The stack gives each
+  control, whose selection is the system blue. The Info page is the
+  window's too (`BundleInfoPage`): the same surface as the Emails page —
+  white cards on the list's background under the list's group titles —
+  in a reading column (`MacLayout.readingWidth`, Settings' width), not
+  the phone's grouped list, which lay on the canvas here with bold list
+  headers and rows stretched across the window. Summary, then Tracking
+  with one row per shipment under a carrier's or shop's name
+  (`BundleTracking`, shared and tested: never a redirect's host; links
+  fold only when they are one email's or carry the same tracking or
+  order number), then Key facts kind by kind. A row's click is what it
+  is for (a shipment opens its tracking page, a fact is copied, with a
+  toast); the email it came from, Copy link and Track are in its hover
+  bar and context menu. The switcher tells the page which background to
+  stand on (`WindowState.bundlePageOf`). The stack gives each
   bundle's screen its own identity (`.id`): the sidebar swaps the bundle
   at the same depth, and the screen kept the first bundle's contents.
   `AppModel.showBundles` is handed to the window the moment it turns

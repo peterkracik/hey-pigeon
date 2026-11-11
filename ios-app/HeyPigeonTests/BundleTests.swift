@@ -236,6 +236,50 @@ struct BundleSheetTests {
         #expect(AppModel.briefKey(before) != AppModel.briefKey(after))
         #expect(model.brief(for: after) == nil)
     }
+
+    /// Wait for the brief that is being asked for, five seconds at most.
+    private func settle(_ model: AppModel, _ id: String) async throws {
+        for _ in 0..<100 where model.bundleBriefs[id]?.generating == true {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    /// Opening a bundle asks for the brief with no tap because the model
+    /// is on this device. When the model goes before the request is made,
+    /// nothing is sent to the provider that answers instead, and nothing
+    /// is said: the card offers the summary on a tap.
+    @Test func aBriefOnOpenStaysOnTheDeviceOrIsNotAsked() async throws {
+        let engine = MockEngine()
+        engine.onDeviceAI = true
+        engine.cloudAI = true
+        let model = AppModel(engine: engine)
+        model.autoSummarize = false
+        #expect(model.aiConfigured)
+        let c = try #require(model.bundleContents(id: "b1"))
+
+        model.summarizeBundleOnOpen(c)
+        #expect(model.brief(for: c)?.generating == true)
+        engine.onDeviceAI = false
+        try await settle(model, "b1")
+        #expect(model.brief(for: c) == nil)
+
+        // Apple's cloud answers now: opening asks for nothing.
+        model.summarizeBundleOnOpen(c)
+        #expect(model.brief(for: c) == nil)
+        // A tap goes to whoever answers.
+        model.summarizeBundle(c)
+        try await settle(model, "b1")
+        #expect(model.brief(for: c)?.brief != nil)
+
+        // With the model on this device, opening asks and it answers.
+        engine.onDeviceAI = true
+        let other = AppModel(engine: engine)
+        other.autoSummarize = false
+        let again = try #require(other.bundleContents(id: "b1"))
+        other.summarizeBundleOnOpen(again)
+        try await settle(other, "b1")
+        #expect(other.brief(for: again)?.brief != nil)
+    }
 }
 
 /// What the Info page works out of a bundle's tracking links and facts

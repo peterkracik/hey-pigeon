@@ -404,6 +404,17 @@ final class MockEngine: MailEngine {
         (onDeviceAI ? ["apple"] : []) + (cloudAI ? ["apple-cloud"] : [])
     }
 
+    /// The engine's refusal (crates/ffi/src/settings.rs complete_as): a
+    /// writing call that names the provider the user was shown is not
+    /// sent when another one answers now. The sample inbox answers with
+    /// no provider at all, which an empty expectation stands for; the
+    /// core says "connect an AI provider" there instead.
+    private func refuseAChangedProvider(_ expected: String?) throws {
+        guard let expected else { return }
+        let active = try aiStatus().providerId ?? ""
+        if active != expected { throw AIProviderChanged() }
+    }
+
     func aiStatus() throws -> AIStatus {
         let fallback = aiFallback.isEmpty ? AIProvider.defaultFallback : aiFallback
         let preferred = aiProvider ?? AIProvider.defaultFallback.first { !$0.takesKey && canAnswer($0) } ?? .openai
@@ -455,7 +466,9 @@ final class MockEngine: MailEngine {
         try requireKeyed(provider)
         aiModelChoice[provider.rawValue] = model
     }
-    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String {
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?,
+                    expectedProvider: String?) async throws -> String {
+        try refuseAChangedProvider(expectedProvider)
         try? await Task.sleep(for: .milliseconds(500))
         if instruction.hasPrefix(AIAssist.writePrefix) {
             // Compose from a brief (the assistant's Write mode).
@@ -469,7 +482,9 @@ final class MockEngine: MailEngine {
         }
         return "\(text)\n\n(\(instruction.lowercased()))"
     }
-    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String {
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?,
+                      expectedProvider: String?) async throws -> String {
+        try refuseAChangedProvider(expectedProvider)
         try? await Task.sleep(for: .milliseconds(500))
         return "Thanks — I'll take a look and get back to you by [day]."
     }
@@ -625,7 +640,8 @@ final class MockEngine: MailEngine {
     func suggestedBundle(threadId: String) throws -> String? { nil }
 
     /// What the core's bundle summary would say about the sample trip.
-    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
+    func aiSummarizeBundle(id: String, expectedProvider: String?) async throws -> BundleBrief {
+        try refuseAChangedProvider(expectedProvider)
         try? await Task.sleep(for: .milliseconds(300))
         return BundleBrief(status: "Check-in for **LH1172** is open; the flight leaves **Saturday**.",
                            actions: ["Check in for LH1172"])

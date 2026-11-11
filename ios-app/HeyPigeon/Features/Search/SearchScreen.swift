@@ -59,6 +59,10 @@ struct SearchScreen: View {
 /// covers the mail it has downloaded; Gmail's own covers everything
 /// (AppModel.searchGmail). What it finds joins the results.
 struct GmailSearchRow: View {
+    /// In the Mac's search panel: its 36 pt line in the panel's 12 pt
+    /// type, on the panel's glass. Elsewhere the phone's row on the canvas.
+    /// One row and one wording for both; each keeps its own size.
+    var inPanel = false
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -72,14 +76,18 @@ struct GmailSearchRow: View {
                 Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail")
                 Spacer()
             }
-            .font(.footnote.weight(.semibold))
+            .font(inPanel ? .system(size: 12, weight: .medium) : .footnote.weight(.semibold))
             .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 16).padding(.vertical, 12)
+            .padding(.horizontal, inPanel ? 20 : 16)
+            .padding(.vertical, inPanel ? 0 : 12)
+            .frame(height: inPanel ? 36 : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(model.isSearchingGmail)
-        .background(Theme.canvas)
+        .background(inPanel ? Color.clear : Theme.canvas)
+        // The pointer's tooltip and VoiceOver's hint say the same thing.
+        .help("Finds older mail that is not on this \(Device.name) yet")
         .accessibilityHint("Finds older mail that is not on this \(Device.name) yet")
     }
 }

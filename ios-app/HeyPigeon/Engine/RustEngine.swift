@@ -370,13 +370,29 @@ final class RustEngine: MailEngine {
     func setAIModel(_ model: String, for provider: AIProvider) throws {
         try engine.setAiModel(providerId: provider.rawValue, model: model)
     }
-    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String {
-        try await engine.aiEditText(providerId: provider, instruction: instruction, text: text, history: history,
-                                    context: context.map(Self.ffi))
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?,
+                    expectedProvider: String?) async throws -> String {
+        do {
+            return try await engine.aiEditText(providerId: provider, instruction: instruction, text: text, history: history,
+                                               context: context.map(Self.ffi), expectedProviderId: expectedProvider)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
     }
-    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String {
-        try await engine.aiDraftReply(providerId: provider, subject: subject, history: history, notes: notes,
-                                      context: context.map(Self.ffi))
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?,
+                      expectedProvider: String?) async throws -> String {
+        do {
+            return try await engine.aiDraftReply(providerId: provider, subject: subject, history: history, notes: notes,
+                                                 context: context.map(Self.ffi), expectedProviderId: expectedProvider)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
+    }
+    /// The core's refusal in the app's own type, so the shell and the mock
+    /// throw the same thing; any other error passes as it is.
+    private static func shellError(_ error: EngineError) -> any Error {
+        if case .ProviderChanged = error { return AIProviderChanged() }
+        return error
     }
     private static func ffi(_ c: AIWriteContext) -> AiWriteContext {
         AiWriteContext(senderName: c.senderName, senderEmail: c.senderEmail, recipients: c.recipients, subject: c.subject)
@@ -452,9 +468,14 @@ final class RustEngine: MailEngine {
     }
     func removeFromBundle(threadId: String) throws { try engine.removeFromBundle(threadId: threadId) }
     func suggestedBundle(threadId: String) throws -> String? { try engine.suggestBundle(threadId: threadId) }
-    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
-        let s = try await engine.aiSummarizeBundle(providerId: provider, bundleId: id)
-        return BundleBrief(status: s.status, actions: s.actions)
+    func aiSummarizeBundle(id: String, expectedProvider: String?) async throws -> BundleBrief {
+        do {
+            let s = try await engine.aiSummarizeBundle(providerId: provider, bundleId: id,
+                                                       expectedProviderId: expectedProvider)
+            return BundleBrief(status: s.status, actions: s.actions)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
     }
 }
 

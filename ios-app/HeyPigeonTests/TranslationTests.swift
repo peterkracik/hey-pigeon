@@ -73,6 +73,48 @@ struct TranslationTests {
         #expect(BodySelection(message: ["text": "  \n"])?.isUsable == false)
     }
 
+    /// The line under a translation is built from the provider the
+    /// request was pinned to; after a refusal it says where Try again
+    /// goes, since nothing was sent.
+    @MainActor @Test func theFootnoteNamesTheProviderTheRequestWentTo() throws {
+        let engine = MockEngine()
+        let none = try engine.aiStatus()
+        engine.onDeviceAI = true
+        let device = try engine.aiStatus()
+        #expect(TranslationPanel.footnote(shown: device, refused: false, wasCut: false)
+            == "Translated on this \(Device.name).")
+        #expect(TranslationPanel.footnote(shown: none, refused: false, wasCut: false)
+            == "The selected text was sent to the AI provider.")
+        #expect(TranslationPanel.footnote(shown: nil, refused: false, wasCut: true)
+            .hasPrefix("The selected text was sent to the AI provider. Only the first "))
+        #expect(TranslationPanel.footnote(shown: device, refused: true, wasCut: true)
+            == "Try again translates on this \(Device.name).")
+        #expect(TranslationPanel.footnote(shown: none, refused: true, wasCut: false)
+            == "Try again sends the selected text to the AI provider.")
+    }
+
+    /// The panel's request: pinned to the provider read before it, it is
+    /// refused when another one answers by then (here Apple's cloud after
+    /// the device model went), and goes through once it names that one.
+    @MainActor @Test func aTranslationIsPinnedToTheProviderItsFootnoteNames() async throws {
+        let engine = MockEngine()
+        engine.onDeviceAI = true
+        engine.cloudAI = true
+        let shown = try engine.aiStatus()
+        engine.onDeviceAI = false
+        await #expect(throws: AIProviderChanged.self) {
+            _ = try await engine.aiEditText(instruction: Translation.instruction(to: "Slovak"), text: "Hello",
+                                            history: nil, context: nil,
+                                            expectedProvider: AIAssist.expectedProvider(shown))
+        }
+        let now = try engine.aiStatus()
+        #expect(now.answersInAppleCloud)
+        let out = try await engine.aiEditText(instruction: Translation.instruction(to: "Slovak"), text: "Hello",
+                                              history: nil, context: nil,
+                                              expectedProvider: AIAssist.expectedProvider(now))
+        #expect(out == "[Slovak] Hello")
+    }
+
     @Test func theSampleInboxEchoesTheSelectionInTheLanguage() async throws {
         let out = try await MockEngine().aiEditText(instruction: Translation.instruction(to: "Slovak"), text: "Hello", history: nil)
         #expect(out == "[Slovak] Hello")

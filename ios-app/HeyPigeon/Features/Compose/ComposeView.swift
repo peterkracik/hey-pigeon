@@ -857,17 +857,10 @@ extension ComposeView {
         }
     }
 
+    /// The inline reply's window and close buttons: the Mac's icon
+    /// button in its quiet size (macos-app MacStyle `IconButton`).
     private func headerButton(_ systemImage: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
+        IconButton(systemImage, help: help, size: .header, action: action)
     }
 
     /// The window button: the draft moves to the composer's sheet with

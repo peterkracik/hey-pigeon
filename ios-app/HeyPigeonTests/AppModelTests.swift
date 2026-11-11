@@ -231,6 +231,13 @@ struct AppModelTests {
         #expect(ComposeView.linkAddress(from: "   ") == nil)
     }
 
+    /// The sign-in is offered by an empty list only while no account is
+    /// connected (the sample inbox has two).
+    @Test func theSignInIsOfferedOnlyWithNoAccount() {
+        #expect(!model.accounts.isEmpty)
+        #expect(model.connectFirstAccount == nil)
+    }
+
     /// The composer's trash: gone at once, and Undo opens the composer on
     /// the message again, as one no Gmail draft stands behind.
     @Test func aDiscardedDraftComesBackWithUndo() throws {

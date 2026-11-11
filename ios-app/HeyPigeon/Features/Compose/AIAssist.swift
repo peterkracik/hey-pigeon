@@ -159,6 +159,15 @@ enum AIAssist {
         }
     }
 
+    /// The provider a request must be answered by: the one the footer
+    /// was drawn with. Empty when it showed none (no provider, or a
+    /// status that could not be read), which matches no provider: the
+    /// footer then says "your AI provider" only because nothing can
+    /// answer, and a request is not sent to one that turned up since.
+    static func expectedProvider(_ shown: AIStatus?) -> String {
+        shown?.providerId ?? ""
+    }
+
     /// The privacy line under the assistant: what a tap sends, and to
     /// whom. It must stay literally true (ios-app/CLAUDE.md): the pieces
     /// are the arguments of the engine's `aiEditText` / `aiDraftReply`
@@ -168,6 +177,12 @@ enum AIAssist {
     /// addresses.
     /// With a result under review (`refining`) a tap is a tone: it sends
     /// that draft, not the brief or the original text.
+    /// The destination holds for the request too: the view hands the
+    /// runner the status it drew this line from, the request carries that
+    /// provider, and the core sends nothing when another one would answer
+    /// (`AIProviderChanged`). A sync that changes the provider between
+    /// the draw and the tap used to send that one request under the old
+    /// sentence.
     static func footnote(mode: Mode, isReply: Bool, sendsWriter: Bool, destination: Destination,
                          refining: Bool = false) -> String {
         var parts: [String]
@@ -272,16 +287,25 @@ final class AIAssistRunner {
     }
 
     // MARK: The requests
+    //
+    // `shown` is the status the view drew its footer from, in the same
+    // pass that made the button: the request names that provider and is
+    // refused, not rerouted, when another one answers now. The refusal
+    // lands in `error` like any other and is never retried here: showing
+    // it redraws the footer with the new destination, and the next tap
+    // is made under that sentence.
 
     /// An instruction applied to the selection or the whole message.
     func edit(_ instruction: String, text: String, hasSelection: Bool, history: String?, context: AIWriteContext?,
-              in model: AppModel) {
+              shown: AIStatus?, in model: AppModel) {
         guard !AIAssist.isBlank(text) else {
             error = "Nothing to edit — write something first."
             return
         }
+        let expected = AIAssist.expectedProvider(shown)
         run {
-            try await model.engine.aiEditText(instruction: instruction, text: text, history: history, context: context)
+            try await model.engine.aiEditText(instruction: instruction, text: text, history: history, context: context,
+                                              expectedProvider: expected)
         } done: { out in
             AIAssist.Outcome(text: out, written: false, hasSelection: hasSelection)
         }
@@ -290,9 +314,11 @@ final class AIAssistRunner {
     /// A tone on a result under review: applied to the result, not to the
     /// original, so tones chain.
     func refine(_ outcome: AIAssist.Outcome, with instruction: String, history: String?, context: AIWriteContext?,
-                in model: AppModel) {
+                shown: AIStatus?, in model: AppModel) {
+        let expected = AIAssist.expectedProvider(shown)
         run {
-            try await model.engine.aiEditText(instruction: instruction, text: outcome.text, history: history, context: context)
+            try await model.engine.aiEditText(instruction: instruction, text: outcome.text, history: history, context: context,
+                                              expectedProvider: expected)
         } done: { out in
             AIAssist.Outcome(text: out, written: outcome.written, hasSelection: outcome.hasSelection)
         }
@@ -300,11 +326,14 @@ final class AIAssistRunner {
 
     /// A reply from the transcript (the notes steer it), or a new message
     /// from the brief through the edit endpoint.
-    func write(notes: String, subject: String, history: String?, context: AIWriteContext?, in model: AppModel) {
+    func write(notes: String, subject: String, history: String?, context: AIWriteContext?, shown: AIStatus?,
+               in model: AppModel) {
+        let expected = AIAssist.expectedProvider(shown)
         if let history, !AIAssist.isBlank(history) {
             run {
                 try await model.engine.aiDraftReply(subject: subject, history: history,
-                                                    notes: notes.isEmpty ? nil : notes, context: context)
+                                                    notes: notes.isEmpty ? nil : notes, context: context,
+                                                    expectedProvider: expected)
             } done: { out in
                 AIAssist.Outcome(text: out, written: true, hasSelection: false)
             }
@@ -315,7 +344,8 @@ final class AIAssistRunner {
             }
             run {
                 try await model.engine.aiEditText(instruction: AIAssist.writeInstruction(subject: subject),
-                                                  text: notes, history: nil, context: context)
+                                                  text: notes, history: nil, context: context,
+                                                  expectedProvider: expected)
             } done: { out in
                 AIAssist.Outcome(text: out, written: true, hasSelection: false)
             }

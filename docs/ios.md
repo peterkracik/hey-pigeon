@@ -297,7 +297,10 @@ edit presets, a free instruction, against the selection or the whole body)
 (shared with the Mac's panel: `AIAssist.swift` — one list of presets and
 tones, every request cancellable and given up on after 90 s, the result
 shown for review, with tones to refine it, before it replaces anything,
-and a footer that says what the tap sends and to whom)
+and a footer that says what the tap sends and to whom; the request
+carries the provider that footer was drawn with, and the core sends
+nothing when another one would answer by then — the sheet says the
+provider changed and the footer redraws)
 and **Write** (a brief, or notes for a reply, that the AI turns into the
 whole message; the sheet opens there when the body is empty). Attachments
 via the Photos picker and the Files picker, 18 MB a message. **Send waits
@@ -411,7 +414,9 @@ only when formatting was applied.
 - Empty inbox is a designed moment: the pigeon, "All clear", the time of the
   last sync. Not a shrug. With no account connected the same place is the
   way in: "Connect your Gmail" and one *Add Google account* button
-  (`EmptyState`'s `connect`), on the phone and in the Mac window.
+  (`EmptyState`'s `connect`, from `AppModel.connectFirstAccount`), on the
+  phone, in the iPad's list column (its thread column stays blank until
+  there is mail) and in the Mac window.
 - Loading is skeleton rows, never a spinner in the list.
 - The only animation of note is archive: the row slides out in ~150 ms with
   a haptic. Everything else is the system's.

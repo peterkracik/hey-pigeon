@@ -569,6 +569,26 @@ picked per request by the core:
   same rule with Jev last. `RustEngine.refreshAIProviders` re-registers
   before every sync, so an offline cloud model drops out and the device
   model answers.
+- The provider is resolved again on every call, so it can change between
+  a privacy line being drawn and the tap under it. The composer's
+  assistant closes that: `ai_edit_text` and `ai_draft_reply` take an
+  `expected_provider_id` (the `provider_id` of the status the footer was
+  drawn from, empty when it showed none), the core resolves the provider
+  once, and when it is another one it returns
+  `EngineError::ProviderChanged` without sending anything
+  (`AIProviderChanged` in the shell; `AIAssistRunner` shows it and does
+  not retry, the footer redraws, the next tap is under the new sentence).
+  The same expectation pins two more requests. The translation panel
+  reads the status before its first request, names that provider in the
+  call and builds "Translated on this iPhone" / "…was sent to the AI
+  provider" from it, so the line describes the provider that answered,
+  not a later read; a refusal shows who answers now and waits for Try
+  again. A bundle's brief asked for on open because the model is on this
+  device (`AppModel.summarizeBundleOnOpen`, `ai_summarize_bundle`) names
+  `apple` and is dropped silently when another provider would answer.
+  Calls that pass no expectation (list and thread summaries, triage, the
+  one-tap reply draft) go to whoever answers now: their sentences say
+  what is sent, not where.
 - **Settings › AI** lists both Apple rows (answering · available · why
   not), *Prefer*, *If it can't answer* (private first · cloud first · stay
   on this iPhone) and a per-provider token line from `AiUsageLedger`
@@ -628,7 +648,8 @@ last pick is kept on the device under `translation.language`), Copy, and
 the privacy line. The request is the engine's `ai_edit_text` with
 `Translation.instruction(to:)` — the core picks the provider as for every
 other call, the on-device model when it can — and sends the selection
-alone, cut to 6,000 characters. Own messages offer no circle; the system's
+alone, cut to 6,000 characters. The call names the provider the privacy
+line is drawn from, so the line is true of the request it sits under. Own messages offer no circle; the system's
 Look Up / Translate stay in the edit menu on both bodies.
 
 ### Agentic triage (#66)

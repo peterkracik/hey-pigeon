@@ -47,20 +47,14 @@ struct InboxPage: View {
         .onChange(of: state.listFocusRequest) { _, _ in listFocused = true }
     }
 
-    /// With no account the empty list offers the sign-in (the shared
-    /// EmptyState), as the phone's does.
-    private var connect: (() -> Void)? {
-        guard model.accounts.isEmpty else { return nil }
-        return { Task { await model.addAccount() } }
-    }
-
     @ViewBuilder private var content: some View {
         if !model.hasLoadedOnce {
             SkeletonList()
         } else if model.groupedRows.isEmpty && model.isSearching && model.isSearchPending {
             Color.clear
         } else if model.groupedRows.isEmpty {
-            EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt, connect: connect)
+            EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt,
+                       connect: model.connectFirstAccount)
         } else {
             list
         }

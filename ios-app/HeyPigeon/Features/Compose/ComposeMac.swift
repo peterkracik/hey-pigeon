@@ -598,16 +598,9 @@ struct EditorTools: View {
 
     private func button(_ label: String, _ systemImage: String, key: String?, tint: Color? = nil,
                         action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint ?? foreground)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(key.map { "\(label) (\($0))" } ?? label)
-        .accessibilityLabel(label)
+        // The Mac's icon button in its tool size (macos-app MacStyle).
+        IconButton(systemImage, help: key.map { "\(label) (\($0))" } ?? label, size: .tool,
+                   tint: tint ?? foreground, label: label, action: action)
     }
 }
 
@@ -705,11 +698,15 @@ struct MacAIPanel: View {
     private var typed: String { instruction.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
+        // Who answers, read once per draw: the footer and every request
+        // made from this pass get the same value, and the core refuses a
+        // request when another provider answers by the time of the click.
+        let shown = try? model.engine.aiStatus()
         VStack(alignment: .leading, spacing: 10) {
             if let result = runner.result {
-                review(result)
+                review(result, shown: shown)
             } else {
-                prompt
+                prompt(shown)
             }
             if let error = runner.error {
                 Text(error).font(.footnote).foregroundStyle(Theme.dangerText)
@@ -717,7 +714,7 @@ struct MacAIPanel: View {
             // What a click sends, and to whom (AIAssist.footnote, as under
             // the phone's sheet). The Mac sends the AIWriteContext too.
             Text(AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: true,
-                                   destination: AIAssist.Destination(try? model.engine.aiStatus()),
+                                   destination: AIAssist.Destination(shown),
                                    refining: runner.result != nil))
                 .font(.caption2).foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -732,14 +729,14 @@ struct MacAIPanel: View {
 
     // MARK: Asking
 
-    private var prompt: some View {
+    private func prompt(_ shown: AIStatus?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 TextField(placeholder, text: $instruction)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .focused($focused)
-                    .onSubmit { go() }
+                    .onSubmit { go(shown) }
                     .onExitCommand { onClose() }
                     .disabled(running)
                 if running {
@@ -749,7 +746,7 @@ struct MacAIPanel: View {
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.textSecondary)
                 } else {
-                    Button(action: go) {
+                    Button { go(shown) } label: {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(canGo ? Theme.onPrimary : Theme.textTertiary)
@@ -770,7 +767,7 @@ struct MacAIPanel: View {
                 .buttonStyle(.plain)
                 .help("Close (Esc)")
             }
-            chips
+            chips(shown)
             HStack(spacing: 10) {
                 Text(hint).font(.caption).foregroundStyle(Theme.textTertiary)
                 Spacer()
@@ -806,19 +803,19 @@ struct MacAIPanel: View {
         !running && AIAssist.canRun(mode: mode, typed: typed, hasText: hasText, isReply: isReply)
     }
 
-    @ViewBuilder private var chips: some View {
+    @ViewBuilder private func chips(_ shown: AIStatus?) -> some View {
         switch mode {
         case .edit:
             FlowLayout(spacing: 6) {
                 ForEach(Array(AIAssist.edits.enumerated()), id: \.element.id) { index, preset in
-                    chip(preset.title, primary: index == 0) { edit(preset.instruction) }
+                    chip(preset.title, primary: index == 0) { edit(preset.instruction, shown: shown) }
                 }
             }
         case .write:
             if isReply {
                 FlowLayout(spacing: 6) {
                     ForEach(Array(AIAssist.replies.enumerated()), id: \.element.id) { index, preset in
-                        chip(preset.title, primary: index == 0) { write(notes: preset.notes ?? typed) }
+                        chip(preset.title, primary: index == 0) { write(notes: preset.notes ?? typed, shown: shown) }
                     }
                 }
             }
@@ -841,7 +838,7 @@ struct MacAIPanel: View {
 
     // MARK: Reviewing
 
-    private func review(_ r: AIAssist.Outcome) -> some View {
+    private func review(_ r: AIAssist.Outcome, shown: AIStatus?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(AIAssist.reviewTitle(r))
@@ -868,7 +865,9 @@ struct MacAIPanel: View {
             .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             FlowLayout(spacing: 6) {
                 ForEach(AIAssist.tones) { tone in
-                    chip(tone.title) { runner.refine(r, with: tone.instruction, history: history, context: context, in: model) }
+                    chip(tone.title) {
+                        runner.refine(r, with: tone.instruction, history: history, context: context, shown: shown, in: model)
+                    }
                 }
             }
             HStack(spacing: 8) {
@@ -887,21 +886,22 @@ struct MacAIPanel: View {
     // MARK: Requests
 
     /// Return or the arrow: the typed line, as an edit or as the brief.
-    private func go() {
+    private func go(_ shown: AIStatus?) {
         guard canGo else { return }
         switch mode {
-        case .edit: edit(typed)
-        case .write: write(notes: typed)
+        case .edit: edit(typed, shown: shown)
+        case .write: write(notes: typed, shown: shown)
         }
     }
 
-    private func edit(_ instruction: String) {
+    private func edit(_ instruction: String, shown: AIStatus?) {
         let t = target()
-        runner.edit(instruction, text: t.text, hasSelection: t.hasSelection, history: history, context: context, in: model)
+        runner.edit(instruction, text: t.text, hasSelection: t.hasSelection, history: history, context: context,
+                    shown: shown, in: model)
     }
 
-    private func write(notes: String) {
-        runner.write(notes: notes, subject: subject, history: history, context: context, in: model)
+    private func write(notes: String, shown: AIStatus?) {
+        runner.write(notes: notes, subject: subject, history: history, context: context, shown: shown, in: model)
     }
 
     private func apply(_ r: AIAssist.Outcome) {

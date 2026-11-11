@@ -356,7 +356,7 @@ struct BundleScreen: View {
         }
         .onAppear {
             load()
-            if let c = contents, model.briefsOnOpen, model.brief(for: c) == nil { model.summarizeBundle(c) }
+            if let c = contents { model.summarizeBundleOnOpen(c) }
         }
         // Every reload re-reads the bundle: marks, removals, new links.
         .onChange(of: model.reloadCount) { _, _ in load() }
@@ -519,7 +519,8 @@ struct BundleScreen: View {
 }
 
 /// The model's brief on a bundle: where things stand, then what is left
-/// for the user, with a refresh. Asks on a tap unless `briefsOnOpen`.
+/// for the user, with a refresh. Asks on a tap, or on open
+/// when `AppModel.summarizeBundleOnOpen` may.
 struct BriefCard: View {
     let state: BundleBriefState?
     let refresh: () -> Void

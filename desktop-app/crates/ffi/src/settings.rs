@@ -458,6 +458,13 @@ impl Engine {
     /// transcript when replying inside a thread; `context` says who is
     /// writing to whom (the model otherwise mistook the draft for mail to
     /// answer, and answered in English whatever the draft's language).
+    ///
+    /// `expected_provider_id` is the provider the caller told the user
+    /// would answer (the composer's privacy line, drawn from
+    /// `ai_status().provider_id`; empty when it showed none). When another
+    /// one would answer now the call fails with
+    /// `EngineError::ProviderChanged` and sends nothing; `None` asks for
+    /// no such check.
     pub async fn ai_edit_text(
         &self,
         provider_id: String,
@@ -465,6 +472,7 @@ impl Engine {
         text: String,
         history: Option<String>,
         context: Option<AiWriteContext>,
+        expected_provider_id: Option<String>,
     ) -> Result<String, EngineError> {
         check_provider(&provider_id, &self.backend_ids())?;
         let instruction = instruction.trim();
@@ -475,9 +483,10 @@ impl Engine {
         if text.is_empty() {
             return Err(EngineError::Invalid("nothing to edit".into()));
         }
-        self.complete(
+        self.complete_as(
             EDIT_SYSTEM_PROMPT,
             build_edit_prompt(instruction, text, history.as_deref(), context.as_ref()),
+            expected_provider_id.as_deref(),
         )
         .await
     }
@@ -516,6 +525,7 @@ impl Engine {
 
     /// Draft a reply to the open thread from its transcript (+ the user's
     /// notes). Never sends: the user edits and sends themselves.
+    /// `expected_provider_id` as in `ai_edit_text`.
     pub async fn ai_draft_reply(
         &self,
         provider_id: String,
@@ -523,14 +533,16 @@ impl Engine {
         history: String,
         notes: Option<String>,
         context: Option<AiWriteContext>,
+        expected_provider_id: Option<String>,
     ) -> Result<String, EngineError> {
         check_provider(&provider_id, &self.backend_ids())?;
         if history.trim().is_empty() {
             return Err(EngineError::Invalid("nothing to reply to".into()));
         }
-        self.complete(
+        self.complete_as(
             DRAFT_REPLY_SYSTEM_PROMPT,
             build_draft_reply_prompt(&subject, &history, notes.as_deref(), context.as_ref()),
+            expected_provider_id.as_deref(),
         )
         .await
     }
@@ -875,9 +887,30 @@ impl Engine {
 
     /// One completion through whichever provider answers now.
     pub(crate) async fn complete(&self, system: &str, user: String) -> Result<String, EngineError> {
+        self.complete_as(system, user, None).await
+    }
+
+    /// One completion, refused when `expected` names another provider than
+    /// the one that answers now. The provider is resolved once: the one
+    /// compared is the one called, fallback order included, so a backend
+    /// registered or a preference synced in meanwhile cannot slip between
+    /// the check and the send. That is what keeps a sentence such as
+    /// "Nothing leaves the device" true of the request made under it.
+    pub(crate) async fn complete_as(
+        &self,
+        system: &str,
+        user: String,
+        expected: Option<&str>,
+    ) -> Result<String, EngineError> {
         let active = self.active_provider()?.ok_or_else(|| {
             EngineError::Invalid("connect an AI provider in Settings first".into())
         })?;
+        if let Some(expected) = expected {
+            let id = active.id();
+            if id != expected {
+                return Err(EngineError::ProviderChanged(id));
+            }
+        }
         let messages = vec![
             ChatMessage {
                 role: ChatRole::System,
@@ -1487,6 +1520,87 @@ mod tests {
             cloud.completions.lock().unwrap().len() + device.completions.lock().unwrap().len(),
             2
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The composer says who a request goes to before the tap. A request
+    /// carrying that provider is answered by it or not sent at all; one
+    /// carrying none goes to whoever answers now, as before.
+    #[tokio::test]
+    async fn a_request_is_refused_when_the_provider_shown_no_longer_answers() {
+        let (e, dir) = open("expected");
+        let device =
+            crate::ai::fakes::ScriptedBackend::new("on device", verdict(Priority::Low, &[]));
+        let cloud = crate::ai::fakes::ScriptedBackend::with_id(
+            "apple-cloud",
+            "in the cloud",
+            verdict(Priority::Low, &[]),
+        );
+        e.add_ai_backend(device.clone());
+        e.add_ai_backend(cloud.clone());
+        let edit = |expected: Option<&str>| {
+            e.ai_edit_text(
+                "openai".into(),
+                "Shorten".into(),
+                "A long text.".into(),
+                None,
+                None,
+                expected.map(str::to_string),
+            )
+        };
+        let reply = |expected: Option<&str>| {
+            e.ai_draft_reply(
+                "openai".into(),
+                "Deck".into(),
+                "Priya: slides?".into(),
+                None,
+                None,
+                expected.map(str::to_string),
+            )
+        };
+
+        // The provider shown is the one that answers: sent, to it.
+        let shown = e.ai_status().unwrap().provider_id;
+        assert_eq!(shown.as_deref(), Some("apple"));
+        assert_eq!(edit(shown.as_deref()).await.unwrap(), "on device");
+        assert_eq!(reply(shown.as_deref()).await.unwrap(), "on device");
+        assert_eq!(device.completions.lock().unwrap().len(), 2);
+
+        // The device model goes away after the footer was drawn (a
+        // foreground sync re-registers the backends): the fallback order
+        // would reach Apple's cloud under "Nothing leaves the device".
+        e.remove_ai_backend("apple".into());
+        for result in [edit(shown.as_deref()).await, reply(shown.as_deref()).await] {
+            match result {
+                Err(EngineError::ProviderChanged(now)) => assert_eq!(now, "apple-cloud"),
+                other => panic!("expected ProviderChanged, got {other:?}"),
+            }
+        }
+        // A synced preference moving the choice is refused the same way.
+        e.add_ai_backend(device.clone());
+        e.set_ai_provider("apple-cloud".into()).unwrap();
+        assert!(matches!(
+            edit(shown.as_deref()).await,
+            Err(EngineError::ProviderChanged(_))
+        ));
+        // A footer that showed no provider (empty) matches none.
+        assert!(matches!(
+            edit(Some("")).await,
+            Err(EngineError::ProviderChanged(_))
+        ));
+        // Nothing reached either model.
+        assert_eq!(device.completions.lock().unwrap().len(), 2);
+        assert!(cloud.completions.lock().unwrap().is_empty());
+
+        // No expectation: whoever answers now, as for every other caller.
+        assert_eq!(edit(None).await.unwrap(), "in the cloud");
+        assert_eq!(reply(None).await.unwrap(), "in the cloud");
+        assert_eq!(cloud.completions.lock().unwrap().len(), 2);
+
+        // Nobody can answer: the usual error, whatever was expected.
+        e.remove_ai_backend("apple".into());
+        e.remove_ai_backend("apple-cloud".into());
+        assert!(matches!(edit(Some("")).await, Err(EngineError::Invalid(_))));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

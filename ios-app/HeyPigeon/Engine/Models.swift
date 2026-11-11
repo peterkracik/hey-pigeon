@@ -519,6 +519,16 @@ struct AIStatus: Hashable {
     }
 }
 
+/// A writing call refused: the provider that would answer is no longer the
+/// one the user was shown (the core's `EngineError::ProviderChanged`).
+/// Nothing was sent. The words are for the user; showing them redraws the
+/// privacy line with who answers now.
+struct AIProviderChanged: LocalizedError, Equatable {
+    var errorDescription: String? {
+        "The AI provider changed, so this request was not sent. Check where it goes now, then try again."
+    }
+}
+
 /// The AI providers by their synced ids: Apple on device, Apple's Private
 /// Cloud Compute, and the three the user brings an API key for — ChatGPT
 /// (OpenAI), Claude (Anthropic), Gemini (Google), which the Rust core
@@ -1222,9 +1232,15 @@ protocol MailEngine: AnyObject {
     func refreshAIProviders()
     /// Revise compose text under an instruction. `history` is the thread's
     /// transcript when replying; `context` who writes to whom (nil keeps
-    /// the plain prompt).
-    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String
-    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String
+    /// the plain prompt). `expectedProvider` is the provider the user was
+    /// told would answer (`AIStatus.providerId` as the privacy line was
+    /// drawn; empty when it showed none): when another one would answer
+    /// now, the call throws `AIProviderChanged` and sends nothing. nil
+    /// asks for no check.
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?,
+                    expectedProvider: String?) async throws -> String
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?,
+                      expectedProvider: String?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String
     func aiSummarizeGroup(items: [(from: String, subject: String, snippet: String)]) async throws -> String
     /// The system prompts the engine runs (summary, thread summary, draft
@@ -1273,7 +1289,10 @@ protocol MailEngine: AnyObject {
     /// The bundle to offer first in the picker, by a shared identifier.
     func suggestedBundle(threadId: String) throws -> String?
     /// The model's status and to-dos for a bundle, from its newest emails.
-    func aiSummarizeBundle(id: String) async throws -> BundleBrief
+    /// `expectedProvider` as for the writing calls: the brief asked for
+    /// with no tap because the model is on this device names that
+    /// provider, and is not sent (`AIProviderChanged`) to another one.
+    func aiSummarizeBundle(id: String, expectedProvider: String?) async throws -> BundleBrief
 }
 
 extension MailEngine {
@@ -1285,7 +1304,19 @@ extension MailEngine {
     func readInBackground<T: Sendable>(_ read: @escaping @Sendable (any StoreReader) throws -> T) async throws -> T {
         try read(MainActorStoreReader(engine: self))
     }
-    /// The writing calls without a context: the phone's composer, the
+    /// A brief asked for on a tap, or under auto-summarize: whoever answers.
+    func aiSummarizeBundle(id: String) async throws -> BundleBrief {
+        try await aiSummarizeBundle(id: id, expectedProvider: nil)
+    }
+    /// The writing calls without an expected provider: for a caller that
+    /// shows no sentence naming who answers before the request.
+    func aiEditText(instruction: String, text: String, history: String?, context: AIWriteContext?) async throws -> String {
+        try await aiEditText(instruction: instruction, text: text, history: history, context: context, expectedProvider: nil)
+    }
+    func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?) async throws -> String {
+        try await aiDraftReply(subject: subject, history: history, notes: notes, context: context, expectedProvider: nil)
+    }
+    /// The writing calls without a context: the translation panel, the
     /// Reply intent and the triage agent send the text alone.
     func aiEditText(instruction: String, text: String, history: String?) async throws -> String {
         try await aiEditText(instruction: instruction, text: text, history: history, context: nil)

@@ -2497,14 +2497,27 @@ final class AppModel {
         return s
     }
 
-    /// Whether opening a bundle asks for its brief by itself: only when the
-    /// model is on this device, or the user turned on auto-summarize —
-    /// the rule Settings › AI states for every summary.
-    var briefsOnOpen: Bool {
-        autoSummarize || ((try? engine.aiStatus())?.answersOnDevice ?? false)
+    /// Opening a bundle asks for its brief by itself only when the user
+    /// turned on auto-summarize, or the model is on this device — the
+    /// rule Settings › AI states for every summary. In the second case
+    /// the request names the device model and the core does not send it
+    /// to anyone else: reading the status here and letting the engine
+    /// pick again at the call let a sync between the two send an untapped
+    /// summary to a cloud provider.
+    func summarizeBundleOnOpen(_ c: BundleContents) {
+        guard brief(for: c) == nil else { return }
+        if autoSummarize {
+            summarizeBundle(c)
+        } else if (try? engine.aiStatus())?.answersOnDevice == true {
+            summarizeBundle(c, expecting: AIProvider.apple.rawValue)
+        }
     }
 
-    func summarizeBundle(_ c: BundleContents) {
+    /// Ask for the bundle's brief. `provider` is set only by
+    /// `summarizeBundleOnOpen`: a request the user did not tap for is
+    /// dropped without a word when that provider no longer answers, and
+    /// the card goes back to offering the summary on a tap.
+    func summarizeBundle(_ c: BundleContents, expecting provider: String? = nil) {
         guard aiConfigured, !c.threads.isEmpty else { return }
         let key = Self.briefKey(c)
         let id = c.bundle.id
@@ -2512,8 +2525,10 @@ final class AppModel {
         bundleBriefs[id] = BundleBriefState(cacheKey: key, generating: true)
         Task {
             do {
-                let brief = try await engine.aiSummarizeBundle(id: id)
+                let brief = try await engine.aiSummarizeBundle(id: id, expectedProvider: provider)
                 bundleBriefs[id] = BundleBriefState(cacheKey: key, brief: brief)
+            } catch is AIProviderChanged where provider != nil {
+                bundleBriefs[id] = nil
             } catch {
                 bundleBriefs[id] = BundleBriefState(cacheKey: key, error: error.localizedDescription)
             }

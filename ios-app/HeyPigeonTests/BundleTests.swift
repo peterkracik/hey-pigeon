@@ -281,3 +281,62 @@ struct BundleSheetTests {
         #expect(other.brief(for: again)?.brief != nil)
     }
 }
+
+/// What the Info page works out of a bundle's tracking links and facts
+/// (BundleTracking): a row's name, which links are one shipment, and the
+/// facts kind by kind.
+struct BundleTrackingTests {
+    private func link(_ address: String, thread: String, subject: String = "") throws -> BundleLinkItem {
+        let url = try #require(URL(string: address))
+        return BundleLinkItem(url: url, host: url.host() ?? "", threadId: thread, subject: subject)
+    }
+
+    private func fact(_ category: BundleFactCategory, _ value: String, thread: String = "t") -> BundleFactItem {
+        BundleFactItem(category: category, value: value, threadId: thread, at: Date())
+    }
+
+    @Test func aHostIsNamedAsAReaderWouldSayIt() {
+        #expect(BundleTracking.name(host: "www.amazon.de") == "Amazon")
+        #expect(BundleTracking.name(host: "www.amazon.co.uk") == "Amazon")
+        #expect(BundleTracking.name(host: "www.ups.com") == "UPS")
+        #expect(BundleTracking.name(host: "track.dpd.example") == "DPD")
+        #expect(BundleTracking.name(host: "WWW.FedEx.com") == "FedEx")
+        #expect(BundleTracking.name(host: "zalando.ch") == "Zalando")
+        // A redirect's host, and one with no name in it, name nothing.
+        #expect(BundleTracking.name(host: "unitedparcelservice.sc.omtrdc.net") == nil)
+        #expect(BundleTracking.isRedirect(host: "u123.ct.sendgrid.net"))
+        #expect(!BundleTracking.isRedirect(host: "www.ups.com"))
+        #expect(BundleTracking.name(host: "192.168.1.1") == nil)
+        #expect(BundleTracking.name(host: "localhost") == nil)
+    }
+
+    @Test func oneEmailsLinksAreOneShipmentAndTheCarriersOwnWins() throws {
+        let redirect = try link("https://unitedparcelservice.sc.omtrdc.net/r?x=1", thread: "ups", subject: "Delivered")
+        let own = try link("https://www.ups.com/track?n=1", thread: "ups", subject: "Delivered")
+        let other = try link("https://www.amazon.de/progress-tracker?a=1", thread: "amz")
+        let shipments = BundleTracking.shipments(links: [redirect, own, other], facts: [])
+        #expect(shipments.map(\.link) == [own, other])
+        #expect(shipments.allSatisfy { $0.earlier.isEmpty })
+    }
+
+    @Test func aSharedNumberFoldsEmailsUnderTheNewestAndAShopAloneDoesNot() throws {
+        let delivered = try link("https://www.amazon.de/track?orderId=028-1111111-2222222&ref=a", thread: "a3", subject: "Delivered")
+        let out = try link("https://www.amazon.de/track?orderId=028-1111111-2222222&ref=b", thread: "a2", subject: "Out for delivery")
+        let stranger = try link("https://www.amazon.de/track?orderId=028-9999999-0000000", thread: "b1", subject: "Dispatched")
+        let facts = [fact(.order, "028-1111111-2222222"), fact(.order, "4545")]
+        let shipments = BundleTracking.shipments(links: [delivered, out, stranger], facts: facts)
+        #expect(shipments.count == 2)
+        #expect(shipments.first?.link == delivered && shipments.first?.earlier == [out])
+        // The same shop with another order stays a shipment of its own.
+        #expect(shipments.last?.link == stranger && shipments.last?.earlier.isEmpty == true)
+        // A short number in an address by chance links nothing.
+        let chance = try link("https://shop.example/t/4545/a", thread: "c1")
+        let also = try link("https://shop.example/t/4545/b", thread: "c2")
+        #expect(BundleTracking.shipments(links: [chance, also], facts: facts).count == 2)
+    }
+
+    @Test func factsStandKindByKindInTheOrderTheirKindsAppear() {
+        let facts = [fact(.order, "A"), fact(.tracking, "T1"), fact(.order, "B"), fact(.invoice, "I"), fact(.tracking, "T2")]
+        #expect(BundleTracking.byKind(facts).map(\.value) == ["A", "B", "T1", "T2", "I"])
+    }
+}

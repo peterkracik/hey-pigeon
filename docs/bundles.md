@@ -50,6 +50,24 @@ and key facts as one-line lists.
 - **⊖ on each email** (and "Not part of …" in the row menu): the email
   leaves the bundle, never comes back to it, and its subject becomes a "not
   this" example the model sees for that bundle.
+- On the Mac the Info page is the window's own too (`macos-app`
+  `BundleInfo.swift`): cards on the list's background in a reading
+  column, under the list's small grey titles. **Tracking** is one row
+  per shipment, named after the carrier or shop (`BundleTracking.name`:
+  `www.amazon.de` → "Amazon"; a click-redirect's host is never a name,
+  the email's sender stands in). Links fold into one shipment only when
+  that can be read off them: the same email (the carrier's own link
+  wins over a redirect's), or the same tracking or order number from
+  the key facts in both addresses; the newest email's link is the row,
+  the earlier emails are under its context menu ("+2 earlier"). Two
+  emails from one shop with nothing else in common stay two rows: the
+  core gives a link no shipment id, status or date. A click opens the
+  tracking page. **Key facts** stand kind by kind, the kind named on
+  its first row; a click copies the value, "Track" is a pill on a
+  tracking number that has a link, and the email a fact came from is
+  in the hover bar and the context menu. The summary's to-dos carry an
+  arrow, not a circle: they are the model's words and nothing stores a
+  tick.
 - On the Mac the Emails page is the window's own list
   (`macos-app` `BundleEmails.swift`): the inbox's single-line row on the
   inbox's white card, with its hover bar (⊖ before the arrow), trackpad

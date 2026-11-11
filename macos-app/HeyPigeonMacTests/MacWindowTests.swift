@@ -302,6 +302,8 @@ struct WindowStateTests {
         // The list's open card does not follow into the page.
         state.openBundles(at: "b1")
         #expect(state.expanded == nil)
+        // A bundle's screen on top: the page stands on the list's background.
+        #expect(state.showsBundleScreen)
         // A click on a bundle's row: its card, the list's cursor untouched.
         state.expand(t4, in: model)
         #expect(state.expanded == "t4" && state.selection == ["t1"] && state.bundlePath == [.bundle("b1")])
@@ -311,6 +313,7 @@ struct WindowStateTests {
         // The row's arrow: the thread in the page's stack, not the window's.
         state.open(t4, in: model)
         #expect(state.showBundles && state.path.isEmpty && state.bundlePath == [.bundle("b1"), .thread(t4)])
+        #expect(!state.showsBundleScreen)
         #expect(state.openThread?.id == "t4" && state.selection == ["t1"])
         // A reply from a row's card opens its thread there too.
         state.bundlePath = [.bundle("b1")]

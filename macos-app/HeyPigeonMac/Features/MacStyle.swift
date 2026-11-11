@@ -44,6 +44,9 @@ enum MacLayout {
     static let paneListWidth: CGFloat = 420
     static let paneSenderWidth: CGFloat = 120
     static let paneMinWidth: CGFloat = 1000
+    /// A page that is read, not scanned (a bundle's Info): prose and
+    /// short facts in a column as wide as Settings' form.
+    static let readingWidth: CGFloat = 760
 }
 
 /// The Mac's icon button, in the four sizes the app uses, each with the

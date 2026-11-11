@@ -88,14 +88,17 @@ enum BundleRoute: Hashable {
 }
 
 /// What a host draws itself in the bundle view, in place of the phone's
-/// pieces. The Mac window gives its own (macos-app `BundleEmails.swift`):
-/// its list is single-line rows on a card with a hover bar, and its
-/// switchers are capsule tabs. The phone and the iPad give none.
+/// pieces. The Mac window gives its own (macos-app `BundleEmails.swift`,
+/// `BundleInfo.swift`): its list is single-line rows on a card with a
+/// hover bar, its switchers are capsule tabs, and its Info page is cards
+/// in a reading column. The phone and the iPad give none.
 struct BundleScreenParts {
     /// The Emails · Info switcher, floating over the top of the page.
     let switcher: (Binding<BundlePage>, BundleContents) -> AnyView
     /// The Emails page.
     let emails: (BundleContents) -> AnyView
+    /// The Info page.
+    let info: (BundleContents) -> AnyView
 }
 
 /// The Bundles stack: active bundles, then archived ones; a bundle opens
@@ -372,7 +375,7 @@ struct BundleScreen: View {
             case .emails:
                 if let parts { parts.emails(c) } else { emails(c) }
             case .info:
-                info(c)
+                if let parts { parts.info(c) } else { info(c) }
             }
         }
     }

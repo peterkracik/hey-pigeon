@@ -157,10 +157,12 @@ final class WindowState: Equatable {
     /// The Bundles page's stack (BundlesStack): a bundle, then an email in
     /// it. The window's, so the open email is the window's open thread.
     var bundlePath: [BundleRoute] = []
-    /// The bundle whose Emails page is on screen (BundleEmailList sets it
-    /// while it is up): the page then stands on the list's background, to
-    /// the window's edges, as the inbox's cards do (BundlesPage).
-    var bundleEmailsOf: String?
+    /// A bundle's own screen (its Emails or Info page) is the top of the
+    /// Bundles page's stack: the page then stands on the list's
+    /// background, to the window's edges, as the inbox's cards do.
+    var showsBundleScreen: Bool {
+        if case .bundle? = bundlePath.last { true } else { false }
+    }
     /// The header shows the search field (`/`, the magnifier).
     var searching = false
     var showPalette = false
@@ -381,7 +383,6 @@ final class WindowState: Equatable {
     func closeBundles() {
         showBundles = false
         bundlePath = []
-        bundleEmailsOf = nil
         expanded = nil
         listFocusRequest += 1
     }

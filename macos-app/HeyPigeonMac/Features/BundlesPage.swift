@@ -21,17 +21,7 @@ struct BundlesPage: View {
 
     var body: some View {
         BundlesStack(path: $state.bundlePath, parts: BundleScreenParts(
-            switcher: { page, contents in
-                // The switcher is up exactly while a bundle's own screen
-                // is (not its editor, not an email of it): it tells the
-                // page which background to stand on. Each page of the
-                // screen said so itself before, and the one leaving
-                // could take back what the one arriving had just set.
-                let id = contents.bundle.id
-                return AnyView(BundlePageTabs(page: page, openCount: contents.open.count)
-                    .onAppear { state.bundlePageOf = id }
-                    .onDisappear { if state.bundlePageOf == id { state.bundlePageOf = nil } })
-            },
+            switcher: { page, contents in AnyView(BundlePageTabs(page: page, openCount: contents.open.count)) },
             emails: { contents in AnyView(BundleEmailList(contents: contents, state: state)) },
             info: { contents in AnyView(BundleInfoPage(contents: contents, state: state)) }
         ))
@@ -40,8 +30,11 @@ struct BundlesPage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Behind a bundle's two pages the list's background, to the
             // window's edges, so their white cards read as the inbox's
-            // do; the canvas behind every other page of the stack.
-            .background(state.bundlePageOf == nil ? MacTheme.content : MacTheme.listBackground)
+            // do; the canvas behind every other page of the stack. Read
+            // off the path: a flag the screen set as it appeared was not
+            // always set, and the page then stood on a grey column
+            // between two strips of the canvas.
+            .background(state.showsBundleScreen ? MacTheme.listBackground : MacTheme.content)
             // Focusable so the key map works after a click on the page, with
             // no ring drawn around it.
             .focusable()

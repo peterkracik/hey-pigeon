@@ -105,8 +105,9 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   order number), then Key facts kind by kind. A row's click is what it
   is for (a shipment opens its tracking page, a fact is copied, with a
   toast); the email it came from, Copy link and Track are in its hover
-  bar and context menu. The switcher tells the page which background to
-  stand on (`WindowState.bundlePageOf`). The stack gives each
+  bar and context menu. The page stands on the list's background while
+  a bundle's screen is the top of its stack
+  (`WindowState.showsBundleScreen`, read off the path). The stack gives each
   bundle's screen its own identity (`.id`): the sidebar swaps the bundle
   at the same depth, and the screen kept the first bundle's contents.
   `AppModel.showBundles` is handed to the window the moment it turns

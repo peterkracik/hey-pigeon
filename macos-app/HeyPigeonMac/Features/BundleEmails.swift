@@ -47,7 +47,6 @@ struct BundleEmailList: View {
     private var folds: Bool { contents.done.count > BundleScreen.doneShownUnfolded }
 
     var body: some View {
-        let id = contents.bundle.id
         List {
             if contents.bundle.isAutomatic {
                 note("Made automatically. Choose ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.",
@@ -71,9 +70,6 @@ struct BundleEmailList: View {
         .contentMargins(.bottom, 40, for: .scrollContent)
         .background(MacTheme.listBackground)
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: state.expanded)
-        // The page behind takes the list's background while this is up.
-        .onAppear { state.bundleEmailsOf = id }
-        .onDisappear { if state.bundleEmailsOf == id { state.bundleEmailsOf = nil } }
     }
 
     /// Rows sharing one white card, as a day group's do in the inbox.

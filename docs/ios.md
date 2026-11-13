@@ -175,8 +175,10 @@ The app uses the system's Liquid Glass surfaces (iOS 26+) rather than
 drawing its own chrome:
 
 - The tab bar is the floating glass pill with the Search tab as the separate
-  circle (`Tab(role: .search)`); it minimizes on scroll
-  (`tabBarMinimizeBehavior(.onScrollDown)`) so a long inbox is all rows.
+  circle (`Tab(role: .search)`); it stays whole while the list scrolls.
+  The label bar over it is what folds on a scroll down, to the label in
+  use (`TriageSplitBar`, `ScrollCollapse`); a tap, a scroll up or the top
+  of the list opens it again.
 - No navigation title (`toolbar(removing: .title)`): the bar is just the
   two glass circles, and the list starts right under them.
 - Toolbar items, the account pill, the undo toast, the thread's participant

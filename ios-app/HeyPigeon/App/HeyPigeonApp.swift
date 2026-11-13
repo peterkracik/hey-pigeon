@@ -130,8 +130,10 @@ struct RootView: View {
                 SearchScreen()
             }
         }
-        // Liquid Glass tab bar shrinks away while reading, back on scroll up.
-        .tabBarMinimizeBehavior(.onScrollDown)
+        // The tab bar stays whole while the list scrolls: Inbox, Remind me
+        // and Need reply are one tap away at any depth. What gives the rows
+        // their room is the label bar over it, which folds to the label in
+        // use (TriageSplitBar, ScrollCollapse).
     }
 }
 

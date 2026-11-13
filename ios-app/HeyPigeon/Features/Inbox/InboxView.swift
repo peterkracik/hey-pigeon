@@ -30,6 +30,11 @@ struct MailListScreen: View {
         }
     }
 
+    /// The label bar folded to the label in use, while the list is being
+    /// read downwards. The list reports it (`ScrollCollapse`); a tap on the
+    /// folded bar, a scroll back up or the top of the list opens it again.
+    @State private var labelsCollapsed = false
+
     private var aiItem: AIBarItem {
         Self.aiBarItem(summarize: model.aiConfigured, ask: tab == .inbox && InboxAsk.isAvailable(model))
     }
@@ -43,7 +48,10 @@ struct MailListScreen: View {
                 } else if isActive && model.groupedRows.isEmpty {
                     EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: model.connectFirstAccount)
                 } else if isActive {
-                    ThreadList(path: $path)
+                    ThreadList(path: $path) { collapsed in
+                        guard collapsed != labelsCollapsed else { return }
+                        withAnimation(Motion.animation(.snappy)) { labelsCollapsed = collapsed }
+                    }
                 } else {
                     Color.clear
                 }
@@ -100,7 +108,11 @@ struct MailListScreen: View {
                 if tab == .inbox {
                     VStack(spacing: 0) {
                         AnalysisProgressBar()
-                        if !model.triageLabels.isEmpty { TriageSplitBar() }
+                        if !model.triageLabels.isEmpty {
+                            TriageSplitBar(collapsed: labelsCollapsed) {
+                                withAnimation(Motion.animation(.snappy)) { labelsCollapsed = false }
+                            }
+                        }
                     }
                     .animation(.snappy, value: model.analysis.isVisible)
                 }
@@ -241,10 +253,27 @@ struct ListTitle: View {
 /// Floating filter above the tab bar: the folder title (no filter), then
 /// the Jev triage labels from Settings — the desktop's label tabs under the
 /// folder title. Accounts switch in the sidebar.
+///
+/// On the phone it folds while the list scrolls down (`collapsed`): only
+/// the label in use stays, as a pill at the leading edge, and a tap on it
+/// opens the bar again (`expand`). The tab bar under it does not move.
 struct TriageSplitBar: View {
     @Environment(AppModel.self) private var model
+    /// Folded to the label in use. The iPad's columns and the Mac never fold.
+    var collapsed = false
+    /// Opens the folded bar.
+    var expand: () -> Void = {}
 
     var body: some View {
+        Group {
+            if collapsed { current } else { labels }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
+    /// Every label, scrolling sideways.
+    private var labels: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
                 segment(nil, title: model.folder.title, count: model.counts[model.folder.countKey] ?? 0)
@@ -261,8 +290,25 @@ struct TriageSplitBar: View {
         .fixedSize(horizontal: false, vertical: true)
         .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .glassEffect(.regular, in: .capsule)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 6)
+    }
+
+    /// The label in use alone. As tall as the open bar, so the list's
+    /// bottom inset does not change under a scroll in progress.
+    private var current: some View {
+        let id = model.triageFilterId
+        let label = model.triageLabels.first { $0.id == id }
+        let title = label?.name ?? model.folder.title
+        let count = label == nil ? model.counts[model.folder.countKey] ?? 0 : 0
+        return Button {
+            expand()
+            Haptics.light()
+        } label: {
+            segmentLabel(title: title, count: count, on: true).padding(4)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityHint("Shows all labels")
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func segment(_ id: String?, title: String, count: Int) -> some View {
@@ -271,15 +317,88 @@ struct TriageSplitBar: View {
             model.triageFilterId = id
             Haptics.light()
         } label: {
-            HStack(spacing: 6) {
-                Text(title).font(.subheadline.weight(on ? .bold : .medium))
-                if count > 0 { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
-            }
-            .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(on ? Theme.card.opacity(0.95) : .clear, in: Capsule())
+            segmentLabel(title: title, count: count, on: on)
         }
         .buttonStyle(.plain)
+    }
+
+    /// One label as it is drawn: its name, the count behind the folder's.
+    private func segmentLabel(title: String, count: Int, on: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(title).font(.subheadline.weight(on ? .bold : .medium))
+            if count > 0 { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
+        }
+        .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(on ? Theme.card.opacity(0.95) : .clear, in: Capsule())
+    }
+}
+
+/// Whether a bar over a list is folded, from how the list scrolls: folded
+/// after a scroll down, open again after a scroll up or at the top. Pure,
+/// so the rule is tested without a view.
+struct ScrollCollapse: Equatable {
+    /// How far the list must move one way before the bar follows: a
+    /// finger resting on the list, or a reload under it, moves less.
+    static let threshold: CGFloat = 24
+
+    private(set) var collapsed = false
+    /// Where the current direction started: the highest offset while
+    /// open, the lowest while folded.
+    private var anchor: CGFloat = 0
+
+    /// Takes the list's offset from its top, clamped to what it can
+    /// scroll (`clamped`), and returns whether the bar is folded now.
+    mutating func update(offset: CGFloat) -> Bool {
+        if offset <= 0 {
+            collapsed = false
+            anchor = 0
+        } else if collapsed {
+            if offset > anchor { anchor = offset }
+            else if anchor - offset > Self.threshold { collapsed = false; anchor = offset }
+        } else {
+            if offset < anchor { anchor = offset }
+            else if offset - anchor > Self.threshold { collapsed = true; anchor = offset }
+        }
+        return collapsed
+    }
+
+    /// The offset without the rubber band at either end: the bounce back
+    /// from the bottom is not a scroll up.
+    static func clamped(offset: CGFloat, content: CGFloat, container: CGFloat) -> CGFloat {
+        min(max(0, offset), max(0, content - container))
+    }
+}
+
+/// Reports `ScrollCollapse` for the scroll view it is on. The body never
+/// reads the tracker, so its change on every frame redraws nothing.
+private struct ScrollCollapseReporter: ViewModifier {
+    let action: ((Bool) -> Void)?
+    @State private var tracker = ScrollCollapse()
+
+    func body(content: Content) -> some View {
+        if let action {
+            content
+                .onScrollGeometryChange(for: CGFloat.self) { g in
+                    ScrollCollapse.clamped(
+                        offset: g.contentOffset.y + g.contentInsets.top,
+                        content: g.contentSize.height + g.contentInsets.top + g.contentInsets.bottom,
+                        container: g.containerSize.height)
+                } action: { _, offset in
+                    let was = tracker.collapsed
+                    if tracker.update(offset: offset) != was { action(!was) }
+                }
+                // The list went away folded (an empty label, another tab,
+                // a thread pushed over it): with nothing to scroll back
+                // up, the bar would have stayed folded.
+                .onDisappear {
+                    guard tracker.collapsed else { return }
+                    tracker = ScrollCollapse()
+                    action(false)
+                }
+        } else {
+            content
+        }
     }
 }
 
@@ -291,6 +410,9 @@ struct ThreadList: View {
     /// The thread open beside the list (the iPad's split layout): its row
     /// is tinted. Nil on the phone.
     @Environment(\.openThreadId) private var openThreadId
+    /// Told when a bar over the list should fold or open (`ScrollCollapse`).
+    /// Nil where nothing folds: search, the iPad's columns.
+    var onCollapse: ((Bool) -> Void)?
 
     var body: some View {
         List {
@@ -306,6 +428,7 @@ struct ThreadList: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 0, for: .scrollContent)
+        .modifier(ScrollCollapseReporter(action: onCollapse))
         .dismissKeyboardOnScroll()
         // The top of the inbox has its bodies fetched ahead, on Wi-Fi: a
         // tap then shows the message, not a spinner (AppModel.prefetchBodies).

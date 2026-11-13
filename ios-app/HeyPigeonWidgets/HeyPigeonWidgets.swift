@@ -1,8 +1,9 @@
 // The widget extension: Unread (small), Next reminder (medium), Need reply
-// (medium), the reminder, triage and analysis Live Activities and the
-// Controls. Everything reads WidgetSnapshot from the App Group — the app
-// writes it after every reload; buttons run WidgetMarkDoneIntent in the app's process and taps deep-link
-// through heypigeon://.
+// (medium), the Lock Screen versions of those, the triage and analysis Live
+// Activities and the Controls. Everything reads WidgetSnapshot from the App
+// Group — the app writes it after every reload; buttons run
+// WidgetMarkDoneIntent in the app's process and taps deep-link through
+// heypigeon://.
 //
 // The same file is the Mac's widget extension (macos-app/project.yml): no
 // Live Activities or Controls there, no Lock Screen families, and the Done
@@ -21,7 +22,6 @@ struct HeyPigeonWidgetBundle: WidgetBundle {
         NextReminderWidget()
         NeedReplyWidget()
         #if os(iOS)
-        ReminderLiveActivity()
         TriageLiveActivity()
         AnalysisLiveActivity()
         ComposeControl()
@@ -43,9 +43,17 @@ enum WidgetFamilies {
 
     static let reminder: [WidgetFamily] = {
         #if os(iOS)
-        [.systemMedium, .accessoryRectangular]
+        [.systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline]
         #else
         [.systemMedium]
+        #endif
+    }()
+
+    static let needReply: [WidgetFamily] = {
+        #if os(iOS)
+        [.systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline]
+        #else
+        [.systemMedium, .systemLarge]
         #endif
     }()
 }
@@ -218,47 +226,95 @@ struct NextReminderView: View {
     private var row: WidgetSnapshot.Row? { snapshot.due.first ?? snapshot.upcoming.first }
     private var isDue: Bool { !snapshot.due.isEmpty }
 
-    /// The Lock Screen's rectangular slot (iOS only).
-    private var isAccessory: Bool {
+    var body: some View {
         #if os(iOS)
-        family == .accessoryRectangular
+        switch family {
+        case .accessoryCircular: circular
+        case .accessoryRectangular: rectangular
+        case .accessoryInline: inline
+        default: card
+        }
         #else
-        false
+        card
         #endif
     }
 
-    var body: some View {
-        if let row {
-            if isAccessory {
-                VStack(alignment: .leading) {
-                    Text(isDue ? "Due · \(row.from)" : "\(row.from) · \(row.at, style: .relative)").font(.headline).lineLimit(1)
-                    Text(row.subject).font(.caption).lineLimit(2)
+    /// The due count, capped where the snapshot is: it keeps five rows.
+    private var dueText: String {
+        snapshot.due.count >= WidgetSnapshot.maxRows ? "\(WidgetSnapshot.maxRows)+" : "\(snapshot.due.count)"
+    }
+
+    #if os(iOS)
+    /// Lock Screen status, not a list: how many are due, dimmed at zero.
+    private var circular: some View {
+        VStack(spacing: 0) {
+            Image(systemName: isDue ? "clock.badge.exclamationmark" : "clock").font(.caption).widgetAccentable(isDue)
+            Text(dueText).font(.title3.weight(.bold)).monospacedDigit()
+        }
+        .opacity(isDue ? 1 : 0.6)
+        .widgetURL(AppGroup.Link.folder("scheduled"))
+    }
+
+    private var rectangular: some View {
+        Group {
+            if let row {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(isDue ? "\(dueText) due" : "Next in \(row.at, style: .relative)").font(.headline).lineLimit(1)
+                    Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(.caption).lineLimit(2)
                 }
                 .widgetURL(AppGroup.Link.thread(row.id))
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label(isDue ? (snapshot.due.count == 1 ? "Due now" : "\(snapshot.due.count) due") : "Next reminder",
-                              systemImage: row.isFollowUp ? "clock.arrow.circlepath" : "clock")
-                            .font(.caption.weight(.semibold)).foregroundStyle(isDue ? WidgetPalette.reminder : .secondary)
-                        Spacer()
-                        Text(isDue ? "now" : Self.when(row.at)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("No reminders").font(.headline)
+                    Text("Nothing scheduled").font(.caption)
+                }
+                .widgetURL(AppGroup.Link.folder("scheduled"))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var inline: some View {
+        Group {
+            if let row {
+                Label {
+                    if isDue { Text("\(dueText) due · \(row.from)") } else { Text("Next in \(row.at, style: .relative)") }
+                } icon: {
+                    Image(systemName: "clock")
+                }
+            } else {
+                Label("No reminders", systemImage: "clock")
+            }
+        }
+        .widgetURL(AppGroup.Link.folder("scheduled"))
+    }
+    #endif
+
+    @ViewBuilder
+    private var card: some View {
+        if let row {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label(isDue ? (snapshot.due.count == 1 ? "Due now" : "\(snapshot.due.count) due") : "Next reminder",
+                          systemImage: row.isFollowUp ? "clock.arrow.circlepath" : "clock")
+                        .font(.caption.weight(.semibold)).foregroundStyle(isDue ? WidgetPalette.reminder : .secondary)
+                    Spacer()
+                    Text(isDue ? "now" : Self.when(row.at)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                Link(destination: AppGroup.Link.thread(row.id)) {
+                    RowView(row: row)
+                }
+                Spacer(minLength: 0)
+                HStack {
+                    WidgetDoneButton(threadId: row.id) {
+                        Label("Done", systemImage: "checkmark").font(.caption.weight(.semibold))
                     }
-                    Link(destination: AppGroup.Link.thread(row.id)) {
-                        RowView(row: row)
+                    if isDue {
+                        WidgetSnoozeButton(threadId: row.id)
                     }
-                    Spacer(minLength: 0)
-                    HStack {
-                        WidgetDoneButton(threadId: row.id) {
-                            Label("Done", systemImage: "checkmark").font(.caption.weight(.semibold))
-                        }
-                        if isDue {
-                            WidgetSnoozeButton(threadId: row.id)
-                        }
-                        Spacer()
-                        if snapshot.due.count + snapshot.upcoming.count > 1 {
-                            Text("+\(snapshot.due.count + snapshot.upcoming.count - 1) more").font(.caption2).foregroundStyle(.secondary)
-                        }
+                    Spacer()
+                    if snapshot.due.count + snapshot.upcoming.count > 1 {
+                        Text("+\(snapshot.due.count + snapshot.upcoming.count - 1) more").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -290,7 +346,7 @@ struct NeedReplyWidget: Widget {
         }
         .configurationDisplayName("Need reply")
         .description("The threads waiting on your answer.")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .supportedFamilies(WidgetFamilies.needReply)
     }
 }
 
@@ -301,13 +357,63 @@ struct NeedReplyView: View {
     private var shown: [WidgetSnapshot.Row] { Array(snapshot.needReply.prefix(family == .systemLarge ? 5 : 3)) }
 
     var body: some View {
+        #if os(iOS)
+        switch family {
+        case .accessoryCircular: circular
+        case .accessoryRectangular: rectangular
+        case .accessoryInline: inline
+        default: card
+        }
+        #else
+        card
+        #endif
+    }
+
+    private var countText: String {
+        snapshot.needReplyTotal == 1 ? "1 needs a reply" : "\(snapshot.needReplyTotal) need a reply"
+    }
+
+    #if os(iOS)
+    /// Lock Screen status: the total (the snapshot keeps its true count),
+    /// dimmed at zero.
+    private var circular: some View {
+        VStack(spacing: 0) {
+            Image(systemName: "arrowshape.turn.up.left").font(.caption).widgetAccentable(snapshot.needReplyTotal > 0)
+            Text("\(snapshot.needReplyTotal)").font(.title3.weight(.bold)).monospacedDigit()
+        }
+        .opacity(snapshot.needReplyTotal > 0 ? 1 : 0.6)
+        .widgetURL(AppGroup.Link.folder("needReply"))
+    }
+
+    private var rectangular: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if let row = snapshot.needReply.first {
+                Text(countText).font(.headline).lineLimit(1)
+                Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(.caption).lineLimit(2)
+            } else {
+                Text("Nothing to answer").font(.headline)
+                Text("No thread needs a reply").font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .widgetURL(AppGroup.Link.folder("needReply"))
+    }
+
+    private var inline: some View {
+        Label(snapshot.needReplyTotal == 0 ? "Nothing to answer" : countText, systemImage: "arrowshape.turn.up.left")
+            .widgetURL(AppGroup.Link.folder("needReply"))
+    }
+    #endif
+
+    @ViewBuilder
+    private var card: some View {
         if shown.isEmpty {
             EmptyWidgetView(title: "Nothing to answer", systemImage: "arrowshape.turn.up.left", detail: "Flag a thread Need reply and it shows here.")
                 .widgetURL(AppGroup.Link.folder("needReply"))
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label(snapshot.needReplyTotal == 1 ? "1 needs a reply" : "\(snapshot.needReplyTotal) need a reply", systemImage: "arrowshape.turn.up.left")
+                    Label(countText, systemImage: "arrowshape.turn.up.left")
                         .font(.caption.weight(.semibold)).foregroundStyle(WidgetPalette.needReply)
                     Spacer()
                 }

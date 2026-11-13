@@ -163,7 +163,6 @@ final class TriageAgent: TriageToolHost {
         applied = await plan.apply(to: model)
         journal("run", "applied \(applied) of \(plan.proposals.count)")
         setPhase(.done)
-        await ReminderLiveActivityController.sync(model)
     }
 
     /// The user said no.

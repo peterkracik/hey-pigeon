@@ -31,10 +31,9 @@ enum AppBootstrap {
     /// Widget buttons, Live Activity buttons and Controls run their intents
     /// in the app's process (Shared/WidgetShared/WidgetIntents.swift; on
     /// the Mac, Shortcuts can run them — its widgets use heypigeon://
-    /// links instead); this is where they reach the model. The snapshot
-    /// and the Live Activity follow so the surface that was tapped shows
-    /// the result at once (the Mac has no Live Activity: its controller
-    /// does nothing).
+    /// links instead); this is where they reach the model. The reload
+    /// publishes the snapshot, so the surface that was tapped shows the
+    /// result at once.
     static func installWidgetActions() {
         WidgetActions.handler = { action in
             guard let model = AppModel.current else { return }
@@ -51,7 +50,6 @@ enum AppBootstrap {
             // The optimistic row change lands on the next main-actor turn.
             try? await Task.sleep(for: .milliseconds(50))
             model.reload()
-            await ReminderLiveActivityController.sync(model)
         }
     }
 }

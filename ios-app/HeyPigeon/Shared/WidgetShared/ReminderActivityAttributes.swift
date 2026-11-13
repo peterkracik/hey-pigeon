@@ -1,7 +1,6 @@
-// The Live Activity for reminders that have come due: one activity for all
-// of them, the first one's thread on it. Static: nothing (the set changes).
-// Dynamic: how many are due, and the first's sender, subject and thread id
-// (what the Done and Snooze buttons act on, what a tap opens).
+// The attributes of the retired due-reminder Live Activity. Nothing starts
+// one any more; the type stays so ReminderLiveActivityController can end one
+// an older build left running. Delete both once that build is gone.
 
 #if os(iOS)
 import ActivityKit

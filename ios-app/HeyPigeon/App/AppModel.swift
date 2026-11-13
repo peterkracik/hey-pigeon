@@ -774,15 +774,14 @@ final class AppModel {
         if dueCount != before {
             Task {
                 await NewMailNotifier.refreshBadge(self)
-                // A reminder came due while the app is in front: the Live
-                // Activity and the widgets show it now.
-                await ReminderLiveActivityController.sync(self)
+                // A reminder came due while the app is in front: the
+                // widgets show it now.
                 WidgetSnapshotWriter.publish(self)
             }
         }
     }
 
-    /// A widget's or the Live Activity's "1 h": the reminder moves ahead,
+    /// A widget's or a banner's "1 h": the reminder moves ahead,
     /// keeping its follow-up nature.
     func snooze(threadId: String, hours: Int) {
         guard let row = try? engine.threadRow(id: threadId) else { return }

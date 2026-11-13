@@ -71,7 +71,7 @@ struct WidgetMarkDoneIntent: InAppWidgetIntent {
     }
 }
 
-/// Snooze a due reminder from the Live Activity: one hour from now.
+/// Snooze a due reminder from a widget: one hour from now.
 struct WidgetSnoozeIntent: InAppWidgetIntent {
     static let title: LocalizedStringResource = "Snooze Reminder"
     static let description = IntentDescription("Moves the reminder an hour ahead.")

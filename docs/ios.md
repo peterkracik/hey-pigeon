@@ -178,7 +178,8 @@ drawing its own chrome:
   circle (`Tab(role: .search)`); it stays whole while the list scrolls.
   The label bar over it is what folds on a scroll down, to the label in
   use (`TriageSplitBar`, `ScrollCollapse`); a tap, a scroll up or the top
-  of the list opens it again.
+  of the list opens it again. The open bar and the pill are one piece
+  of glass (`glassEffectID`), so the bar shrinks into the pill.
 - No navigation title (`toolbar(removing: .title)`): the bar is just the
   two glass circles, and the list starts right under them.
 - Toolbar items, the account pill, the undo toast, the thread's participant

@@ -467,3 +467,30 @@ struct RowActionKeyTests {
         #expect(RowAction.allCases.map(\.key) == ["E", "#", "H", "N", "S", "U"])
     }
 }
+
+struct ScrollCollapseTests {
+    @Test func aScrollDownFoldsTheBarAndAScrollUpOpensIt() {
+        var bar = ScrollCollapse()
+        #expect(bar.update(offset: 10) == false)   // under the threshold
+        #expect(bar.update(offset: 40) == true)
+        #expect(bar.update(offset: 400) == true)
+        #expect(bar.update(offset: 390) == true)    // a small move back is not a scroll up
+        #expect(bar.update(offset: 370) == false)
+        #expect(bar.update(offset: 380) == false)
+        #expect(bar.update(offset: 400) == true)
+    }
+
+    @Test func theTopOfTheListAlwaysOpensTheBar() {
+        var bar = ScrollCollapse()
+        _ = bar.update(offset: 300)
+        #expect(bar.collapsed)
+        #expect(bar.update(offset: 0) == false)
+    }
+
+    @Test func theBounceAtEitherEndIsNotAScroll() {
+        #expect(ScrollCollapse.clamped(offset: -30, content: 2000, container: 800) == 0)
+        #expect(ScrollCollapse.clamped(offset: 1260, content: 2000, container: 800) == 1200)
+        // A list shorter than the screen never folds the bar.
+        #expect(ScrollCollapse.clamped(offset: 50, content: 300, container: 800) == 0)
+    }
+}

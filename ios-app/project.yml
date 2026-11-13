@@ -139,7 +139,7 @@ targets:
         # of Siri continues in the Search tab (CSQueryContinuationActionType,
         # HeyPigeonApp.onContinueUserActivity).
         CoreSpotlightContinuation: true
-        # The due-reminder Live Activity (ReminderLiveActivityController).
+        # The triage and analysis Live Activities.
         NSSupportsLiveActivities: true
         # The intent new-mail banners are built from (communication
         # notifications), and the open thread (ThreadView.activityType) that
@@ -180,8 +180,8 @@ targets:
         - HeyPigeonTests
         - HeyPigeonUITests
 
-  # Widgets (Unread · Next reminder · Need reply), the reminder Live
-  # Activity and the Controls. Reads the App Group snapshot the app writes;
+  # Widgets (Unread · Next reminder · Need reply, also on the Lock Screen),
+  # the triage and analysis Live Activities and the Controls. Reads the App Group snapshot the app writes;
   # never links the Rust core. Shared/WidgetShared is compiled into both.
   HeyPigeonWidgets:
     type: app-extension

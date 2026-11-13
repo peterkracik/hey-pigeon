@@ -389,13 +389,16 @@ Widgets run out of process, so they get a **snapshot, not the engine**
   system needs that); their bodies call a hook (`WidgetActions.handler`)
   the app installs at launch, so the shared file never references
   `AppModel`.
-- **Live Activity** (`ReminderLiveActivity`): one for all reminders that
-  are due, showing the first — sender, subject, Done · 1 h, tap to open —
-  on the Lock Screen and in the Dynamic Island. iOS lets only the app in
-  front start one, so `ReminderLiveActivityController.sync` runs on every
-  activation and on the 30 s tick that notices a reminder coming due; it
-  updates as the set changes and ends when it empties. The local
-  notification still fires for the asleep case.
+- **Due reminders** are a banner at the due time (`ReminderScheduler`,
+  filed under `NotificationActions.reminderCategory`, so it has Mark Done ·
+  Remind Me in 1 Hour · Reply) and the Lock Screen widgets, not a Live
+  Activity: that one sat on the Lock Screen for as long as a reminder was
+  due. `ReminderLiveActivityController.endLeftovers` ends one a previous
+  build left running.
+- **Lock Screen widgets**: *Next reminder* and *Need reply* each offer a
+  circular count, a rectangular row and an inline line next to their Home
+  Screen sizes. They read the same snapshot, and the timeline flips the
+  next reminder to due at its minute.
 - **Analysis Live Activity** (`AnalysisLiveActivity`): a pass of
   auto-triage worth following (20+ emails — "Reanalyze all emails", a first
   pass over the mailbox) shows "Analyzing emails · 40 of 120" with a bar on

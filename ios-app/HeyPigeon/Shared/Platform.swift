@@ -248,6 +248,8 @@ enum NotificationActions {
     static let reply = "mail.reply"
     /// The category a new-mail banner is filed under.
     static let newMailCategory = "mail.new"
+    /// The category a due-reminder banner is filed under: the same buttons.
+    static let reminderCategory = "mail.reminder"
 }
 
 /// An attachment out of the app: the Mac copies it into the Downloads

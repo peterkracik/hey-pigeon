@@ -57,10 +57,9 @@ struct HeyPigeonApp: App {
             case .active:
                 // Refocusing the app is the strongest "is there new mail?" signal.
                 Task { await model.sync() }
-                // The share sheet may have left a draft; a due reminder gets
-                // its Live Activity (only the app in front can start one).
+                // The share sheet may have left a draft.
                 model.adoptPendingShare()
-                Task { await ReminderLiveActivityController.sync(model) }
+                Task { await ReminderLiveActivityController.endLeftovers() }
             case .background:
                 model.flushPendingSends()
                 model.flushPendingPrefs()

@@ -95,7 +95,8 @@ enum NewMailNotifier {
             .filter { !$0.isRead }
     }
 
-    /// Tell the system which buttons a new-mail banner has. Once, at launch.
+    /// Tell the system which buttons a new-mail or a due-reminder banner
+    /// has. Once, at launch.
     static func registerActions() {
         let actions = [
             UNNotificationAction(identifier: NotificationActions.done, title: "Mark Done", options: []),
@@ -104,6 +105,7 @@ enum NewMailNotifier {
         ]
         UNUserNotificationCenter.current().setNotificationCategories([
             UNNotificationCategory(identifier: NotificationActions.newMailCategory, actions: actions, intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: NotificationActions.reminderCategory, actions: actions, intentIdentifiers: [], options: []),
         ])
     }
 

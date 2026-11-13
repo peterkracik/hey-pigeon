@@ -59,6 +59,9 @@ enum ReminderScheduler {
             content.badge = NSNumber(value: unread + dueByThen)
             content.threadIdentifier = t.accountId
             content.userInfo = ["threadId": t.id]
+            // Mark Done · Remind Me in 1 Hour · Reply on the banner itself
+            // (NewMailNotifier.registerActions).
+            content.categoryIdentifier = NotificationActions.reminderCategory
             // iOS 27: the notification names its thread entity, so "remind
             // me about that notification tomorrow" and "open it" resolve.
             content.appEntityIdentifiers = [MailThreadEntity.identifier(t.id)]

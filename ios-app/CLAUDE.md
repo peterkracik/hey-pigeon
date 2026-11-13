@@ -44,7 +44,7 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   off the main actor (`MailEngine.readInBackground`), and the pages on
   screen are kept. Navigation and the user's own actions call `reload()`
   so the result is there when they return. The badge, the widgets, the
-  reminder notifications and the Live Activity read the model's last
+  reminder notifications and the Lock Screen widgets read the model's last
   snapshot, never the store. Change several navigation properties
   together with `navigate(to:folder:)` (one reload), not one assignment
   after another.

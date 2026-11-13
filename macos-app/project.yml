@@ -200,7 +200,6 @@ targets:
         name: Widgets
         excludes:
           - "Controls.swift"
-          - "ReminderLiveActivity.swift"
           - "TriageLiveActivity.swift"
           - "AnalysisLiveActivity.swift"
       - path: ../ios-app/HeyPigeon/Shared/WidgetShared

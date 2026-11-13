@@ -263,9 +263,14 @@ struct TriageSplitBar: View {
     var collapsed = false
     /// Opens the folded bar.
     var expand: () -> Void = {}
+    /// The open bar and the folded pill are one piece of glass
+    /// (`glassEffectID`): it shrinks to the pill and grows back, as the
+    /// tab bar did when it was the one that minimized. Two glass views
+    /// swapped in an `if` only faded into each other.
+    @Namespace private var glass
 
     var body: some View {
-        Group {
+        GlassEffectContainer {
             if collapsed { current } else { labels }
         }
         .padding(.horizontal, 16)
@@ -290,6 +295,7 @@ struct TriageSplitBar: View {
         .fixedSize(horizontal: false, vertical: true)
         .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .glassEffect(.regular, in: .capsule)
+        .glassEffectID("bar", in: glass)
     }
 
     /// The label in use alone. As tall as the open bar, so the list's
@@ -307,6 +313,7 @@ struct TriageSplitBar: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffectID("bar", in: glass)
         .accessibilityHint("Shows all labels")
         .frame(maxWidth: .infinity, alignment: .leading)
     }

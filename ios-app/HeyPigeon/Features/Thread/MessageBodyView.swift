@@ -1211,9 +1211,23 @@ extension HTMLView: NSViewRepresentable {
 /// the wheel belongs to the thread's scroll view around it — a plain
 /// WKWebView swallows scroll events over the message and the thread stops
 /// moving wherever the pointer rests on a body.
+///
+/// It also takes first responder on every click. The thread page is
+/// `.focusable()` and holds the focus (so the key map works), and without
+/// this it kept it: drag-selecting text did nothing, ⌘C had nothing to copy
+/// and a click on a link never reached the page.
 private final class PassthroughWebView: WKWebView {
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        super.mouseDown(with: event)
     }
 }
 #endif

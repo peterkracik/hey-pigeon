@@ -5,6 +5,7 @@
 // number). The triage hook in ThreadView uses the same pieces.
 
 import QuickLook
+import QuickLookThumbnailing
 import SwiftUI
 
 struct AttachmentChips: View {
@@ -17,17 +18,10 @@ struct AttachmentChips: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            FlowLayout(spacing: 6) {
+            FlowLayout(spacing: 8) {
                 ForEach(attachments) { a in
                     Button { Task { await open(a) } } label: {
-                        HStack(spacing: 5) {
-                            if fetching == a.id { ProgressView().controlSize(.mini) } else { Image(systemName: icon(a)).font(.caption) }
-                            Text(a.filename).font(.caption.weight(.semibold)).lineLimit(1)
-                            if let s = a.sizeText { Text(s).font(.caption2).foregroundStyle(Theme.textTertiary) }
-                        }
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        AttachmentTile(attachment: a, fetching: fetching == a.id)
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -46,10 +40,6 @@ struct AttachmentChips: View {
         }
         .quickLookPreview($preview)
         .sheet(item: $explaining) { a in AttachmentInsightSheet(attachment: a) }
-    }
-
-    private func icon(_ a: AttachmentItem) -> String {
-        a.isImage ? "photo" : a.isPDF ? "doc.richtext" : "doc"
     }
 
     /// The file into the Downloads folder, shown in the Finder (the Mac).
@@ -72,6 +62,100 @@ struct AttachmentChips: View {
             preview = try await model.engine.attachmentFile(a)
             error = nil
         } catch { self.error = "Couldn't load \(a.filename): \(error.localizedDescription)" }
+    }
+}
+
+/// One attachment as a small card: a preview of the first page or the
+/// picture on top, then the name (two lines) with its type and size. The
+/// preview is only drawn for images and PDFs, and only when the file is
+/// small and the path is not metered (the same rule as the body prefetch):
+/// making it means fetching the attachment, which nobody asked for yet.
+/// Everything else shows the file-type icon, so a tile never waits.
+private struct AttachmentTile: View {
+    let attachment: AttachmentItem
+    let fetching: Bool
+    @Environment(AppModel.self) private var model
+    @Environment(\.displayScale) private var displayScale
+    @State private var thumbnail: CGImage?
+
+    static let width: CGFloat = 168
+    static let previewHeight: CGFloat = 96
+    /// Larger files are not fetched just to be drawn small.
+    static let thumbnailLimit = 8_000_000
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            previewArea
+                .frame(width: Self.width, height: Self.previewHeight)
+                .clipped()
+            VStack(alignment: .leading, spacing: 6) {
+                Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
+                    .font(.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Text(attachment.typeLabel)
+                        .font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    if let s = attachment.sizeText { Text(s).font(.caption2).foregroundStyle(Theme.textTertiary) }
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .frame(width: Self.width, alignment: .leading)
+        }
+        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.separator, lineWidth: 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .task(id: attachment.id) { await loadThumbnail() }
+    }
+
+    @ViewBuilder private var previewArea: some View {
+        ZStack {
+            if let thumbnail {
+                Rectangle().fill(Theme.card)
+                Image(decorative: thumbnail, scale: displayScale)
+                    .resizable().scaledToFill()
+                    .frame(width: Self.width, height: Self.previewHeight, alignment: .top)
+            } else {
+                Rectangle().fill(Theme.card.opacity(0.6))
+                Image(systemName: attachment.isImage ? "photo" : attachment.isPDF ? "doc.richtext" : "doc")
+                    .font(.title2).foregroundStyle(Theme.textTertiary)
+            }
+            if fetching { ProgressView().controlSize(.small) }
+        }
+    }
+
+    private func loadThumbnail() async {
+        guard attachment.isExplainable, attachment.size <= Self.thumbnailLimit,
+              Connectivity.shared.allowsPrefetch, thumbnail == nil,
+              let file = try? await model.engine.attachmentFile(attachment), !Task.isCancelled else { return }
+        let made = await AttachmentThumbnail.make(of: file, size: CGSize(width: Self.width, height: Self.previewHeight), scale: displayScale)
+        if let made, !Task.isCancelled { thumbnail = made.image }
+    }
+}
+
+/// Makes a tile's preview. A CGImage is not Sendable, so the generation
+/// happens here, off the main actor, and only the box crosses back.
+private enum AttachmentThumbnail {
+    struct Box: @unchecked Sendable { let image: CGImage }
+
+    static func make(of file: URL, size: CGSize, scale: CGFloat) async -> Box? {
+        let request = QLThumbnailGenerator.Request(fileAt: file, size: size, scale: scale, representationTypes: .thumbnail)
+        guard let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) else { return nil }
+        return Box(image: rep.cgImage)
+    }
+}
+
+extension AttachmentItem {
+    /// The badge on a tile: "PDF", "PNG", "DOCX"; "FILE" when nothing says.
+    var typeLabel: String {
+        if isPDF { return "PDF" }
+        let ext = (filename as NSString).pathExtension.uppercased()
+        if !ext.isEmpty, ext.count <= 5 { return ext }
+        if isImage { return "IMG" }
+        return "FILE"
     }
 }
 

@@ -137,6 +137,9 @@ impl Store for MemStore {
             t.follow_up_since = old.follow_up_since;
             t.suggestion = old.suggestion;
             t.bundle_id = old.bundle_id.clone();
+            // The metadata tier cannot see attachments: the flag is the
+            // full fetch's, through `set_has_attachment`.
+            t.has_attachment = old.has_attachment;
         }
         g.threads.insert(t.id.clone(), t);
         Ok(())
@@ -848,6 +851,21 @@ impl Store for MemStore {
             item.attempts += 1;
         }
         Ok(())
+    }
+
+    fn set_has_attachment(
+        &self,
+        thread_id: &ThreadId,
+        has_attachment: bool,
+    ) -> Result<bool, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.threads.get_mut(thread_id) {
+            Some(t) => {
+                t.has_attachment = has_attachment;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     fn set_schedule(

@@ -514,6 +514,12 @@ struct AppModelTests {
         #expect(!InlineImages.hasRemoteImages(html))
         #expect(InlineImages.hasRemoteImages(#"<IMG width=1 src="https://t.example/p.gif">"#))
         #expect(InlineImages.hasRemoteImages(#"<img src=//cdn.example/a.png>"#))
+        // A body with such a picture has its parts listed though the thread
+        // has no attachment; a plain one does not.
+        let banner = MessageItem(id: "m", fromName: "Ana", fromAddress: "ana@acme.test", to: ["me"], date: Date(),
+                                 snippet: "", bodyHTML: html, bodyText: nil, isRead: true, isMine: false, isDraft: false)
+        #expect(ThreadDetail.showsInlinePictures([makeMessage("p", text: "plain"), banner]))
+        #expect(!ThreadDetail.showsInlinePictures([makeMessage("p", text: "plain")]))
         // The chip for a picture the body shows goes away; a real file stays.
         let logo = AttachmentItem(threadId: "t", messageId: "m", attachmentId: "a", filename: "logo.png",
                                   mimeType: "image/png", size: 10, contentId: "Image001.png@01DB")

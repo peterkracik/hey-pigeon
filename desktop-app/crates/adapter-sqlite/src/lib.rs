@@ -586,6 +586,12 @@ const MIGRATIONS: &[&str] = &[
     // their next open (as in v22 and v26), which sets it for real.
     "UPDATE messages SET body_fetched = 0
       WHERE thread_id IN (SELECT id FROM threads WHERE has_attachment = 0);",
+    // v33 — a picture the body shows inline no longer counts as an
+    // attachment (the list row's paperclip stood on a newsletter whose
+    // only file was its banner). The flags set under the old rule are
+    // read again on the thread's next open, as in v32.
+    "UPDATE messages SET body_fetched = 0
+      WHERE thread_id IN (SELECT id FROM threads WHERE has_attachment = 1);",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -6685,7 +6691,7 @@ mod tests {
     /// the 27th, as it shipped, and this branch's follow it.
     #[test]
     fn the_steps_after_v26_are_mains_then_this_branchs() {
-        assert_eq!(MIGRATIONS.len(), 32);
+        assert_eq!(MIGRATIONS.len(), 33);
         for (version, names) in [
             (27, "reply_to_addrs"),
             (28, "last_error"),
@@ -6693,6 +6699,7 @@ mod tests {
             (30, "mail_fts"),
             (31, "rule_marks"),
             (32, "has_attachment = 0"),
+            (33, "has_attachment = 1"),
         ] {
             assert!(MIGRATIONS[version - 1].contains(names), "v{version}");
             assert!(!MIGRATIONS[version - 2].contains(names), "v{version}");
@@ -6720,8 +6727,8 @@ mod tests {
             (version, listed)
         };
         let fresh = schema(0);
-        assert_eq!(fresh.0, 32);
-        for from in [26, 27, 28, 29, 30, 31] {
+        assert_eq!(fresh.0, 33);
+        for from in [26, 27, 28, 29, 30, 31, 32] {
             assert_eq!(schema(from), fresh, "from v{from}");
         }
     }

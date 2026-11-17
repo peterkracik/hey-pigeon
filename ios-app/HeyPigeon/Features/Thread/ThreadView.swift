@@ -343,7 +343,10 @@ struct ThreadView: View {
         // The flag is known only once the bodies are fetched, and the first
         // open is that fetch: the row the list handed over still says no,
         // so ask the detail that just came back as well.
-        guard detail?.thread.hasAttachment == true || current.hasAttachment, let list = try? await model.engine.attachments(threadId: row.id), !list.isEmpty else { return }
+        // A picture the body shows inline does not set the flag (it is not
+        // a file to the reader), so a body that refers to one asks too.
+        guard detail?.thread.hasAttachment == true || current.hasAttachment
+                || ThreadDetail.showsInlinePictures(detail?.messages ?? []), let list = try? await model.engine.attachments(threadId: row.id), !list.isEmpty else { return }
         attachments = Dictionary(grouping: list, by: \.messageId)
         // An invitation (the newest .ics): what, when and where, with the
         // answers, above the messages.

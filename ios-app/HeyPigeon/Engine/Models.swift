@@ -177,6 +177,12 @@ struct ThreadDetail: Hashable, Sendable {
     let thread: ThreadRow
     let messages: [MessageItem]
 
+    /// Whether any body refers to a `cid:` picture: the thread's parts are
+    /// worth listing for the web view even when it has no attachment.
+    static func showsInlinePictures(_ messages: [MessageItem]) -> Bool {
+        messages.contains { m in m.bodyHTML.map { !InlineImages.references(in: $0).isEmpty } ?? false }
+    }
+
     /// The conversation without its unsent drafts: what replies answer,
     /// what the AI reads.
     var mail: [MessageItem] { messages.filter { !$0.isDraft } }

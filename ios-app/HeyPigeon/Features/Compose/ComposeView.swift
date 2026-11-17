@@ -3,8 +3,8 @@
 // chips, and the footer with Send · Discard · AI · Attach · Aa. Send hands
 // the draft to the model, which holds it for the undo window before it goes
 // to the outbox (text part always, html part when formatting was applied);
-// an undone send reopens this view prefilled. Closing (the X, a swipe down)
-// or leaving the app saves it as a Gmail draft; Discard deletes that draft.
+// an undone send reopens this view prefilled. Closing (the X; the sheet
+// does not swipe down) or leaving the app saves it as a Gmail draft; Discard deletes that draft.
 //
 // The body editor and the AI are per platform, in the two extensions at
 // the end: the phone's rich TextEditor over an AttributedString, the
@@ -203,7 +203,7 @@ struct ComposeView: View {
                 // baseline, so closing it saves it.
                 if savedSnapshot == nil, draft.bodyRich == nil { savedSnapshot = snapshot }
             }
-            // A swipe down closes like the X: whatever changed is kept as a draft.
+            // Closing (the X) keeps whatever changed as a draft.
             .onDisappear { if !finished && !handingOver { saveDraft() } }
             // The model's copy follows the editor, so Siri's "send it" sends
             // what is on screen, not what the composer opened with — once

@@ -936,6 +936,10 @@ extension View {
                         .accessibilityLabel(sizeLabel)
                 }
             }
+            // The sheet leaves by its X only: a scroll back up through the
+            // message, carried past the top, used to pull the sheet down
+            // and close the draft being written.
+            .interactiveDismissDisabled()
         #else
         safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {

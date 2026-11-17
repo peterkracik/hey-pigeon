@@ -83,7 +83,9 @@ pub struct FullFetch {
     pub messages: Vec<Message>,
     /// Their attachment parts.
     pub attachments: Vec<AttachmentRef>,
-    /// Whether any fetched message carries a named attachment.
+    /// Whether any fetched message carries an attachment a reader would
+    /// call one: a part its own body does not already show inline
+    /// (`shown_inline`). A newsletter's header picture is not one.
     pub has_attachment: bool,
     /// True when the whole thread was fetched, so `attachments` is the
     /// thread's complete list; false when only the missing messages were.
@@ -430,23 +432,30 @@ impl GmailProvider {
         whole_thread: bool,
     ) -> FullFetch {
         self.remember_inline_parts(wires);
+        let messages: Vec<Message> = wires
+            .iter()
+            .map(|w| {
+                let mut m = to_message(account_id, thread_id, w);
+                // Sanitized here, once, on the way into the store:
+                // `body_fetched` on a message means its HTML is safe
+                // to hand to a view as it is.
+                m.body_html = m.body_html.as_deref().map(sanitize::html);
+                m.body_fetched = true;
+                m
+            })
+            .collect();
+        // Asked of the sanitized body, the one the views show: a picture
+        // it no longer refers to is listed under the message as a file.
+        let has_attachment = wires.iter().zip(&messages).any(|(w, m)| {
+            let shown = cid_references(m.body_html.as_deref().unwrap_or_default());
+            message_attachments(w)
+                .iter()
+                .any(|a| !shown_inline(a, &shown))
+        });
         FullFetch {
-            messages: wires
-                .iter()
-                .map(|w| {
-                    let mut m = to_message(account_id, thread_id, w);
-                    // Sanitized here, once, on the way into the store:
-                    // `body_fetched` on a message means its HTML is safe
-                    // to hand to a view as it is.
-                    m.body_html = m.body_html.as_deref().map(sanitize::html);
-                    m.body_fetched = true;
-                    m
-                })
-                .collect(),
+            messages,
             attachments: wires.iter().flat_map(message_attachments).collect(),
-            has_attachment: wires
-                .iter()
-                .any(|m| m.payload.as_ref().is_some_and(part_has_attachment)),
+            has_attachment,
             whole_thread,
         }
     }
@@ -2346,6 +2355,56 @@ fn collect_attachments<'a>(part: &'a WirePart, out: &mut Vec<WireAttachment<'a>>
     }
 }
 
+/// The Content-IDs an HTML body refers to (`src="cid:…"`), lowercased and
+/// percent-decoded, as the shells read them (`InlineImages.references`).
+fn cid_references(html: &str) -> Vec<String> {
+    let lower = html.to_ascii_lowercase();
+    lower
+        .split("cid:")
+        .skip(1)
+        .map(|rest| {
+            let end = rest
+                .find(|c: char| c == '"' || c == '\'' || c == ')' || c == '>' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            percent_decode(&rest[..end])
+        })
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
+/// `%40` and the like back to their bytes; anything malformed stays.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = (b[i] == b'%' && i + 2 < b.len())
+            .then(|| s.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match hex {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).to_ascii_lowercase()
+}
+
+/// Whether the message's body already shows this part (an inline picture
+/// among `shown`, the body's `cid_references`), so it is not listed as a
+/// file and does not make the thread one "with an attachment".
+fn shown_inline(a: &AttachmentRef, shown: &[String]) -> bool {
+    a.content_id
+        .as_deref()
+        .is_some_and(|id| shown.contains(&id.to_ascii_lowercase()))
+}
+
 /// Every attachment part of a thread, message by message, in the order the
 /// parts tree lists them. A part Gmail embedded (no `attachmentId`) gets
 /// `inline:<n>`, its index among the message's attachment parts, so
@@ -3198,6 +3257,44 @@ mod tests {
         assert!(m.message_id_header.is_none() && m.references_header.is_none());
         assert_eq!(m.list_unsubscribe.as_deref(), Some("<https://x.com/u>"));
         assert!(!m.list_unsubscribe_one_click);
+    }
+
+    /// A picture the body shows inline (a newsletter's header) is listed
+    /// for the view to draw, but it is not "an attachment": the list row
+    /// showed a paperclip for a mail whose only file was its banner. One
+    /// the body does not refer to still counts.
+    #[test]
+    fn a_picture_the_body_shows_is_not_an_attachment() {
+        use base64::Engine as _;
+        let html = base64::engine::general_purpose::URL_SAFE
+            .encode(r#"<p>Hi</p><img src="cid:Header_Stausee.jpg" width="600">"#);
+        let thread = |content_id: &str| -> WireThread {
+            serde_json::from_value(serde_json::json!({
+                "id": "t1",
+                "messages": [{"id": "m1", "labelIds": ["INBOX"], "internalDate": "1",
+                    "payload": {"mimeType": "multipart/related", "headers": [], "parts": [
+                        {"mimeType": "text/html", "headers": [], "body": {"data": html}},
+                        {"mimeType": "image/jpeg", "filename": "Header_Stausee.jpg",
+                         "body": {"attachmentId": "att-1", "size": 10},
+                         "headers": [{"name": "Content-ID", "value": content_id}]}
+                    ]}}]
+            }))
+            .unwrap()
+        };
+        let p = provider();
+        let fetch =
+            |w: &WireThread| p.full_fetch(&"acc".to_string(), &"t1".to_string(), &w.messages, true);
+
+        let shown = fetch(&thread("<header_stausee.JPG>"));
+        assert!(!shown.has_attachment);
+        assert_eq!(shown.attachments.len(), 1, "still listed, for the body");
+
+        assert!(fetch(&thread("<other@x>")).has_attachment);
+
+        assert_eq!(
+            cid_references(r#"<img src="cid:image001.png%4001DB"> <td background='cid:b@x'>"#),
+            vec!["image001.png@01db", "b@x"]
+        );
     }
 
     /// A full fetch marks every message as fetched — also the one with no

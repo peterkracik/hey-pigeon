@@ -578,6 +578,14 @@ const MIGRATIONS: &[&str] = &[
         DELETE FROM rule_marks WHERE thread_id = old.id;
     END;
     ",
+    // v32 — the attachment flag is the full fetch's alone. Sync reads
+    // `format=metadata`, which has no parts tree, so every sync re-upsert
+    // wrote 0 over what opening the thread had found, and the thread view
+    // then never listed the attachments. `upsert_thread` leaves the column
+    // alone now; threads stored without the flag are fetched once more on
+    // their next open (as in v22 and v26), which sets it for real.
+    "UPDATE messages SET body_fetched = 0
+      WHERE thread_id IN (SELECT id FROM threads WHERE has_attachment = 0);",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1609,7 +1617,9 @@ fn upsert_thread_on(c: &Connection, t: &Thread) -> rusqlite::Result<()> {
     // sync re-upsert of provider data must not clobber an existing schedule.
     // Writes go through `set_schedule` only. labels, by contrast, ARE
     // provider data — re-upserts must write them so the folder queries stay
-    // current.
+    // current. has_attachment is written on insert only: sync's metadata
+    // tier cannot see attachments and always carries false, so the full
+    // fetch owns the column through `set_has_attachment`.
     c.prepare_cached(
         "INSERT INTO threads (id, account_id, subject, snippet, last_msg_at, is_read,
                               is_inbox, is_archived, msg_count, from_summary, last_from_addr,
@@ -1620,8 +1630,7 @@ fn upsert_thread_on(c: &Connection, t: &Thread) -> rusqlite::Result<()> {
                last_msg_at = excluded.last_msg_at, is_read = excluded.is_read,
                is_inbox = excluded.is_inbox, is_archived = excluded.is_archived,
                msg_count = excluded.msg_count, from_summary = excluded.from_summary,
-               last_from_addr = excluded.last_from_addr, labels = excluded.labels,
-               has_attachment = excluded.has_attachment",
+               last_from_addr = excluded.last_from_addr, labels = excluded.labels",
     )?
     .execute(params![
         t.id,
@@ -2978,6 +2987,21 @@ impl Store for SqliteStore {
             )
             .map(|_| ())
         })
+    }
+
+    /// Known only from a full fetch — `upsert_thread` leaves the column alone.
+    fn set_has_attachment(
+        &self,
+        thread_id: &ThreadId,
+        has_attachment: bool,
+    ) -> Result<bool, StoreError> {
+        let n = self.with(|c| {
+            c.execute(
+                "UPDATE threads SET has_attachment = ?2 WHERE id = ?1",
+                params![thread_id, has_attachment],
+            )
+        })?;
+        Ok(n > 0)
     }
 
     /// Never synced to Gmail — `upsert_thread` leaves the column alone.
@@ -6492,10 +6516,11 @@ mod tests {
         assert_eq!(moved(&s), 0, "opening moved nothing");
         // Meanwhile the old index answers.
         assert_eq!(found(&s, "body17"), vec!["t17"]);
-        // Main's v27 ran before the index steps, here or on the device:
-        // opened mail is to be fetched again unless it already was.
+        // Main's v27 ran before the index steps, here or on the device,
+        // and v32 asks once more for mail of a thread without the
+        // attachment flag: opened mail is to be fetched again.
         let opened = s.list_messages(&"t25".to_string()).unwrap().remove(0);
-        assert_eq!(opened.body_fetched, version >= 27);
+        assert!(!opened.body_fetched);
         assert_eq!(opened.reply_to_addrs.is_empty(), version < 27);
         // That fetch, for a message the move has not reached: the row is
         // written, and still waits its turn for the new index.
@@ -6636,17 +6661,38 @@ mod tests {
         the_index_moves("v27.db", 27);
     }
 
+    /// Sync's metadata tier always says "no attachment": a re-upsert must
+    /// not take back what the full fetch found, or the thread view never
+    /// lists the attachments (the phone showed none for a mail with a PDF).
+    #[test]
+    fn a_sync_upsert_keeps_the_attachment_flag() {
+        let s = store();
+        let id = "t1".to_string();
+        let flag = |s: &SqliteStore| s.get_thread(&id).unwrap().unwrap().has_attachment;
+        // What a sync writes: the thread, without the flag.
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 1000);
+        assert!(!flag(&s));
+        assert!(s.set_has_attachment(&id, true).unwrap());
+        seed_labelled(&s, "t1", &["INBOX"], true, false, 2000);
+        assert!(flag(&s));
+        // The full fetch can take it back (the message with the file went).
+        assert!(s.set_has_attachment(&id, false).unwrap());
+        assert!(!flag(&s));
+        assert!(!s.set_has_attachment(&"nope".to_string(), true).unwrap());
+    }
+
     /// The steps in the order devices meet them: main's Reply-To step is
     /// the 27th, as it shipped, and this branch's follow it.
     #[test]
     fn the_steps_after_v26_are_mains_then_this_branchs() {
-        assert_eq!(MIGRATIONS.len(), 31);
+        assert_eq!(MIGRATIONS.len(), 32);
         for (version, names) in [
             (27, "reply_to_addrs"),
             (28, "last_error"),
             (29, "thread_links"),
             (30, "mail_fts"),
             (31, "rule_marks"),
+            (32, "has_attachment = 0"),
         ] {
             assert!(MIGRATIONS[version - 1].contains(names), "v{version}");
             assert!(!MIGRATIONS[version - 2].contains(names), "v{version}");
@@ -6674,8 +6720,8 @@ mod tests {
             (version, listed)
         };
         let fresh = schema(0);
-        assert_eq!(fresh.0, 31);
-        for from in [26, 27, 28, 29, 30] {
+        assert_eq!(fresh.0, 32);
+        for from in [26, 27, 28, 29, 30, 31] {
             assert_eq!(schema(from), fresh, "from v{from}");
         }
     }

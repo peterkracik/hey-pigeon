@@ -1513,9 +1513,9 @@ impl Engine {
             thread.has_attachment || full.has_attachment
         };
         if has_attachment != thread.has_attachment {
-            let mut t = thread.clone();
-            t.has_attachment = has_attachment;
-            self.store.upsert_thread(&t).map_err(store_err)?;
+            self.store
+                .set_has_attachment(&thread.id, has_attachment)
+                .map_err(store_err)?;
         }
         // A bundled thread's tracking links are read from its bodies now,
         // while this is off the caller's thread and they were just

@@ -969,6 +969,16 @@ pub trait Store {
         Ok(self.outbox_list(u32::MAX)?.iter().any(|i| i.id == id))
     }
 
+    /// Set a thread's attachment flag. Only a full fetch knows it
+    /// (`MailProvider::fetch_bodies`); sync's metadata tier always carries
+    /// false, so `upsert_thread` writes the flag for a new thread only and
+    /// never over a stored one. Ok(false) = unknown thread.
+    fn set_has_attachment(
+        &self,
+        thread_id: &ThreadId,
+        has_attachment: bool,
+    ) -> Result<bool, StoreError>;
+
     /// Set or clear a thread's "remind me" schedule (epoch ms). Local
     /// metadata, never sent to the mail provider — it travels between the
     /// user's devices via `SyncTransport` instead. Ok(false) = unknown

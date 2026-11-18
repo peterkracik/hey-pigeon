@@ -364,6 +364,9 @@ struct MailPreview: View {
     @Environment(AppModel.self) private var model
     @State private var detail: ThreadDetail?
     @State private var failed: String?
+    /// The attachments of the thread's messages, by message: read once the
+    /// card is open, as the thread view does.
+    @State private var attachments: [String: [AttachmentItem]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -373,7 +376,12 @@ struct MailPreview: View {
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                 MessageBodyView(html: last.bodyHTML, text: last.bodyText ?? last.snippet, senderAddress: last.fromAddress,
+                                inlineImages: (attachments[last.id] ?? []).filter { $0.contentId != nil },
                                 translatable: !last.isMine)
+                // A picture the body already shows (a signature logo) is
+                // not offered again as a file.
+                let files = (attachments[last.id] ?? []).filter { !InlineImages.isShownInline($0, in: last.bodyHTML) }
+                if !files.isEmpty { AttachmentChips(attachments: files) }
             } else if let failed {
                 Text(failed).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             } else {
@@ -411,6 +419,9 @@ struct MailPreview: View {
             } catch {
                 if detail == nil { failed = error.localizedDescription }
             }
+            guard row.hasAttachment, let list = try? await model.engine.attachments(threadId: id), !list.isEmpty,
+                  !Task.isCancelled else { return }
+            attachments = Dictionary(grouping: list, by: \.messageId)
         }
     }
 }

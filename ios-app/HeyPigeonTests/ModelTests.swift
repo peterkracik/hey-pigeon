@@ -494,3 +494,17 @@ struct ScrollCollapseTests {
         #expect(ScrollCollapse.clamped(offset: 50, content: 300, container: 800) == 0)
     }
 }
+
+struct AttachmentTypeLabelTests {
+    private func item(_ name: String, _ mime: String) -> AttachmentItem {
+        AttachmentItem(threadId: "t", messageId: "m", attachmentId: "a", filename: name, mimeType: mime, size: 0)
+    }
+
+    @Test func badgeNamesTheKindOfFile() {
+        #expect(item("transaction-confirmation-1.pdf", "application/pdf").typeLabel == "PDF")
+        #expect(item("scan", "application/pdf").typeLabel == "PDF")
+        #expect(item("report.docx", "application/octet-stream").typeLabel == "DOCX")
+        #expect(item("photo", "image/jpeg").typeLabel == "IMG")
+        #expect(item("", "application/octet-stream").typeLabel == "FILE")
+    }
+}

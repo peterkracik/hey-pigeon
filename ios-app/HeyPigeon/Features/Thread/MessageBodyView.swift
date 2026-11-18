@@ -733,6 +733,51 @@ enum MailDocument {
     })();
     """#
 
+    /// A drag that starts on a link selects, like a drag anywhere else.
+    /// WebKit never starts a selection inside a link (the anchor refuses
+    /// it, whatever the styles say), and in a newsletter most of the text
+    /// is one: the page makes that selection itself, from the place the
+    /// button went down to the place the pointer is, and the click that
+    /// ends such a drag does not open the link. A plain click still does.
+    /// The mouse only: a finger's tap brings no move with the button down.
+    static let linkSelectScript = #"""
+    (function () {
+      var start = null, moved = false, suppress = false;
+      function caret(x, y) {
+        if (document.caretRangeFromPoint) {
+          var r = document.caretRangeFromPoint(x, y);
+          return r ? { node: r.startContainer, offset: r.startOffset } : null;
+        }
+        var p = document.caretPositionFromPoint ? document.caretPositionFromPoint(x, y) : null;
+        return p ? { node: p.offsetNode, offset: p.offset } : null;
+      }
+      document.addEventListener("mousedown", function (e) {
+        start = null; moved = false; suppress = false;
+        if (e.button !== 0 || e.detail > 1 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+        var t = e.target;
+        if (!t || !t.closest || !t.closest("a[href]")) return;
+        var c = caret(e.clientX, e.clientY);
+        if (c) start = { node: c.node, offset: c.offset, x: e.clientX, y: e.clientY };
+      }, true);
+      document.addEventListener("mousemove", function (e) {
+        if (!start) return;
+        if (e.buttons === 0) { start = null; return; }
+        if (!moved && Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) < 4) return;
+        var c = caret(e.clientX, e.clientY), sel = window.getSelection();
+        if (!c || !sel) return;
+        moved = true;
+        sel.setBaseAndExtent(start.node, start.offset, c.node, c.offset);
+      }, true);
+      document.addEventListener("mouseup", function () { suppress = moved; start = null; }, true);
+      document.addEventListener("click", function (e) {
+        if (!suppress) return;
+        suppress = false;
+        e.preventDefault();
+        e.stopPropagation();
+      }, true);
+    })();
+    """#
+
     /// What the status line shows for a link: the site first, so a long
     /// address is cut at its end and never in front of the host, and
     /// without the "user@" part a look-alike hides behind
@@ -839,6 +884,8 @@ private struct HTMLView {
             WKUserScript(source: Coordinator.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController.addUserScript(
             WKUserScript(source: MailDocument.imageSelectScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController.addUserScript(
+            WKUserScript(source: MailDocument.linkSelectScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController.add(coordinator, name: Self.heightHandler)
         config.userContentController.addUserScript(
             WKUserScript(source: Coordinator.heightScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))

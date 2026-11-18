@@ -733,6 +733,52 @@ enum MailDocument {
     })();
     """#
 
+    /// A drag that starts on a link selects, like a drag anywhere else.
+    /// WebKit never starts a selection inside a link (the anchor refuses
+    /// it, whatever the styles say), and in a newsletter most of the text
+    /// is one: the page makes that selection itself, from the place the
+    /// button went down to the place the pointer is, and the click that
+    /// ends such a drag does not open the link. A plain click still does.
+    /// The mouse only: a finger's tap brings no move with the button down.
+    static let linkSelectScript = #"""
+    (function () {
+      var start = null, moved = false, suppress = false;
+      function caret(x, y) {
+        if (document.caretRangeFromPoint) {
+          var r = document.caretRangeFromPoint(x, y);
+          return r ? { node: r.startContainer, offset: r.startOffset } : null;
+        }
+        var p = document.caretPositionFromPoint ? document.caretPositionFromPoint(x, y) : null;
+        return p ? { node: p.offsetNode, offset: p.offset } : null;
+      }
+      document.addEventListener("mousedown", function (e) {
+        start = null; moved = false; suppress = false;
+        if (e.button !== 0 || e.detail > 1 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+        var t = e.target;
+        if (!t || !t.closest || !t.closest("a[href]")) return;
+        var c = caret(e.clientX, e.clientY);
+        if (c) start = { node: c.node, offset: c.offset, x: e.clientX, y: e.clientY };
+      }, true);
+      document.addEventListener("mousemove", function (e) {
+        if (!start) return;
+        // A move with no button behind it: the button came up elsewhere.
+        if (e.which === 0) { start = null; return; }
+        if (!moved && Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y) < 4) return;
+        var c = caret(e.clientX, e.clientY), sel = window.getSelection();
+        if (!c || !sel) return;
+        moved = true;
+        sel.setBaseAndExtent(start.node, start.offset, c.node, c.offset);
+      }, true);
+      document.addEventListener("mouseup", function () { suppress = moved; start = null; }, true);
+      document.addEventListener("click", function (e) {
+        if (!suppress) return;
+        suppress = false;
+        e.preventDefault();
+        e.stopPropagation();
+      }, true);
+    })();
+    """#
+
     /// What the status line shows for a link: the site first, so a long
     /// address is cut at its end and never in front of the host, and
     /// without the "user@" part a look-alike hides behind
@@ -839,6 +885,8 @@ private struct HTMLView {
             WKUserScript(source: Coordinator.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController.addUserScript(
             WKUserScript(source: MailDocument.imageSelectScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController.addUserScript(
+            WKUserScript(source: MailDocument.linkSelectScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController.add(coordinator, name: Self.heightHandler)
         config.userContentController.addUserScript(
             WKUserScript(source: Coordinator.heightScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
@@ -1009,7 +1057,7 @@ private struct HTMLView {
           window.addEventListener("mouseup", released, true);
           window.addEventListener("blur", released);
           // A button let go outside the view, whose mouseup never came.
-          document.addEventListener("mousemove", function (e) { if (e.buttons === 0) released(); }, true);
+          document.addEventListener("mousemove", function (e) { if (e.which === 0) released(); }, true);
           function report() {
             timer = null;
             var sel = window.getSelection(), msg = null;
@@ -1233,6 +1281,7 @@ extension HTMLView: NSViewRepresentable {
         let web = PassthroughWebView(frame: .zero, configuration: configuration(coordinator: context.coordinator))
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
+        web.addGestureRecognizer(MessageMouseClaim())
         // Transparent, so the message card's colour shows through as on iOS.
         web.setValue(false, forKey: "drawsBackground")
         return web
@@ -1245,6 +1294,40 @@ extension HTMLView: NSViewRepresentable {
     static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
         tearDown(web)
     }
+}
+
+/// Keeps a mouse press on a message for the message. In a row opened in
+/// place the web view sits in the list's table, whose own click and drag
+/// recognizers hold every press back until they have had their say — and
+/// they took it: the page heard no mouse event at all, so nothing in the
+/// message could be selected (a drag, a double click) however the page was
+/// set up. This one begins with the press and puts those that would hold
+/// it back out of the running, for that press only; the web view's own
+/// recognizers, the context menu and the swipes are left alone.
+private final class MessageMouseClaim: NSGestureRecognizer {
+    init() {
+        super.init(target: nil, action: nil)
+        delaysPrimaryMouseButtonEvents = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func mouseDown(with event: NSEvent) { state = .began }
+
+    override func mouseDragged(with event: NSEvent) {
+        if state == .began || state == .changed { state = .changed }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        state = state == .possible ? .failed : .ended
+    }
+
+    override func canPrevent(_ other: NSGestureRecognizer) -> Bool {
+        other.view !== view && other.delaysPrimaryMouseButtonEvents
+    }
+
+    override func canBePrevented(by other: NSGestureRecognizer) -> Bool { false }
 }
 
 /// A web view that never scrolls itself: it is as tall as its content, and

@@ -134,8 +134,11 @@ private final class Stage {
         var chain: [String] = []
         var view: NSView? = web
         while let v = view {
-            let gestures = v.gestureRecognizers.map { "\(type(of: $0))\($0.delaysPrimaryMouseButtonEvents ? "!" : "")" }
-            chain.append("\(type(of: v))\(gestures.isEmpty ? "" : "\(gestures)")")
+            // Only what can hold a press back, with its state: the log
+            // line is cut at about a thousand characters.
+            let gestures = v.gestureRecognizers.filter(\.delaysPrimaryMouseButtonEvents)
+                .map { "\(type(of: $0)):\($0.state.rawValue)" }
+            if !gestures.isEmpty { chain.append("\(String(describing: type(of: v)).prefix(24))\(gestures)") }
             view = v.superview
         }
         NSLog("%@", "** selection trace \(label): selected=\(selected.count) heard=\(heard) keyboard=\(responder)"

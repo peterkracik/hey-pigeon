@@ -87,7 +87,7 @@ struct TranslationPanel: View {
             .contentMargins(.horizontal, 0, for: .scrollContent)
             HStack(alignment: .top) {
                 Text(footnoteShown)
-                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.caption).foregroundStyle(Theme.textTertiary)
                 Spacer(minLength: 8)
                 if let result {
                     Button {
@@ -96,7 +96,7 @@ struct TranslationPanel: View {
                         withAnimation(.snappy) { copied = true }
                     } label: {
                         Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                            .font(.footnote.weight(.semibold))
+                            .font(Theme.secondary.weight(.semibold))
                     }
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
@@ -125,9 +125,9 @@ struct TranslationPanel: View {
         } label: {
             HStack(spacing: 4) {
                 Text(language)
-                Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
             }
-            .font(.subheadline.weight(.semibold))
+            .font(Theme.bodySmall.weight(.semibold))
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
             .padding(.horizontal, 10).padding(.vertical, 5)

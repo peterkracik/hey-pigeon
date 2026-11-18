@@ -24,18 +24,18 @@ struct InviteCard: View {
                     .foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(invite.summary.isEmpty ? "Invitation" : invite.summary)
-                        .font(.subheadline.weight(.semibold))
+                        .font(Theme.bodySmall.weight(.semibold))
                         .foregroundStyle(Theme.textPrimary)
                     if let when = invite.whenText {
-                        Text(when).font(.footnote).foregroundStyle(Theme.textSecondary)
+                        Text(when).font(Theme.secondary).foregroundStyle(Theme.textSecondary)
                     }
                     if let place = invite.location {
-                        Text(place).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(2)
+                        Text(place).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(2)
                     }
                     if invite.isCancellation {
-                        Text("The organizer cancelled this event.").font(.footnote).foregroundStyle(Theme.textTertiary)
+                        Text("The organizer cancelled this event.").font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     } else if let organizer = invite.organizerName ?? invite.organizerEmail {
-                        Text("From \(organizer)").font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        Text("From \(organizer)").font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)

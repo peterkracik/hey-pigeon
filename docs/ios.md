@@ -312,7 +312,8 @@ in the toast with Undo — the desktop's deferred commit — and only then goes
 through the outbox, with the same retry semantics as desktop; Undo reopens
 the composer with the draft. Backgrounding the app inside the window sends
 at once rather than risk losing the message. The composer has no Cancel:
-its **X** (or a swipe down, or leaving the app) saves the message as a
+its **X** (or leaving the app; the sheet does not close on a swipe down,
+so scrolling back up through a message cannot close it) saves the message as a
 Gmail draft — created on the first save, updated after that, skipped while
 nothing changed — and the trash next to Send discards it, deleting that
 draft, with Undo in the toast: Undo opens the composer on the message

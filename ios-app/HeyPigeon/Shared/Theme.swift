@@ -114,9 +114,37 @@ enum Theme {
     }
 
     static func sender(_ unread: Bool) -> Font {
-        hasManrope
-            ? .custom(unread ? "Manrope-Bold" : "Manrope-SemiBold", size: 14, relativeTo: .subheadline)
-            : .system(.subheadline, weight: unread ? .bold : .semibold)
+        if hasManrope { return .custom(unread ? "Manrope-Bold" : "Manrope-SemiBold", size: 14, relativeTo: .subheadline) }
+        #if os(macOS)
+        return .system(size: 13, weight: unread ? .bold : .semibold)
+        #else
+        return .system(.subheadline, weight: unread ? .bold : .semibold)
+        #endif
+    }
+
+    // The thread's small text. On iOS these are the system's text styles
+    // (Dynamic Type). On the Mac those styles are 10 and 11 pt, a step
+    // under the window's list (MailRow: 13 for the names, subjects and
+    // snippets, 12 for the time, 11 for the chips), so a thread read
+    // smaller than the row it was opened from: the Mac takes the list's
+    // sizes instead.
+    /// A line of secondary text (a snippet, a label): `.footnote`; the Mac's 13.
+    static var secondary: Font { macOr(13, .footnote) }
+    /// A time or a count: `.footnote`; the Mac's 12.
+    static var meta: Font { macOr(12, .footnote) }
+    /// The finest line (who a message went to): `.caption`; the Mac's 12.
+    static var caption: Font { macOr(12, .caption) }
+    /// A glyph or a size beside a caption: `.caption2`; the Mac's 11.
+    static var caption2: Font { macOr(11, .caption2) }
+    /// A short text to read (a draft's first lines): `.subheadline`; the Mac's 13.
+    static var bodySmall: Font { macOr(13, .subheadline) }
+
+    private static func macOr(_ size: CGFloat, _ style: Font.TextStyle) -> Font {
+        #if os(macOS)
+        return .system(size: size)
+        #else
+        return .system(style)
+        #endif
     }
 }
 

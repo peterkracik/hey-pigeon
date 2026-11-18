@@ -26,22 +26,22 @@ struct MessageHeaderLine<Trailing: View>: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
-                    .font(.footnote)
+                    .font(Theme.meta)
                     .foregroundStyle(inThread && !message.isRead ? Theme.textSecondary : Theme.textTertiary)
                     .monospacedDigit()
                 trailing()
             }
             if expanded {
                 Text("to \(message.to.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 // The sender asked for replies elsewhere: said here, not
                 // first in the composer's To field.
                 if inThread, !message.repliesGoTo.isEmpty {
                     Text("replies go to \(message.repliesGoTo.joined(separator: ", "))")
-                        .font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
             } else {
-                Text(message.snippet).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                Text(message.snippet).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
         }
         .contentShape(Rectangle())

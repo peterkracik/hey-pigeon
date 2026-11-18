@@ -36,7 +36,7 @@ struct AttachmentChips: View {
                     .accessibilityLabel("Attachment \(a.filename)")
                 }
             }
-            if let error { Text(error).font(.caption).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText) }
         }
         .quickLookPreview($preview)
         .sheet(item: $explaining) { a in AttachmentInsightSheet(attachment: a) }
@@ -90,15 +90,15 @@ private struct AttachmentTile: View {
                 .clipped()
             VStack(alignment: .leading, spacing: 6) {
                 Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
-                    .font(.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
                     .lineLimit(2).multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
                     Text(attachment.typeLabel)
-                        .font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
+                        .font(Theme.caption2.weight(.bold)).foregroundStyle(Theme.accent)
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(Theme.card, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    if let s = attachment.sizeText { Text(s).font(.caption2).foregroundStyle(Theme.textTertiary) }
+                    if let s = attachment.sizeText { Text(s).font(Theme.caption2).foregroundStyle(Theme.textTertiary) }
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
@@ -183,7 +183,7 @@ struct AttachmentInsightSheet: View {
                         }
                     }
                     Text("Read on this \(Device.name) by Apple Intelligence. The attachment never leaves the device.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary).padding(.top, 8)
+                        .font(Theme.caption).foregroundStyle(Theme.textTertiary).padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -230,8 +230,8 @@ private struct InsightFields: View {
         VStack(spacing: 0) {
             ForEach(pairs, id: \.0) { k, v in
                 HStack(alignment: .firstTextBaseline) {
-                    Text(k).font(.footnote).foregroundStyle(Theme.textTertiary).frame(width: 84, alignment: .leading)
-                    Text(v).font(.footnote.weight(.medium)).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                    Text(k).font(Theme.secondary).foregroundStyle(Theme.textTertiary).frame(width: 84, alignment: .leading)
+                    Text(v).font(Theme.secondary.weight(.medium)).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                     Spacer()
                 }
                 .padding(.vertical, 6)
@@ -295,9 +295,9 @@ struct SuggestionCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "sparkles").font(.footnote).foregroundStyle(Theme.textSecondary)
+            Image(systemName: "sparkles").font(Theme.secondary).foregroundStyle(Theme.textSecondary)
             Text(reason)
-                .font(.footnote).foregroundStyle(Theme.textSecondary)
+                .font(Theme.secondary).foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button { model.acceptSuggestion(row) } label: {
                 Chip(text: suggestion.title, systemImage: suggestion.systemImage,
@@ -306,7 +306,7 @@ struct SuggestionCard: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Accept: \(suggestion.title)")
             Button { model.dismissSuggestion(row) } label: {
-                Image(systemName: "xmark").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                Image(systemName: "xmark").font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                     .padding(6)
                     .tapArea(horizontal: 8, vertical: 10)
             }

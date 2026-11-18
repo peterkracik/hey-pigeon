@@ -59,7 +59,6 @@ struct MessageSelectionTests {
         await stage.clear(web)
         await stage.drag(in: web, from: from, to: CGPoint(x: from.x + 120, y: from.y))
         let dragged = await stage.selection(web)
-        await stage.trace("drag", web, selected: dragged)
         #expect(!dragged.isEmpty, "a drag over text selected nothing")
         try await Task.sleep(for: .milliseconds(700))
         let kept = await stage.selection(web)
@@ -71,14 +70,12 @@ struct MessageSelectionTests {
         let onLink = CGPoint(x: link.midX, y: link.midY)
         await stage.drag(in: web, from: onLink, to: CGPoint(x: max(onLink.x - 150, text.minX + 2), y: onLink.y))
         let fromLink = await stage.selection(web)
-        await stage.trace("link", web, selected: fromLink)
         #expect(!fromLink.isEmpty, "a drag from a link selected nothing")
 
         // A double click on a word.
         await stage.clear(web)
         await stage.doubleClick(in: web, at: from)
         let word = await stage.selection(web)
-        await stage.trace("double", web, selected: word)
         #expect(!word.isEmpty, "a double click selected nothing")
         try await Task.sleep(for: .milliseconds(700))
         let wordKept = await stage.selection(web)
@@ -126,25 +123,6 @@ private final class Stage {
         return view.subviews.flatMap { webViews(in: $0) }
     }
 
-    /// What the page heard and where the events could have gone instead,
-    /// in the run's log: the failure alone says only that nothing was
-    /// selected.
-    func trace(_ label: String, _ web: WKWebView, selected: String) async {
-        let heard = await string("JSON.stringify(window.__heard || null)", in: web)
-        var chain: [String] = []
-        var view: NSView? = web
-        while let v = view {
-            // Only what can hold a press back, with its state: the log
-            // line is cut at about a thousand characters.
-            let gestures = v.gestureRecognizers.filter(\.delaysPrimaryMouseButtonEvents)
-                .map { "\(type(of: $0)):\($0.state.rawValue)" }
-            if !gestures.isEmpty { chain.append("\(String(describing: type(of: v)).prefix(24))\(gestures)") }
-            view = v.superview
-        }
-        NSLog("%@", "** selection trace \(label): selected=\(selected.count) heard=\(heard) keyboard=\(responder)"
-            + " frame=\(web.frame) visible=\(web.visibleRect) chain=\(chain.joined(separator: " < "))")
-    }
-
     func string(_ script: String, in web: WKWebView) async -> String {
         ((try? await web.evaluateJavaScript(script)) as? String) ?? ""
     }
@@ -163,19 +141,7 @@ private final class Stage {
     }
 
     func clear(_ web: WKWebView) async {
-        _ = await string("""
-        (function () {
-          window.getSelection().removeAllRanges();
-          if (!window.__heard) {
-            window.__heard = {};
-            ["mousedown", "mousemove", "mouseup", "click", "dblclick", "selectstart"].forEach(function (n) {
-              document.addEventListener(n, function () { window.__heard[n] = (window.__heard[n] || 0) + 1; }, true);
-            });
-          }
-          for (var k in window.__heard) window.__heard[k] = 0;
-          return "";
-        })()
-        """, in: web)
+        _ = await string("window.getSelection().removeAllRanges(); ''", in: web)
         try? await Task.sleep(for: .milliseconds(200))
     }
 

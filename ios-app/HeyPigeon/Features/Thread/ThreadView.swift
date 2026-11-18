@@ -47,6 +47,13 @@ struct ThreadView: View {
     /// Stored drafts being deleted: off the screen at once, while the
     /// draft is read for the Undo and the delete syncs back.
     @State private var discardedDrafts: Set<String> = []
+    /// The saved draft this thread opened with, which the Mac puts
+    /// straight into its composer under the messages (`reopenDraft`): it
+    /// neither takes the keyboard nor scrolls the thread to itself.
+    @State private var reopenedDraft: String?
+    /// The thread whose draft was already reopened: once an open, so a
+    /// draft closed with the X stays a card.
+    @State private var reopenedFor: String?
     /// The scroll view's height: room under an inline reply, so it can
     /// sit in the middle of the view.
     @State private var viewportHeight: CGFloat = 0
@@ -102,6 +109,7 @@ struct ThreadView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                         .font(Theme.display(22, relativeTo: .title2))
@@ -136,19 +144,6 @@ struct ThreadView: View {
                             }
                             .padding(.horizontal, 12).padding(.top, 10)
                         }
-                        if let draft = inlineDraft {
-                            ComposeView(draft: draft, inline: true)
-                                .id(draft.draftKey)
-                                // The thread closing (or the next one taking
-                                // its place) takes the draft with it, saved on
-                                // the way out by the composer itself; the sheet
-                                // must not come up in its place.
-                                .onDisappear {
-                                    if !model.composeDetached, model.composeDraft?.draftKey == draft.draftKey {
-                                        model.composeDraft = nil
-                                    }
-                                }
-                        }
                     } else if let failed {
                         // With the way to ask again: the only one was to
                         // go back to the list and open the thread anew.
@@ -166,6 +161,25 @@ struct ThreadView: View {
                         ProgressView().frame(maxWidth: .infinity).padding(40)
                     }
                 }
+                // The reply being written, under the lazy stack and not in
+                // it: a lazy stack lets go of a row that scrolls out of
+                // view, which read here as the thread closing — the draft
+                // came off the model and was a card again when the reader
+                // scrolled back.
+                if detail != nil, let draft = inlineDraft {
+                    ComposeView(draft: draft, inline: true, takesFocus: draft.draftKey != reopenedDraft)
+                        .id(draft.draftKey)
+                        // The thread closing (or the next one taking
+                        // its place) takes the draft with it, saved on
+                        // the way out by the composer itself; the sheet
+                        // must not come up in its place.
+                        .onDisappear {
+                            if !model.composeDetached, model.composeDraft?.draftKey == draft.draftKey {
+                                model.composeDraft = nil
+                            }
+                        }
+                }
+                }
                 .padding(.top, 6)
                 // Room under an inline reply, so it can sit in the middle.
                 .padding(.bottom, inlineDraft == nil ? 150 : max(150, viewportHeight / 2))
@@ -176,7 +190,9 @@ struct ThreadView: View {
             // The reply opens in the middle of the view: a moment after it
             // is there, so the lazy stack has laid it out.
             .onChange(of: inlineDraftShown) { _, key in
-                guard let key else { return }
+                // A draft the thread opened with stays where it is, under
+                // the messages: the reader came for the thread.
+                guard let key, key != reopenedDraft else { return }
                 Task {
                     try? await Task.sleep(for: .milliseconds(120))
                     withAnimation(.snappy(duration: 0.3)) { proxy.scrollTo(key, anchor: .center) }
@@ -267,11 +283,13 @@ struct ThreadView: View {
             }
             let shownFromStore = detail != nil
             if shownFromStore { Trace.end("thread.open", opening) }
+            reopenDraft(settled: false)
             do {
                 let fresh = try await model.engine.thread(id: row.id)
                 Trace.end("thread.fetch", fetching)
                 if !shownFromStore { Trace.end("thread.open", opening) }
                 if fresh != detail { detail = fresh }
+                reopenDraft(settled: true)
                 // The first open stores the bodies: the index can now carry them.
                 if !hadBodies { SpotlightIndexer.invalidate(threadId: row.id) }
                 if detail == nil { failed = "This thread is no longer available." }
@@ -420,7 +438,7 @@ struct ThreadView: View {
     @ViewBuilder private var messageCount: some View {
         let count = detail?.mail.count ?? row.messageCount
         if count > 1 {
-            Text("\(count)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
+            Text("\(count)").font(Theme.meta.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
                 .accessibilityLabel("\(count) messages")
         }
     }
@@ -569,7 +587,7 @@ struct ThreadView: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: replyKind.systemImage)
-                    Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                    Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
                 }
                 .padding(.leading, compact ? 12 : 18).padding(.trailing, compact ? 8 : 12)
                 .frame(maxHeight: .infinity)
@@ -678,6 +696,25 @@ struct ThreadView: View {
     /// Reopen a draft in the composer: one not synced yet as it was saved,
     /// a stored one read from Gmail (recipients, body, attachments).
     private func edit(_ d: ThreadDraft) {
+        reopenedDraft = nil
+        if let local = d.unsynced { model.composeDraft = local } else { model.openDraft(current) }
+    }
+
+    /// Where a reply is written under its thread (the Mac), a thread with
+    /// a saved draft opens with that draft in the composer, not as a card
+    /// to click first. Once per open of a thread, and only while no other message is
+    /// being written; the phone's composer is a sheet, which a thread does
+    /// not open by itself.
+    private func reopenDraft(settled: Bool) {
+        guard ComposePresentation.inlineReplies, reopenedFor != row.id, detail != nil else { return }
+        // The stored copy may not know of the draft yet: Gmail's answer
+        // (`settled`) is the last word for this open.
+        guard model.composeDraft == nil, let d = drafts.last else {
+            if settled { reopenedFor = row.id }
+            return
+        }
+        reopenedFor = row.id
+        reopenedDraft = d.id
         if let local = d.unsynced { model.composeDraft = local } else { model.openDraft(current) }
     }
 
@@ -766,13 +803,13 @@ private struct DraftRow: View {
                         Chip(text: "Draft", systemImage: "pencil",
                              background: Theme.tagBackground(Self.tone), foreground: Theme.tagForeground(Self.tone), capsule: true)
                         Text(draft.to.isEmpty ? "No recipients" : "to \(draft.to.joined(separator: ", "))")
-                            .font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                            .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
                         Spacer(minLength: 8)
                         Text(Formatters.rowTime(draft.date))
-                            .font(.footnote).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                            .font(Theme.meta).foregroundStyle(Theme.textTertiary).monospacedDigit()
                     }
                     Text(preview)
-                        .font(.subheadline)
+                        .font(Theme.bodySmall)
                         .foregroundStyle(draft.text.isEmpty ? Theme.textTertiary : Theme.textSecondary)
                         .lineLimit(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -786,7 +823,7 @@ private struct DraftRow: View {
                     .tint(Theme.danger)
                 Spacer()
             }
-            .font(.footnote.weight(.semibold))
+            .font(Theme.secondary.weight(.semibold))
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
             .controlSize(.small)
@@ -887,7 +924,7 @@ struct MessageRow: View {
                 Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
             }
         } label: {
-            Image(systemName: "ellipsis").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            Image(systemName: "ellipsis").font(Theme.secondary.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                 .frame(width: 28, height: 22)
                 // 28 × 22 as drawn; 44 × 44 to the finger.
                 .tapArea(horizontal: 8, vertical: 11)
@@ -905,8 +942,8 @@ private struct EarlierRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
-                Image(systemName: "line.3.horizontal").font(.caption.weight(.bold))
-                Text("\(count) earlier messages").font(.footnote.weight(.semibold))
+                Image(systemName: "line.3.horizontal").font(Theme.caption.weight(.bold))
+                Text("\(count) earlier messages").font(Theme.secondary.weight(.semibold))
                 Spacer()
             }
             .foregroundStyle(Theme.textSecondary)

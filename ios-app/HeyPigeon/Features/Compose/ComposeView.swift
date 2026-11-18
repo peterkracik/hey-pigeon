@@ -58,6 +58,10 @@ struct ComposeView: View {
     /// in a sheet: no chrome and no scroll view of its own, and leaving
     /// means taking the draft off the model, not dismissing a presentation.
     let inline: Bool
+    /// False for a draft its thread opened with (ThreadView.reopenDraft):
+    /// it is there to continue, and the keyboard stays with the thread's
+    /// keys until the writer clicks into it.
+    let takesFocus: Bool
     @Environment(\.scenePhase) private var scenePhase
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -86,8 +90,9 @@ struct ComposeView: View {
     /// Siri's "send it" sends) catches up with the editor.
     private static let mirrorDelay: Duration = .milliseconds(300)
 
-    init(draft: SendDraft, inline: Bool = false) {
+    init(draft: SendDraft, inline: Bool = false, takesFocus: Bool = true) {
         self.inline = inline
+        self.takesFocus = takesFocus
         _draft = State(initialValue: draft)
         _to = State(initialValue: draft.to)
         _cc = State(initialValue: draft.cc)
@@ -198,7 +203,7 @@ struct ComposeView: View {
                     setBody(text: "\n\n\(sig)")
                     pristine = true
                 }
-                focus = to.isEmpty ? .to : .body
+                if takesFocus { focus = to.isEmpty ? .to : .body }
                 // An undone send (it carries bodyRich) is unsaved work: no
                 // baseline, so closing it saves it.
                 if savedSnapshot == nil, draft.bodyRich == nil { savedSnapshot = snapshot }

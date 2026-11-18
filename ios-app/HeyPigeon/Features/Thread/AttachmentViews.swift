@@ -21,9 +21,9 @@ struct AttachmentChips: View {
                 ForEach(attachments) { a in
                     Button { Task { await open(a) } } label: {
                         HStack(spacing: 5) {
-                            if fetching == a.id { ProgressView().controlSize(.mini) } else { Image(systemName: icon(a)).font(.caption) }
-                            Text(a.filename).font(.caption.weight(.semibold)).lineLimit(1)
-                            if let s = a.sizeText { Text(s).font(.caption2).foregroundStyle(Theme.textTertiary) }
+                            if fetching == a.id { ProgressView().controlSize(.mini) } else { Image(systemName: icon(a)).font(Theme.caption) }
+                            Text(a.filename).font(Theme.caption.weight(.semibold)).lineLimit(1)
+                            if let s = a.sizeText { Text(s).font(Theme.caption2).foregroundStyle(Theme.textTertiary) }
                         }
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 5)
@@ -42,7 +42,7 @@ struct AttachmentChips: View {
                     .accessibilityLabel("Attachment \(a.filename)")
                 }
             }
-            if let error { Text(error).font(.caption).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText) }
         }
         .quickLookPreview($preview)
         .sheet(item: $explaining) { a in AttachmentInsightSheet(attachment: a) }
@@ -99,7 +99,7 @@ struct AttachmentInsightSheet: View {
                         }
                     }
                     Text("Read on this \(Device.name) by Apple Intelligence. The attachment never leaves the device.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary).padding(.top, 8)
+                        .font(Theme.caption).foregroundStyle(Theme.textTertiary).padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -146,8 +146,8 @@ private struct InsightFields: View {
         VStack(spacing: 0) {
             ForEach(pairs, id: \.0) { k, v in
                 HStack(alignment: .firstTextBaseline) {
-                    Text(k).font(.footnote).foregroundStyle(Theme.textTertiary).frame(width: 84, alignment: .leading)
-                    Text(v).font(.footnote.weight(.medium)).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                    Text(k).font(Theme.secondary).foregroundStyle(Theme.textTertiary).frame(width: 84, alignment: .leading)
+                    Text(v).font(Theme.secondary.weight(.medium)).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                     Spacer()
                 }
                 .padding(.vertical, 6)
@@ -211,9 +211,9 @@ struct SuggestionCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "sparkles").font(.footnote).foregroundStyle(Theme.textSecondary)
+            Image(systemName: "sparkles").font(Theme.secondary).foregroundStyle(Theme.textSecondary)
             Text(reason)
-                .font(.footnote).foregroundStyle(Theme.textSecondary)
+                .font(Theme.secondary).foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button { model.acceptSuggestion(row) } label: {
                 Chip(text: suggestion.title, systemImage: suggestion.systemImage,
@@ -222,7 +222,7 @@ struct SuggestionCard: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Accept: \(suggestion.title)")
             Button { model.dismissSuggestion(row) } label: {
-                Image(systemName: "xmark").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                Image(systemName: "xmark").font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                     .padding(6)
                     .tapArea(horizontal: 8, vertical: 10)
             }

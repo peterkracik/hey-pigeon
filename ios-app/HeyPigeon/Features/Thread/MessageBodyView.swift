@@ -78,7 +78,7 @@ struct MessageBodyView: View {
                 // they do not load even when pictures are allowed.
                 if known.trackers > 0 {
                     Label("\(known.trackers) \(known.trackers == 1 ? "tracker" : "trackers") blocked", systemImage: "eye.slash")
-                        .font(.caption)
+                        .font(Theme.caption)
                         .foregroundStyle(Theme.textTertiary)
                         .accessibilityLabel(known.trackers == 1 ? "1 tracking picture blocked" : "\(known.trackers) tracking pictures blocked")
                 }
@@ -87,12 +87,12 @@ struct MessageBodyView: View {
                 if misleadingLinks > 0 {
                     Label(misleadingLinks == 1 ? "1 link goes to another site than it shows"
                           : "\(misleadingLinks) links go to another site than they show", systemImage: "link")
-                        .font(.caption)
+                        .font(Theme.caption)
                         .foregroundStyle(Theme.textTertiary)
                 }
                 if !imagesAllowed && known.hasRemoteImages {
                     HStack(spacing: 6) {
-                        Text("Images hidden").font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text("Images hidden").font(Theme.caption).foregroundStyle(Theme.textTertiary)
                         Spacer()
                         imageButton("Load") { loadOnce = true }
                             .accessibilityLabel("Load images in this message")
@@ -202,7 +202,7 @@ struct MessageBodyView: View {
     private func imageButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(Theme.caption.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .padding(.horizontal, 8).padding(.vertical, 3)
@@ -746,7 +746,7 @@ extension View {
         overlayPreferenceValue(HoveredLinkKey.self, alignment: .bottomLeading) { text in
             if let text {
                 Text(text)
-                    .font(.caption)
+                    .font(Theme.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)

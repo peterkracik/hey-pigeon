@@ -167,7 +167,15 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   inline reply): `ThreadView` puts `ComposeView(draft:inline:)` under
   the messages when the open draft answers its thread
   (`ComposePresentation.inlineReplies`, `AppModel.composeDetached`) and
-  scrolls it to the middle; a reply from the list or a row's preview
+  scrolls it to the middle. It sits under the thread's lazy stack, never
+  in it (a lazy stack lets go of a row scrolled out of view, and the
+  draft fell back to its card), and a thread that has a saved draft
+  opens with it in the composer (`ThreadView.reopenDraft`: once an open,
+  without taking the keyboard from the thread's keys or scrolling to
+  it); the card is what the X leaves. The thread's small text takes the
+  list's sizes through `Theme.secondary` · `meta` · `caption` ·
+  `caption2` · `bodySmall` (the system's text styles are 10 and 11 pt
+  here); a reply from the list or a row's preview
   opens the thread first (`WindowState.showThread`); `MainWindow` shows
   the sheet only for a new message, a forward, a reply pulled out with
   the card's window button, or a reply to a thread no window shows

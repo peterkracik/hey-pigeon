@@ -614,6 +614,10 @@ enum MailDocument {
           img, table { max-width: 100% !important; height: auto; }
           /* Some mail turns selection off; the user can always select and copy. */
           body, body * { -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important; }
+          /* A drag that began on a link or a picture lifted it (WebKit's drag
+             and drop) and selected nothing; in a newsletter that is most of
+             the page. Nothing is lifted: every drag selects, across pictures too. */
+          body, body * { -webkit-user-drag: none !important; }
           a { color: \(link); }
           blockquote { border-left: 3px solid #9A9CA2; margin: 0; padding-left: 12px; color: #75787F; }
         </style></head><body>\(html)</body></html>
@@ -703,6 +707,29 @@ enum MailDocument {
         post(a ? a.href : null);
       });
       document.documentElement.addEventListener("pointerleave", function () { post(null); });
+    })();
+    """#
+
+    /// A click on a picture selects it, as in a text editor, so it can be
+    /// copied on its own; a drag across it takes it into the selection
+    /// anyway. The mouse only (a finger's long press has the system's
+    /// picture menu), and not a picture that is a link: its click opens
+    /// the link.
+    static let imageSelectScript = #"""
+    (function () {
+      var mouse = false;
+      document.addEventListener("pointerdown", function (e) { mouse = e.pointerType === "mouse"; }, true);
+      document.addEventListener("click", function (e) {
+        var t = e.target;
+        if (!mouse || e.button !== 0 || e.detail > 1 || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+        if (!t || t.tagName !== "IMG" || (t.closest && t.closest("a[href]"))) return;
+        var sel = window.getSelection();
+        if (!sel) return;
+        var range = document.createRange();
+        range.selectNode(t);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
     })();
     """#
 
@@ -810,6 +837,8 @@ private struct HTMLView {
         config.userContentController.add(coordinator, name: Self.selectionHandler)
         config.userContentController.addUserScript(
             WKUserScript(source: Coordinator.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController.addUserScript(
+            WKUserScript(source: MailDocument.imageSelectScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         config.userContentController.add(coordinator, name: Self.heightHandler)
         config.userContentController.addUserScript(
             WKUserScript(source: Coordinator.heightScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
@@ -961,12 +990,26 @@ private struct HTMLView {
         /// in page coordinates — the page is as tall as its content and never
         /// scrolls, so those are the view's) a moment after it settles, and
         /// null when it is gone. Only a change is posted: the event fires
-        /// for every handle move.
+        /// for every handle move. Nothing is posted while the mouse button
+        /// is down: a pause in a drag used to post, the view was drawn
+        /// again and the translate circle came up under the pointer in the
+        /// middle of the selection being made. The report waits for the
+        /// button to come up.
         static let selectionScript = #"""
         (function () {
           var w = window.webkit, h = w && w.messageHandlers && w.messageHandlers.pigeonSelection;
           if (!h) return;
-          var timer = null, last = "";
+          var timer = null, last = "", down = false;
+          function schedule() {
+            if (timer) { clearTimeout(timer); timer = null; }
+            if (!down) timer = setTimeout(report, 120);
+          }
+          function released() { if (down) { down = false; schedule(); } }
+          document.addEventListener("mousedown", function (e) { if (e.button === 0) { down = true; schedule(); } }, true);
+          window.addEventListener("mouseup", released, true);
+          window.addEventListener("blur", released);
+          // A button let go outside the view, whose mouseup never came.
+          document.addEventListener("mousemove", function (e) { if (e.buttons === 0) released(); }, true);
           function report() {
             timer = null;
             var sel = window.getSelection(), msg = null;
@@ -988,10 +1031,7 @@ private struct HTMLView {
             last = key;
             h.postMessage(msg);
           }
-          document.addEventListener("selectionchange", function () {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(report, 120);
-          });
+          document.addEventListener("selectionchange", schedule);
         })();
         """#
 
@@ -1216,7 +1256,18 @@ extension HTMLView: NSViewRepresentable {
 /// `.focusable()` and holds the focus (so the key map works), and without
 /// this it kept it: drag-selecting text did nothing, ⌘C had nothing to copy
 /// and a click on a link never reached the page.
+///
+/// And a selection dragged past the visible part of the message scrolls
+/// the thread (or the list around a row's preview) along, as a text view
+/// does: the web view is as tall as its message and scrolls nothing
+/// itself, so the drag stopped at the window's edge and the rest of a
+/// long mail could not be reached.
 private final class PassthroughWebView: WKWebView {
+    /// The last drag of the selection being made, and the loop that keeps
+    /// scrolling while the pointer rests outside the visible part.
+    private var lastDrag: NSEvent?
+    private var autoscroller: Task<Void, Never>?
+
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)
     }
@@ -1228,6 +1279,42 @@ private final class PassthroughWebView: WKWebView {
     override func mouseDown(with event: NSEvent) {
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        super.mouseDragged(with: event)
+        lastDrag = event
+        guard autoscroller == nil else { return }
+        autoscroller = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled, let self, let drag = self.lastDrag else { return }
+                // Scrolls the nearest scroll view when the pointer is past
+                // its visible part; the page then hears the same drag again,
+                // now over other text, and the selection grows to it.
+                if self.autoscroll(with: drag) { self.extendSelection(with: drag) }
+            }
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        stopAutoscroll()
+        super.mouseUp(with: event)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { stopAutoscroll() }
+    }
+
+    private func extendSelection(with event: NSEvent) {
+        super.mouseDragged(with: event)
+    }
+
+    private func stopAutoscroll() {
+        autoscroller?.cancel()
+        autoscroller = nil
+        lastDrag = nil
     }
 }
 #endif

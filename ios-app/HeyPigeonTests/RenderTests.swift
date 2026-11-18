@@ -165,6 +165,46 @@ struct SanitizedMailRenderTests {
         #expect(long?.count == 300)
     }
 
+    /// Any part of a message can be selected: the mail cannot turn the
+    /// selection off, a drag that starts on a link or a picture selects
+    /// instead of lifting it, and a click on a picture selects the picture.
+    @Test func everyPartOfAMessageCanBeSelected() async throws {
+        let mail = """
+        <style>* { -webkit-user-select: none; user-select: none; }</style>
+        <p id="p" style="user-select:none">Plain <a id="a" href="https://shop.example/">a link</a> text</p>
+        <img id="i" src="cid:logo@acme" width="120" height="40" alt="Acme">
+        <a href="https://shop.example/"><img id="l" src="cid:banner@acme" width="120" height="40" alt="Sale"></a>
+        """
+        let page = Page()
+        try #require(await page.load(MailDocument.wrap(MailHTML.sanitize(mail), allowRemoteImages: false, dark: false)))
+        let styles = await page.string("""
+        JSON.stringify(["p", "a", "i", "l"].map(function (id) {
+          var s = getComputedStyle(document.getElementById(id));
+          return [s.webkitUserSelect, s.webkitUserDrag].join(" ");
+        }))
+        """)
+        #expect(styles == #"["text none","text none","text none","text none"]"#)
+
+        // A mouse click on a picture selects that picture; on a picture
+        // that is a link it is the link's click and selects nothing.
+        let picked = await page.string(MailDocument.imageSelectScript + """
+        (function () {
+          function click(id) {
+            var t = document.getElementById(id);
+            window.getSelection().removeAllRanges();
+            t.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }));
+            t.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+            var s = window.getSelection();
+            if (s.rangeCount === 0 || s.isCollapsed) return "none";
+            var r = s.getRangeAt(0), n = r.startContainer.childNodes[r.startOffset];
+            return n && n.id ? n.id : "other";
+          }
+          return click("i") + " " + click("l");
+        })()
+        """)
+        #expect(picked == "i none")
+    }
+
     @Test func aPlainReplyComesThroughUntouchedInWhatMatters() async throws {
         let reply = #"<div dir="ltr">Sounds good, see you at 8.<br><br><a href="mailto:tomas@friends.test?subject=Ride">tomas@friends.test</a></div>"#
         let clean = MailHTML.sanitize(reply)

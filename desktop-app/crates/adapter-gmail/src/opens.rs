@@ -56,6 +56,7 @@ pub(crate) fn events_from(
         .map(|(token, events)| {
             let events = events
                 .into_iter()
+                .take(MAX_EVENTS_PER_TOKEN)
                 .filter_map(|e| {
                     OpenLabel::parse(&e.label).map(|label| OpenEvent { label, at: e.at })
                 })
@@ -65,11 +66,38 @@ pub(crate) fn events_from(
         .collect()
 }
 
-/// A relay address as the provider keeps it: https, no trailing slash;
-/// None for anything else.
+/// A relay address as the provider keeps it: an https origin and
+/// nothing more (`readstatus::opens_origin`); None for anything else.
 pub(crate) fn normalised(url: Option<String>) -> Option<String> {
-    url.map(|u| u.trim().trim_end_matches('/').to_string())
-        .filter(|u| u.starts_with("https://"))
+    url.as_deref()
+        .and_then(heypigeon_core::readstatus::opens_origin)
+}
+
+/// The most a query's answer may weigh: 100 tokens of 50 events each fit
+/// many times over. A relay that sends more is not read.
+const MAX_ANSWER_BYTES: usize = 512 * 1024;
+/// Events kept per token from one answer — the relay's own limit (25 for
+/// each of its two labels). What a relay sends beyond it is dropped.
+pub(crate) const MAX_EVENTS_PER_TOKEN: usize = 50;
+
+/// The body of an answer, read no further than `max` bytes.
+async fn bounded_body(mut resp: reqwest::Response, max: usize) -> Result<Vec<u8>, MailError> {
+    let too_big = || MailError::Provider("relay: the answer is too large".into());
+    if resp.content_length().is_some_and(|n| n > max as u64) {
+        return Err(too_big());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|_| MailError::Network("relay unreachable".into()))?
+    {
+        if body.len() + chunk.len() > max {
+            return Err(too_big());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 impl GmailProvider {
@@ -77,6 +105,11 @@ impl GmailProvider {
     /// engine does, from what the relay reported); None for no read status.
     pub fn set_opens_url(&self, url: Option<String>) {
         *self.opens_url.lock().unwrap() = normalised(url);
+    }
+
+    /// Whether the provider knows where the relay's `opens` function is.
+    pub fn has_opens_url(&self) -> bool {
+        self.opens_url.lock().unwrap().is_some()
     }
 
     fn opens_base(&self) -> Result<String, MailError> {
@@ -95,7 +128,7 @@ impl GmailProvider {
         let base = self.opens_base()?;
         let bearer = self.access_token(account_id).await?;
         let resp = self
-            .http
+            .relay_http
             .post(format!("{base}/v1/tokens"))
             .timeout(REGISTER_TIMEOUT)
             .bearer_auth(bearer)
@@ -103,10 +136,8 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|_| MailError::Network("relay unreachable".into()))?;
-        let registered: WireRegistered = Self::check(resp)
-            .await?
-            .json()
-            .await
+        let body = bounded_body(Self::check(resp).await?, 4096).await?;
+        let registered: WireRegistered = serde_json::from_slice(&body)
             .map_err(|_| MailError::Provider("relay: unreadable answer".into()))?;
         if registered.pixel_url != expected_pixel_url(&base, token) {
             return Err(MailError::Provider(
@@ -124,7 +155,7 @@ impl GmailProvider {
         let base = self.opens_base()?;
         let bearer = self.access_token(account_id).await?;
         let resp = self
-            .http
+            .relay_http
             .post(format!("{base}/v1/opens"))
             .timeout(TIMEOUT)
             .bearer_auth(bearer)
@@ -132,10 +163,8 @@ impl GmailProvider {
             .send()
             .await
             .map_err(|_| MailError::Network("relay unreachable".into()))?;
-        let answer: HashMap<String, Vec<WireEvent>> = Self::check(resp)
-            .await?
-            .json()
-            .await
+        let body = bounded_body(Self::check(resp).await?, MAX_ANSWER_BYTES).await?;
+        let answer: HashMap<String, Vec<WireEvent>> = serde_json::from_slice(&body)
             .map_err(|_| MailError::Provider("relay: unreadable answer".into()))?;
         Ok(events_from(answer, tokens))
     }
@@ -144,7 +173,7 @@ impl GmailProvider {
         let base = self.opens_base()?;
         let bearer = self.access_token(account_id).await?;
         let resp = self
-            .http
+            .relay_http
             .delete(format!("{base}/v1/tokens"))
             .timeout(TIMEOUT)
             .bearer_auth(bearer)
@@ -186,15 +215,47 @@ mod tests {
         }
     }
 
+    /// The relay names its own address, and it goes into mail: only an
+    /// https origin is kept — nothing that could be markup, a path, a
+    /// user or another scheme.
     #[test]
-    fn only_an_https_relay_address_is_kept() {
+    fn only_an_https_origin_is_kept_as_the_relays_address() {
         assert_eq!(normalised(None), None);
-        assert_eq!(normalised(Some("http://plain.example".into())), None);
-        assert_eq!(normalised(Some("o.heypigeon.app".into())), None);
-        assert_eq!(
-            normalised(Some(" https://o.heypigeon.app/ ".into())).as_deref(),
-            Some("https://o.heypigeon.app")
-        );
+        for kept in [
+            (" https://o.heypigeon.app/ ", "https://o.heypigeon.app"),
+            ("HTTPS://O.HeyPigeon.App", "https://o.heypigeon.app"),
+            ("https://relay.example:8443", "https://relay.example:8443"),
+        ] {
+            assert_eq!(
+                normalised(Some(kept.0.into())).as_deref(),
+                Some(kept.1),
+                "{}",
+                kept.0
+            );
+        }
+        for refused in [
+            "http://plain.example",
+            "o.heypigeon.app",
+            "https://",
+            "https://x\" onerror=\"alert(1)",
+            "https://x\"><script>alert(1)</script>",
+            "https://o.heypigeon.app/path",
+            "https://o.heypigeon.app/?q=1",
+            "https://o.heypigeon.app#f",
+            "https://user:pw@o.heypigeon.app",
+            "https://user@o.heypigeon.app",
+            "https://o.heypigeon.app:port",
+            "https://o.heypigeon.app:",
+            "https://o.hey pigeon.app",
+            "https://o.heypigeon.app\n.evil.example",
+            "https://[::1]",
+            "https://.evil.example",
+            "https://a..b",
+            "javascript:alert(1)",
+            "https://o.heypigeon.app<",
+        ] {
+            assert_eq!(normalised(Some(refused.into())), None, "{refused}");
+        }
     }
 
     /// The query's answer: only what was asked about, only labels this
@@ -228,5 +289,17 @@ mod tests {
             ]
         );
         assert!(events[&"b".repeat(32)].is_empty());
+
+        // A relay that sends more events for a token than it can hold is
+        // read up to that many.
+        let flood: Vec<serde_json::Value> = (0..500)
+            .map(|at| serde_json::json!({ "label": "opened", "at": at }))
+            .collect();
+        let answer: HashMap<String, Vec<WireEvent>> =
+            serde_json::from_value(serde_json::json!({ TOKEN: flood })).unwrap();
+        assert_eq!(
+            events_from(answer, &asked)[TOKEN].len(),
+            MAX_EVENTS_PER_TOKEN
+        );
     }
 }

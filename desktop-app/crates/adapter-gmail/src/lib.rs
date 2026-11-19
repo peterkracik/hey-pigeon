@@ -78,6 +78,20 @@ pub(crate) fn http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// The client for the relay (push registration, read status). The same
+/// timeouts, and no redirects: the relay answers itself or not at all, and
+/// a request that carries the account's access token is never sent on to
+/// wherever an answer points.
+pub(crate) fn relay_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("heypigeon")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default()
+}
+
 /// What a full fetch of a thread (or of some of its messages) brought.
 pub struct FullFetch {
     /// The fetched messages, bodies included, `body_fetched` set.
@@ -126,6 +140,8 @@ fn expiry(expires_in: u64) -> SystemTime {
 
 pub struct GmailProvider {
     http: reqwest::Client,
+    /// For the relay only (`relay_http_client`): no redirects.
+    relay_http: reqwest::Client,
     client: ClientConfig,
     secrets: Arc<dyn SecretStore + Send + Sync>,
     tokens: Mutex<HashMap<AccountId, CachedToken>>,
@@ -156,6 +172,7 @@ impl GmailProvider {
     pub fn new(client: ClientConfig, secrets: Arc<dyn SecretStore + Send + Sync>) -> Self {
         Self {
             http: http_client(),
+            relay_http: relay_http_client(),
             client,
             secrets,
             tokens: Mutex::new(HashMap::new()),

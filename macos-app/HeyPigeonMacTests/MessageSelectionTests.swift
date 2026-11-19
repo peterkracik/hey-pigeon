@@ -84,69 +84,75 @@ struct MessageSelectionTests {
     }
 
     /// PROBE (temporary, for the intermittent double-click failure): the
-    /// double click many times over, at the test's own pace and with the
-    /// four events handed over with no pause between some or all of them
-    /// (what a busy main thread does to a real double click), on both
-    /// pages. It prints what the page heard and what the recognizers above
-    /// the message were doing; it fails nothing.
-    @Test(.timeLimit(.minutes(8))) func probeDoubleClicks() async throws {
+    /// test's own steps on a fresh window and page each time, timing how
+    /// long after the last mouse-up the double-clicked word is selected,
+    /// when the window handed each event on and when the page heard it.
+    /// It fails nothing.
+    @Test(.timeLimit(.minutes(10))) func probeDoubleClicks() async throws {
         let row = try #require(try engine.threadRow(id: "t1"))
-        do {
-            let stage = Stage(NavigationStack { ThreadPage(row: row, state: state) }.environment(model))
-            defer { stage.close() }
-            try await probe(on: stage, page: "thread")
+        for attempt in 1...12 {
+            let fresh = WindowState()
+            let stage = Stage(NavigationStack { ThreadPage(row: row, state: fresh) }.environment(model))
+            try await probe(on: stage, page: "thread", attempt: attempt)
+            stage.close()
         }
-        state.path = []
-        do {
-            let stage = Stage(InboxPage(state: state).environment(model))
-            defer { stage.close() }
+        for attempt in 1...30 {
+            let fresh = WindowState()
+            let stage = Stage(InboxPage(state: fresh).environment(model))
             try await Task.sleep(for: .milliseconds(300))
-            state.expand(row, in: model)
-            try await probe(on: stage, page: "inPlace")
+            fresh.expand(row, in: model)
+            try await probe(on: stage, page: "inPlace", attempt: attempt)
+            stage.close()
         }
     }
 
-    private func probe(on stage: Stage, page: String) async throws {
+    private func probe(on stage: Stage, page: String, attempt: Int) async throws {
         let found = await stage.messageView()
-        let web = try #require(found, "no message came up in the window")
+        guard let web = found else { ProbeLog.say("\(page) #\(attempt) no message came up"); return }
         let textRect = await stage.rect(of: "document.querySelectorAll('p')[1]", in: web)
-        let text = try #require(textRect)
+        let linkRect = await stage.rect(of: "document.querySelector('a')", in: web)
+        guard let text = textRect, let link = linkRect else { ProbeLog.say("\(page) #\(attempt) no rects"); return }
         let from = CGPoint(x: text.minX + 4, y: text.minY + min(text.height, 18) / 2)
-        _ = await stage.string("window.__probe = []; ['mousedown','mouseup','click','dblclick'].forEach(function (t) {"
-            + " document.addEventListener(t, function (e) { window.__probe.push(t + ':' + e.detail + '@' + Math.round(performance.now())); }, true); }); ''",
+        _ = await stage.string("window.__probe = []; ['mousedown','mouseup','dblclick'].forEach(function (t) {"
+            + " document.addEventListener(t, function (e) { window.__probe.push(t + ':' + e.detail + '@' + Math.round(performance.now() - (window.__probe0 || 0))); }, true); }); ''",
             in: web)
         let log = ProbeLog()
         let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
             let name = "\(event.type == .leftMouseDown ? "D" : "U")\(event.clickCount)"
             MainActor.assumeIsolated {
-                log.add("\(name) pre{\(stage.recognizers(above: web))}")
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated { log.add("\(name) after{\(stage.recognizers(above: web))}") }
-                }
+                log.add("\(name) in")
+                DispatchQueue.main.async { MainActor.assumeIsolated { log.add("\(name) out") } }
             }
             return event
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
-        let modes: [(name: String, gaps: [Int], times: Int)] = [
-            ("paced", [30, 60, 30], 40), ("burst", [0, 0, 0], 15), ("pairs", [0, 60, 0], 15), ("seam", [30, 0, 30], 15),
-        ]
-        for mode in modes {
-            var empty = 0
-            for attempt in 1...mode.times {
-                await stage.clear(web)
-                _ = await stage.string("window.__probe = []; ''", in: web)
-                log.restart()
-                await stage.doubleClick(in: web, at: from, gaps: mode.gaps)
-                let word = await stage.selection(web)
-                let heard = await stage.string("(window.__probe || []).join(' ')", in: web)
-                if word.isEmpty { empty += 1 }
-                if word.isEmpty || attempt <= 2 {
-                    ProbeLog.say("\(page) \(mode.name) #\(attempt) selected=\"\(word)\" page=[\(heard)] hit=\(stage.hit(web, at: from))"
-                        + " keyboard=\(stage.responder) ui=[\(log.lines.joined(separator: "; "))]")
-                }
-            }
-            ProbeLog.say("\(page) \(mode.name): \(empty) of \(mode.times) double clicks selected nothing")
+
+        // The test's first two steps, as it does them.
+        await stage.clear(web)
+        await stage.drag(in: web, from: from, to: CGPoint(x: from.x + 120, y: from.y))
+        let dragged = await stage.selection(web)
+        try await Task.sleep(for: .milliseconds(700))
+        await stage.clear(web)
+        let onLink = CGPoint(x: link.midX, y: link.midY)
+        await stage.drag(in: web, from: onLink, to: CGPoint(x: max(onLink.x - 150, text.minX + 2), y: onLink.y))
+        let fromLink = await stage.selection(web)
+
+        // The double click, with a clock on it.
+        await stage.clear(web)
+        _ = await stage.string("window.__probe = []; window.__probe0 = performance.now(); ''", in: web)
+        log.restart()
+        await stage.doubleClick(in: web, at: from, settle: 0)
+        log.add("posted")
+        var word = "", selectedAt = -1
+        for _ in 0..<200 {
+            word = await stage.selection(web)
+            if !word.isEmpty { selectedAt = log.elapsed; break }
+            try await Task.sleep(for: .milliseconds(25))
         }
+        let heard = await stage.string("(window.__probe || []).join(' ')", in: web)
+        ProbeLog.say("\(page) #\(attempt) drag=\(dragged.isEmpty ? "EMPTY" : "ok") link=\(fromLink.isEmpty ? "EMPTY" : "ok")"
+            + " word=\"\(word)\" selectedAt=\(selectedAt)ms key=\(stage.window.isKeyWindow) active=\(NSApp.isActive)"
+            + " page=[\(heard)] ui=[\(log.lines.joined(separator: "; "))]")
     }
 }
 
@@ -158,9 +164,9 @@ private final class ProbeLog {
 
     func restart() { lines = []; start = .now }
 
-    func add(_ line: String) {
-        lines.append("+\(Int((ContinuousClock.now - start) / .milliseconds(1)))ms \(line)")
-    }
+    var elapsed: Int { Int((ContinuousClock.now - start) / .milliseconds(1)) }
+
+    func add(_ line: String) { lines.append("+\(elapsed)ms \(line)") }
 
     /// On a line the workflow's log filter lets through.
     static func say(_ line: String) {
@@ -264,29 +270,15 @@ private final class Stage {
         await pause(400)
     }
 
-    func doubleClick(in web: WKWebView, at point: CGPoint, gaps: [Int] = [30, 60, 30]) async {
+    func doubleClick(in web: WKWebView, at point: CGPoint, settle: Int = 400) async {
         post(.leftMouseDown, in: web, at: point, clicks: 1)
-        await pause(gaps[0])
+        await pause(30)
         post(.leftMouseUp, in: web, at: point, clicks: 1)
-        await pause(gaps[1])
+        await pause(60)
         post(.leftMouseDown, in: web, at: point, clicks: 2)
-        await pause(gaps[2])
+        await pause(30)
         post(.leftMouseUp, in: web, at: point, clicks: 2)
-        await pause(400)
-    }
-
-    /// PROBE (temporary): every recognizer from the message up to the
-    /// window, with its state ("d": it holds a press back).
-    func recognizers(above web: WKWebView) -> String {
-        var parts: [String] = []
-        var view: NSView? = web
-        while let v = view {
-            for g in v.gestureRecognizers {
-                parts.append("\(type(of: g)):\(g.state.rawValue)\(g.delaysPrimaryMouseButtonEvents ? "d" : "")")
-            }
-            view = v.superview
-        }
-        return parts.joined(separator: " ")
+        await pause(settle)
     }
 
     /// No pause at all for zero: the next event is posted in the same turn.

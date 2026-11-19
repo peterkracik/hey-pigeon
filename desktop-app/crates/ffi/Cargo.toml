@@ -42,8 +42,16 @@ async-trait = "0.1"
 futures = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
+
+# iOS speaks to the Keychain itself: `keyring` cannot say when an item may
+# be read, and its default locks background sync out of the refresh token
+# while the phone is locked (secrets.rs).
+[target.'cfg(target_os = "ios")'.dependencies]
+security-framework = "3"
+security-framework-sys = "2"
+core-foundation = "0.10"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

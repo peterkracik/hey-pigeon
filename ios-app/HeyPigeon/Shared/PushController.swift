@@ -107,7 +107,7 @@ final class PushController {
             do {
                 try await engine.disablePush()
             } catch {
-                lastError = error.localizedDescription
+                lastError = errorText(error)
             }
             refreshStatus()
         }
@@ -144,7 +144,7 @@ final class PushController {
             )
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            lastError = errorText(error)
         }
         refreshStatus()
     }

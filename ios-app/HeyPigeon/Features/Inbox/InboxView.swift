@@ -1,5 +1,5 @@
 // The list screens behind the tab bar. The view's name sits between the
-// glass circles on top (sidebar · AI, compose), the list starts right under
+// glass circles on top (sidebar · AI), the list starts right under
 // them, and the Jev label filter floats above the tab bar as a glass pill.
 // Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
 // Need reply. Search has no screen of its own on the phone: its field hides
@@ -127,11 +127,8 @@ struct MailListScreen: View {
                             .accessibilityLabel("Ask my inbox")
                     }
                 }
-                ToolbarItem(placement: .barTrailing) {
-                    Button { model.composeDraft = SendDraft() } label: { Image(systemName: "square.and.pencil") }
-                        .keyboardShortcut("n", modifiers: .command)
-                        .accessibilityLabel("Compose")
-                }
+                // Compose is not here: it is the circle beside the tab bar
+                // (RootView.tabs), under the thumb.
             }
             // The search field, hidden above the list until it is pulled
             // down: the first part of the pull that, carried on, syncs

@@ -75,7 +75,7 @@ floating "splits" pill above the tab bar. Here that maps to:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│ (≡)                                                  (✎) │  ← sidebar · compose
+│ (≡)                                                  (✦) │  ← sidebar · AI (when connected)
 │ ┄ 🔍 Search mail ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │  ← hidden; pull the list down
 │ ● Sender                                          10:42  │
 │   Subject                                                │
@@ -83,7 +83,7 @@ floating "splits" pill above the tab bar. Here that maps to:
 │ ─────────────────────────────────────────────────────────│
 │   …                                                      │
 │        ( Inbox 2 · Invoices · Travel · Newsletters )     │  ← Jev label pill (Settings › Triage)
-│        (  Inbox  ·  Remind me  ·  Need reply  )          │  ← tab bar
+│   (  Inbox  ·  Remind me  ·  Need reply  )   (✎)        │  ← tab bar + compose
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -112,7 +112,7 @@ floating "splits" pill above the tab bar. Here that maps to:
   edge (white on dark, the accent on light) and the bold sender. In the
   unified view the sender's first letter takes the account colour — no
   dot, no avatar.
-- **The title** sits between the two circles: folder, unread count and —
+- **The title** sits between the top bar's circles: folder, unread count and —
   with more than one account — the account's dot and name. Tapping it
   switches account (All · each).
 - **Search** is a field hidden above each of the three lists, in the
@@ -128,11 +128,16 @@ floating "splits" pill above the tab bar. Here that maps to:
   VoiceOver a "Search" action on the title; Spotlight's "Search in Hey
   Pigeon" lands in the same place. All of them set `tab = .search`, as
   on the iPad, where Search is a sidebar row and `/`.
-- **Compose** is the top-right circle; with an AI provider connected a
-  sparkle sits next to it and summarizes the current view (folder ·
+- **Compose** is the glass circle beside the tab bar, under the thumb
+  (where the search circle was). The system draws that circle only for
+  a search-role tab, so it is one, with a pencil: choosing it opens the
+  composer and the bar's selection stays on the list (`RootView.tabs`,
+  `BarSlot`). ⌘N is a key equivalent on the same screen.
+- **The AI** is the top-right circle, with a provider connected: a
+  sparkle that summarizes the current view (folder ·
   label filter · account) in a sheet. When "Ask my inbox" is there too,
   the one sparkle is a menu of the two (`MailListScreen.aiBarItem`), so
-  the bar never holds more than the sidebar, the title and two circles.
+  the top bar never holds more than the sidebar, the title and one circle.
   A thread has the summary sparkle in its top bar.
 - **Triage chips** (Jev labels + priority) appear inline on rows, not as a
   filter bar; a priority filter can join the account pill later.

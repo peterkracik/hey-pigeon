@@ -160,6 +160,7 @@ struct MainWindow: View {
                 .composeSheetSize(fullScreen: model.composeFullScreen, window: windowSize)
         }
         .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
+        .sheet(item: $model.recentOpensSheet) { _ in RecentOpensView() }
         .sheet(isPresented: $state.showShortcuts) { ShortcutsSheet() }
         .sheet(isPresented: $state.showTriage) {
             NavigationStack { TriageJournalView() }

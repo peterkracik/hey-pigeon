@@ -34,7 +34,7 @@ struct ShortcutsSheet: View {
         ]),
         ("Go", [
             ("G then I", "Inbox"), ("G then S", "Remind me"), ("G then N", "Need reply"), ("G then P", "Pinned"),
-            ("G then D", "Drafts"), ("G then T", "Sent"), ("G then A", "Archive"),
+            ("G then D", "Drafts"), ("G then T", "Sent"), ("G then A", "Archive"), ("G then O", "Recent Opens"),
             ("0 · 1 · 2", "All accounts · the first · the second"), ("⌘1 … ⌘8", "The folders, in the sidebar's order"),
         ]),
     ]

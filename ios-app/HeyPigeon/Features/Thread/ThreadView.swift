@@ -423,6 +423,14 @@ struct ThreadView: View {
             }
         }
         .threadCard()
+        // Opened at a message (a row of Recent Opens): that message is
+        // open when the thread shows, wherever it is in the fold.
+        .onChange(of: model.pendingMessageId, initial: true) { _, id in
+            guard let id, messages.contains(where: { $0.id == id }) else { return }
+            allCollapsed = false
+            expanded.insert(id)
+            model.pendingMessageId = nil
+        }
     }
 
     // MARK: Header pieces

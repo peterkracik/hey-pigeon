@@ -95,7 +95,10 @@
     image. Removing the account from a device asks the relay for the same deletion, which
     also clears read status for mail already sent from your other devices. If
     the account is removed or signed out before the relay could be reached, its records
-    are left to expire within 30 days. Once it is off on a device and that request has
+    are left to expire within 30 days. What a device has already recorded about opened
+    mail (the status in the message and the Recent Opens list, which shows the last 90
+    days) stays on that device until the account is removed from it; the relay's own
+    30-day limit does not shorten it. Once it is off on a device and that request has
     been answered, the device does not contact the relay about that account. Tracking
     opens can require the recipient's consent under EU and UK law; you are responsible
     for that when you turn it on.</p>

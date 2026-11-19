@@ -64,6 +64,14 @@ struct SidebarColumn: View {
                         folder(.spam)
                         folder(.trash)
                     }
+                    // Read status's list (a sheet, not a folder: it never
+                    // shows as selected). Not in a build that cannot track.
+                    if model.readStatusAvailable {
+                        SidebarRow(title: RecentOpens.title, systemImage: RecentOpens.symbol,
+                                   help: "Mail you sent that was opened (G then O)") {
+                            state.run(.recentOpens, in: model)
+                        }
+                    }
 
                     if !labels.isEmpty || model.labelAccountId != nil {
                         SectionHeader(title: "Labels", open: $labelsOpen)

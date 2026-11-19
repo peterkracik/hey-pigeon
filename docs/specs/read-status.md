@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — steps 1–4 merged (#142, #144, #147, #150), the relay deployed and `o.heypigeon.app` live; step 5 (send, poll, off switch) implemented, not merged; steps 6–7 not started
+Status: Approved — steps 1–5 merged (#142, #144, #147, #150, #152), the relay deployed and `o.heypigeon.app` live; step 6 (Recent Opens) implemented, not merged; step 7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -68,13 +68,31 @@ switch, per mailbox, off until I turn it on.
   its time, and "Delivered to a device that hides opens" for a hidden
   one; five at most, then "and N earlier". Nothing else about the reader is shown, because
   nothing else is known (R18).
-- R7. "Recent Opens" is a list of the user's messages with at least one
-  open, newest open first: recipients, subject, "Opened <when>". It is a
-  query over the local store, across all accounts (or the account the app
-  is filtered to), and holds nothing the relay did not already report.
-  Choosing a row opens the thread. Empty state: "No opens yet", and when
-  no account has the setting on, one line that says read status is off and
-  where to turn it on.
+- R7. "Recent Opens" is a sheet listing the user's sent messages that
+  were opened in the last 90 days, newest open first, 100 at most, under
+  three kinds of heading: "Last 7 days" (less than seven days ago, to the
+  second), "Earlier this month", then one heading for each month before,
+  named by the month, with its year when that is not this year. A row is
+  a message on two lines: who opened it — the one recipient there was,
+  by name or address; with several, "One of N recipients", never a name
+  — followed on the same line by the time of its newest open (weekday
+  and time of day within the last seven days; weekday, day and month
+  before that, in the user's language); under them its subject. The 90
+  days are the device's memory: the relay forgets a message after 30,
+  but what it reported stays in the local store, which nothing prunes
+  short of removing the account. Only opens are in it: a message
+  only ever fetched by a device that hides opens is not listed, anywhere
+  on the sheet. It is a query over the local store, across all accounts
+  (or the account the app is filtered to); it makes no request and
+  holds nothing the relay did not already report. Choosing a row closes
+  the sheet and opens the thread with that message open. The rows are
+  read when the sheet opens and again when the store changes while it is
+  open, never from a view's body. Empty: "No opens yet"; "Read status is
+  off" with where to turn it on when no account has it on; "Read status
+  is not available in this build" without a relay. The entry points are
+  shown only in a build with a relay. An account whose read status was
+  turned off keeps the rows it had (R11) until they are older than 90
+  days; an account that is removed takes its rows with it.
 
 ### The setting
 
@@ -91,7 +109,9 @@ switch, per mailbox, off until I turn it on.
 - R11. While the setting is off for an account, for that account: no pixel
   is added to outgoing mail, no token is registered, and the app makes no
   request of any kind to the opens endpoint. Statuses already stored stay
-  visible; they stop changing.
+  visible — in the message header and in Recent Opens — and stop
+  changing; they are this device's own records and go when the account
+  is removed from it. The privacy copy says so.
 - R12. Turning the setting off on a device does three things, in this
   order: the setting is written; polling and pixels stop for that account
   on that device; the relay is asked to delete every live token of that
@@ -360,11 +380,11 @@ new about its user, but the declaration must still be literally true.
 
 | | iPhone | iPad | Mac |
 | --- | --- | --- | --- |
-| Surface | Status and its events in the open message's header (thread view); composer sheet. Recent Opens (step 6): a list pushed from the sidebar sheet | Same views in the iPad layout | Status and its events in the open message's header (thread page); inline composer or window. Recent Opens (step 6): a list page |
-| Entry points | The composer's footer: the eye button, "Read status", when the From account has it on. Step 6: sidebar sheet → "Recent Opens" | Same | The same eye button in the composer's footer. Step 6: sidebar → "Recent Opens"; `g o`; palette "Recent Opens" |
+| Surface | Status and its events in the open message's header (thread view); composer sheet; Recent Opens as a sheet | Same views in the iPad layout | Status and its events in the open message's header (thread page); inline composer or window; Recent Opens as the same sheet |
+| Entry points | The composer's footer: the eye button, "Read status", when the From account has it on. Sidebar sheet → "Recent Opens" | Same; the sidebar column's "Recent Opens" row | The same eye button. Sidebar → "Recent Opens"; Go menu → "Recent Opens"; `g o`; palette "Recent Opens" |
 | Settings | Settings → Accounts → account → "Read status", off | same | same (Settings window) |
 | How it learns of opens | Sync on open, pull, background refresh; silent push when "New mail (push)" is on | same | The 30-second sync |
-| Status | Steps 1–5 implemented: every status in the header, the setting, the composer switch, tracked sends, the poll, the off switch. Recent Opens and the silent push on open not started | same | same |
+| Status | Steps 1–6 implemented: every status in the header, the setting, the composer switch, tracked sends, the poll, the off switch, Recent Opens. The silent push on open not started | same | same |
 
 ## Platform differences
 
@@ -373,8 +393,9 @@ new about its user, but the declaration must still be literally true.
   otherwise at their next sync. Reason: the Mac build has no push
   entitlement (`macos-app/project.yml`), and iOS suspends the app. Same
   data, same query, different clock.
-- **`g o` and the palette entries** exist on the Mac only (with a
-  hardware keyboard the iPad uses the sidebar row). Platform idiom.
+- **`g o` and the palette entry** exist on the Mac only; the iPad with a
+  hardware keyboard uses the sidebar row. Platform idiom: all three open
+  the same sheet through `AppModel.showRecentOpens`.
 - Nothing else. Wording, defaults, precedence, the flush rule and the off
   switch are one implementation in the core and `AppModel`; the
   composer's switch and the Settings row are one view each, in the shared
@@ -412,14 +433,15 @@ Relay (`node --test`, no network):
 Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 
 - [x] R1, local half — `eachStateHasItsWords`, `theMockFollowsTheCoresRule`, `aMockThreadShowsWhatBecameOfSentMail` (`ModelTests`, `ReadStatusTests`) — green in `ios-ci` and `macos-ci` on #142
-- [ ] R1, R5, R6 — `openedAndHiddenHaveTheirWords`, `detailsListWhatTheRelayReported`, `theMockRanksOpensLikeTheCore`, `aTranscriptCarriesNoPictureAddress` (`ModelTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
-- [ ] R15, R16 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens`, `aScheduledMessageKeepsTheChoiceMadeWhenItWasSent`, `theReadStatusRowSaysWhatItDoes` (`AppModelTests`) — written, not yet compiled
-- [ ] R7 — `recentOpensAreNewestFirstAndRespectTheAccountFilter`
+- [x] R1, R5, R6 — `openedAndHiddenHaveTheirWords`, `detailsListWhatTheRelayReported`, `theMockRanksOpensLikeTheCore`, `aTranscriptCarriesNoPictureAddress` (`ModelTests`) — green in `ios-ci` and `macos-ci` on #152
+- [x] R15, R16 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens`, `aScheduledMessageKeepsTheChoiceMadeWhenItWasSent`, `mailSentWithoutAComposerIsNotTracked`, `theReadStatusRowSaysWhatItDoes` (`AppModelTests`) — green in `ios-ci` and `macos-ci` on #152
+- [x] R7, the query — `recent_opens_are_local_opened_and_newest_first` (`core::readstatus`: opens only, the window, one account or all, kept after "off", gone with the account, zero relay calls), `recent_opens_come_from_the_stored_events` (`adapter-sqlite`), and at the bridge in `a_thread_carries_opens_and_hidden_fetches`
+- [ ] R7, the sheet — `recentOpensAreNewestFirstAndRespectTheAccountFilter` (`AppModelTests`), `recentOpensNameOneRecipientAndNobodyOfSeveral`, `recentOpensSayWhyTheyAreEmpty` (`ModelTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
 - [x] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`, `pushIsOfferedOnlyWhereTheAppCanBePushedTo` (`AppModelTests`) — green in `ios-ci` and `macos-ci` on #150 (`theReadStatusRowIsNotShownYet`, green there too, is replaced in step 5 by `theReadStatusRowSaysWhatItDoes`)
 
 Mac (`macos-app/HeyPigeonMacTests`):
 
-- [ ] `g o` resolves to Recent Opens; the palette, `KeyboardMap.characters` and `ShortcutsSheet.groups` agree (`MacWindowTests`)
+- [ ] `g o` resolves to Recent Opens and is on the shortcuts sheet (`gArmsAChordAndTheNextKeyGoesSomewhere`); the command opens the shared sheet (`theCommandOpensTheSharedSheet`) (`MacWindowTests`) — written, not yet compiled. A chord is not a bare key, so `KeyboardMap.characters` does not change
 
 Whole feature:
 
@@ -732,4 +754,57 @@ Step 5 after the security review of #152, 2026-11-19:
   removal's delete also clears the records of other devices that still
   track.
 
-Steps 6–7: not started.
+Since step 5, 2026-11-19: merged as #152 (squash 3e44a37). `rust-ci`,
+`ios-ci` (iPhone tests, iPad build), `macos-ci` and the relay checks were
+green on its head, so the Swift of step 5 and of the fix round compiled
+and its tests passed. The security reviewer re-checked the fix round —
+B1, B2 and S1–S6 closed, verdict "ship" — and raised three follow-ups,
+applied before the merge: a pending delete is dropped when the relay
+answers that it has no `opens` (N1; no dedicated test, it needs a
+signed-in relay call); the Settings footer and the privacy page say that
+removing the account also clears read status for mail already sent from
+the user's other devices (N2); the privacy page says the request logs
+are "discarded, not stored". Still unverified and the owner's: a real
+send to a real mailbox; the request-log exclusion's effect and Cloud
+Trace on the deployed project.
+
+Step 6, 2026-11-19 — **Verified with notes**. Not merged.
+
+- Rust: `cargo fmt --all -- --check`, the `cargo test` line of `rust-ci`
+  from a clean build and its Swift bindgen step pass locally. No relay
+  or Terraform file changed.
+- Swift (`Models`, `RustEngine`, `MockEngine`, `AppModel`,
+  `RecentOpensView`, `SidebarSheet`, `PadSplitView`, `HeyPigeonApp`,
+  `ThreadView`, the Mac's `WindowState`, `SidebarColumn`,
+  `CommandPalette`, `ShortcutsSheet`, `MainWindow`, and the tests) was
+  written on Linux and has never been compiled.
+- N3, fixed in this step: a pending delete carries the address it was
+  recorded with to that one call (`MailProvider::delete_open_tokens`'s
+  `at`); it is no longer made the provider's address, so another account
+  cannot register with a previous relay because of it. Tests:
+  `an_account_that_leaves_has_the_relay_forget_it` (core),
+  `a_delete_goes_to_its_recorded_relay` (adapter),
+  `a_pending_delete_keeps_the_address_to_send_it_to` (bridge).
+- Decided in this step: Recent Opens is a sheet on all three platforms
+  (the spec's first draft had a list page on the Mac); it lists opens
+  only and never a hidden delivery; its rows stay after read status is
+  turned off, until they are 30 days old (R11), and the footer and the
+  privacy page gained a sentence saying so; the thread opens with the
+  chosen message open, without scrolling to it.
+- Not seen on a device: the sheet, its rows and headings, the sidebar
+  rows, and the message opening expanded.
+
+Step 6, second pass after the owner's reference screen, 2026-11-19: the
+sheet's structure follows it in the app's own look — the headings of R7
+in place of the list's day groups, the time right after the name, the
+window widened from 30 to 90 days (local events are never pruned, and no
+copy promised they would be; the footer and the privacy page now say
+whose memory an old row is), and "Recent Opens" added to the Mac's Go
+menu. The grouping and the dates are one pure type
+(`RecentOpens.Format`, `RecentOpens.sections`) with an injected now,
+calendar and locale; tests `recentOpensStandUnderTheirHeadings`,
+`recentOpensSayWhenInTheUsersWords` (`ModelTests`) — written, not yet
+compiled. The Mac's menus show no chords (the bare-letter keys are not
+menu equivalents), so the Go menu's item carries none.
+
+Step 7: not started.

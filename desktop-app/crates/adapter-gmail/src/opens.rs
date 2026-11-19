@@ -73,6 +73,18 @@ pub(crate) fn normalised(url: Option<String>) -> Option<String> {
         .and_then(heypigeon_core::readstatus::opens_origin)
 }
 
+/// Where a delete goes: the address it was recorded with when that is an
+/// acceptable origin, else the provider's own.
+pub(crate) fn delete_base(
+    at: Option<&str>,
+    own: Result<String, MailError>,
+) -> Result<String, MailError> {
+    match at.and_then(heypigeon_core::readstatus::opens_origin) {
+        Some(recorded) => Ok(recorded),
+        None => own,
+    }
+}
+
 /// The most a query's answer may weigh: 100 tokens of 50 events each fit
 /// many times over. A relay that sends more is not read.
 const MAX_ANSWER_BYTES: usize = 512 * 1024;
@@ -169,8 +181,15 @@ impl GmailProvider {
         Ok(events_from(answer, tokens))
     }
 
-    pub(crate) async fn opens_delete(&self, account_id: &AccountId) -> Result<(), MailError> {
-        let base = self.opens_base()?;
+    /// `at`: the relay the delete was recorded for, used for this call
+    /// alone — the provider's own address, which registrations and
+    /// queries use, is not touched.
+    pub(crate) async fn opens_delete(
+        &self,
+        account_id: &AccountId,
+        at: Option<&str>,
+    ) -> Result<(), MailError> {
+        let base = delete_base(at, self.opens_base())?;
         let bearer = self.access_token(account_id).await?;
         let resp = self
             .relay_http
@@ -256,6 +275,29 @@ mod tests {
         ] {
             assert_eq!(normalised(Some(refused.into())), None, "{refused}");
         }
+    }
+
+    /// N3: a delete goes to the relay it was recorded for, without that
+    /// address becoming the provider's.
+    #[test]
+    fn a_delete_goes_to_its_recorded_relay() {
+        let own = || Ok::<_, MailError>("https://o.heypigeon.app".to_string());
+        let none = || Err::<String, _>(MailError::Provider("read status: no relay".into()));
+        assert_eq!(
+            delete_base(Some("https://old.example"), own()).unwrap(),
+            "https://old.example"
+        );
+        assert_eq!(
+            delete_base(Some("https://old.example/"), none()).unwrap(),
+            "https://old.example"
+        );
+        assert_eq!(delete_base(None, own()).unwrap(), "https://o.heypigeon.app");
+        // An address that is not an origin is not used.
+        assert_eq!(
+            delete_base(Some("https://x\" onerror=\"y"), own()).unwrap(),
+            "https://o.heypigeon.app"
+        );
+        assert!(delete_base(None, none()).is_err());
     }
 
     /// The query's answer: only what was asked about, only labels this

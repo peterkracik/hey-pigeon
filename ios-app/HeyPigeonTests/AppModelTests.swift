@@ -272,7 +272,8 @@ struct AppModelTests {
                      "Turning this off stops it on this device at once",
                      "asks the relay to delete what it holds for this account",
                      "your other devices follow when they next sync",
-                     "Removing the account asks for the same",
+                     "Removing the account asks the relay for the same deletion",
+                     "stays on that device until the account is removed from it",
                      "left to expire within 30 days"] {
             #expect(footer.contains(part), "\(part)")
         }
@@ -366,6 +367,52 @@ struct AppModelTests {
         #expect(model.tracksOpens(composed, from: account.id))
         composed.trackOpens = false
         #expect(!model.tracksOpens(composed, from: account.id))
+    }
+
+    /// R7: Recent Opens is read from the store when the sheet opens,
+    /// newest open first, for the account the app is filtered to; a row
+    /// opens its thread at that message and closes the sheet.
+    @Test func recentOpensAreNewestFirstAndRespectTheAccountFilter() async throws {
+        let now = Date()
+        let (work, personal) = ("me@work.test", "me@personal.test")
+        #expect(model.recentOpens.isEmpty && !model.recentOpensLoaded)
+        engine.recordOpen(messageId: "t1-m1", threadId: "t1", accountId: work, subject: "Q4 roadmap review",
+                          recipients: ["Priya Nair"], at: now.addingTimeInterval(-3_600))
+        engine.recordOpen(messageId: "t2-m1", threadId: "t2", accountId: personal, subject: "Weekend ride?",
+                          recipients: ["Tomáš", "Ana"], at: now.addingTimeInterval(-600))
+        // Opened again later: the same row, moved up.
+        engine.recordOpen(messageId: "t1-m1", threadId: "t1", accountId: work, subject: "Q4 roadmap review",
+                          recipients: ["Priya Nair"], at: now.addingTimeInterval(-60))
+
+        model.showSidebar = true
+        model.showRecentOpens()
+        #expect(model.recentOpensSheet != nil && !model.showSidebar)
+        await model.loadRecentOpens()
+        #expect(model.recentOpensLoaded)
+        #expect(model.recentOpens.map(\.messageId) == ["t1-m1", "t2-m1"])
+        #expect(model.recentOpens[0].opens == 2)
+        #expect(RecentOpens.who(model.recentOpens[1]) == "One of 2 recipients")
+
+        // One account's.
+        model.selectedAccountId = personal
+        await model.loadRecentOpens()
+        #expect(model.recentOpens.map(\.messageId) == ["t2-m1"])
+        model.selectedAccountId = nil
+        await model.loadRecentOpens()
+
+        // A row: the sheet closes and its thread opens at that message.
+        model.open(model.recentOpens[0])
+        #expect(model.recentOpensSheet == nil)
+        #expect(model.pendingThreadId == "t1")
+        #expect(model.pendingMessageId == "t1-m1")
+        // A plain open of a thread forgets a message left over.
+        model.openThread(id: "t3")
+        #expect(model.pendingMessageId == nil)
+
+        // An account that is removed takes its rows with it.
+        await model.removeAccount(try #require(model.accounts.first { $0.id == work }))
+        await model.loadRecentOpens()
+        #expect(model.recentOpens.map(\.messageId) == ["t2-m1"])
     }
 
     /// Having a relay is not being able to push: the Mac build carries the

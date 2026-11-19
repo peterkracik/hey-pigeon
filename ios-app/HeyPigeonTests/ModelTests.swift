@@ -129,6 +129,131 @@ struct ReadStatusTests {
         #expect(!transcript.contains("heypigeon.app") && !transcript.contains("0123456789abcdef") && !transcript.contains(".gif"))
     }
 
+    /// A fixed place and language for Recent Opens' dates: Thursday 19
+    /// November 2026, 11:49, UTC, British English.
+    private var utc: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }
+    private func on(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 12, _ min: Int = 0) -> Date {
+        utc.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+    }
+    private func openFormat(now: Date? = nil) -> RecentOpens.Format {
+        RecentOpens.Format(now: now ?? on(2026, 11, 19, 11, 49), calendar: utc, locale: Locale(identifier: "en_GB"))
+    }
+    private func opened(_ id: String, _ date: Date, to: [String] = ["Peter"], subject: String = "Lunch") -> RecentOpenItem {
+        RecentOpenItem(messageId: id, threadId: "t-\(id)", accountId: "me@work.test", subject: subject,
+                       recipients: to, openedAt: date)
+    }
+
+    /// R7: a row names the one recipient there was and nobody when there
+    /// were several.
+    @Test func recentOpensNameOneRecipientAndNobodyOfSeveral() {
+        let format = openFormat()
+        let one = opened("a", on(2026, 11, 19, 8, 45))
+        let several = opened("b", on(2026, 11, 17), to: ["Peter", "ana@acme.test", "Ben"], subject: "")
+        let none = opened("c", on(2026, 10, 23), to: [])
+        #expect(RecentOpens.who(one) == "Peter")
+        #expect(RecentOpens.who(several) == "One of 3 recipients")
+        #expect(!RecentOpens.who(several).contains("Peter"))
+        #expect(RecentOpens.who(none) == "A recipient")
+        #expect(RecentOpens.subject(several) == "(no subject)")
+        #expect(RecentOpens.spoken(one, format: format) == "Peter opened Lunch, \(format.time(one.openedAt))")
+        #expect(RecentOpens.title == "Recent Opens")
+    }
+
+    /// The headings: "Last 7 days", "Earlier this month", then a heading
+    /// a month, named by the month — across a month's end, a year's end,
+    /// and to the second at seven days.
+    @Test func recentOpensStandUnderTheirHeadings() {
+        let now = on(2026, 11, 19, 11, 49)
+        let format = openFormat(now: now)
+        let rows = [
+            opened("thu", on(2026, 11, 19, 8, 45)),
+            opened("fri", on(2026, 11, 13, 9, 0)),          // six days back
+            opened("mon", on(2026, 11, 9)),                 // this month, before the week
+            opened("sat", on(2026, 11, 1, 0, 0)),           // the month's first minute
+            opened("oct31", on(2026, 10, 31, 23, 59)),      // the minute before it
+            opened("oct9", on(2026, 10, 9)),
+            opened("sep", on(2026, 9, 30)),
+        ]
+        let sections = RecentOpens.sections(rows, format: format)
+        #expect(sections.map(\.title) == ["Last 7 days", "Earlier this month", "October", "September"])
+        #expect(sections.map { $0.items.map(\.id) } == [["thu", "fri"], ["mon", "sat"], ["oct31", "oct9"], ["sep"]])
+        #expect(sections.map(\.id) == ["week", "month", "2026-10", "2026-9"])
+        #expect(RecentOpens.sections([], format: format).isEmpty)
+
+        // Exactly seven days ago is no longer "Last 7 days"; a second less is.
+        let edge = now.addingTimeInterval(-RecentOpens.recentSpan)
+        #expect(RecentOpens.sections([opened("e", edge)], format: format).map(\.title) == ["Earlier this month"])
+        #expect(RecentOpens.sections([opened("e", edge.addingTimeInterval(1))], format: format).map(\.title) == ["Last 7 days"])
+        // A clock that runs ahead is recent, not a month of its own.
+        #expect(RecentOpens.sections([opened("f", now.addingTimeInterval(3_600))], format: format).map(\.title) == ["Last 7 days"])
+
+        // Early in a month the week reaches into the month before, and
+        // what is older there stands under that month's name.
+        let earlyDec = openFormat(now: on(2026, 12, 2, 9, 0))
+        let december = RecentOpens.sections([opened("a", on(2026, 11, 28)), opened("b", on(2026, 11, 20))], format: earlyDec)
+        #expect(december.map(\.title) == ["Last 7 days", "November"])
+
+        // Across a year's end the month carries its year; this year's does not.
+        let january = openFormat(now: on(2027, 1, 20, 9, 0))
+        let winter = RecentOpens.sections([
+            opened("a", on(2027, 1, 18)), opened("b", on(2027, 1, 3)),
+            opened("c", on(2026, 12, 24)), opened("d", on(2026, 11, 9)),
+        ], format: january)
+        #expect(winter.map(\.id) == ["week", "month", "2026-12", "2026-11"])
+        #expect(winter[2].title.contains("December") && winter[2].title.contains("2026"))
+        #expect(winter[3].title.contains("November") && winter[3].title.contains("2026"))
+        #expect(!winter[1].title.contains("2027"))
+    }
+
+    /// The row's time: weekday and time of day within the last seven
+    /// days; weekday, day and month before that, with the year only when
+    /// it is not this one — in the user's language, never spelled here.
+    @Test func recentOpensSayWhenInTheUsersWords() {
+        let format = openFormat()
+        // Within the week (a week ago this evening is still inside it): "Thu 18:59".
+        let recent = format.time(on(2026, 11, 12, 18, 59))
+        #expect(recent.hasPrefix("Thu") && recent.hasSuffix("18:59"))
+        #expect(!recent.contains("Nov"))
+        // Older, this year: "Mon, 9 Nov" — no time of day, no year.
+        let older = format.time(on(2026, 11, 9, 14, 30))
+        #expect(older.contains("Mon") && older.contains("9") && older.contains("Nov"))
+        #expect(!older.contains("14") && !older.contains("2026"))
+        let october = format.time(on(2026, 10, 23, 9, 0))
+        #expect(october.contains("Fri") && october.contains("23") && october.contains("Oct"))
+        // Another year: the year is there.
+        #expect(format.time(on(2025, 12, 24, 9, 0)).contains("2025"))
+        // Another language gets its own words, not these.
+        let german = RecentOpens.Format(now: on(2026, 11, 19, 11, 49), calendar: utc, locale: Locale(identifier: "de_DE"))
+        #expect(german.time(on(2026, 10, 23, 9, 0)).contains("Okt"))
+        #expect(german.heading(on(2026, 10, 23)).title == "Oktober")
+        // The headings "Last 7 days" and "Earlier this month" are the app's own words.
+        #expect(german.heading(on(2026, 11, 18)).title == "Last 7 days")
+    }
+
+    /// The sheet's words when it has no rows, and under them when it has:
+    /// honest about a build that cannot track and about read status being
+    /// off, and never calling a hidden delivery an open.
+    @Test func recentOpensSayWhyTheyAreEmpty() {
+        #expect(RecentOpens.emptyState(available: false, anyAccountOn: false).title == "Read status is not available in this build")
+        #expect(RecentOpens.emptyState(available: false, anyAccountOn: true).title == "Read status is not available in this build")
+        let off = RecentOpens.emptyState(available: true, anyAccountOn: false)
+        #expect(off.title == "Read status is off")
+        #expect(off.detail.contains("Settings › Accounts"))
+        let empty = RecentOpens.emptyState(available: true, anyAccountOn: true)
+        #expect(empty.title == "No opens yet")
+        #expect(empty.detail.contains("Apple Mail hides opens"))
+        #expect(RecentOpens.footer(anyAccountOn: true).contains("a device that hides opens is not listed"))
+        // How far back, and whose memory an old row is.
+        #expect(RecentOpens.footer(anyAccountOn: true).contains("Opens of the last 90 days, at most 100"))
+        #expect(RecentOpens.footer(anyAccountOn: true).contains("The relay keeps its own record of a message for 30 days"))
+        #expect(!RecentOpens.footer(anyAccountOn: true).contains("Read status is off"))
+        #expect(RecentOpens.footer(anyAccountOn: false).hasSuffix("Read status is off, so nothing new is added."))
+    }
+
     @Test func theMockFollowsTheCoresRule() {
         let t0 = noon
         let thread = MockEngine.withReadStatus([

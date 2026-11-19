@@ -148,6 +148,8 @@ final class RustEngine: MailEngine {
 
     func threadLocal(id: String) throws -> ThreadDetail? { try reader.threadLocal(id: id) }
 
+    func recentOpens(accountId: String?) throws -> [RecentOpenItem] { try reader.recentOpens(accountId: accountId) }
+
     func draft(threadId: String) async throws -> SendDraft? {
         guard let d = try await engine.loadDraft(threadId: threadId) else { return nil }
         var draft = SendDraft()
@@ -566,6 +568,14 @@ struct RustStoreReader: StoreReader, Sendable {
         guard let t = try engine.getThreadLocal(threadId: id) else { return nil }
         let me = t.thread.accountId
         return ThreadDetail(thread: ThreadRow(t.thread), messages: t.messages.map { MessageItem($0, myEmail: me) })
+    }
+
+    func recentOpens(accountId: String?) throws -> [RecentOpenItem] {
+        try engine.recentOpens(accountId: accountId).map { r in
+            RecentOpenItem(messageId: r.messageId, threadId: r.threadId, accountId: r.accountId, subject: r.subject,
+                           recipients: r.recipients.map { EmailAddress.displayName(in: $0) },
+                           openedAt: Date(epochMs: r.openedAt), opens: Int(r.opens))
+        }
     }
 }
 

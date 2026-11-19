@@ -514,6 +514,31 @@ pub fn catch_up_threads<S: Store>(
     store.sent_threads_without_bodies(account_id, now - TOKEN_TTL_MS, CATCH_UP_BATCH)
 }
 
+// ----------------------------------------------------------- recent opens
+
+/// How far back "Recent Opens" looks, and how many rows it holds. The
+/// window is this device's memory, not the relay's: the relay forgets a
+/// message 30 days after it was sent (`TOKEN_TTL_MS`), while what it
+/// reported stays in this store until the account is removed. So the
+/// list can reach back further than the relay does — three months, and
+/// never more than a hundred rows.
+pub const RECENT_OPENS_WINDOW_MS: i64 = 90 * 24 * 3_600_000;
+pub const RECENT_OPENS_LIMIT: u32 = 100;
+
+/// "Recent Opens" (R7): the user's sent messages opened in the last 90
+/// days, newest open first, 100 at most — for one account or all. Read
+/// from what this device already stored; nothing is asked of anyone. An
+/// account whose read status was turned off since keeps the rows it had
+/// (R11: what was stored stays, it only stops changing) until they are
+/// older than the window; they go with the account when it is removed.
+pub fn recent_opens<S: Store>(
+    store: &S,
+    account_id: Option<&AccountId>,
+    now: i64,
+) -> Result<Vec<crate::domain::RecentOpen>, StoreError> {
+    store.recent_opens(account_id, now - RECENT_OPENS_WINDOW_MS, RECENT_OPENS_LIMIT)
+}
+
 // ------------------------------------------------------------- off switch
 
 /// sync_meta: the relay still has to be told to forget this mailbox.
@@ -589,7 +614,9 @@ pub async fn forget_mailbox<M: MailProvider, S: Store>(
     if !pending && !account_tracks(store, account_id) {
         return false;
     }
-    match provider.delete_open_tokens(account_id).await {
+    // To the relay the request was recorded with, when it named one.
+    let at = pending_delete_url(store, account_id).ok().flatten();
+    match provider.delete_open_tokens(account_id, at.as_deref()).await {
         Ok(()) => {
             let _ = cancel_delete(store, account_id);
             true
@@ -627,7 +654,9 @@ pub async fn flush_delete<M: MailProvider, S: Store>(
         cancel_delete(store, account_id)?;
         return Ok(false);
     }
-    match provider.delete_open_tokens(account_id).await {
+    // To the relay the request was recorded with, when it named one.
+    let at = pending_delete_url(store, account_id).ok().flatten();
+    match provider.delete_open_tokens(account_id, at.as_deref()).await {
         Ok(()) => {
             cancel_delete(store, account_id)?;
             Ok(true)
@@ -1323,7 +1352,7 @@ mod tests {
 
         // A has not synced yet and sends a tracked message: a new token
         // at the relay, registered after B's delete.
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        std::thread::sleep(std::time::Duration::from_millis(5));
         outbox::enqueue(&a, &acc(), send(true, Some("<p>Late</p>"))).unwrap();
         outbox::drain(&provider, &a, 10).await.unwrap();
         assert_eq!(calls(&provider).len(), 1);
@@ -1398,6 +1427,18 @@ mod tests {
             *provider.opens_failure.lock().unwrap() = None;
             assert!(flush_delete(&provider, &store, &acc()).await.unwrap());
         }
+        // N3: the delete goes to the address the request was recorded
+        // with, for that call alone; a request without one goes to the
+        // address the provider has.
+        let (provider, store) = fixture(false);
+        request_delete(&store, &acc(), "https://old-relay.example").unwrap();
+        assert!(flush_delete(&provider, &store, &acc()).await.unwrap());
+        request_delete(&store, &acc(), "").unwrap();
+        assert!(forget_mailbox(&provider, &store, &acc()).await);
+        assert_eq!(
+            *provider.opens_delete_addresses.lock().unwrap(),
+            vec![Some("https://old-relay.example".to_string()), None]
+        );
         // A recorded address that is not an origin is not kept as one.
         let (_, store) = fixture(false);
         request_delete(&store, &acc(), r#"https://x" onerror="alert(1)"#).unwrap();
@@ -1781,6 +1822,153 @@ mod tests {
         off.read_status = false;
         store.upsert_account(&off).unwrap();
         assert!(catch_up_threads(&store, &acc(), NOW).unwrap().is_empty());
+    }
+
+    /// R7: Recent Opens is the opened messages only, newest open first,
+    /// within its window — read from the store, with no request to anyone,
+    /// whether the account's read status is on or was turned off since.
+    #[tokio::test]
+    async fn recent_opens_are_local_opened_and_newest_first() {
+        let (provider, store) = fixture(true);
+        let other: AccountId = "a2".into();
+        store.upsert_account(&sample_account("a2")).unwrap();
+        let opened = |at| OpenEvent {
+            label: OpenLabel::Opened,
+            at,
+        };
+        let hidden = |at| OpenEvent {
+            label: OpenLabel::Hidden,
+            at,
+        };
+        let put =
+            |id: &str, account: &AccountId, to: &[&str], events: &[OpenEvent], linked: bool| {
+                let thread = crate::domain::Thread {
+                    id: format!("th-{id}"),
+                    account_id: account.clone(),
+                    subject: format!("Subject {id}"),
+                    msg_count: 1,
+                    ..Default::default()
+                };
+                let mut m = sent(&format!("m-{id}"), NOW - 10 * HOUR);
+                m.account_id = account.clone();
+                m.thread_id = thread.id.clone();
+                m.to_addrs = to.iter().map(|a| a.to_string()).collect();
+                m.cc_addrs = vec![];
+                store.upsert_thread(&thread).unwrap();
+                store.upsert_message(&m).unwrap();
+                store
+                    .open_token_put(&OpenToken {
+                        token: format!("tok-{id}"),
+                        account_id: account.clone(),
+                        message_id: linked.then(|| m.id.clone()),
+                        thread_id: linked.then(|| thread.id.clone()),
+                        sent_at: NOW - 10 * HOUR,
+                        expires_at: NOW + TOKEN_TTL_MS,
+                        polled_at: None,
+                    })
+                    .unwrap();
+                store
+                    .open_events_add(&format!("tok-{id}"), events, NOW)
+                    .unwrap();
+            };
+        put(
+            "one",
+            &acc(),
+            &["Ana <ana@acme.test>"],
+            &[
+                opened(NOW - 3 * HOUR),
+                opened(NOW - HOUR),
+                hidden(NOW - 60_000),
+            ],
+            true,
+        );
+        put(
+            "two",
+            &acc(),
+            &["ben@acme.test", "cy@acme.test"],
+            &[opened(NOW - 2 * HOUR)],
+            true,
+        );
+        // Only fetched by a device that hides opens: not an open.
+        put(
+            "hidden",
+            &acc(),
+            &["dan@acme.test"],
+            &[hidden(NOW - 30 * 60_000)],
+            true,
+        );
+        // Opened long ago: outside the window.
+        put(
+            "old",
+            &acc(),
+            &["eve@acme.test"],
+            &[opened(NOW - RECENT_OPENS_WINDOW_MS - HOUR)],
+            true,
+        );
+        // The sent message has not been seen yet: no row to show.
+        put(
+            "unlinked",
+            &acc(),
+            &["fay@acme.test"],
+            &[opened(NOW - 60_000)],
+            false,
+        );
+        put(
+            "theirs",
+            &other,
+            &["gus@acme.test"],
+            &[opened(NOW - 90 * 60_000)],
+            true,
+        );
+
+        let all = recent_opens(&store, None, NOW).unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|r| r.message_id.as_str())
+                .collect::<Vec<_>>(),
+            ["m-one", "m-theirs", "m-two"]
+        );
+        assert_eq!(
+            all[0],
+            crate::domain::RecentOpen {
+                message_id: "m-one".into(),
+                thread_id: "th-one".into(),
+                account_id: acc(),
+                subject: "Subject one".into(),
+                recipients: vec!["Ana <ana@acme.test>".into()],
+                opened_at: NOW - HOUR,
+                opens: 2,
+            }
+        );
+        assert_eq!(all[2].recipients.len(), 2);
+        // One account's.
+        let mine = recent_opens(&store, Some(&acc()), NOW).unwrap();
+        assert_eq!(mine.len(), 2);
+        assert!(mine.iter().all(|r| r.account_id == ACC));
+        // Turned off since: what was stored stays (R11) …
+        let mut off = sample_account(ACC);
+        off.read_status = false;
+        store.upsert_account(&off).unwrap();
+        assert_eq!(recent_opens(&store, Some(&acc()), NOW).unwrap().len(), 2);
+        // … until it ages out of the window …
+        assert!(
+            recent_opens(&store, Some(&acc()), NOW + RECENT_OPENS_WINDOW_MS)
+                .unwrap()
+                .is_empty()
+        );
+        // … or the account is removed.
+        store.delete_account(ACC);
+        assert_eq!(recent_opens(&store, None, NOW).unwrap().len(), 1);
+        // Reading it asked the relay nothing.
+        assert!(calls(&provider).is_empty());
+        // Nothing of the relay's bookkeeping is in a row or its debug text.
+        let text = format!("{all:?}");
+        assert!(!text.contains("tok-") && !text.contains("acme.test") && !text.contains("Subject"));
+        assert_eq!(RECENT_OPENS_LIMIT, 100);
+        // It reaches back further than the relay keeps a message: an open
+        // from two months ago is still this device's to show.
+        assert!(RECENT_OPENS_WINDOW_MS > TOKEN_TTL_MS);
+        assert_eq!(RECENT_OPENS_WINDOW_MS, 90 * 24 * HOUR);
     }
 
     /// A provider with no relay (the default) tracks nothing and holds

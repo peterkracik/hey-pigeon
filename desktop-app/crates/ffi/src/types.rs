@@ -237,6 +237,38 @@ pub enum MessageReadState {
     Replied,
 }
 
+/// One row of "Recent Opens" (docs/specs/read-status.md R7): a message
+/// the user sent that was opened. From the local store; it carries
+/// nothing of the relay's bookkeeping.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RecentOpenRow {
+    pub message_id: String,
+    pub thread_id: String,
+    pub account_id: String,
+    pub subject: String,
+    /// Who the message went to (To, then Cc), as `Name <addr>` or a bare
+    /// address.
+    pub recipients: Vec<String>,
+    /// The newest open, epoch milliseconds.
+    pub opened_at: i64,
+    /// How many opens are recorded for it.
+    pub opens: u32,
+}
+
+impl From<domain::RecentOpen> for RecentOpenRow {
+    fn from(r: domain::RecentOpen) -> Self {
+        Self {
+            message_id: r.message_id,
+            thread_id: r.thread_id,
+            account_id: r.account_id,
+            subject: r.subject,
+            recipients: r.recipients,
+            opened_at: r.opened_at,
+            opens: r.opens,
+        }
+    }
+}
+
 /// One fetch of a tracked message's pixel, as the relay reported it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MessageOpenEvent {

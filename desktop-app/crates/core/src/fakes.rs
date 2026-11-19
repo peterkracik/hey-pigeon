@@ -190,6 +190,51 @@ impl Store for MemStore {
         Ok(out)
     }
 
+    fn recent_opens(
+        &self,
+        account_id: Option<&AccountId>,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<RecentOpen>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut rows: Vec<RecentOpen> = Vec::new();
+        for t in g.open_tokens.values() {
+            if account_id.is_some_and(|a| a != &t.account_id) {
+                continue;
+            }
+            let (Some(message_id), Some(thread_id)) = (&t.message_id, &t.thread_id) else {
+                continue;
+            };
+            let (Some(m), Some(thread)) = (g.messages.get(message_id), g.threads.get(thread_id))
+            else {
+                continue;
+            };
+            let opens: Vec<i64> = g
+                .open_events
+                .get(&t.token)
+                .into_iter()
+                .flatten()
+                .filter(|e| e.label == OpenLabel::Opened && e.at >= since)
+                .map(|e| e.at)
+                .collect();
+            let Some(opened_at) = opens.iter().copied().max() else {
+                continue;
+            };
+            rows.push(RecentOpen {
+                message_id: message_id.clone(),
+                thread_id: thread_id.clone(),
+                account_id: t.account_id.clone(),
+                subject: thread.subject.clone(),
+                recipients: m.to_addrs.iter().chain(&m.cc_addrs).cloned().collect(),
+                opened_at,
+                opens: opens.len() as u32,
+            });
+        }
+        rows.sort_by(|a, b| (b.opened_at, &b.message_id).cmp(&(a.opened_at, &a.message_id)));
+        rows.truncate(limit as usize);
+        Ok(rows)
+    }
+
     fn sent_threads_without_bodies(
         &self,
         account_id: &AccountId,
@@ -1280,6 +1325,8 @@ pub struct FakeProvider {
     /// Some(url) is what `register_open_token` answers instead of the
     /// honest pixel URL (a relay that misbehaves).
     pub opens_pixel_override: Mutex<Option<String>>,
+    /// The address each `delete_open_tokens` call was told to go to.
+    pub opens_delete_addresses: Mutex<Vec<Option<String>>>,
 }
 
 /// One call to the faked `opens` function.
@@ -1361,6 +1408,7 @@ impl FakeProvider {
             opens_events: Mutex::new(HashMap::new()),
             opens_failure: Mutex::new(None),
             opens_pixel_override: Mutex::new(None),
+            opens_delete_addresses: Mutex::new(Vec::new()),
         }
     }
 
@@ -1602,11 +1650,19 @@ impl MailProvider for FakeProvider {
             .collect())
     }
 
-    async fn delete_open_tokens(&self, account_id: &AccountId) -> Result<(), MailError> {
+    async fn delete_open_tokens(
+        &self,
+        account_id: &AccountId,
+        at: Option<&str>,
+    ) -> Result<(), MailError> {
         self.opens_calls
             .lock()
             .unwrap()
             .push(OpensCall::Delete(account_id.clone()));
+        self.opens_delete_addresses
+            .lock()
+            .unwrap()
+            .push(at.map(str::to_string));
         if let Some(fail) = *self.opens_failure.lock().unwrap() {
             return Err(fail());
         }

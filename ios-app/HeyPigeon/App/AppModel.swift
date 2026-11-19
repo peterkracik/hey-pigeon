@@ -47,6 +47,11 @@ struct SummaryPresentation: Identifiable, Equatable {
     let title: String
 }
 
+/// The Recent Opens sheet (docs/specs/read-status.md R7).
+struct RecentOpensPresentation: Identifiable, Equatable {
+    let id = UUID()
+}
+
 /// The Ask sheet, optionally opened on a question.
 struct AskPresentation: Identifiable, Equatable {
     let id = UUID()
@@ -342,6 +347,17 @@ final class AppModel {
     }
     /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
     var askSheet: AskPresentation?
+    /// The Recent Opens sheet, when it is open (`showRecentOpens`).
+    var recentOpensSheet: RecentOpensPresentation?
+    /// Its rows: read when the sheet opens and again whenever the store
+    /// changes while it is open — never from a view's body.
+    private(set) var recentOpens: [RecentOpenItem] = []
+    /// False until the first read has landed (the sheet says nothing
+    /// about "no opens" before it knows).
+    private(set) var recentOpensLoaded = false
+    /// The message a thread should open at (`openThread(id:messageId:)`):
+    /// the thread view expands it and forgets it.
+    var pendingMessageId: String?
 
     /// Scheduled / Need reply / Drafts totals for the sidebar, the tab
     /// badges and the list title, and the reminders whose time has passed
@@ -884,6 +900,9 @@ final class AppModel {
             return
         }
         Trace.interval("reload.apply") { apply(snapshot) }
+        // The store changed (a sync brought an open): the open sheet's
+        // rows are read again, here and not from the view.
+        if recentOpensSheet != nil { await loadRecentOpens() }
     }
 
     /// What a reload asks the store for now. The pages on screen, whole:
@@ -1484,12 +1503,44 @@ final class AppModel {
 
     /// Deep link from a notification (reminder or new mail): the inbox tab
     /// pushes the thread when it sees `pendingThreadId`.
-    func openThread(id: String) {
+    func openThread(id: String, messageId: String? = nil) {
         // Sheets close, as for `show(_:)`: the thread used to open under them.
         showSidebar = false
         showSettings = false
+        recentOpensSheet = nil
         navigate(to: .inbox)
+        // The message to open the thread at (a row of Recent Opens); a
+        // plain open forgets one left over from before.
+        pendingMessageId = messageId
         pendingThreadId = id
+    }
+
+    // MARK: Recent Opens (docs/specs/read-status.md R7)
+
+    /// Open the Recent Opens sheet. The sidebar and Settings close first:
+    /// one root cannot present a sheet over another's.
+    func showRecentOpens() {
+        showSidebar = false
+        showSettings = false
+        recentOpensSheet = RecentOpensPresentation()
+    }
+
+    /// Read the list from the store, off the main actor, for the account
+    /// the app is filtered to (or all). A local read: nothing is asked of
+    /// the relay, and an account with read status off adds nothing new.
+    func loadRecentOpens() async {
+        let account = selectedAccountId
+        let rows = try? await engine.readInBackground { try $0.recentOpens(accountId: account) }
+        // The account filter moved under the read: that read is stale.
+        guard account == selectedAccountId else { return }
+        let fresh = rows ?? []
+        if fresh != recentOpens { recentOpens = fresh }
+        recentOpensLoaded = true
+    }
+
+    /// A row of Recent Opens was chosen: its thread, at that message.
+    func open(_ item: RecentOpenItem) {
+        openThread(id: item.threadId, messageId: item.messageId)
     }
 
     /// Siri / a widget asked for a folder or tab: Scheduled and Need reply

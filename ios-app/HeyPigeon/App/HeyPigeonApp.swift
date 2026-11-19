@@ -161,6 +161,7 @@ extension RootView {
                                            set: { if $0 == nil && model.composeFullScreen { model.composeDraft = nil } }),
                              onDismiss: { Keyboard.dismiss() }) { draft in ComposeView(draft: draft) }
             .sheet(item: $model.askSheet) { p in AskSheet(question: p.question) }
+            .sheet(item: $model.recentOpensSheet) { _ in RecentOpensView() }
             .overlay(alignment: .bottom) { ToastStack() }
             .disconnectedAlert()
     }

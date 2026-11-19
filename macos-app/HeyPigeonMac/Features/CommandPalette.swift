@@ -419,6 +419,12 @@ struct CommandPalette: View {
                 state.run(.go(view), in: model)
             })
         }
+        // Read status's list; not in a build that cannot track.
+        if model.readStatusAvailable {
+            out.append(PaletteItem(id: "go.recentOpens", title: RecentOpens.title, systemImage: RecentOpens.symbol, key: "G O") {
+                state.run(.recentOpens, in: model)
+            })
+        }
         for label in model.labels where !label.id.hasPrefix("CATEGORY_") {
             out.append(PaletteItem(id: "go.label.\(label.accountId).\(label.id)", title: "Go to \(label.name)",
                                    subtitle: model.accounts.count > 1 ? label.accountId : nil, systemImage: "tag") {

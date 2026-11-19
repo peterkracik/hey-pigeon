@@ -3197,6 +3197,51 @@ impl Store for SqliteStore {
         })
     }
 
+    fn recent_opens(
+        &self,
+        account_id: Option<&AccountId>,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<RecentOpen>, StoreError> {
+        self.read(|c| {
+            // From the events (indexed by label and time), newest first;
+            // each joins one token, one message and one thread by key.
+            let mut stmt = c.prepare_cached(
+                "SELECT t.message_id, t.thread_id, t.account_id, th.subject,
+                        m.to_addrs, m.cc_addrs, MAX(e.at) AS opened_at, COUNT(*)
+                   FROM open_events e
+                   JOIN open_tokens t ON t.token = e.token
+                   JOIN messages m ON m.id = t.message_id
+                   JOIN threads th ON th.id = t.thread_id
+                  WHERE e.label = 'opened' AND e.at >= ?1
+                    AND (?2 IS NULL OR t.account_id = ?2)
+                  GROUP BY t.message_id
+                  ORDER BY opened_at DESC, t.message_id DESC
+                  LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![since, account_id, limit], |r| {
+                let to: String = r.get(4)?;
+                let cc: Option<String> = r.get(5)?;
+                let mut recipients: Vec<String> = serde_json::from_str(&to).unwrap_or_default();
+                recipients.extend(
+                    cc.as_deref()
+                        .and_then(|cc| serde_json::from_str::<Vec<String>>(cc).ok())
+                        .unwrap_or_default(),
+                );
+                Ok(RecentOpen {
+                    message_id: r.get(0)?,
+                    thread_id: r.get(1)?,
+                    account_id: r.get(2)?,
+                    subject: r.get(3)?,
+                    recipients,
+                    opened_at: r.get(6)?,
+                    opens: r.get(7)?,
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
     fn sent_threads_without_bodies(
         &self,
         account_id: &AccountId,
@@ -5035,6 +5080,92 @@ mod tests {
             .open_events_for_thread(&"nope".to_string())
             .unwrap()
             .is_empty());
+    }
+
+    /// R7: Recent Opens from the tables — opened messages only, newest
+    /// open first, one row a message, for one account or all, bounded.
+    #[test]
+    fn recent_opens_come_from_the_stored_events() {
+        let s = store();
+        s.upsert_account(&sample_account("a2")).unwrap();
+        let put = |id: &str, account: &str, cc: &[&str], events: &[(i64, OpenLabel)]| {
+            let thread = Thread {
+                id: format!("th-{id}"),
+                account_id: account.into(),
+                subject: format!("Subject {id}"),
+                last_msg_at: 100,
+                msg_count: 1,
+                ..Default::default()
+            };
+            let m = Message {
+                id: format!("m-{id}"),
+                thread_id: thread.id.clone(),
+                account_id: account.into(),
+                from_addr: "me@example.com".into(),
+                to_addrs: vec![format!("{id}@acme.test")],
+                cc_addrs: cc.iter().map(|c| c.to_string()).collect(),
+                date: 100,
+                label_ids: vec!["SENT".into()],
+                ..Default::default()
+            };
+            s.upsert_thread_with_messages(&thread, &[m]).unwrap();
+            s.open_token_put(&OpenToken {
+                token: format!("tok-{id}"),
+                account_id: account.into(),
+                message_id: Some(format!("m-{id}")),
+                thread_id: Some(thread.id.clone()),
+                sent_at: 100,
+                expires_at: 10_000,
+                polled_at: None,
+            })
+            .unwrap();
+            let events: Vec<OpenEvent> = events
+                .iter()
+                .map(|(at, label)| OpenEvent {
+                    label: *label,
+                    at: *at,
+                })
+                .collect();
+            s.open_events_add(&format!("tok-{id}"), &events, 1).unwrap();
+        };
+        use OpenLabel::{Hidden, Opened};
+        put(
+            "one",
+            "a1",
+            &[],
+            &[(500, Opened), (900, Opened), (950, Hidden)],
+        );
+        put("two", "a1", &["cc@acme.test"], &[(700, Opened)]);
+        put("hid", "a1", &[], &[(990, Hidden)]);
+        put("old", "a1", &[], &[(50, Opened)]);
+        put("oth", "a2", &[], &[(800, Opened)]);
+        let ids = |rows: &[RecentOpen]| {
+            rows.iter()
+                .map(|r| r.message_id.clone())
+                .collect::<Vec<_>>()
+        };
+        let all = s.recent_opens(None, 100, 10).unwrap();
+        assert_eq!(ids(&all), ["m-one", "m-oth", "m-two"]);
+        assert_eq!((all[0].opened_at, all[0].opens), (900, 2));
+        assert_eq!(all[0].subject, "Subject one");
+        assert_eq!(all[2].recipients, ["two@acme.test", "cc@acme.test"]);
+        assert_eq!(
+            ids(&s.recent_opens(Some(&"a1".to_string()), 100, 10).unwrap()),
+            ["m-one", "m-two"]
+        );
+        assert_eq!(ids(&s.recent_opens(None, 100, 1).unwrap()), ["m-one"]);
+        // Only opens at or after `since` count, also towards the row's time.
+        let late = s.recent_opens(None, 850, 10).unwrap();
+        assert_eq!(ids(&late), ["m-one"]);
+        assert_eq!(late[0].opens, 1);
+        // A message the store no longer holds has no row.
+        s.delete_thread(&"th-two".to_string()).unwrap();
+        assert_eq!(
+            ids(&s.recent_opens(None, 100, 10).unwrap()),
+            ["m-one", "m-oth"]
+        );
+        s.delete_account("a2").unwrap();
+        assert_eq!(ids(&s.recent_opens(None, 100, 10).unwrap()), ["m-one"]);
     }
 
     /// R19's catch-up asks for the user's own recent sent mail whose body

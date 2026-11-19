@@ -30,6 +30,8 @@ enum MailCommand: Hashable {
     case account(Int?)
     case go(MailView)
     case summarizeView, ask, triage, syncNow
+    /// G then O: the Recent Opens sheet (docs/specs/read-status.md R7).
+    case recentOpens
 }
 
 /// A key press, reduced to what the map decides on.
@@ -40,7 +42,7 @@ enum MailKey: Equatable {
 /// The desktop's keyboard map (desktop-app/src/App.svelte onKey), as a pure
 /// function: a key and its modifiers in, a command out. `g` arms a chord
 /// for a second — g-i inbox, g-a archive, g-s scheduled, g-n need reply,
-/// g-d drafts, g-p pinned, g-t sent, g-u all accounts — and any other key
+/// g-d drafts, g-p pinned, g-t sent, g-o recent opens, g-u all accounts — and any other key
 /// after it is read on its own, so g, e means "mark done".
 enum KeyboardMap {
     enum Resolution: Equatable {
@@ -103,6 +105,7 @@ enum KeyboardMap {
         case "d": .go(.drafts)
         case "p": .go(.starred)
         case "t": .go(.sent)
+        case "o": .recentOpens
         case "u": .account(nil)
         default: nil
         }
@@ -711,6 +714,9 @@ final class WindowState: Equatable {
             model.openViewSummary()
         case .ask:
             model.askSheet = AskPresentation()
+        case .recentOpens:
+            // The shared sheet, as on the phone; a local list, no request.
+            model.showRecentOpens()
         case .triage:
             showTriage = true
         case .syncNow:

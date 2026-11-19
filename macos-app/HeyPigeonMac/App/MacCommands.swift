@@ -141,6 +141,12 @@ struct MacCommands: Commands {
                 .keyboardShortcut("k", modifiers: .command)
             Button("Bundles…") { run(.bundles) }
                 .keyboardShortcut("b", modifiers: .command)
+            // Read status's list (the sidebar's row, the palette's entry
+            // and G then O open the same sheet). No key equivalent: the
+            // bare-letter chords are not menu shortcuts. Greyed out in a
+            // build that cannot track.
+            Button(RecentOpens.title) { run(.recentOpens) }
+                .disabled(!model.readStatusAvailable)
             Button("Keyboard Shortcuts") { run(.shortcuts) }
                 .keyboardShortcut("/", modifiers: .command)
         }

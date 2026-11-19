@@ -141,6 +141,11 @@ struct SidebarList: View {
                         onPick()
                     }
                 } label: { Label("Add Google account", systemImage: "plus.circle") }
+                // Read status's list (docs/specs/read-status.md R7). Not in
+                // a build that cannot track: the row would lead nowhere.
+                if model.readStatusAvailable {
+                    Button { onPick(); model.showRecentOpens() } label: { Label(RecentOpens.title, systemImage: RecentOpens.symbol) }
+                }
                 Button { onPick(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
             .menuCard()

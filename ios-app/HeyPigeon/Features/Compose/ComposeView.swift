@@ -961,12 +961,18 @@ extension ComposeView {
 #endif
 
 extension ComposeView {
-    /// The name the thread knows an address by, else the address.
+    /// The name the thread knows an address by, else the address. Only
+    /// the Mac's composer loads the thread above a reply; the phone's
+    /// knows the addresses alone.
     private func displayName(_ address: String) -> String {
+        #if os(macOS)
         // A Reply-To address stays an address: the name would be the one
         // its sender chose for an earlier message of the thread.
         if draft.repliesElsewhere { return address }
         return thread?.mail.first { EmailAddress.same($0.fromAddress, address) }?.fromName ?? address
+        #else
+        return address
+        #endif
     }
 
     /// Who writes to whom, for the AI's prompt: the phone's sheet and the

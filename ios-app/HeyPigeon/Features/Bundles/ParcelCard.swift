@@ -23,11 +23,18 @@ enum ParcelCard {
     /// then the parcel left the card by itself long ago.
     static let dismissalsKept: TimeInterval = 180 * 86_400
 
-    private static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+    /// Epoch milliseconds; a date no Int64 holds (a pref can carry any
+    /// number) is the far end rather than a trap.
+    private static func ms(_ date: Date) -> Int64 {
+        Int64(exactly: (date.timeIntervalSince1970 * 1000).rounded()) ?? .max
+    }
 
     /// A dismissal as the synced pref stores it: the parcel's id and the
-    /// time of its newest email, `number:1Z999@1795089600000`. The time
-    /// is what lets the parcel come back: a newer email is a newer time.
+    /// time of its newest email, `number:bfa83b19dfd2e747@1795089600000`.
+    /// The id is the core's: a digest of the tracking or order number,
+    /// never the number, because this is written to a pref that syncs.
+    /// The time is what lets the parcel come back: a newer email is a
+    /// newer time.
     static func entry(_ parcel: ParcelItem) -> String { "\(parcel.id)@\(ms(parcel.at))" }
 
     /// An entry's id and time; nil for anything else a pref may hold.
@@ -70,19 +77,14 @@ enum ParcelCard {
         return parcel.subject.isEmpty ? "Parcel" : parcel.subject
     }
 
-    /// The carrier or shop the Track button leads to, as a reader would
-    /// say it (`BundleTracking.name`); for a click-redirect's host, whose
-    /// name says nothing, the email's sender.
-    static func carrier(_ parcel: ParcelItem) -> String? {
-        if let name = BundleTracking.name(host: parcel.host) { return name }
-        let sender = parcel.sender.trimmingCharacters(in: .whitespaces)
-        return sender.isEmpty ? nil : sender
-    }
-
-    /// "Track parcel with DHL", for VoiceOver: the button's words alone
-    /// do not say which of several parcels it tracks.
+    /// "Track parcel, opens track.dhl.com", for VoiceOver: the button's
+    /// words alone do not say which of several parcels it tracks, nor
+    /// where it leads. The host is the link's own (`ParcelItem.host`),
+    /// never a name: a carrier's name worked out from a host's label read
+    /// "DHL" for `dhl.top`, and the email's sender is whoever the email
+    /// says it is.
     static func trackLabel(_ parcel: ParcelItem) -> String {
-        carrier(parcel).map { "Track parcel with \($0)" } ?? "Track parcel"
+        "Track parcel, opens \(parcel.host)"
     }
 
     /// `2026-11-20`: a calendar day in the form the core hands one over.
@@ -110,21 +112,26 @@ enum ParcelCard {
     }
 
     /// The row's second line (R12), the first that applies: delivered;
-    /// out for delivery; the day it is expected; else who carries it,
-    /// "Shipped" when that much is known or the email's subject when not,
-    /// and the email's time. `updates` is the bundle's folded mail under
-    /// this row (`AppModel.parcelUpdates`), named at the end.
+    /// out for delivery; the day it is expected — each followed by the
+    /// host the Track button opens; else that host, "Shipped" when that
+    /// much is known or the email's subject when not, and the email's
+    /// time. The host is on every form of the line: the title and the
+    /// subject are the mail's words, and the host is the one thing on
+    /// the row the mail cannot dress up. It stands before the subject so
+    /// a long subject cannot push it off the line. `updates` is the
+    /// bundle's folded mail under this row (`AppModel.parcelUpdates`),
+    /// named at the end.
     static func statusLine(_ parcel: ParcelItem, updates: Int = 0, now: Date = Date(), calendar: Calendar = .current) -> String {
         var line: String
         if parcel.progress == .delivered {
-            line = "Delivered"
+            line = "Delivered · \(parcel.host)"
         } else if parcel.progress == .outForDelivery {
-            line = "Out for delivery"
+            line = "Out for delivery · \(parcel.host)"
         } else if let phrase = parcel.expectedDay.flatMap({ expected($0, now: now, calendar: calendar) }) {
-            line = phrase
+            line = "\(phrase) · \(parcel.host)"
         } else {
             let what = parcel.progress == .shipped ? "Shipped" : (parcel.subject.isEmpty ? nil : parcel.subject)
-            line = [carrier(parcel), what, Formatters.rowTime(parcel.at, now: now)].compactMap { $0 }.joined(separator: " · ")
+            line = [parcel.host, what, Formatters.rowTime(parcel.at, now: now)].compactMap { $0 }.joined(separator: " · ")
         }
         if updates > 0 { line += " · \(updates) updates" }
         return line
@@ -228,7 +235,7 @@ struct ParcelCardView: View {
 
 /// One parcel: the bundle's icon, what it is, where it stands, and its
 /// three actions. The texts read as one element; Track parcel is a button
-/// of its own, named with the carrier.
+/// of its own, named with the host it opens.
 private struct ParcelRow: View {
     let parcel: ParcelItem
     @Environment(AppModel.self) private var model

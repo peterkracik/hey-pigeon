@@ -148,7 +148,7 @@ extension RootView {
             // While the Bundles sheet is open it presents these itself
             // (AppModel.modal, BundleSheetPresenters).
             .sharedSheets(inBundles: false, dismissesKeyboard: true)
-            .coverScreen(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil }) {
+            .coverScreen(isPresented: $model.showBundles, onDismiss: { model.bundlesStartId = nil; model.bundlesStartInfoId = nil }) {
                 BundlesSheet(initialBundleId: model.bundlesStartId)
             }
             // The composer as a dialog or full screen (its button switches).

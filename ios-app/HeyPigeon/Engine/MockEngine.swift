@@ -101,7 +101,8 @@ final class MockEngine: MailEngine {
     /// The sample inbox with an order on its way: a shopping bundle of two
     /// read emails and its two parcels, so the parcel card
     /// (docs/specs/parcel-card.md) has something to show when the app
-    /// runs on the mock (HEYPIGEON_MOCK=1, or no OAuth client).
+    /// runs on the mock (HEYPIGEON_MOCK=1, or no OAuth client; not with
+    /// HEYPIGEON_MOCK_ORDER=0). The ids stand in for the core's digests.
     static func withSampleOrder() -> MockEngine {
         let engine = MockEngine()
         let now = Date()

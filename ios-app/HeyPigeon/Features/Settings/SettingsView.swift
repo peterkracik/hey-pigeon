@@ -103,8 +103,11 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Show parcels")
                             // Privacy copy: the card is worked out locally; the
-                            // only request is the one the user asks for.
-                            Text("Parcels on their way get a card at the top of your inbox. Worked out on this \(Device.name) from your mail; Track parcel opens the email's own link in your browser.")
+                            // only request is the one the user asks for. What
+                            // syncs is this switch and the dismissals (a digest
+                            // of the parcel's number or its Gmail thread id, and
+                            // a time), like every other setting.
+                            Text("Parcels on their way get a card at the top of your inbox. Worked out on this \(Device.name) from your mail; Track parcel opens the email's own link in your browser. Which parcels you dismissed syncs to your other devices with your other settings.")
                                 .font(.caption).foregroundStyle(Theme.textTertiary)
                         }
                     }

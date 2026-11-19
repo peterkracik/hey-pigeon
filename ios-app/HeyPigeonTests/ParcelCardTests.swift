@@ -43,21 +43,25 @@ struct ParcelRuleTests {
     }
 
     @Test func aDismissedParcelComesBackWithANewerEmail() {
-        let old = parcel("number:1Z999", at: noon)
+        let old = parcel("number:bfa83b19dfd2e747", at: noon)
         let other = parcel("thread:t9", at: noon)
         let dismissed = ParcelCard.dismissing([old], from: [], now: noon)
         #expect(dismissed == [ParcelCard.entry(old)])
         #expect(ParcelCard.visible([old, other], dismissed: dismissed, accountId: nil).map(\.id) == ["thread:t9"])
         // The same parcel after a newer email about it: back.
-        let newer = parcel("number:1Z999", at: noon.addingTimeInterval(3600))
-        #expect(ParcelCard.visible([newer], dismissed: dismissed, accountId: nil).map(\.id) == ["number:1Z999"])
+        let newer = parcel("number:bfa83b19dfd2e747", at: noon.addingTimeInterval(3600))
+        #expect(ParcelCard.visible([newer], dismissed: dismissed, accountId: nil).map(\.id) == ["number:bfa83b19dfd2e747"])
         // A device that has not read the newer email yet still hides it.
         let later = ParcelCard.dismissing([newer], from: dismissed, now: noon)
         #expect(later == [ParcelCard.entry(newer)], "one entry per parcel")
         #expect(ParcelCard.visible([old], dismissed: later, accountId: nil).isEmpty)
         // What a pref may hold besides: ignored, never a crash.
-        #expect(ParcelCard.visible([old], dismissed: ["", "@", "x@y", "number:1Z999"], accountId: nil).count == 1)
+        #expect(ParcelCard.visible([old], dismissed: ["", "@", "x@y", "number:bfa83b19dfd2e747"], accountId: nil).count == 1)
         #expect(ParcelCard.parse("thread:a@b@12")?.id == "thread:a@b")
+        // A date no Int64 holds is an entry like any other, not a trap.
+        #expect(ParcelCard.entry(parcel("thread:far", at: .distantFuture)).hasPrefix("thread:far@"))
+        #expect(ParcelCard.entry(parcel("thread:far", at: Date(timeIntervalSince1970: .greatestFiniteMagnitude)))
+            == "thread:far@\(Int64.max)")
     }
 
     @Test func dismissalsAreSortedAndOldOnesGo() {
@@ -79,23 +83,71 @@ struct ParcelRuleTests {
         func line(_ p: ParcelItem, updates: Int = 0) -> String {
             ParcelCard.statusLine(p, updates: updates, now: noon, calendar: calendar)
         }
-        #expect(line(parcel("a", progress: .delivered, day: "2026-11-20")) == "Delivered")
-        #expect(line(parcel("a", progress: .outForDelivery)) == "Out for delivery")
-        #expect(line(parcel("a", progress: .shipped, day: "2026-11-19")) == "Expected today")
-        #expect(line(parcel("a", day: "2026-11-20")) == "Expected tomorrow")
-        #expect(line(parcel("a", day: "2026-11-18")) == "Expected yesterday")
-        #expect(line(parcel("a", day: "2026-11-22")) == "Expected Sunday")
+        #expect(line(parcel("a", progress: .delivered, day: "2026-11-20")) == "Delivered · www.dhl.com")
+        #expect(line(parcel("a", progress: .outForDelivery)) == "Out for delivery · www.dhl.com")
+        #expect(line(parcel("a", progress: .shipped, day: "2026-11-19")) == "Expected today · www.dhl.com")
+        #expect(line(parcel("a", day: "2026-11-20")) == "Expected tomorrow · www.dhl.com")
+        #expect(line(parcel("a", day: "2026-11-18")) == "Expected yesterday · www.dhl.com")
+        #expect(line(parcel("a", day: "2026-11-22")) == "Expected Sunday · www.dhl.com")
         #expect(line(parcel("a", day: "2026-12-03")).hasPrefix("Expected 3"))
-        // No day: who carries it, what the email says, when — never a guess.
+        // No day: where the link leads, what the email says, when — never
+        // a guess, and the host before the mail's own words.
         let time = Formatters.rowTime(noon, now: noon)
-        #expect(line(parcel("a", at: noon)) == "DHL · Your order has shipped · \(time)")
-        #expect(line(parcel("a", at: noon, progress: .shipped)) == "DHL · Shipped · \(time)")
-        // A redirect's host is no name: the sender stands in.
-        #expect(line(parcel("a", at: noon, host: "u1.ct.sendgrid.net")) == "Zalando · Your order has shipped · \(time)")
+        #expect(line(parcel("a", at: noon)) == "www.dhl.com · Your order has shipped · \(time)")
+        #expect(line(parcel("a", at: noon, progress: .shipped)) == "www.dhl.com · Shipped · \(time)")
         // A day that is no day falls back too.
-        #expect(line(parcel("a", at: noon, progress: .shipped, day: "soon")) == "DHL · Shipped · \(time)")
-        #expect(line(parcel("a", day: "2026-11-20"), updates: 3) == "Expected tomorrow · 3 updates")
+        #expect(line(parcel("a", at: noon, progress: .shipped, day: "soon")) == "www.dhl.com · Shipped · \(time)")
+        #expect(line(parcel("a", day: "2026-11-20"), updates: 3) == "Expected tomorrow · www.dhl.com · 3 updates")
         #expect(ParcelCard.dayString(noon, calendar: calendar) == "2026-11-19")
+    }
+
+    /// The row always says where Track parcel leads, in the link's own
+    /// host: whatever is known about the parcel, whoever the email says
+    /// it is from, and whatever the host's first label spells.
+    @Test func everyFormOfTheLineNamesTheHostItOpens() {
+        func line(_ p: ParcelItem) -> String { ParcelCard.statusLine(p, now: noon, calendar: calendar) }
+        // A click-redirect: its host, not the sender's display name.
+        let redirect = parcel("a", at: noon, host: "u1.ct.sendgrid.net", sender: "DHL Express")
+        #expect(line(redirect).contains(redirect.host))
+        #expect(!line(redirect).contains("DHL"))
+        #expect(ParcelCard.trackLabel(redirect) == "Track parcel, opens u1.ct.sendgrid.net")
+        // The day is known: the host is still there.
+        let dated = parcel("a", day: "2026-11-19", host: "evil.example", sender: "DHL")
+        #expect(line(dated) == "Expected today · evil.example")
+        // A look-alike is read as what it is, never as the brand.
+        for host in ["dhl.top", "dhl.com.de", "dhl.evil.example"] {
+            for p in [parcel("a", at: noon, host: host), parcel("a", progress: .delivered, host: host),
+                      parcel("a", progress: .outForDelivery, host: host), parcel("a", day: "2026-11-20", host: host)] {
+                #expect(line(p).contains(host), "\(host)")
+                #expect(!line(p).contains("DHL"), "\(host)")
+            }
+        }
+    }
+
+    /// A parcel's address becomes a link only when the host the system
+    /// will open is the host the row names (`ParcelItem.init?` and the
+    /// bundle's Info page in RustEngine go through this).
+    @Test func aLinkIsOfferedOnlyWhenItsHostIsTheOneNamed() {
+        #expect(MailLink.url("https://www.dhl.com/track?id=1", host: "www.dhl.com") != nil)
+        #expect(MailLink.url("https://WWW.DHL.com:443/track", host: "www.dhl.com") != nil)
+        #expect(MailLink.url("http://tracking.gls.example/p/77", host: "tracking.gls.example") != nil)
+        // The host the core read is not the one the URL leads to.
+        #expect(MailLink.url("https://evil.example/track", host: "dhl.com") == nil)
+        // A user or a password before the host, however it got there.
+        #expect(MailLink.url("https://dhl.com@evil.example/track", host: "evil.example") == nil)
+        #expect(MailLink.url("https://dhl.com:x@evil.example/track") == nil)
+        #expect(MailLink.url("https://dhl.com%5C@evil.example/track") == nil)
+        // The backslash forms: whatever URL(string:) makes of them, the
+        // result is never a link shown as dhl.com.
+        for spoof in ["https://dhl.com\\@evil.example/track", "https://dhl.com:443\\@evil.example/x",
+                      "https://dhl.com\\.evil.example/track"] {
+            #expect(MailLink.url(spoof, host: "dhl.com") == nil, "\(spoof)")
+            if let url = MailLink.url(spoof) { #expect(MailLink.host(of: url) != "dhl.com", "\(spoof)") }
+        }
+        // Not a web address, or none at all.
+        for other in ["ftp://dhl.com/x", "javascript:alert(1)", "mailto:a@dhl.com", "dhl.com/track", "https:///track", ""] {
+            #expect(MailLink.url(other) == nil, "\(other)")
+        }
     }
 
     @Test func titlesAndLabels() {
@@ -103,8 +155,7 @@ struct ParcelRuleTests {
         #expect(ParcelCard.title(parcel("a", title: "Kettle"), bundle: b) == "Kettle")
         #expect(ParcelCard.title(parcel("a"), bundle: b) == "Zalando order")
         #expect(ParcelCard.title(parcel("a"), bundle: nil) == "Your order has shipped")
-        #expect(ParcelCard.trackLabel(parcel("a")) == "Track parcel with DHL")
-        #expect(ParcelCard.trackLabel(parcel("a", host: "u1.ct.sendgrid.net", sender: " ")) == "Track parcel")
+        #expect(ParcelCard.trackLabel(parcel("a")) == "Track parcel, opens www.dhl.com")
         #expect(ParcelCard.dismissedToast(1) == "Parcel dismissed")
         #expect(ParcelCard.dismissedToast(3) == "3 parcels dismissed")
     }
@@ -134,11 +185,29 @@ struct ParcelModelTests {
     let model: AppModel
     let engine: MockEngine
 
-    init() {
+    /// The parcels are read off the main actor, a moment after the rows
+    /// (`AppModel.reload` carries the ones it holds): wait for them.
+    init() async {
         engine = MockEngine()
         engine.parcelStore = [parcel("thread:t4", progress: .shipped, title: "Travel adapter")]
         model = AppModel(engine: engine)
         model.reload()
+        await model.settleReloads()
+    }
+
+    /// The main actor's reload does not work the parcels out: it keeps
+    /// the ones the model holds, and the read that follows brings the new.
+    @Test func aReloadCarriesTheParcelsAndTheNextReadBringsTheNew() async {
+        let fresh = AppModel(engine: engine)
+        fresh.reload()
+        #expect(fresh.parcels.isEmpty && !fresh.rows.isEmpty, "rows now, parcels after")
+        await fresh.settleReloads()
+        #expect(fresh.inboxParcels.map(\.id) == ["thread:t4"])
+        engine.parcelStore = []
+        fresh.reload()
+        #expect(fresh.inboxParcels.count == 1, "carried")
+        await fresh.settleReloads()
+        #expect(fresh.inboxParcels.isEmpty && fresh.parcels.isEmpty)
     }
 
     @Test func theCardStandsOverThePlainInboxOnly() {
@@ -161,8 +230,9 @@ struct ParcelModelTests {
         #expect(model.inboxParcels.count == 1)
     }
 
-    @Test func dismissIsUndoableSyncedAndEndsWithANewerEmail() throws {
+    @Test func dismissIsUndoableSyncedAndEndsWithANewerEmail() async throws {
         let shown = try #require(model.inboxParcels.first)
+        // At once: a dismissal filters the list the model holds.
         model.dismiss(shown)
         #expect(model.inboxParcels.isEmpty)
         #expect(model.toasts.last?.text == "Parcel dismissed")
@@ -170,8 +240,9 @@ struct ParcelModelTests {
         // Another device (a second model over the same prefs) hides it too.
         let other = AppModel(engine: engine)
         other.reload()
-        #expect(other.inboxParcels.isEmpty)
-        // Undo brings it back and clears the pref.
+        await other.settleReloads()
+        #expect(other.parcels.count == 1 && other.inboxParcels.isEmpty)
+        // Undo brings it back, at once, and clears the pref.
         #expect(model.undoLast())
         #expect(model.inboxParcels.count == 1)
         #expect(try engine.prefs()["inbox.dismissed_parcels"] as? [String] == [])
@@ -180,15 +251,18 @@ struct ParcelModelTests {
         #expect(model.inboxParcels.isEmpty)
         engine.parcelStore = [parcel("thread:t4", at: shown.at.addingTimeInterval(60), progress: .outForDelivery)]
         model.reload()
+        await model.settleReloads()
         #expect(model.inboxParcels.first?.progress == .outForDelivery)
     }
 
-    @Test func theSettingTurnsTheCardOffEverywhere() throws {
+    @Test func theSettingTurnsTheCardOffEverywhere() async throws {
         model.parcelCardEnabled = false
         #expect(model.inboxParcels.isEmpty)
         #expect(try engine.prefs()["inbox.parcel_card"] as? Bool == false)
         model.reload()
-        #expect(model.parcels.isEmpty, "off, the reload does not ask for parcels")
+        #expect(model.parcels.isEmpty, "off, the reload carries none")
+        await model.settleReloads()
+        #expect(model.parcels.isEmpty, "and does not ask for parcels")
         let other = AppModel(engine: engine)
         #expect(!other.parcelCardEnabled)
     }
@@ -204,6 +278,7 @@ struct ParcelModelTests {
         empty.parcelStore = [parcel("thread:t4")]
         let model = AppModel(engine: empty)
         model.reload()
+        await model.settleReloads()
         #expect(model.rows.isEmpty && model.inboxParcels.count == 1 && !model.listIsEmpty)
         model.navigate(to: .inbox, folder: .spam)
         #expect(model.rows.isEmpty && model.inboxParcels.isEmpty && model.listIsEmpty)
@@ -215,6 +290,10 @@ struct ParcelModelTests {
         let shown = try #require(model.inboxParcels.first)
         model.openParcelDetails(shown)
         #expect(model.showBundles && model.bundlesStartId == "b1" && model.bundlesStartInfoId == "b1")
+        // Any other way into Bundles opens on Emails: the Info page asked
+        // for by a screen that never appeared does not wait for the next.
+        model.openBundles(at: "b1")
+        #expect(model.bundlesStartId == "b1" && model.bundlesStartInfoId == nil)
     }
 
     @Test func aParcelGoesWithItsBundle() throws {
@@ -224,10 +303,11 @@ struct ParcelModelTests {
 
     /// The sample order (the mock the app runs on without an account):
     /// two read emails that would fold, and two parcels.
-    @Test func theSampleOrdersQuietMailStandsUnderItsParcel() throws {
+    @Test func theSampleOrdersQuietMailStandsUnderItsParcel() async throws {
         let sample = MockEngine.withSampleOrder()
         let model = AppModel(engine: sample)
         model.reload()
+        await model.settleReloads()
         #expect(model.inboxParcels.map(\.bundleId) == ["b2", "b2"])
         let fold = try #require(model.parcelFolds["b2"])
         #expect(Set(fold.rows.map(\.id)) == ["t9", "t10"])

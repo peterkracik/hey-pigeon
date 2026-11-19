@@ -738,10 +738,38 @@ struct BundleFactItem: Identifiable, Hashable {
     var id: String { "\(category.rawValue):\(value)" }
 }
 
+/// A web address taken from mail, before the app shows where it leads or
+/// opens it (the parcel card, a bundle's Info page).
+enum MailLink {
+    /// The address as a URL, or nil when it is not one the app may name
+    /// by its host: http or https only, a host, and no user or password
+    /// before it — `https://dhl.com@evil.example/`, and what
+    /// `URL(string:)` makes of `https://dhl.com\@evil.example/` (it
+    /// escapes the backslash, and the host is `evil.example`). With
+    /// `host`, the URL's own host must be that one: what the core read
+    /// off the text and what the system will open are then the same by
+    /// construction, whatever either parser does with an odd address.
+    static func url(_ string: String, host: String? = nil) -> URL? {
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              url.user() == nil, url.password() == nil,
+              let real = self.host(of: url) else { return nil }
+        if let host, real != host.lowercased() { return nil }
+        return url
+    }
+
+    /// The host a URL leads to, lower-cased; nil when it has none.
+    static func host(of url: URL) -> String? {
+        guard let host = url.host()?.lowercased(), !host.isEmpty else { return nil }
+        return host
+    }
+}
+
 /// A tracking link found in a bundle's mail ("Track your parcel").
 struct BundleLinkItem: Identifiable, Hashable {
     let url: URL
-    /// `track.dpd.example`, for the row.
+    /// `track.dpd.example`, for the row: the URL's own host
+    /// (`MailLink.host(of:)`), not a second reading of the address.
     let host: String
     let threadId: String
     /// The email's subject: which order the link tracks.
@@ -760,8 +788,9 @@ enum ParcelProgress: String, Hashable, Sendable {
 /// it out (`Engine.trackingOverview`); `progress`, `expectedDay` and
 /// `title` are nil when no email states them.
 struct ParcelItem: Identifiable, Hashable, Sendable {
-    /// The same on every device (`number:<tracking or order number>` or
-    /// `thread:<thread id>`): what a dismissal names.
+    /// The same on every device (`number:<a digest of the tracking or
+    /// order number>` or `thread:<thread id>`): what a dismissal names.
+    /// Opaque here; the core makes it (`parcels::number_id`).
     let id: String
     let bundleId: String
     /// The newest email about it, and the account that email is in.
@@ -769,7 +798,9 @@ struct ParcelItem: Identifiable, Hashable, Sendable {
     let accountId: String
     /// That email's tracking link: what Track parcel opens.
     let url: URL
-    /// The host the link leads to: `track.dhl.com`.
+    /// The host the link leads to: `track.dhl.com`. The URL's own host
+    /// (`MailLink.url(_:host:)` in `RustEngine`), a name and never an IP
+    /// address: the row and VoiceOver say it wherever Track parcel is.
     let host: String
     /// That email's subject, sender and time.
     var subject = ""

@@ -514,7 +514,8 @@ struct CommandPalette: View {
         var out = parcels.map { parcel in
             PaletteItem(id: "parcel.track.\(parcel.id)",
                         title: "Track parcel · \(ParcelCard.title(parcel, bundle: bundle(parcel.bundleId)))",
-                        subtitle: "\(ParcelCard.statusLine(parcel, now: now)) — opens \(parcel.host)",
+                        // The card's own line: it names the host the link opens.
+                        subtitle: ParcelCard.statusLine(parcel, now: now),
                         systemImage: "shippingbox") {
                 Browser.open(parcel.url)
             }

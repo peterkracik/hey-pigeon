@@ -487,8 +487,11 @@ final class RustEngine: MailEngine {
             BundleContents(
                 bundle: BundleItem($0.bundle),
                 facts: $0.facts.map(BundleFactItem.init),
-                links: $0.links.compactMap { l in
-                    URL(string: l.url).map { BundleLinkItem(url: $0, host: l.host, threadId: l.threadId, subject: l.subject) }
+                links: $0.links.compactMap { l -> BundleLinkItem? in
+                    // Shown by its host, so only an address whose host
+                    // can be named, and the URL's own host on the row.
+                    guard let url = MailLink.url(l.url), let host = MailLink.host(of: url) else { return nil }
+                    return BundleLinkItem(url: url, host: host, threadId: l.threadId, subject: l.subject)
                 },
                 threads: $0.threads.map { ThreadRow($0) }
             )
@@ -653,16 +656,18 @@ private extension BundleItem {
 }
 
 private extension ParcelItem {
-    /// Nil for a link that is no web address: the core only hands over
-    /// http and https, and the card opens nothing else.
+    /// Nil for a link the card may not name by its host
+    /// (`MailLink.url(_:host:)`): not http or https, a user or password
+    /// before the host, or a host that is not the one the core read. The
+    /// host on the row is then, by construction, the one the button opens.
     init?(_ p: Parcel) {
-        guard let url = URL(string: p.url), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else { return nil }
-        let progress: ParcelProgress? = switch p.status {
-        case .shipped: .shipped
-        case .outForDelivery: .outForDelivery
-        case .delivered: .delivered
-        case nil: nil
+        guard let url = MailLink.url(p.url, host: p.host) else { return nil }
+        let progress = p.status.map { status -> ParcelProgress in
+            switch status {
+            case .shipped: return .shipped
+            case .outForDelivery: return .outForDelivery
+            case .delivered: return .delivered
+            }
         }
         self.init(id: p.id, bundleId: p.bundleId, threadId: p.threadId, accountId: p.accountId, url: url,
                   host: p.host, subject: p.subject, sender: p.sender, at: Date(epochMs: p.at),
@@ -680,7 +685,7 @@ private extension BundleFactItem {
         case .tracking: .tracking
         }
         self.init(category: category, value: f.value, threadId: f.threadId, at: Date(epochMs: f.at),
-                  url: f.url.flatMap(URL.init(string:)))
+                  url: f.url.flatMap { MailLink.url($0) })
     }
 }
 

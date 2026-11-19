@@ -418,27 +418,36 @@ struct ParcelPaletteTests {
 
     @Test func eachParcelCanBeTrackedAndAllDismissed() throws {
         #expect(CommandPalette.parcelItems([], bundle: { _ in nil }, dismissAll: {}).isEmpty)
-        var dismissed = 0
+        let dismissed = Counter()
         let kettle = try parcel("thread:a", title: "Kettle")
-        let other = try parcel("number:1Z9")
-        let items = CommandPalette.parcelItems([kettle, other], bundle: { _ in nil }, dismissAll: { dismissed += 1 })
-        #expect(items.map(\.id) == ["parcel.track.thread:a", "parcel.track.number:1Z9", "parcel.dismissAll"])
+        let other = try parcel("number:1f9a")
+        let items = CommandPalette.parcelItems([kettle, other], bundle: { _ in nil }, dismissAll: { dismissed.count += 1 })
+        #expect(items.map(\.id) == ["parcel.track.thread:a", "parcel.track.number:1f9a", "parcel.dismissAll"])
         #expect(items.map(\.title) == ["Track parcel · Kettle", "Track parcel · Your order has shipped", "Dismiss all parcels"])
         // The second line says where things stand and where the link leads.
-        #expect(items[0].subtitle == "Out for delivery — opens www.dhl.com")
+        #expect(items[0].subtitle == "Out for delivery · www.dhl.com")
         #expect(PaletteFilter.filter(items, query: "track kettle").map(\.id) == ["parcel.track.thread:a"])
         items[2].run()
-        #expect(dismissed == 1)
+        #expect(dismissed.count == 1)
+    }
+
+    /// What the palette's closure counts in: a class on the main actor,
+    /// not a captured local (an escaping main-actor closure may not
+    /// change one).
+    @MainActor private final class Counter {
+        var count = 0
     }
 
     /// The model's own parcels reach the palette's list only while the
     /// card is on screen.
-    @Test func theCardsParcelsAreTheModels() throws {
+    @Test func theCardsParcelsAreTheModels() async throws {
         let engine = MockEngine()
         let shown = try parcel("thread:t4")
         engine.parcelStore = [shown]
         let model = AppModel(engine: engine)
         model.reload()
+        // The parcels are read off the main actor, after the rows.
+        await model.settleReloads()
         #expect(model.inboxParcels.count == 1)
         model.navigate(to: .needReply)
         #expect(model.inboxParcels.isEmpty)

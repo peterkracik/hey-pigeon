@@ -590,7 +590,10 @@ final class AppModel {
     /// own; everywhere it is what the parcel's "Mark all done" acts on.
     private(set) var parcelFolds: [String: BundleFold] = [:]
     /// The bundle whose screen opens on its Info page ("View details");
-    /// the screen takes it when it appears (`BundleScreen`).
+    /// the screen takes it when it appears (`BundleScreen`). Cleared with
+    /// `bundlesStartId` — by the next `openBundles` and when the phone's
+    /// cover closes — so a screen that never appeared (the bundle went on
+    /// another device) leaves nothing behind for a later opening.
     var bundlesStartInfoId: String?
 
     /// What the card should show for the list as it is now (R9): the
@@ -614,8 +617,9 @@ final class AppModel {
 
     /// "View details": the parcel's bundle, on its Info page.
     func openParcelDetails(_ parcel: ParcelItem) {
-        bundlesStartInfoId = parcel.bundleId
         openBundles(at: parcel.bundleId)
+        // After: any other way into Bundles clears it (`openBundles`).
+        bundlesStartInfoId = parcel.bundleId
     }
 
     /// "Dismiss": this parcel leaves the card until a newer email about
@@ -939,10 +943,18 @@ final class AppModel {
     /// store now, on the main actor: for navigation and the user's own
     /// actions, whose result should be on screen when the call returns.
     /// The engine's change notices go through `reloadSoon` instead.
+    ///
+    /// The parcels are the exception: working them out reads every active
+    /// bundle's recent mail (milliseconds that grow with the bundles), so
+    /// this carries the ones the model holds, as `reloadForNavigation`
+    /// does, and a reload off the main actor follows for them. Dismiss
+    /// and Undo need no read: they filter the carried list (`regroup`).
     func reload() {
         Trace.interval("reload") {
-            apply(Self.readList(MainActorStoreReader(engine: engine), listRequest))
+            apply(Self.readList(MainActorStoreReader(engine: engine), listRequest,
+                                carrying: parcelCardEnabled ? parcels : []))
         }
+        if parcelCardEnabled { reloadSoon() }
     }
 
     /// A tab, folder or account switch: the new list's rows now, on the
@@ -1018,7 +1030,10 @@ final class AppModel {
 
     /// The store's side of a reload, in one pass, from any thread. A read
     /// that fails leaves its part empty, as the separate reads used to.
-    nonisolated static func readList(_ store: any StoreReader, _ request: ListRequest) -> ListSnapshot {
+    /// `carrying`: the parcels to keep instead of asking the store for
+    /// them (the main actor's `reload`).
+    nonisolated static func readList(_ store: any StoreReader, _ request: ListRequest,
+                                     carrying parcels: [ParcelItem]? = nil) -> ListSnapshot {
         let rows = unique((try? store.threads(in: request.view, accountId: request.accountId, before: nil, limit: request.limit)) ?? [])
         let unified = (try? store.unreadCounts(accountId: nil)) ?? [:]
         var byAccount: [String: [String: Int]] = [:]
@@ -1034,7 +1049,7 @@ final class AppModel {
         return ListSnapshot(
             request: request,
             bundles: (try? store.bundles()) ?? [],
-            parcels: request.parcels ? ((try? store.parcels()) ?? []) : [],
+            parcels: parcels ?? (request.parcels ? ((try? store.parcels()) ?? []) : []),
             rows: rows,
             counts: counts,
             unifiedCounts: unified,
@@ -2725,6 +2740,7 @@ final class AppModel {
     /// The Bundles sheet, on the list or on one bundle.
     func openBundles(at id: String? = nil) {
         bundlesStartId = id
+        bundlesStartInfoId = nil
         showSidebar = false
         showBundles = true
     }

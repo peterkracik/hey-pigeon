@@ -82,6 +82,90 @@ struct MessageSelectionTests {
         #expect(!wordKept.isEmpty, "the double-clicked word did not stay selected")
         #expect(stage.holdsKeyboard(web), "after a double click the keyboard is with \(stage.responder)")
     }
+
+    /// PROBE (temporary, for the intermittent double-click failure): the
+    /// double click many times over, at the test's own pace and with the
+    /// four events handed over with no pause between some or all of them
+    /// (what a busy main thread does to a real double click), on both
+    /// pages. It prints what the page heard and what the recognizers above
+    /// the message were doing; it fails nothing.
+    @Test(.timeLimit(.minutes(8))) func probeDoubleClicks() async throws {
+        let row = try #require(try engine.threadRow(id: "t1"))
+        do {
+            let stage = Stage(NavigationStack { ThreadPage(row: row, state: state) }.environment(model))
+            defer { stage.close() }
+            try await probe(on: stage, page: "thread")
+        }
+        state.path = []
+        do {
+            let stage = Stage(InboxPage(state: state).environment(model))
+            defer { stage.close() }
+            try await Task.sleep(for: .milliseconds(300))
+            state.expand(row, in: model)
+            try await probe(on: stage, page: "inPlace")
+        }
+    }
+
+    private func probe(on stage: Stage, page: String) async throws {
+        let found = await stage.messageView()
+        let web = try #require(found, "no message came up in the window")
+        let textRect = await stage.rect(of: "document.querySelectorAll('p')[1]", in: web)
+        let text = try #require(textRect)
+        let from = CGPoint(x: text.minX + 4, y: text.minY + min(text.height, 18) / 2)
+        _ = await stage.string("window.__probe = []; ['mousedown','mouseup','click','dblclick'].forEach(function (t) {"
+            + " document.addEventListener(t, function (e) { window.__probe.push(t + ':' + e.detail + '@' + Math.round(performance.now())); }, true); }); ''",
+            in: web)
+        let log = ProbeLog()
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
+            let name = "\(event.type == .leftMouseDown ? "D" : "U")\(event.clickCount)"
+            MainActor.assumeIsolated {
+                log.add("\(name) pre{\(stage.recognizers(above: web))}")
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { log.add("\(name) after{\(stage.recognizers(above: web))}") }
+                }
+            }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        let modes: [(name: String, gaps: [Int], times: Int)] = [
+            ("paced", [30, 60, 30], 40), ("burst", [0, 0, 0], 15), ("pairs", [0, 60, 0], 15), ("seam", [30, 0, 30], 15),
+        ]
+        for mode in modes {
+            var empty = 0
+            for attempt in 1...mode.times {
+                await stage.clear(web)
+                _ = await stage.string("window.__probe = []; ''", in: web)
+                log.restart()
+                await stage.doubleClick(in: web, at: from, gaps: mode.gaps)
+                let word = await stage.selection(web)
+                let heard = await stage.string("(window.__probe || []).join(' ')", in: web)
+                if word.isEmpty { empty += 1 }
+                if word.isEmpty || attempt <= 2 {
+                    ProbeLog.say("\(page) \(mode.name) #\(attempt) selected=\"\(word)\" page=[\(heard)] hit=\(stage.hit(web, at: from))"
+                        + " keyboard=\(stage.responder) ui=[\(log.lines.joined(separator: "; "))]")
+                }
+            }
+            ProbeLog.say("\(page) \(mode.name): \(empty) of \(mode.times) double clicks selected nothing")
+        }
+    }
+}
+
+/// PROBE (temporary): what the window did with each mouse event.
+@MainActor
+private final class ProbeLog {
+    private(set) var lines: [String] = []
+    private var start = ContinuousClock.now
+
+    func restart() { lines = []; start = .now }
+
+    func add(_ line: String) {
+        lines.append("+\(Int((ContinuousClock.now - start) / .milliseconds(1)))ms \(line)")
+    }
+
+    /// On a line the workflow's log filter lets through.
+    static func say(_ line: String) {
+        FileHandle.standardError.write(Data("◇ PROBE \(line)\n".utf8))
+    }
 }
 
 /// A window with one of the app's pages in it, and a pointer for it.
@@ -180,18 +264,34 @@ private final class Stage {
         await pause(400)
     }
 
-    func doubleClick(in web: WKWebView, at point: CGPoint) async {
+    func doubleClick(in web: WKWebView, at point: CGPoint, gaps: [Int] = [30, 60, 30]) async {
         post(.leftMouseDown, in: web, at: point, clicks: 1)
-        await pause(30)
+        await pause(gaps[0])
         post(.leftMouseUp, in: web, at: point, clicks: 1)
-        await pause(60)
+        await pause(gaps[1])
         post(.leftMouseDown, in: web, at: point, clicks: 2)
-        await pause(30)
+        await pause(gaps[2])
         post(.leftMouseUp, in: web, at: point, clicks: 2)
         await pause(400)
     }
 
+    /// PROBE (temporary): every recognizer from the message up to the
+    /// window, with its state ("d": it holds a press back).
+    func recognizers(above web: WKWebView) -> String {
+        var parts: [String] = []
+        var view: NSView? = web
+        while let v = view {
+            for g in v.gestureRecognizers {
+                parts.append("\(type(of: g)):\(g.state.rawValue)\(g.delaysPrimaryMouseButtonEvents ? "d" : "")")
+            }
+            view = v.superview
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// No pause at all for zero: the next event is posted in the same turn.
     private func pause(_ milliseconds: Int) async {
+        guard milliseconds > 0 else { return }
         try? await Task.sleep(for: .milliseconds(milliseconds))
     }
 

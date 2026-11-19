@@ -16,6 +16,10 @@ import Synchronization
 enum AiTask: Sendable {
     case completion
     case classification
+    /// The user's own text handed back changed (an edit, a proofread, a
+    /// translation): the on-device model runs under the guardrails made
+    /// for transforming text.
+    case transformation
 }
 
 /// Whether a provider can answer on this device now, and if not, why
@@ -81,7 +85,13 @@ struct SystemModelProvider: ModelProvider {
     }
 
     func session(instructions: String, task: AiTask, tools: [any Tool]) -> LanguageModelSession {
-        LanguageModelSession(model: SystemLanguageModel.default, tools: tools, instructions: instructions)
+        // The default guardrails judge what a text says and refused mail
+        // the user only wanted translated; the permissive ones are Apple's
+        // for turning text the app was given into other text.
+        let model = task == .transformation
+            ? SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations)
+            : SystemLanguageModel.default
+        return LanguageModelSession(model: model, tools: tools, instructions: instructions)
     }
 
     /// Whether the on-device model is made for a language (a code, "sk").

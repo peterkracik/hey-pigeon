@@ -176,7 +176,15 @@ impl Engine {
     /// `for_delete`: a delete is waiting and the address is not known —
     /// the one case in which the relay is asked for an account that has
     /// read status off, and regardless of when it was last asked.
-    pub(crate) async fn discover_opens(&self, account_id: &AccountId, for_delete: bool) {
+    ///
+    /// Returns what the relay said: `Some(true)` it has an `opens`
+    /// address, `Some(false)` it answered and has none, `None` it was not
+    /// asked or did not answer.
+    pub(crate) async fn discover_opens(
+        &self,
+        account_id: &AccountId,
+        for_delete: bool,
+    ) -> Option<bool> {
         let read_status = self
             .store
             .list_accounts()
@@ -196,9 +204,9 @@ impl Engine {
             discovery_due(read_status, relay_url.as_deref(), asked_at, now_ms())
         };
         if !due {
-            return;
+            return None;
         }
-        let Some(relay_url) = relay_url else { return };
+        let relay_url = relay_url?;
         let info = {
             let provider = self.provider.read().await;
             provider.relay_info(account_id, &relay_url).await
@@ -207,7 +215,9 @@ impl Engine {
             Ok(info) => {
                 // Only an https origin is kept (`opens_origin`): this
                 // address goes into the mail the user sends.
-                let stored = match info.opens_url.as_deref().and_then(readstatus::opens_origin) {
+                let origin = info.opens_url.as_deref().and_then(readstatus::opens_origin);
+                let has_opens = origin.is_some();
+                let stored = match origin {
                     Some(origin) => self.secrets.set(OPENS_URL, &origin),
                     // No read status on this relay (or not yet): forget
                     // an address it gave before.
@@ -219,13 +229,18 @@ impl Engine {
                     log::warn!("read status: relay answer not kept: {e}");
                 }
                 self.provider.read().await.set_opens_url(self.opens_url());
+                Some(has_opens)
             }
             // A relay that refuses the token says nothing about the
             // account's Gmail grant: the sync itself finds that out.
             Err(MailError::AuthExpired) => {
-                log::info!("read status: the relay refused to say where opens is")
+                log::info!("read status: the relay refused to say where opens is");
+                None
             }
-            Err(_) => log::info!("read status: the relay did not say where opens is"),
+            Err(_) => {
+                log::info!("read status: the relay did not say where opens is");
+                None
+            }
         }
     }
 
@@ -240,7 +255,14 @@ impl Engine {
             self.provider.read().await.set_opens_url(Some(url));
             return;
         }
-        self.discover_opens(account_id, true).await;
+        // A relay that answers and has no `opens` holds nothing to
+        // forget: drop the request, or every sync round would ask it
+        // again for an account that is off, without end.
+        if self.discover_opens(account_id, true).await == Some(false) {
+            if let Err(e) = readstatus::cancel_delete(&self.store, account_id) {
+                log::warn!("read status: pending delete not dropped: {e}");
+            }
+        }
     }
 
     /// Send a pending "forget this mailbox" (R12), if there is one.

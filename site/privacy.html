@@ -84,15 +84,16 @@
     a random identifier for that message, a one-way hash of your address, and the time of
     each open (or that the message reached a device that hides opens), for 30 days. It
     sees the IP address and mail app of whoever loads the image while answering the
-    request. The relay's code does not store or log them, and the hosting platform's
-    request logging is switched off for it. The app sends the relay your Google access
+    request. The relay's code does not store or log them, and its request logs are
+    discarded, not stored. The app sends the relay your Google access
     token, checked with Google and not stored, to register a message and to ask what was
     opened.</p>
     <p>Turning read status off stops it on that device at once: nothing more is added to
     mail sent from it, and it asks the relay to delete the account's records, right away
     if it is online and otherwise when it next syncs. Your other devices follow when they
     next sync; until then a device that has not heard may still send a message with the
-    image. Removing the account from a device asks the relay for the same deletion. If
+    image. Removing the account from a device asks the relay for the same deletion, which
+    also clears read status for mail already sent from your other devices. If
     the account is removed or signed out before the relay could be reached, its records
     are left to expire within 30 days. Once it is off on a device and that request has
     been answered, the device does not contact the relay about that account. Tracking

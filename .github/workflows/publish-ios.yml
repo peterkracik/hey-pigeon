@@ -5,6 +5,8 @@ name: publish-ios
 # main that changes the app — the Swift shell or the Rust crates it embeds —
 # publishes a TestFlight build; nothing runs for changes elsewhere. An
 # `ios-v*` tag publishes too and sets the marketing version from the tag.
+# Each build's "What to Test" in TestFlight lists the commits since the
+# previous published build.
 #
 # Expo's EAS Build cannot compile this app (it is a native Xcode project over a
 # Rust core, not a React Native project), so the build runs here with
@@ -106,8 +108,14 @@ jobs:
       url: https://appstoreconnect.apple.com/apps
     permissions:
       contents: read
+      # To find the previous published run, for the TestFlight notes.
+      actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the TestFlight notes list the commits since the
+          # previous build.
+          fetch-depth: 0
 
       - name: Select newest Xcode with the iOS 27 SDK
         run: |
@@ -461,6 +469,42 @@ jobs:
             --file "$IPA" \
             --apiKey "${{ secrets.ASC_API_KEY_ID }}" \
             --apiIssuer "${{ secrets.ASC_API_ISSUER_ID }}"
+
+      # ---- TestFlight "What to Test": what changed since the last build ----
+      # The subjects of the commits that touched the app since the previous
+      # successful run of this workflow. Apple only accepts the text once it
+      # has processed the build, so the script waits for that. The build is
+      # already uploaded by now: a failure here is a warning, not a failed run.
+      - name: Set TestFlight notes (changes since the previous build)
+        if: ${{ github.event_name == 'push' || inputs.uploader != 'none' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_NUMBER: ${{ steps.ver.outputs.build }}
+        run: |
+          set -uo pipefail
+          paths=(ios-app desktop-app/crates desktop-app/Cargo.toml desktop-app/Cargo.lock ':!ios-app/**/*.md')
+          prev="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow publish-ios.yml --status success --limit 1 --json headSha --jq '.[0].headSha // empty' 2>/dev/null || true)"
+          if [[ -n "$prev" && "$prev" != "$GITHUB_SHA" ]] && git merge-base --is-ancestor "$prev" HEAD 2>/dev/null; then
+            range=("$prev..HEAD")
+          else
+            # No earlier build to compare with (or a re-run of the same commit).
+            range=(-n 10 HEAD)
+          fi
+          notes="$RUNNER_TEMP/testflight-notes.txt"
+          # "Fix the thing (#123)" → "- Fix the thing"
+          git log --no-merges --pretty='%s' "${range[@]}" -- "${paths[@]}" \
+            | sed -E 's/[[:space:]]*\(#[0-9]+\)$//; s/^/- /' > "$notes"
+          if [[ ! -s "$notes" ]]; then
+            git log -1 --pretty='- %s' | sed -E 's/[[:space:]]*\(#[0-9]+\)$//' > "$notes"
+          fi
+          { echo "### TestFlight notes — ${APP_VERSION} (${BUILD_NUMBER})"; echo; cat "$notes"; } >> "$GITHUB_STEP_SUMMARY"
+          if ! python3 ios-app/scripts/testflight-notes.py "$notes"; then
+            echo "::warning::The build is uploaded, but its TestFlight notes could not be set. They are in this run's summary; paste them under TestFlight → the build → What to Test if wanted."
+          fi
 
       - name: Clean up keys
         if: always()

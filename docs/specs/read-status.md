@@ -93,23 +93,35 @@ switch, per mailbox, off until I turn it on.
   request of any kind to the opens endpoint. Statuses already stored stay
   visible; they stop changing.
 - R12. Turning the setting off on a device does three things, in this
-  order: the setting is written (and synced); polling for that account
-  stops; the relay is asked to delete every live token of that mailbox
-  (R16, Delete). Pixels already sent then name unknown tokens and record
-  nothing. If the delete cannot be sent (offline), it is retried on the
-  following sync rounds until it succeeds, and it is the only request the
-  account makes to the opens endpoint while off.
+  order: the setting is written; polling and pixels stop for that account
+  on that device; the relay is asked to delete every live token of that
+  mailbox (R20, Delete) — at once, on the engine's own runtime, without
+  waiting for a sync, and then on every sync round (whether or not Gmail
+  answered that round) until the relay has answered. The setting is
+  pushed to the user's other devices in the same breath. The request is
+  kept with the address `opens` had when it was made, so it can still be
+  sent if the app forgets the address meanwhile. Pixels already sent then
+  name unknown tokens and record nothing. While off, this delete is the
+  only request the account makes to the opens endpoint.
 - R13. A device that learns through sync that the setting was turned off
-  elsewhere stops adding pixels and stops polling at once, and sends no
-  delete of its own: the device that flipped the switch owns it. The
-  delete is idempotent, so a second one (two devices switched off in the
-  same minute, a retry after a lost answer) is harmless.
+  elsewhere stops adding pixels and stops polling at once. It sends no
+  delete of its own — unless it holds a token it sent *after* that
+  decision (it had not heard yet; the other device's delete came too
+  early for that token), in which case it asks for the delete too. The
+  delete is idempotent, so a second one is harmless. Until a device has
+  synced, "off" is not yet true on it: it may still send a tracked
+  message.
 - R14. Turning the setting on again starts fresh: new messages are
   tracked; messages sent before stay at the status they had.
 - R15. The composer has a per-message switch, "Read status", shown only
   when the sending account's setting is on (and a relay exists); it starts
   on. Changing the From account re-evaluates it. Off sends that one
-  message with no pixel and no token.
+  message with no pixel and no token. Mail that is sent without a
+  composer showing that switch — an unsubscribe request, an invitation's
+  answer, a saved Gmail draft sent by Siri or a Shortcut — is never
+  tracked, whatever the account's setting, and gains no HTML part: the
+  user never saw a switch for it. Siri's "send it" on the *open* composer
+  sends what the composer holds, its switch included.
 
 ### Sending
 
@@ -215,9 +227,18 @@ switch, per mailbox, off until I turn it on.
 
 - R25. Two accounts: each has its own setting, tokens and events; a
   message is tracked by the setting of the account it is sent from.
-- R26. Removing an account from a device deletes its local tokens and
-  events and sends nothing to the relay (other devices may still use the
-  mailbox; the documents expire on their own).
+- R26. Removing an account from a device first asks the relay, once and
+  for a few seconds at most, to delete the mailbox's tokens — when read
+  status is on for the account or a delete is still waiting — and pushes
+  the account's setting to the user's other devices; then its local
+  tokens and events go. Removal never fails or waits long for this. The
+  delete is the mailbox's: another device that still has the account with
+  read status on loses its relay records too (its statuses stop changing
+  for mail already sent; new mail is tracked as before). If the relay
+  could not be reached, or the account was signed out, the records are
+  left to expire within 30 days. Adding the account again restores the
+  setting from the user's settings sync: an "off" that could not be
+  pushed before removal (offline) can come back as "on".
 - R27. Known limitation, stated in the setting's footer: opening the
   message in Gmail on the web, in the Sent folder, loads the pixel through
   Gmail's image proxy and counts as an open. The same holds for any other
@@ -479,6 +500,13 @@ Whole feature:
   or browser is `opened`.
 - Cost stays $0 at personal volume.
 - Link-click tracking and blocker evasion are out.
+- **Only the composer tracks.** Mail sent without a composer showing the
+  "Read status" switch (unsubscribe, invitation answers, a saved draft
+  sent by Siri or a Shortcut) is never tracked (R15). Decided after the
+  security review of step 5.
+- **Removing an account deletes the mailbox's relay records** (R26),
+  on the reviewer's recommendation: the user is leaving, the records
+  should go. It replaces the earlier "removal sends nothing".
 - **Not delivered outranks Opened** when one of several recipients
   bounced and another opened (R1). Showing both was the alternative.
 - **A failed relay registration sends the message on time, untracked**
@@ -675,5 +703,33 @@ Step 5, 2026-11-19 — **Verified with notes**. Not merged.
   with a relay starts with it on (`PushController`); not this feature's
   sentence. `core::sync::settle_follow_ups` still counts a bounce as a
   reply.
+
+Step 5 after the security review of #152, 2026-11-19:
+
+- Fixed, each with a test: the off switch's delete runs at once on the
+  engine's runtime, on every sync round, and before an account is
+  removed (R12, R26); it keeps the address to send it to; a device that
+  sent a tracked message after "off" deletes it when it learns (R13);
+  only the composer tracks (R15); the relay's address is an https origin
+  or nothing and the pixel tag escapes what it is given; relay calls
+  follow no redirects and read bounded answers; a `>` inside an
+  attribute no longer hides a pixel from the outgoing strip.
+- Copy made true: the Settings footer, the privacy page (what the access
+  token is for, "the relay's code does not store or log" in place of an
+  unverified absolute, what turning off and removing do and when, per
+  device), the site's "never goes to a server of ours" (AI features send
+  text to the provider the user chose), and the "is never called"
+  sentences in `DESIGN.md`, `relay/README.md` and the reviewer's guide.
+- Still to check on the deployed project (unchanged): that the
+  request-log exclusion keeps the `opens` request log out of storage,
+  and Cloud Trace — the privacy page now claims only what the code and
+  the configuration do.
+- Edges that remain, by design: records left for up to 30 days when an
+  account is removed or signed out before the relay was reached; a
+  device that has not synced "off" may send one more tracked message
+  (deleted when it learns); an "off" not pushed before an offline
+  removal can come back as "on" when the account is added again; a
+  removal's delete also clears the records of other devices that still
+  track.
 
 Steps 6–7: not started.

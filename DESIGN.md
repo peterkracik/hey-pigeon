@@ -125,7 +125,9 @@ Three tiers — the first two need no server, the third is the one optional one:
    read status on it holds a random token per sent message and when it
    was opened, never mail. The apps use it only for an account whose read
    status the user turned on (off by default); for any other account
-   nothing is added to outgoing mail and the function is never called. The core owns the watch lease (`core::push`,
+   nothing is added to outgoing mail and the function is not called —
+   with one exception: an account just turned off (or removed) sends one
+   request to delete its records, repeated until the relay has answered. The core owns the watch lease (`core::push`,
    renewed daily from the sync round); the iOS shell owns the toggle. Note
    for tier 2: `users.watch` itself needs no Pub/Sub scope — only consuming
    the topic from the desktop would.

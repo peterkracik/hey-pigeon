@@ -51,8 +51,10 @@
 
     <p>Hey Pigeon runs on your device and talks directly to your Google account. It has
     two optional features that use a small relay server, described below; neither ever
-    receives your email. Nobody but you — not even the developer — can see your email,
-    contacts, or account data through Hey Pigeon.</p>
+    receives your email. The developer does not see your email, contacts, or account
+    data. For those two features the app sends the relay a Google access token for your
+    mailbox, to show who is asking: the relay checks it with Google, never uses it to
+    read mail, and does not store it.</p>
 
     <h2>What data Hey Pigeon accesses</h2>
     <p>When you connect a Google Account, Hey Pigeon requests the following scopes,
@@ -82,13 +84,20 @@
     a random identifier for that message, a one-way hash of your address, and the time of
     each open (or that the message reached a device that hides opens), for 30 days. It
     sees the IP address and mail app of whoever loads the image while answering the
-    request and does not store or log them. The app sends the relay your Google access
+    request. The relay's code does not store or log them, and the hosting platform's
+    request logging is switched off for it. The app sends the relay your Google access
     token, checked with Google and not stored, to register a message and to ask what was
-    opened. Turning read status off has the app delete those records at the relay, as
-    soon as that device is online. While it is off for an
-    account, nothing is added to mail sent from it and the relay is not contacted about
-    it. Tracking opens can require the recipient's consent under EU and UK law; you are
-    responsible for that when you turn it on.</p>
+    opened.</p>
+    <p>Turning read status off stops it on that device at once: nothing more is added to
+    mail sent from it, and it asks the relay to delete the account's records, right away
+    if it is online and otherwise when it next syncs. Your other devices follow when they
+    next sync; until then a device that has not heard may still send a message with the
+    image. Removing the account from a device asks the relay for the same deletion. If
+    the account is removed or signed out before the relay could be reached, its records
+    are left to expire within 30 days. Once it is off on a device and that request has
+    been answered, the device does not contact the relay about that account. Tracking
+    opens can require the recipient's consent under EU and UK law; you are responsible
+    for that when you turn it on.</p>
 
     <h2>AI features (optional)</h2>
     <p>If you enable an AI feature (e.g. summarize, draft), Hey Pigeon sends only the
@@ -113,8 +122,9 @@
     access directly at
     <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
     Since your mail is stored only on your device, uninstalling the app or deleting its
-    local data folder removes it. The app deletes its relay records when you turn off push
-    or read status, and read-status records expire on their own after 30 days.</p>
+    local data folder removes it. The app asks the relay to delete its records when you turn
+    off push or read status or remove the account, and read-status records expire on
+    their own after 30 days.</p>
 
     <h2>Contact</h2>
     <p>Questions about this policy: <a href="mailto:support@heypigeon.app">support@heypigeon.app</a>.</p>

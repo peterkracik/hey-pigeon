@@ -11,7 +11,9 @@ halves, three small functions in all:
   for a mailbox whose owner turned read status on in the app (Settings →
   Accounts; off by default, per account): the app then registers a token
   for each message it sends from that account and puts the pixel in it.
-  For every other mailbox the apps never call it.
+  For every other mailbox the apps do not call it — except once to delete:
+  an account whose read status was just turned off, or that is being
+  removed, sends `DELETE /v1/tokens`, repeated until the relay answers.
 
 Everything runs in the same Google Cloud project as the OAuth client and is
 created by Terraform ([../terraform/README.md](../terraform/README.md)).
@@ -231,10 +233,21 @@ manual prerequisites: [../terraform/README.md](../terraform/README.md).
   DELETEs its token and the engine calls `users.stop` for every account.
 - Read status, in the app: Settings → Accounts → the account → "Read
   status" off. The device stops adding pixels and asking about opens at
-  once and sends `DELETE /v1/tokens`, again on its next syncs until the
-  relay has answered; a device that only learns "off" through the user's
-  settings sync sends nothing. Pixels already sent then name unknown
-  tokens. Left alone, a mailbox's records go after 30 days.
+  once and sends `DELETE /v1/tokens` right away, then again on every sync
+  round until the relay has answered. The user's other devices learn
+  "off" when they next sync; one that had not heard yet may still send a
+  tracked message in between, and when it then learns "off" it sends the
+  delete itself, so that token goes too. A device that sent nothing after
+  the decision sends no delete. Pixels already sent then name unknown
+  tokens.
+- Removing an account from a device sends the same delete first (one
+  attempt, a few seconds at most) when read status is on for it or a
+  delete is still waiting. The delete is per mailbox: other devices that
+  still have the account lose their records too and are not told.
+- What can leave records behind: the account is removed, or signed out
+  (the delete needs its Google token), before the relay could be reached.
+  Nothing deletes them then; they expire 30 days after each message was
+  registered.
 - Server side: `terraform destroy` in `terraform/` (the Firestore database is
   protected and left in place; delete it by hand if you want it gone), then in
   `terraform/bootstrap/`. Any lease still running expires within 7 days.

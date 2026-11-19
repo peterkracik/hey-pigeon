@@ -2,9 +2,9 @@
 // glass circles on top (sidebar · AI), the list starts right under
 // them, and the Jev label filter floats above the tab bar as a glass pill.
 // Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
-// Need reply. Search has no screen of its own on the phone: its field hides
-// above each list, is pulled down, and its results take the list's place
-// (SearchPane, Features/Search).
+// Need reply. Search has no screen of its own on the phone: a short pull
+// down on a list (PullDown) opens it, and its field and results take the
+// list's place (SearchPane, Features/Search).
 
 import AppIntents
 import SwiftUI
@@ -73,6 +73,11 @@ struct MailListScreen: View {
             Group {
                 if searching {
                     SearchPane(path: $path)
+                        // The field exists only while the search is up:
+                        // left on the list, the system showed it at the
+                        // top of every list instead of hiding it.
+                        .shownSearch(text: searchText, isPresented: searchPresented, prompt: "Search mail")
+                        .onSubmit(of: .search) { model.rememberSearch() }
                 } else {
                     mailList
                         // Pull to refresh on the list only. Applied after the bottom
@@ -130,12 +135,6 @@ struct MailListScreen: View {
                 // Compose is not here: it is the circle beside the tab bar
                 // (RootView.tabs), under the thumb.
             }
-            // The search field, hidden above the list until it is pulled
-            // down: the first part of the pull that, carried on, syncs
-            // (both are the system's, so they do not compete). Shown
-            // without the pull whenever the search is up.
-            .pullDownSearch(text: searchText, isPresented: searchPresented, pinned: searching, prompt: "Search mail")
-            .onSubmit(of: .search) { model.rememberSearch() }
             .safeAreaInset(edge: .bottom) {
                 // The labels narrow the inbox, not the search.
                 if tab == .inbox && !searching {
@@ -176,10 +175,14 @@ extension MailListScreen {
         } else if isActive && model.listIsEmpty {
             EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: model.connectFirstAccount)
         } else if isActive {
-            ThreadList(path: $path) { collapsed in
+            ThreadList(path: $path, onCollapse: { collapsed in
                 guard collapsed != labelsCollapsed else { return }
                 withAnimation(Motion.animation(.snappy)) { labelsCollapsed = collapsed }
-            }
+            }, onPull: {
+                // A short pull down, let go: the search opens over this
+                // list. Carried further it is the system's refresh.
+                model.navigate(to: .search)
+            })
         } else {
             Color.clear
         }
@@ -461,6 +464,58 @@ private struct ScrollCollapseReporter: ViewModifier {
     }
 }
 
+/// A pull down on a list at its top, measured while the finger is on it:
+/// a short one, let go, opens the search; a long one is the system's
+/// pull to refresh and opens nothing. Pure, so the rule is tested
+/// without a view.
+struct PullDown: Equatable {
+    /// Less than this is a finger resting on the list.
+    static let shortest: CGFloat = 44
+    /// From here on the pull is a refresh.
+    static let longest: CGFloat = 110
+
+    /// The furthest the list was pulled past its top in this drag.
+    private(set) var peak: CGFloat = 0
+
+    /// Takes how far the list is past its top (0 when it is not).
+    mutating func update(overscroll: CGFloat) {
+        if overscroll > peak { peak = overscroll }
+    }
+
+    /// The finger left the list: whether that pull opens the search.
+    /// The next drag starts from nothing.
+    mutating func released() -> Bool {
+        defer { peak = 0 }
+        return peak >= Self.shortest && peak < Self.longest
+    }
+}
+
+/// Reports a `PullDown` on the scroll view it is on. As with
+/// `ScrollCollapseReporter`, the body never reads the tracker.
+private struct PullDownReporter: ViewModifier {
+    let action: (() -> Void)?
+    @State private var pull = PullDown()
+
+    func body(content: Content) -> some View {
+        if let action {
+            content
+                .onScrollGeometryChange(for: CGFloat.self) { g in
+                    max(0, -(g.contentOffset.y + g.contentInsets.top))
+                } action: { _, overscroll in
+                    pull.update(overscroll: overscroll)
+                }
+                .onScrollPhaseChange { old, new in
+                    // A drag begins: what the rubber band did before it
+                    // (a bounce at the top) is not this pull.
+                    if new == .interacting { pull = PullDown() }
+                    if old == .interacting, new != .interacting, pull.released() { action() }
+                }
+        } else {
+            content
+        }
+    }
+}
+
 /// The flat list with the gesture map and the desktop's day groups
 /// (Pinned · Today · Last 7 days · Older; due buckets in Scheduled).
 struct ThreadList: View {
@@ -472,6 +527,10 @@ struct ThreadList: View {
     /// Told when a bar over the list should fold or open (`ScrollCollapse`).
     /// Nil where nothing folds: search, the iPad's columns.
     var onCollapse: ((Bool) -> Void)?
+    /// Told when the list was pulled down a little and let go
+    /// (`PullDown`): the phone opens the search. Nil where the search has
+    /// a place of its own.
+    var onPull: (() -> Void)?
 
     var body: some View {
         List {
@@ -498,6 +557,7 @@ struct ThreadList: View {
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 0, for: .scrollContent)
         .modifier(ScrollCollapseReporter(action: onCollapse))
+        .modifier(PullDownReporter(action: onPull))
         .dismissKeyboardOnScroll()
         // The top of the inbox has its bodies fetched ahead, on Wi-Fi: a
         // tap then shows the message, not a spinner (AppModel.prefetchBodies).

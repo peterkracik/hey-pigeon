@@ -2806,12 +2806,14 @@ final class AppModel {
         } catch { show(error.localizedDescription) }
     }
 
-    /// Whether a message goes out asking to be tracked (R15, R16): the
-    /// composer's switch is on, the account it is sent from has read
-    /// status on, and the build has a relay. Decided when the user sends;
-    /// the core checks the account again when the message leaves.
+    /// Whether a message goes out asking to be tracked (R15, R16): a
+    /// composer showed its switch and it is on, the account it is sent
+    /// from has read status on, and the build has a relay. A draft no
+    /// composer touched (`trackOpens` nil) is never tracked. Decided when
+    /// the user sends; the core checks the account again when the message
+    /// leaves.
     static func tracksOpens(_ draft: SendDraft, account: MailAccount?, available: Bool) -> Bool {
-        draft.trackOpens && available && (account?.readStatus ?? false)
+        (draft.trackOpens ?? false) && available && (account?.readStatus ?? false)
     }
 
     func tracksOpens(_ draft: SendDraft, from accountId: String) -> Bool {
@@ -2825,9 +2827,9 @@ final class AppModel {
     /// The read-status switch of one mailbox (R8). The engine stores it on
     /// the account and syncs it; the accounts are read back either way, so
     /// a switch the engine refused shows what is true.
-    func setReadStatus(_ on: Bool, for account: MailAccount) {
+    func setReadStatus(_ on: Bool, for account: MailAccount) async {
         do {
-            try engine.setReadStatus(accountId: account.id, enabled: on)
+            try await engine.setReadStatus(accountId: account.id, enabled: on)
         } catch { show(error.localizedDescription) }
         reloadAccounts()
     }

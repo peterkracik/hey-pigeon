@@ -355,7 +355,7 @@ private struct AccountRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle(ReadStatusSetting.title, isOn: Binding(
                         get: { account.readStatus },
-                        set: { model.setReadStatus($0, for: account) }))
+                        set: { on in Task { await model.setReadStatus(on, for: account) } }))
                         .disabled(!available)
                     Text(available ? ReadStatusSetting.footer : ReadStatusSetting.unavailable)
                         .font(.caption).foregroundStyle(Theme.textTertiary)

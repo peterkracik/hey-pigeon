@@ -206,7 +206,7 @@ enum ReadStatusSetting {
     /// Under the switch otherwise. Each sentence is checked against what
     /// the app and the relay do (docs/specs/read-status.md, "Privacy
     /// copy"); change the behaviour and this changes with it.
-    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when, or that it reached a device that hides opens — never who or where, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Turning this off deletes what the relay holds for this account as soon as the app is online; from then on nothing is added to your mail and the relay is not contacted for it."
+    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when, or that it reached a device that hides opens — never who or where, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Turning this off stops it on this device at once and asks the relay to delete what it holds for this account, now if the app is online and otherwise when it next syncs; your other devices follow when they next sync. Removing the account asks for the same. If the account is removed or signed out before the relay could be reached, what it holds is left to expire within 30 days."
     /// The composer's switch, for the pointer and VoiceOver.
     static let composerOn = "Read status is on for this message"
     static let composerOff = "Read status is off for this message"
@@ -1038,12 +1038,14 @@ struct SendDraft: Hashable {
     /// an address, never under a name the thread knows (the Mac opens the
     /// fields): a reply must not be sent somewhere the user did not see.
     var repliesElsewhere = false
-    /// The composer's "Read status" switch for this one message
-    /// (docs/specs/read-status.md R15). It starts on and only counts for
-    /// an account whose read status is on: what is sent says whether the
-    /// message is tracked (`AppModel.tracksOpens`), and the core decides
-    /// once more when it leaves the outbox.
-    var trackOpens = true
+    /// The "Read status" choice for this one message
+    /// (docs/specs/read-status.md R15). nil until a composer has shown its
+    /// switch: the composer starts it on and writes the user's choice
+    /// here. Mail that never passes a composer — an unsubscribe request,
+    /// an invitation's answer, a saved draft a Shortcut sends — keeps nil
+    /// and is not tracked: the user never saw a switch for it
+    /// (`AppModel.tracksOpens`).
+    var trackOpens: Bool?
     /// Bumped when something other than the composer changed the open
     /// draft (Siri's "update draft"); the composer adopts the new fields.
     var externalRevision = 0
@@ -1353,7 +1355,10 @@ protocol MailEngine: AnyObject {
     func readStatusAvailable() -> Bool
     /// One mailbox's read-status switch. Stored on the account and synced
     /// to the user's other devices; throws when turned on without a relay.
-    func setReadStatus(accountId: String, enabled: Bool) throws
+    /// Async: the engine writes the setting and returns, and on its own
+    /// runtime pushes it to the other devices and — turned off — asks the
+    /// relay to delete the mailbox's records, without waiting for a sync.
+    func setReadStatus(accountId: String, enabled: Bool) async throws
     /// Async: with push on, the engine first forgets the device at the relay and stops the Gmail watch.
     func removeAccount(id: String) async throws
     /// App-wide preferences synced between the user's devices (`pref:<name>`

@@ -282,8 +282,8 @@ final class RustEngine: MailEngine {
         engine.readStatusAvailable()
     }
 
-    func setReadStatus(accountId: String, enabled: Bool) throws {
-        try engine.setReadStatus(accountId: accountId, enabled: enabled)
+    func setReadStatus(accountId: String, enabled: Bool) async throws {
+        try await engine.setReadStatus(accountId: accountId, enabled: enabled)
     }
 
     // MARK: Prefs — JSON text over the FFI (Engine::get_prefs / set_pref)
@@ -717,7 +717,7 @@ private extension MailAction {
             .send(to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
                   bodyHtml: d.bodyHTML,
                   attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
-                  replyToThread: d.replyToThreadId, fromAddr: d.fromAddress, trackOpens: d.trackOpens)
+                  replyToThread: d.replyToThreadId, fromAddr: d.fromAddress, trackOpens: d.trackOpens ?? false)
         case .saveDraft(let d):
             .saveDraft(key: d.draftKey, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
                        bodyHtml: d.bodyHTML,

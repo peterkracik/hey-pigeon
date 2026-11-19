@@ -386,7 +386,7 @@ final class MockEngine: MailEngine {
 
     /// Off for every account until turned on; on needs a relay, off never
     /// fails for the lack of one; an unknown account is an error.
-    func setReadStatus(accountId: String, enabled: Bool) throws {
+    func setReadStatus(accountId: String, enabled: Bool) async throws {
         if enabled && relayURL.isEmpty { throw MockError.invalid("read status is not available in this build") }
         guard let i = accountList.firstIndex(where: { $0.id == accountId }) else {
             throw MockError.invalid("unknown account \(accountId)")

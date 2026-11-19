@@ -154,6 +154,10 @@ struct ComposeView: View {
         model.readStatusAvailable && (fromAccount?.readStatus ?? false)
     }
 
+    /// The switch's position: on until the user turns it off (a draft no
+    /// composer has shown yet carries no choice).
+    private var tracksOpens: Bool { draft.trackOpens ?? true }
+
     private var canSend: Bool { !(allTo.isEmpty && allCc.isEmpty && allBcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
@@ -373,14 +377,14 @@ struct ComposeView: View {
                 // R15): there only when the account it is sent from has
                 // read status on, and on until switched off.
                 if readStatusOffered {
-                    Button { draft.trackOpens.toggle() } label: {
-                        Image(systemName: draft.trackOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
+                    Button { draft.trackOpens = !tracksOpens } label: {
+                        Image(systemName: tracksOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
                     }
                     .pillButton()
-                    .foregroundStyle(draft.trackOpens ? Theme.accent : Theme.textPrimary)
-                    .help(draft.trackOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
+                    .foregroundStyle(tracksOpens ? Theme.accent : Theme.textPrimary)
+                    .help(tracksOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
                     .accessibilityLabel(ReadStatusSetting.title)
-                    .accessibilityValue(draft.trackOpens ? "On" : "Off")
+                    .accessibilityValue(tracksOpens ? "On" : "Off")
                 }
                 if model.aiConfigured {
                     Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
@@ -516,6 +520,10 @@ struct ComposeView: View {
         d.bodyRich = bodyRich
         d.attachments = attachments
         d.fromAddress = fromAddress
+        // What leaves the composer carries the switch's position, shown or
+        // not; whether the account tracks at all is decided when it is
+        // sent (AppModel.tracksOpens).
+        d.trackOpens = tracksOpens
         return d
     }
 

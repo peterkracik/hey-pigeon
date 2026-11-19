@@ -159,7 +159,7 @@ svg { display: block; }
 /* ---- hero ---- */
 
 .hero { padding: 72px 0 0; text-align: center; }
-.hero-icon { width: 84px; height: 84px; margin: 0 auto 28px; border-radius: 19px; box-shadow: 0 10px 26px rgba(15, 16, 24, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
+.hero-icon { display: block; width: 84px; height: 84px; margin: 0 auto 28px; border-radius: 19px; box-shadow: 0 10px 26px rgba(15, 16, 24, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
 .eyebrow {
   display: inline-flex; align-items: center; gap: 8px; margin-bottom: 22px;
   padding: 6px 14px 6px 12px; border-radius: 980px; background: var(--accent-soft); color: var(--accent-ink);

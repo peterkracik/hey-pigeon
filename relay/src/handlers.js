@@ -3,6 +3,9 @@
 //   apns:   { send({token, env, payload, collapseId}) → {status, reason} }
 //   auth:   { verify(bearer) → email | null }
 //   topic:  the Pub/Sub topic the app should `users.watch`
+//   opensUrl: where the `opens` function answers (src/opens-handlers.js),
+//           or "" when it is not deployed — reported so the app needs
+//           one setting, the relay URL
 //   log:    console-like
 //
 // Privacy contract (DESIGN.md "Push notifications", tier 3): the relay
@@ -35,7 +38,11 @@ export function decodePubsub(cloudEvent) {
   return { emailAddress, historyId: String(historyId) };
 }
 
-export function createHandlers({ tokens, apns, auth, topic, log = console }) {
+export function createHandlers({ tokens, apns, auth, topic, opensUrl = "", log = console }) {
+  // What a caller learns about the relay: where to `watch`, and where read
+  // status lives (null: not deployed here).
+  const relayInfo = () => ({ topic, opensUrl: opensUrl || null });
+
   async function onMailChange(cloudEvent) {
     const change = decodePubsub(cloudEvent);
     if (!change) {
@@ -73,8 +80,8 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
   }
 
   async function registerToken(req, res) {
-    if (req.method !== "POST" && req.method !== "DELETE") {
-      res.set("Allow", "POST, DELETE").status(405).end();
+    if (req.method !== "GET" && req.method !== "POST" && req.method !== "DELETE") {
+      res.set("Allow", "GET, POST, DELETE").status(405).end();
       return;
     }
     const authz = req.get("authorization") ?? "";
@@ -94,6 +101,13 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
     if (!email) {
       // auth.verify logged why (aud mismatch, scope, expired, no profile).
       res.status(401).json({ error: "token rejected" });
+      return;
+    }
+    // GET: the same answer as a registration, and nothing written. For a
+    // device with no APNs token to register (the Mac, a phone with push
+    // off) that only needs to know where the relay's other half is.
+    if (req.method === "GET") {
+      res.status(200).json(relayInfo());
       return;
     }
     const body = typeof req.body === "object" && req.body ? req.body : {};
@@ -119,7 +133,7 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
       return;
     }
     await tokens.upsert(hash, { token: deviceToken, env: body.environment, platform: "ios" });
-    res.status(200).json({ topic });
+    res.status(200).json(relayInfo());
   }
 
   return { onMailChange, registerToken };

@@ -45,7 +45,7 @@ struct MailListScreen: View {
             Group {
                 if !model.hasLoadedOnce {
                     SkeletonList()
-                } else if isActive && model.groupedRows.isEmpty {
+                } else if isActive && model.listIsEmpty {
                     EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: model.connectFirstAccount)
                 } else if isActive {
                     ThreadList(path: $path) { collapsed in
@@ -425,6 +425,16 @@ struct ThreadList: View {
 
     var body: some View {
         List {
+            // Parcels on their way, over everything else in the plain
+            // inbox (docs/specs/parcel-card.md); empty anywhere else.
+            if !model.inboxParcels.isEmpty {
+                Section {
+                    ParcelCardView()
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            }
             ForEach(model.groupedRows) { group in
                 Section {
                     ForEach(group.folds) { fold in foldCell(fold) }

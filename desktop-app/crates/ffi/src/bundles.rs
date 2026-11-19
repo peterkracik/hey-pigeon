@@ -198,6 +198,8 @@ pub struct Parcel {
     /// The newest email about it; `url` is that email's tracking link
     /// (http or https, a link that is visible in the email).
     pub thread_id: String,
+    /// The account that email is in.
+    pub account_id: String,
     pub url: String,
     /// The host `url` leads to, lower-cased: `track.dhl.com`.
     pub host: String,
@@ -219,6 +221,7 @@ impl From<core_parcels::Parcel> for Parcel {
             id: p.id,
             bundle_id: p.bundle_id,
             thread_id: p.thread_id,
+            account_id: p.account_id,
             url: p.url,
             host: p.host,
             subject: p.subject,
@@ -1438,6 +1441,7 @@ mod tests {
         assert_eq!(p.id, "thread:ship");
         assert_eq!(p.bundle_id, b.id);
         assert_eq!(p.thread_id, "ship");
+        assert_eq!(p.account_id, "me@x.com");
         assert_eq!(p.url, "https://track.dpd.example/abc");
         assert_eq!(p.host, "track.dpd.example");
         assert_eq!(p.subject, "Your order #112-334 has shipped");

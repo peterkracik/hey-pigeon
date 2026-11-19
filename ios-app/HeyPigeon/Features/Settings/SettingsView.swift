@@ -99,6 +99,15 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    Toggle(isOn: $model.parcelCardEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Show parcels")
+                            // Privacy copy: the card is worked out locally; the
+                            // only request is the one the user asks for.
+                            Text("Parcels on their way get a card at the top of your inbox. Worked out on this \(Device.name) from your mail; Track parcel opens the email's own link in your browser.")
+                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                        }
+                    }
                     Toggle(isOn: $model.loadRemoteImages) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Load remote images")

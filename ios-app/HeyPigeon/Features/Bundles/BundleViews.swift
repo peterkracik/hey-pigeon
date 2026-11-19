@@ -355,6 +355,12 @@ struct BundleScreen: View {
             Text("The emails stay where they are; only the grouping goes.")
         }
         .onAppear {
+            // "View details" on a parcel asked for this bundle's Info page
+            // (AppModel.openParcelDetails): once, for this opening.
+            if model.bundlesStartInfoId == bundleId {
+                page = .info
+                model.bundlesStartInfoId = nil
+            }
             load()
             if let c = contents { model.summarizeBundleOnOpen(c) }
         }

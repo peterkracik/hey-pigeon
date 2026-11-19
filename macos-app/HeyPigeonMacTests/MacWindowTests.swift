@@ -406,6 +406,43 @@ struct WindowStateTests {
     }
 }
 
+/// The parcel card's palette entries (docs/specs/parcel-card.md): the
+/// list's cursor does not reach the card, so the palette does.
+@MainActor
+struct ParcelPaletteTests {
+    private func parcel(_ id: String, title: String? = nil) throws -> ParcelItem {
+        ParcelItem(id: id, bundleId: "b1", threadId: "t4", accountId: "me@personal.test",
+                   url: try #require(URL(string: "https://www.dhl.com/track")), host: "www.dhl.com",
+                   subject: "Your order has shipped", sender: "Zalando", at: Date(), progress: .outForDelivery, title: title)
+    }
+
+    @Test func eachParcelCanBeTrackedAndAllDismissed() throws {
+        #expect(CommandPalette.parcelItems([], bundle: { _ in nil }, dismissAll: {}).isEmpty)
+        var dismissed = 0
+        let items = CommandPalette.parcelItems([try parcel("thread:a", title: "Kettle"), try parcel("number:1Z9")],
+                                               bundle: { _ in nil }, dismissAll: { dismissed += 1 })
+        #expect(items.map(\.id) == ["parcel.track.thread:a", "parcel.track.number:1Z9", "parcel.dismissAll"])
+        #expect(items.map(\.title) == ["Track parcel · Kettle", "Track parcel · Your order has shipped", "Dismiss all parcels"])
+        // The second line says where things stand and where the link leads.
+        #expect(items[0].subtitle == "Out for delivery — opens www.dhl.com")
+        #expect(PaletteFilter.filter(items, query: "track kettle").map(\.id) == ["parcel.track.thread:a"])
+        items[2].run()
+        #expect(dismissed == 1)
+    }
+
+    /// The model's own parcels reach the palette's list only while the
+    /// card is on screen.
+    @Test func theCardsParcelsAreTheModels() throws {
+        let engine = MockEngine()
+        engine.parcelStore = [try parcel("thread:t4")]
+        let model = AppModel(engine: engine)
+        model.reload()
+        #expect(model.inboxParcels.count == 1)
+        model.navigate(to: .needReply)
+        #expect(model.inboxParcels.isEmpty)
+    }
+}
+
 struct PaletteFilterTests {
     @Test func everyWordMustMatchTitleOrSubtitle() {
         #expect(PaletteFilter.matches("", title: "Mark done"))

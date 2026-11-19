@@ -749,6 +749,40 @@ struct BundleLinkItem: Identifiable, Hashable {
     var id: URL { url }
 }
 
+/// How far along a parcel is, as its mail says. Unknown is nil on the
+/// parcel: nothing is guessed (docs/specs/parcel-card.md R3).
+enum ParcelProgress: String, Hashable, Sendable {
+    case shipped, outForDelivery, delivered
+}
+
+/// One parcel on the inbox's card (docs/specs/parcel-card.md): a shipment
+/// of an active bundle, with what its mail says about it. The core works
+/// it out (`Engine.trackingOverview`); `progress`, `expectedDay` and
+/// `title` are nil when no email states them.
+struct ParcelItem: Identifiable, Hashable, Sendable {
+    /// The same on every device (`number:<tracking or order number>` or
+    /// `thread:<thread id>`): what a dismissal names.
+    let id: String
+    let bundleId: String
+    /// The newest email about it, and the account that email is in.
+    let threadId: String
+    let accountId: String
+    /// That email's tracking link: what Track parcel opens.
+    let url: URL
+    /// The host the link leads to: `track.dhl.com`.
+    let host: String
+    /// That email's subject, sender and time.
+    var subject = ""
+    var sender = ""
+    let at: Date
+    var progress: ParcelProgress? = nil
+    /// The day it is expected, a calendar date as the shop wrote it:
+    /// `2026-11-20`.
+    var expectedDay: String? = nil
+    /// What is in it, from the shop's markup.
+    var title: String? = nil
+}
+
 /// The model's brief on a bundle: where things stand and what is left for
 /// the user to do. `status` carries **bold** key facts (SummaryMarkup).
 struct BundleBrief: Hashable {
@@ -1351,6 +1385,9 @@ protocol StoreReader: Sendable {
     func accounts() throws -> [MailAccount]
     func labels() throws -> [MailLabelItem]
     func bundles() throws -> [BundleItem]
+    /// The inbox card's parcels, every account's, in the card's order
+    /// (docs/specs/parcel-card.md). Local: read from mail already here.
+    func parcels() throws -> [ParcelItem]
     func unreadCounts(accountId: String?) throws -> [String: Int]
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func threadRow(id: String) throws -> ThreadRow?
@@ -1411,6 +1448,7 @@ struct MainActorStoreReader: StoreReader, @unchecked Sendable {
     func accounts() throws -> [MailAccount] { try MainActor.assumeIsolated { try engine.accounts() } }
     func labels() throws -> [MailLabelItem] { try MainActor.assumeIsolated { try engine.labels() } }
     func bundles() throws -> [BundleItem] { try MainActor.assumeIsolated { try engine.bundles() } }
+    func parcels() throws -> [ParcelItem] { try MainActor.assumeIsolated { try engine.parcels() } }
     func unreadCounts(accountId: String?) throws -> [String: Int] {
         try MainActor.assumeIsolated { try engine.unreadCounts(accountId: accountId) }
     }
@@ -1622,6 +1660,10 @@ protocol MailEngine: AnyObject {
     // Bundles (docs/bundles.md). App-local, synced between devices.
     /// Active first, then archived, each by name.
     func bundles() throws -> [BundleItem]
+    /// The inbox card's parcels (docs/specs/parcel-card.md): the shipments
+    /// of the active bundles that are still on their way, every
+    /// account's, in the card's order.
+    func parcels() throws -> [ParcelItem]
     /// Nil for an unknown id (deleted on another device).
     func bundleContents(id: String) throws -> BundleContents?
     /// "New bundle…", optionally from selected threads, which join it.

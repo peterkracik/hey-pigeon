@@ -37,6 +37,12 @@ final class MockEngine: MailEngine {
     private var bundleStore: [MockBundle] = []
     /// The user's "not this one" choices (bundle id, thread id).
     private var bundleExclusions: Set<[String]> = []
+    /// The parcels the core's overview would list
+    /// (crates/core/src/parcels.rs, tested in Rust): here only what was
+    /// put in. Empty in the plain sample inbox, so the tests that count
+    /// its rows and bundles see what they always did; `withSampleOrder`
+    /// and the parcel tests fill it.
+    var parcelStore: [ParcelItem] = []
 
     init() {
         accountList = [
@@ -90,6 +96,46 @@ final class MockEngine: MailEngine {
         bundleStore = [MockBundle(id: "b1", name: "Lisbon trip", category: .trip, description: "",
                                   isArchived: false, createdAt: now.addingTimeInterval(-86_400 * 7))]
         update("t4") { $0.bundleId = "b1" }
+    }
+
+    /// The sample inbox with an order on its way: a shopping bundle of two
+    /// read emails and its two parcels, so the parcel card
+    /// (docs/specs/parcel-card.md) has something to show when the app
+    /// runs on the mock (HEYPIGEON_MOCK=1, or no OAuth client).
+    static func withSampleOrder() -> MockEngine {
+        let engine = MockEngine()
+        let now = Date()
+        func row(_ id: String, _ subject: String, _ snippet: String, hoursAgo: Double) -> ThreadRow {
+            ThreadRow(id: id, accountId: "me@personal.test", subject: subject, snippet: snippet,
+                      lastMessageAt: now.addingTimeInterval(-hoursAgo * 3600), isRead: true, isArchived: false,
+                      messageCount: 1, fromSummary: "Zalando", lastFromAddress: "service@zalando.test",
+                      scheduledAt: nil, isFollowUp: false, needsReply: false, isStarred: false,
+                      hasAttachment: false, priority: .low, triageLabelIds: [], labels: ["INBOX"], bundleId: "b2")
+        }
+        let shipped = row("t9", "Your order has shipped", "Two parcels are on their way to you.", hoursAgo: 30)
+        let ordered = row("t10", "Thanks for your order", "We are packing your order 10105-774.", hoursAgo: 52)
+        engine.rows[shipped.id] = shipped
+        engine.rows[ordered.id] = ordered
+        engine.bundleStore.append(MockBundle(id: "b2", name: "Zalando order", category: .shopping, description: "",
+                                             isArchived: false, createdAt: now.addingTimeInterval(-86_400 * 3)))
+        // The day as the shop would write it: tomorrow's date.
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now) ?? now
+        let day = tomorrow.formatted(.iso8601.year().month().day().dateSeparator(.dash))
+        engine.parcelStore = [
+            URL(string: "https://www.dhl.test/track?id=00340434161094000017").map {
+                ParcelItem(id: "number:00340434161094000017", bundleId: "b2", threadId: "t9",
+                           accountId: "me@personal.test", url: $0, host: "www.dhl.test",
+                           subject: shipped.subject, sender: "Zalando", at: shipped.lastMessageAt,
+                           progress: .shipped, expectedDay: day, title: "Merino crew-neck jumper, navy + 1 more")
+            },
+            URL(string: "https://tracking.gls.test/p/77120045").map {
+                ParcelItem(id: "number:77120045", bundleId: "b2", threadId: "t9",
+                           accountId: "me@personal.test", url: $0, host: "tracking.gls.test",
+                           subject: shipped.subject, sender: "Zalando", at: shipped.lastMessageAt,
+                           progress: .shipped)
+            },
+        ].compactMap { $0 }
+        return engine
     }
 
     func accounts() throws -> [MailAccount] { accountList }
@@ -694,6 +740,14 @@ final class MockEngine: MailEngine {
         bundleStore
             .sorted { ($0.isArchived ? 1 : 0, $0.name.lowercased()) < ($1.isArchived ? 1 : 0, $1.name.lowercased()) }
             .map(item)
+    }
+
+    /// Like the core's overview: only for a bundle that is active and an
+    /// email that is still there (a deleted thread takes its parcel along).
+    func parcels() throws -> [ParcelItem] {
+        parcelStore.filter { p in
+            bundleStore.contains { $0.id == p.bundleId && !$0.isArchived } && rows[p.threadId] != nil
+        }
     }
 
     func bundleContents(id: String) throws -> BundleContents? {

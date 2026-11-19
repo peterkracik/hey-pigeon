@@ -970,8 +970,10 @@ pub struct Parcel {
     /// `thread:<the newest email's thread id>`. What a dismissal names.
     pub id: String,
     pub bundle_id: String,
-    /// The newest email about it, and that email's tracking link.
+    /// The newest email about it, the account it is in, and that email's
+    /// tracking link.
     pub thread_id: ThreadId,
+    pub account_id: String,
     pub url: String,
     /// The link's host, lower-cased: `track.dhl.com`.
     pub host: String,
@@ -1224,6 +1226,7 @@ pub fn overview<S: Store>(
                     id: key,
                     bundle_id: bundle.id.clone(),
                     thread_id: email.id.clone(),
+                    account_id: email.account_id.clone(),
                     url: newest.url.clone(),
                     host: newest.host.clone(),
                     subject: email.subject.clone(),
@@ -1641,6 +1644,7 @@ mod tests {
         assert_eq!(first.host, "www.dhl.com");
         assert_eq!(first.status, Some(ParcelStatus::OutForDelivery));
         assert_eq!(first.bundle_id, b.id);
+        assert_eq!(first.account_id, "a");
         assert_eq!(found[1].id, "thread:other");
         assert_eq!(found[1].status, Some(ParcelStatus::Shipped));
         assert_eq!(found[1].url, "https://tracking.gls.example/p/77");

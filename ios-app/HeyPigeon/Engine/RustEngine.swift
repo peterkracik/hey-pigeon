@@ -481,6 +481,7 @@ final class RustEngine: MailEngine {
     func analyzePending() async -> AnalysisProgress { AnalysisProgress(await engine.analyzePending()) }
 
     func bundles() throws -> [BundleItem] { try reader.bundles() }
+    func parcels() throws -> [ParcelItem] { try reader.parcels() }
     func bundleContents(id: String) throws -> BundleContents? {
         try engine.bundleDetail(bundleId: id).map {
             BundleContents(
@@ -537,6 +538,13 @@ struct RustStoreReader: StoreReader, Sendable {
     }
 
     func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
+
+    /// The core works in the reader's time zone ("today", "tomorrow",
+    /// when an expected day is over), which only the shell knows.
+    func parcels() throws -> [ParcelItem] {
+        let offset = Int32(clamping: TimeZone.current.secondsFromGMT() / 60)
+        return try engine.trackingOverview(utcOffsetMinutes: offset).compactMap { ParcelItem($0) }
+    }
 
     func unreadCounts(accountId: String?) throws -> [String: Int] {
         try engine.unreadCounts(accountId: accountId).mapValues(Int.init)
@@ -641,6 +649,24 @@ private extension BundleItem {
             lastActivityAt: b.lastActivityAt > 0 ? Date(epochMs: b.lastActivityAt) : nil,
             isAutomatic: b.automatic
         )
+    }
+}
+
+private extension ParcelItem {
+    /// Nil for a link that is no web address: the core only hands over
+    /// http and https, and the card opens nothing else.
+    init?(_ p: Parcel) {
+        guard let url = URL(string: p.url), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else { return nil }
+        let progress: ParcelProgress? = switch p.status {
+        case .shipped: .shipped
+        case .outForDelivery: .outForDelivery
+        case .delivered: .delivered
+        case nil: nil
+        }
+        self.init(id: p.id, bundleId: p.bundleId, threadId: p.threadId, accountId: p.accountId, url: url,
+                  host: p.host, subject: p.subject, sender: p.sender, at: Date(epochMs: p.at),
+                  progress: progress, expectedDay: p.expectedDay, title: p.title)
     }
 }
 

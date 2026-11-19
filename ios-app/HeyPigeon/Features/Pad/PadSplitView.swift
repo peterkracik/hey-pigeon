@@ -115,7 +115,7 @@ private struct PadMailList: View {
         Group {
             if !model.hasLoadedOnce {
                 SkeletonList()
-            } else if model.groupedRows.isEmpty {
+            } else if model.listIsEmpty {
                 // With no account: the sign-in, not "All clear" (the
                 // phone's list and the Mac's window offer the same).
                 EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt,

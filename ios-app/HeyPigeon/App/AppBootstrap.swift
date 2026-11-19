@@ -15,7 +15,8 @@ enum AppBootstrap {
         let env = ProcessInfo.processInfo.environment
         let clientId = (Bundle.main.object(forInfoDictionaryKey: clientIdKey) as? String) ?? ""
         if env["HEYPIGEON_MOCK"] == "1" || clientId.isEmpty || clientId.hasPrefix("$(") {
-            return MockEngine()
+            // With an order on its way, so the parcel card shows too.
+            return MockEngine.withSampleOrder()
         }
         do {
             let dir = try FileManager.default.url(

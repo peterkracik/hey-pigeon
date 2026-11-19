@@ -781,6 +781,31 @@ struct RowActionKeyTests {
     }
 }
 
+struct PullDownTests {
+    @Test func aShortPullLetGoOpensTheSearch() {
+        var pull = PullDown()
+        pull.update(overscroll: 20)
+        pull.update(overscroll: 60)
+        pull.update(overscroll: 10)   // the list springing back under the finger
+        #expect(pull.released())
+    }
+
+    @Test func aRestingFingerAndARefreshOpenNothing() {
+        var pull = PullDown()
+        pull.update(overscroll: 12)
+        #expect(!pull.released())
+        pull.update(overscroll: 150)   // the system's pull to refresh
+        #expect(!pull.released())
+    }
+
+    @Test func eachDragStartsFromNothing() {
+        var pull = PullDown()
+        pull.update(overscroll: 60)
+        #expect(pull.released())
+        #expect(!pull.released())
+    }
+}
+
 struct ScrollCollapseTests {
     @Test func aScrollDownFoldsTheBarAndAScrollUpOpensIt() {
         var bar = ScrollCollapse()

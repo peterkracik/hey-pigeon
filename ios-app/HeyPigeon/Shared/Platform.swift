@@ -651,17 +651,17 @@ extension View {
         #endif
     }
 
-    /// The phone's search: a field hidden above the list, in the
-    /// navigation bar's drawer, that a pull down reveals (as Mail's did
-    /// before iOS 26) — and that stays on screen while the search is up
-    /// (`pinned`), however it was opened. The drawer is named: left to
-    /// the system the field goes to the bottom toolbar on the phone.
-    /// Nothing on the Mac, whose search is its own panel.
+    /// The phone's search field, in the navigation bar's drawer and
+    /// always shown: it is put on the search's own pane, which is on
+    /// screen only while the search is up (a short pull down on a list
+    /// opens it — `PullDown`). The drawer is named: left to the system
+    /// the field goes to the bottom toolbar on the phone. Nothing on the
+    /// Mac, whose search is its own panel.
     @ViewBuilder
-    func pullDownSearch(text: Binding<String>, isPresented: Binding<Bool>, pinned: Bool, prompt: String) -> some View {
+    func shownSearch(text: Binding<String>, isPresented: Binding<Bool>, prompt: String) -> some View {
         #if os(iOS)
         searchable(text: text, isPresented: isPresented,
-                   placement: .navigationBarDrawer(displayMode: pinned ? .always : .automatic), prompt: prompt)
+                   placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
         #else
         self
         #endif

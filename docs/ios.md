@@ -76,7 +76,6 @@ floating "splits" pill above the tab bar. Here that maps to:
 ```text
 ┌──────────────────────────────────────────────────────────┐
 │ (≡)                                                  (✦) │  ← sidebar · AI (when connected)
-│ ┄ 🔍 Search mail ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │  ← hidden; pull the list down
 │ ● Sender                                          10:42  │
 │   Subject                                                │
 │   two lines of snippet…                                  │
@@ -115,11 +114,12 @@ floating "splits" pill above the tab bar. Here that maps to:
 - **The title** sits between the top bar's circles: folder, unread count and —
   with more than one account — the account's dot and name. Tapping it
   switches account (All · each).
-- **Search** is a field hidden above each of the three lists, in the
-  navigation bar's drawer, as in Mail before iOS 26: a short pull down
-  shows it, and the same pull carried further syncs (both are the
-  system's — `pullDownSearch`, `.refreshable` — so they do not compete).
-  With the field in use the list gives way to the filter buttons, the
+- **Search** is not on screen until it is asked for: a short pull down
+  on any of the three lists, let go, opens it (`PullDown`: 44–110 pt),
+  and a longer pull is the system's refresh. The field is the search
+  pane's own (`shownSearch`), not the list's: the navigation bar's
+  drawer left on the list showed it at the top of every list. With the
+  search up the list gives way to the field, the filter buttons, the
   recent searches and the results (`SearchPane`); the tab bar keeps the
   list's tab (`AppModel.listTab`), and Cancel or any tab goes back
   (`closeSearch`), the words and filters cleared. A result opens on the
@@ -259,7 +259,7 @@ archive), **Pin** (`s`, the Gmail star), **Remind me** (`h`), **Need reply**
 | `enter` open | tap | |
 | `esc` back | back / edge swipe | |
 | `j`/`k` | scroll | |
-| `/` search | pull the list down · sidebar › Search | |
+| `/` search | a short pull down on the list · sidebar › Search | |
 | `cmd+k` palette | long-press a row | Mark done, Remind me, Pin, Need reply, Mark read/unread, Move to folder, Add label, Jev labels, Delete |
 | `0`/`1`/`2` accounts | sidebar | |
 | `g i` / `g a` | sidebar · label pill | Scheduled and Need reply are tabs |

@@ -4,9 +4,11 @@
 // once when the sheet opens and again when the store changes; nothing is
 // asked of the relay for it.
 //
-// A row is a message: who opened it (the one recipient, by name; with
-// several, nobody is named, because nobody is known), when it was last
-// opened, and its subject. "Delivered to a device that hides opens" is
+// A row is a message, on two lines: who opened it (the one recipient, by
+// name; with several, nobody is named, because nobody is known) and right
+// after the name when it was last opened; under them its subject. The
+// rows stand under "Last 7 days", "Earlier this month" and a heading for
+// each month before that. "Delivered to a device that hides opens" is
 // not an open and is not listed here.
 
 import SwiftUI
@@ -16,7 +18,9 @@ struct RecentOpensView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let sections = RecentOpens.sections(model.recentOpens)
+        // One set of date formatters per draw, shared by every row.
+        let format = RecentOpens.Format()
+        let sections = RecentOpens.sections(model.recentOpens, format: format)
         List {
             Section {
                 if sections.isEmpty {
@@ -37,11 +41,14 @@ struct RecentOpensView: View {
             }
             .menuCard()
             ForEach(sections) { section in
-                Section(section.title) {
+                Section {
                     ForEach(section.items) { item in
-                        Button { model.open(item) } label: { row(item) }
+                        Button { model.open(item) } label: { row(item, format) }
                             .buttonStyle(.plain)
                     }
+                } header: {
+                    // As written ("Last 7 days", "October"), not in capitals.
+                    Text(section.title).textCase(nil)
                 }
                 .menuCard()
             }
@@ -57,14 +64,17 @@ struct RecentOpensView: View {
         .task { await model.loadRecentOpens() }
     }
 
-    private func row(_ item: RecentOpenItem) -> some View {
+    private func row(_ item: RecentOpenItem, _ format: RecentOpens.Format) -> some View {
         VStack(alignment: .leading, spacing: 2) {
+            // The time follows the name, it is not pushed to the far edge;
+            // a long name gives way, the time never does.
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(RecentOpens.who(item))
                     .font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Spacer(minLength: 8)
-                Text(Formatters.messageTime(item.openedAt))
-                    .font(Theme.meta).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                Text(format.time(item.openedAt))
+                    .font(.subheadline).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                    .lineLimit(1).fixedSize().layoutPriority(1)
+                Spacer(minLength: 0)
             }
             Text(RecentOpens.subject(item))
                 .font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
@@ -72,7 +82,7 @@ struct RecentOpensView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(RecentOpens.spoken(item))
+        .accessibilityLabel(RecentOpens.spoken(item, format: format))
         .accessibilityAddTraits(.isButton)
     }
 }

@@ -218,12 +218,82 @@ enum RecentOpens {
     static let title = "Recent Opens"
     static let symbol = "eye"
 
-    /// The rows under one day heading.
+    /// The rows under one heading.
     struct Group: Identifiable, Hashable {
+        /// Stable while the list changes: "week", "month", or "2026-10".
+        let id: String
         let title: String
         var items: [RecentOpenItem]
-        var id: String { title }
     }
+
+    /// The sheet's dates, in the user's language: built once per draw
+    /// (a date formatter is expensive to make) and pure — the tests hand
+    /// it their own "now", calendar and locale.
+    struct Format {
+        let now: Date
+        let calendar: Calendar
+        private let weekday: DateFormatter
+        private let clock: DateFormatter
+        private let day: DateFormatter
+        private let dayYear: DateFormatter
+        private let month: DateFormatter
+        private let monthYear: DateFormatter
+
+        init(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) {
+            self.now = now
+            self.calendar = calendar
+            func make(_ template: String?) -> DateFormatter {
+                let f = DateFormatter()
+                f.calendar = calendar
+                f.timeZone = calendar.timeZone
+                f.locale = locale
+                if let template {
+                    f.setLocalizedDateFormatFromTemplate(template)
+                } else {
+                    f.dateStyle = .none
+                    f.timeStyle = .short
+                }
+                return f
+            }
+            weekday = make("EEE")
+            clock = make(nil)
+            day = make("EEEdMMM")
+            dayYear = make("EEEdMMMy")
+            month = make("LLLL")
+            monthYear = make("LLLLy")
+        }
+
+        /// Opened less than seven days before `now` (or after it: a clock
+        /// that runs ahead is not "last month").
+        func isRecent(_ date: Date) -> Bool {
+            now.timeIntervalSince(date) < RecentOpens.recentSpan
+        }
+
+        private func sameYear(_ date: Date) -> Bool {
+            calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        }
+
+        /// When it was opened: the weekday and the time within the last
+        /// seven days ("Thu 18:59"); before that the weekday, day and
+        /// month ("Mon, 9 Nov"), with the year when it is not this one.
+        func time(_ date: Date) -> String {
+            if isRecent(date) { return "\(weekday.string(from: date)) \(clock.string(from: date))" }
+            return (sameYear(date) ? day : dayYear).string(from: date)
+        }
+
+        /// The heading a row stands under, and its key.
+        func heading(_ date: Date) -> (id: String, title: String) {
+            if isRecent(date) { return ("week", "Last 7 days") }
+            let parts = calendar.dateComponents([.year, .month], from: date)
+            let current = calendar.dateComponents([.year, .month], from: now)
+            if parts.year == current.year && parts.month == current.month { return ("month", "Earlier this month") }
+            let id = "\(parts.year ?? 0)-\(parts.month ?? 0)"
+            return (id, (sameYear(date) ? month : monthYear).string(from: date))
+        }
+    }
+
+    /// "Last 7 days" is this long, to the second.
+    static let recentSpan: TimeInterval = 7 * 86_400
 
     /// Who opened it: the one recipient there was. With several, nobody
     /// is named — one pixel serves them all, so nobody is known.
@@ -240,22 +310,22 @@ enum RecentOpens {
     }
 
     /// The row for VoiceOver, as a sentence.
-    static func spoken(_ item: RecentOpenItem, now: Date = Date()) -> String {
-        "\(who(item)) opened \(subject(item)), \(Formatters.messageTime(item.openedAt, now: now))"
+    static func spoken(_ item: RecentOpenItem, format: Format = Format()) -> String {
+        "\(who(item)) opened \(subject(item)), \(format.time(item.openedAt))"
     }
 
-    /// The rows under the list's own day headings — Today, Last 7 days,
-    /// Older — in the order given (newest open first), empty headings
-    /// left out.
-    static func sections(_ items: [RecentOpenItem], now: Date = Date()) -> [Group] {
-        let heading = Formatters.dayGrouper(now: now)
+    /// The rows under their headings, in the order given (newest open
+    /// first): "Last 7 days", then "Earlier this month", then a heading
+    /// for each month before it, named by the month — with its year when
+    /// that is not this year. Headings with no rows are left out.
+    static func sections(_ items: [RecentOpenItem], format: Format = Format()) -> [Group] {
         var out: [Group] = []
         for item in items {
-            let title = heading(item.openedAt)
-            if let index = out.firstIndex(where: { $0.title == title }) {
+            let heading = format.heading(item.openedAt)
+            if let index = out.firstIndex(where: { $0.id == heading.id }) {
                 out[index].items.append(item)
             } else {
-                out.append(Group(title: title, items: [item]))
+                out.append(Group(id: heading.id, title: heading.title, items: [item]))
             }
         }
         return out
@@ -279,7 +349,7 @@ enum RecentOpens {
     /// Under the rows: what the list is, and that it has stopped growing
     /// when read status is off everywhere.
     static func footer(anyAccountOn: Bool) -> String {
-        let base = "Opens of the last 30 days, as this \(Device.name) recorded them. Mail delivered to a device that hides opens is not listed."
+        let base = "Opens of the last 90 days, at most 100, as this \(Device.name) recorded them. The relay keeps its own record of a message for 30 days; older rows are this \(Device.name)'s memory. Mail delivered to a device that hides opens is not listed."
         return anyAccountOn ? base : base + " Read status is off, so nothing new is added."
     }
 }
@@ -1285,7 +1355,7 @@ protocol StoreReader: Sendable {
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func threadRow(id: String) throws -> ThreadRow?
     func threadLocal(id: String) throws -> ThreadDetail?
-    /// Recent Opens: the user's sent messages opened in the last 30 days,
+    /// Recent Opens: the user's sent messages opened in the last 90 days,
     /// newest open first, 100 at most; one account's, or all. Local.
     func recentOpens(accountId: String?) throws -> [RecentOpenItem]
 }

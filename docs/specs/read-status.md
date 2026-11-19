@@ -69,11 +69,18 @@ switch, per mailbox, off until I turn it on.
   one; five at most, then "and N earlier". Nothing else about the reader is shown, because
   nothing else is known (R18).
 - R7. "Recent Opens" is a sheet listing the user's sent messages that
-  were opened in the last 30 days, newest open first, 100 at most, under
-  the list's day headings (Today · Last 7 days · Older). A row is a
-  message: who opened it — the one recipient there was, by name or
-  address; with several, "One of N recipients", never a name — the time
-  of its newest open, and its subject. Only opens are in it: a message
+  were opened in the last 90 days, newest open first, 100 at most, under
+  three kinds of heading: "Last 7 days" (less than seven days ago, to the
+  second), "Earlier this month", then one heading for each month before,
+  named by the month, with its year when that is not this year. A row is
+  a message on two lines: who opened it — the one recipient there was,
+  by name or address; with several, "One of N recipients", never a name
+  — followed on the same line by the time of its newest open (weekday
+  and time of day within the last seven days; weekday, day and month
+  before that, in the user's language); under them its subject. The 90
+  days are the device's memory: the relay forgets a message after 30,
+  but what it reported stays in the local store, which nothing prunes
+  short of removing the account. Only opens are in it: a message
   only ever fetched by a device that hides opens is not listed, anywhere
   on the sheet. It is a query over the local store, across all accounts
   (or the account the app is filtered to); it makes no request and
@@ -84,7 +91,7 @@ switch, per mailbox, off until I turn it on.
   off" with where to turn it on when no account has it on; "Read status
   is not available in this build" without a relay. The entry points are
   shown only in a build with a relay. An account whose read status was
-  turned off keeps the rows it had (R11) until they are older than 30
+  turned off keeps the rows it had (R11) until they are older than 90
   days; an account that is removed takes its rows with it.
 
 ### The setting
@@ -374,7 +381,7 @@ new about its user, but the declaration must still be literally true.
 | | iPhone | iPad | Mac |
 | --- | --- | --- | --- |
 | Surface | Status and its events in the open message's header (thread view); composer sheet; Recent Opens as a sheet | Same views in the iPad layout | Status and its events in the open message's header (thread page); inline composer or window; Recent Opens as the same sheet |
-| Entry points | The composer's footer: the eye button, "Read status", when the From account has it on. Sidebar sheet → "Recent Opens" | Same; the sidebar column's "Recent Opens" row | The same eye button. Sidebar → "Recent Opens"; `g o`; palette "Recent Opens" |
+| Entry points | The composer's footer: the eye button, "Read status", when the From account has it on. Sidebar sheet → "Recent Opens" | Same; the sidebar column's "Recent Opens" row | The same eye button. Sidebar → "Recent Opens"; Go menu → "Recent Opens"; `g o`; palette "Recent Opens" |
 | Settings | Settings → Accounts → account → "Read status", off | same | same (Settings window) |
 | How it learns of opens | Sync on open, pull, background refresh; silent push when "New mail (push)" is on | same | The 30-second sync |
 | Status | Steps 1–6 implemented: every status in the header, the setting, the composer switch, tracked sends, the poll, the off switch, Recent Opens. The silent push on open not started | same | same |
@@ -786,5 +793,18 @@ Step 6, 2026-11-19 — **Verified with notes**. Not merged.
   chosen message open, without scrolling to it.
 - Not seen on a device: the sheet, its rows and headings, the sidebar
   rows, and the message opening expanded.
+
+Step 6, second pass after the owner's reference screen, 2026-11-19: the
+sheet's structure follows it in the app's own look — the headings of R7
+in place of the list's day groups, the time right after the name, the
+window widened from 30 to 90 days (local events are never pruned, and no
+copy promised they would be; the footer and the privacy page now say
+whose memory an old row is), and "Recent Opens" added to the Mac's Go
+menu. The grouping and the dates are one pure type
+(`RecentOpens.Format`, `RecentOpens.sections`) with an injected now,
+calendar and locale; tests `recentOpensStandUnderTheirHeadings`,
+`recentOpensSayWhenInTheUsersWords` (`ModelTests`) — written, not yet
+compiled. The Mac's menus show no chords (the bare-letter keys are not
+menu equivalents), so the Go menu's item carries none.
 
 Step 7: not started.

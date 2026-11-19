@@ -81,7 +81,7 @@ impl Engine {
         Ok(())
     }
 
-    /// "Recent Opens" (R7): the user's sent messages opened in the last 30
+    /// "Recent Opens" (R7): the user's sent messages opened in the last 90
     /// days, newest open first, 100 at most; `account_id` narrows it to
     /// one account. A read of the local store: no request is made, and an
     /// account with read status off simply has nothing newer to show.

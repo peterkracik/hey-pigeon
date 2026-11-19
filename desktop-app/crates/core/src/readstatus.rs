@@ -516,11 +516,16 @@ pub fn catch_up_threads<S: Store>(
 
 // ----------------------------------------------------------- recent opens
 
-/// How far back "Recent Opens" looks, and how many rows it holds.
-pub const RECENT_OPENS_WINDOW_MS: i64 = 30 * 24 * 3_600_000;
+/// How far back "Recent Opens" looks, and how many rows it holds. The
+/// window is this device's memory, not the relay's: the relay forgets a
+/// message 30 days after it was sent (`TOKEN_TTL_MS`), while what it
+/// reported stays in this store until the account is removed. So the
+/// list can reach back further than the relay does — three months, and
+/// never more than a hundred rows.
+pub const RECENT_OPENS_WINDOW_MS: i64 = 90 * 24 * 3_600_000;
 pub const RECENT_OPENS_LIMIT: u32 = 100;
 
-/// "Recent Opens" (R7): the user's sent messages opened in the last 30
+/// "Recent Opens" (R7): the user's sent messages opened in the last 90
 /// days, newest open first, 100 at most — for one account or all. Read
 /// from what this device already stored; nothing is asked of anyone. An
 /// account whose read status was turned off since keeps the rows it had
@@ -1960,6 +1965,10 @@ mod tests {
         let text = format!("{all:?}");
         assert!(!text.contains("tok-") && !text.contains("acme.test") && !text.contains("Subject"));
         assert_eq!(RECENT_OPENS_LIMIT, 100);
+        // It reaches back further than the relay keeps a message: an open
+        // from two months ago is still this device's to show.
+        assert!(RECENT_OPENS_WINDOW_MS > TOKEN_TTL_MS);
+        assert_eq!(RECENT_OPENS_WINDOW_MS, 90 * 24 * HOUR);
     }
 
     /// A provider with no relay (the default) tracks nothing and holds

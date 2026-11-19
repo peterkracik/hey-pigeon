@@ -3,9 +3,8 @@
 // runner). Edit: the presets, a tone, or a freeform instruction, run
 // against the selection or the whole body. Write: a brief the AI turns
 // into the whole message — a reply goes through the desktop's "Draft with
-// AI" (the brief steers it as notes), a new message through the edit
-// endpoint with a compose instruction. The sheet opens in Write when the
-// body is empty.
+// AI" (the brief steers it as notes), a new message through the engine's
+// write call. The sheet opens in Write when the body is empty.
 //
 // A request can always be cancelled and gives up after `AIAssist.timeout`,
 // and its result is shown for review — refined with a tone, discarded, or
@@ -22,6 +21,9 @@ struct AIEditSheet: View {
     let hasSelection: Bool
     let subject: String
     let history: String?
+    /// Who writes to whom, as the Mac's panel sends it: without it the
+    /// model did not know whose words the draft was or whom to address.
+    let context: AIWriteContext?
     /// Edit result: replaces the selection or the body.
     let onApply: (String) -> Void
     /// Written draft: replaces the body (the signature stays).
@@ -35,12 +37,13 @@ struct AIEditSheet: View {
     @State private var runner = AIAssistRunner()
     @FocusState private var briefFocused: Bool
 
-    init(text: String, hasSelection: Bool, subject: String, history: String?,
+    init(text: String, hasSelection: Bool, subject: String, history: String?, context: AIWriteContext? = nil,
          onApply: @escaping (String) -> Void, onWrite: @escaping (String) -> Void) {
         self.text = text
         self.hasSelection = hasSelection
         self.subject = subject
         self.history = history
+        self.context = context
         self.onApply = onApply
         self.onWrite = onWrite
         _mode = State(initialValue: AIAssist.startMode(text: text))
@@ -53,13 +56,13 @@ struct AIEditSheet: View {
     private var briefTrimmed: String { brief.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var instructionTrimmed: String { instruction.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// What a tap sends and to whom (AIAssist.footnote). The phone sends
-    /// no AIWriteContext. `shown` is the body's one read of who answers,
+    /// What a tap sends and to whom (AIAssist.footnote), the composer's
+    /// AIWriteContext included when it gave one. `shown` is the body's one read of who answers,
     /// the same value every button of that pass hands the runner: a sync
     /// can change the active provider while the sheet is up, and the core
     /// then refuses the request rather than send it under this sentence.
     private func footnote(_ shown: AIStatus?) -> String {
-        AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: false,
+        AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: context != nil,
                           destination: AIAssist.Destination(shown),
                           refining: runner.result != nil)
     }
@@ -206,7 +209,7 @@ struct AIEditSheet: View {
         Section("Tone") {
             ForEach(AIAssist.tones) { tone in
                 preset(tone) { instruction in
-                    runner.refine(r, with: instruction, history: history, context: nil, shown: shown, in: model)
+                    runner.refine(r, with: instruction, history: history, context: context, shown: shown, in: model)
                 }
             }
         }
@@ -216,12 +219,12 @@ struct AIEditSheet: View {
 
     private func edit(_ instruction: String, shown: AIStatus?) {
         guard !AIAssist.isBlank(instruction) else { return }
-        runner.edit(instruction, text: text, hasSelection: hasSelection, history: history, context: nil,
+        runner.edit(instruction, text: text, hasSelection: hasSelection, history: history, context: context,
                     shown: shown, in: model)
     }
 
     private func write(notes: String, shown: AIStatus?) {
-        runner.write(notes: notes, subject: subject, history: history, context: nil, shown: shown, in: model)
+        runner.write(notes: notes, subject: subject, history: history, context: context, shown: shown, in: model)
     }
 
     private func apply(_ r: AIAssist.Outcome) {

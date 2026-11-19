@@ -83,6 +83,14 @@ struct SystemModelProvider: ModelProvider {
     func session(instructions: String, task: AiTask, tools: [any Tool]) -> LanguageModelSession {
         LanguageModelSession(model: SystemLanguageModel.default, tools: tools, instructions: instructions)
     }
+
+    /// Whether the on-device model is made for a language (a code, "sk").
+    /// It answers in others too, badly: the translation panel says so
+    /// instead of presenting a rough answer as a good one.
+    static func supports(language code: String) -> Bool {
+        let wanted = Locale.Language(identifier: code).languageCode
+        return SystemLanguageModel.default.supportedLanguages.contains { $0.languageCode == wanted }
+    }
 }
 
 // MARK: - Apple, Private Cloud Compute

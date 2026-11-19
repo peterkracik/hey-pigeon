@@ -240,7 +240,7 @@ struct ComposeView: View {
                 // What it writes is reviewed in the sheet before
                 // `applyAI` / `replaceBody` put it into the message.
                 AIEditSheet(text: selectedText ?? bodyWithoutSignature, hasSelection: selectedText != nil,
-                            subject: draft.subject, history: draft.history,
+                            subject: draft.subject, history: draft.history, context: writeContext,
                             onApply: applyAI, onWrite: replaceBody)
                 .sheetSize(.mediumOrLarge, dragIndicator: false)
             }
@@ -882,24 +882,6 @@ extension ComposeView {
         return names.isEmpty ? "with no recipients yet" : "to \(names.joined(separator: ", "))"
     }
 
-    /// The name the thread knows an address by, else the address.
-    private func displayName(_ address: String) -> String {
-        // A Reply-To address stays an address: the name would be the one
-        // its sender chose for an earlier message of the thread.
-        if draft.repliesElsewhere { return address }
-        return thread?.mail.first { EmailAddress.same($0.fromAddress, address) }?.fromName ?? address
-    }
-
-    /// Who writes to whom, for the AI's prompt.
-    private var writeContext: AIWriteContext {
-        AIWriteContext(senderName: fromAccount?.displayName, senderEmail: fromAccount?.email,
-                       recipients: (to + cc).map { address in
-                           let name = displayName(address)
-                           return name == address ? address : "\(name) <\(address)>"
-                       },
-                       subject: draft.subject)
-    }
-
     /// The HTML editor with the floating toolbar over its selection, and
     /// the AI panel under it while it is open.
     @ViewBuilder private var bodyEditor: some View {
@@ -979,6 +961,31 @@ extension ComposeView {
 #endif
 
 extension ComposeView {
+    /// The name the thread knows an address by, else the address. Only
+    /// the Mac's composer loads the thread above a reply; the phone's
+    /// knows the addresses alone.
+    private func displayName(_ address: String) -> String {
+        #if os(macOS)
+        // A Reply-To address stays an address: the name would be the one
+        // its sender chose for an earlier message of the thread.
+        if draft.repliesElsewhere { return address }
+        return thread?.mail.first { EmailAddress.same($0.fromAddress, address) }?.fromName ?? address
+        #else
+        return address
+        #endif
+    }
+
+    /// Who writes to whom, for the AI's prompt: the phone's sheet and the
+    /// Mac's panel both send it.
+    private var writeContext: AIWriteContext {
+        AIWriteContext(senderName: fromAccount?.displayName, senderEmail: fromAccount?.email,
+                       recipients: (to + cc).map { address in
+                           let name = displayName(address)
+                           return name == address ? address : "\(name) <\(address)>"
+                       },
+                       subject: draft.subject)
+    }
+
     /// The phone editor's text for a draft: as it was typed (an undone
     /// send), else read back from the html part of a saved draft, else
     /// the plain text.

@@ -388,6 +388,30 @@ final class RustEngine: MailEngine {
             throw Self.shellError(error)
         }
     }
+    func aiProofread(text: String, expectedProvider: String?) async throws -> String {
+        do {
+            return try await engine.aiProofread(providerId: provider, text: text, expectedProviderId: expectedProvider)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
+    }
+    func aiWriteMessage(brief: String, subject: String, context: AIWriteContext?,
+                        expectedProvider: String?) async throws -> String {
+        do {
+            return try await engine.aiWriteMessage(providerId: provider, brief: brief, subject: subject,
+                                                   context: context.map(Self.ffi), expectedProviderId: expectedProvider)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
+    }
+    func aiTranslate(text: String, source: String?, target: String, expectedProvider: String?) async throws -> String {
+        do {
+            return try await engine.aiTranslate(providerId: provider, text: text, source: source, target: target,
+                                                expectedProviderId: expectedProvider)
+        } catch let error as EngineError {
+            throw Self.shellError(error)
+        }
+    }
     /// The core's refusal in the app's own type, so the shell and the mock
     /// throw the same thing; any other error passes as it is.
     private static func shellError(_ error: EngineError) -> any Error {
@@ -412,7 +436,8 @@ final class RustEngine: MailEngine {
 
     func aiPrompts() -> AIPrompts {
         let p = engine.aiPrompts()
-        return AIPrompts(summary: p.summary, threadSummary: p.threadSummary, draftReply: p.draftReply, edit: p.edit)
+        return AIPrompts(summary: p.summary, threadSummary: p.threadSummary, draftReply: p.draftReply, edit: p.edit,
+                         proofread: p.proofread, write: p.write, translate: p.translate)
     }
 
     // MARK: Triage

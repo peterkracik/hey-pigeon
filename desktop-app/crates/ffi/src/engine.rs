@@ -1106,6 +1106,10 @@ impl Engine {
             .find(|a| a.id == email)
             .map(|a| a.color.clone())
             .unwrap_or_else(|| ACCOUNT_COLORS[existing.len() % ACCOUNT_COLORS.len()].to_string());
+        let read_status = existing
+            .iter()
+            .find(|a| a.id == email)
+            .is_some_and(|a| a.read_status);
         self.store.upsert_account(&domain::Account {
             id: email.clone(),
             email: email.clone(),
@@ -1114,6 +1118,8 @@ impl Engine {
             history_id: None,
             avatar_url,
             signature: String::new(),
+            // Signing in again is not a decision about read status.
+            read_status,
         })?;
         self.disconnected.lock().unwrap().remove(&email);
         self.notify_threads_updated();
@@ -1647,6 +1653,9 @@ impl Engine {
         // one meta read per round, one Gmail call per day at most.
         if result.is_ok() {
             self.renew_watch(account_id).await;
+            // Where read status lives, asked of the relay once a day and
+            // only for an account that has it on (readstatus.rs).
+            self.discover_opens(account_id).await;
         }
         // Threads a discarded change left different from Gmail while it
         // could not be asked (`discard_outbox`): Gmail just answered.
@@ -1927,6 +1936,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         e.store
@@ -2010,6 +2020,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
     }
@@ -2476,6 +2487,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         e.store
@@ -2551,6 +2563,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         e.store
@@ -2598,6 +2611,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         e.store

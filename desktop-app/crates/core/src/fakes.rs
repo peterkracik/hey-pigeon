@@ -16,6 +16,7 @@ pub fn sample_account(id: &str) -> Account {
         history_id: None,
         avatar_url: None,
         signature: String::new(),
+        read_status: false,
     }
 }
 

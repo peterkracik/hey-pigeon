@@ -57,6 +57,10 @@ const BUNDLE_THREAD_PREFIX: &str = "bundle_thread:";
 pub const ACCOUNT_FIELD_DISPLAY_NAME: &str = "display_name";
 pub const ACCOUNT_FIELD_COLOR: &str = "color";
 pub const ACCOUNT_FIELD_SIGNATURE: &str = "signature";
+/// `account:read_status` → bool: the account's read-status switch
+/// (docs/specs/read-status.md R9). Like the three above it rides the
+/// account's own file and the newest write wins.
+pub const ACCOUNT_FIELD_READ_STATUS: &str = "read_status";
 /// sync_meta keys.
 const META_FILE_ID: &str = "file_id";
 const META_UPLOADED_FP: &str = "uploaded_fp";
@@ -322,6 +326,20 @@ pub fn record_account_field<S: Store>(
         account_id,
         &account_field_key(field),
         Some(value.into()),
+    )
+}
+
+/// The account's read-status switch, for the user's other devices.
+pub fn record_read_status<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    enabled: bool,
+) -> Result<(), StoreError> {
+    record_local(
+        store,
+        account_id,
+        &account_field_key(ACCOUNT_FIELD_READ_STATUS),
+        Some(enabled.into()),
     )
 }
 
@@ -723,6 +741,29 @@ fn apply_entries<S: Store>(
                     }
                 }
             }
+        } else if account_field(&entry.key) == Some(ACCOUNT_FIELD_READ_STATUS) {
+            // The one account field that is a switch. Stateless like the
+            // rest: the map is the truth, so an account re-connected on
+            // this device (its row written afresh, off) gets the user's
+            // choice back on the next round.
+            let Some(want) = entry.value.as_ref().and_then(|v| v.as_bool()) else {
+                continue;
+            };
+            if account.is_none() {
+                account = store
+                    .list_accounts()?
+                    .into_iter()
+                    .find(|a| &a.id == account_id);
+            }
+            let Some(acc) = account.as_mut() else {
+                continue;
+            };
+            if acc.read_status == want {
+                continue;
+            }
+            acc.read_status = want;
+            store.upsert_account(acc)?;
+            applied.settings += 1;
         } else if let Some(field) = account_field(&entry.key) {
             // Fields always carry a value; a tombstone has nothing to say.
             // Applied statelessly (the map is the truth), so a row reset
@@ -1072,6 +1113,63 @@ mod tests {
             b.get_thread(&"t1".into()).unwrap().unwrap().scheduled_at,
             Some(7)
         );
+    }
+
+    /// docs/specs/read-status.md R8, R9, R13: the switch is off until
+    /// turned on, follows the user to their other devices, and the newest
+    /// write wins — a device that learns "off" from the map is off.
+    #[tokio::test]
+    async fn read_status_setting_syncs_as_account_field() {
+        let remote = Arc::new(MemTransport::default());
+        let acc = "acc".to_string();
+        let a = device_store("acc", "dev-a");
+        let b = device_store("acc", "dev-b");
+        let on = |s: &MemStore| s.list_accounts().unwrap()[0].read_status;
+        let turn = |s: &MemStore, enabled: bool| {
+            let mut account = s.list_accounts().unwrap().remove(0);
+            account.read_status = enabled;
+            s.upsert_account(&account).unwrap();
+            record_read_status(s, &acc, enabled).unwrap();
+        };
+        assert!(!on(&a) && !on(&b));
+        // A round with nothing recorded turns nothing on.
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        assert!(!on(&a) && !on(&b));
+
+        turn(&a, true);
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        assert_eq!(
+            sync_account(&*remote, &b, &acc).await.unwrap(),
+            Applied {
+                threads: 0,
+                settings: 1
+            }
+        );
+        assert!(on(&b));
+        // The other settings of the account are not touched by it.
+        assert_eq!(b.list_accounts().unwrap()[0], {
+            let mut expected = sample_account("acc");
+            expected.read_status = true;
+            expected
+        });
+
+        // B turns it off; A learns it and is off too. Settled after that.
+        turn(&b, false);
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        assert!(sync_account(&*remote, &a, &acc).await.unwrap().any());
+        assert!(!on(&a));
+        assert!(!sync_account(&*remote, &a, &acc).await.unwrap().any());
+
+        // An account re-connected on a device comes back with the user's
+        // choice, not with the default.
+        turn(&a, true);
+        sync_account(&*remote, &a, &acc).await.unwrap();
+        sync_account(&*remote, &b, &acc).await.unwrap();
+        b.upsert_account(&sample_account("acc")).unwrap();
+        assert!(!on(&b));
+        assert!(sync_account(&*remote, &b, &acc).await.unwrap().any());
+        assert!(on(&b));
     }
 
     #[tokio::test]

@@ -1449,6 +1449,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         let acc = "me@x.com".to_string();
@@ -1502,6 +1503,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         assert!(e
@@ -1960,6 +1962,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         let bills = e.create_triage_label("Bills".into()).unwrap();
@@ -2049,6 +2052,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         let total = TRIAGE_BATCH + 2;

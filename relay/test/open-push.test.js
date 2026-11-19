@@ -142,7 +142,7 @@ test("one mailbox is woken at most once a window, however many messages are open
   clock.now = NOW + 200 * 100 + Math.max(WINDOW_MS, REPEAT_MS) + 1;
   await pixel(many[0]);
   assert.equal(apns.sent.filter((m) => m.token === DEVICE).length, 2);
-  assert.equal(WINDOW_MS, 60_000);
+  assert.equal(WINDOW_MS, 5 * 60_000);
 });
 
 test("a mailbox with no registered device is a no-op without a log line", async () => {
@@ -191,7 +191,9 @@ test("the pixel never waits for Apple longer than the budget", async () => {
   const started = Date.now();
   assert.ok(isGif(await pixel()));
   assert.ok(Date.now() - started < 1000, "answered without Apple");
-  assert.equal(apns.sent.length, 1);
+  // Both devices were sent to at once: a stuck first one does not hold
+  // the second back, and the wait does not count the devices.
+  assert.equal(apns.sent.length, 2);
   assert.deepEqual(log.lines, [`info open-push ${HASH.slice(0, 8)}: not waited for`]);
   release();
   assert.ok(BUDGET_MS <= 2000);

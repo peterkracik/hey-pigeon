@@ -21,21 +21,26 @@
 //     the handler stores at most one of those a minute per message;
 //   - at most one push per mailbox per `WINDOW_MS`, whatever the number of
 //     messages opened (a newsletter to two hundred people read in the
-//     same minute is one wake, not two hundred). Kept in memory: no write
-//     on the public path. An instance each has its own memory, and there
-//     are at most three, so the true bound is three a minute; Apple
-//     collapses what is still queued (the collapse id) and throttles
-//     background pushes to a few an hour on its side anyway;
+//     same minutes is one wake, not two hundred). An open is not urgent,
+//     and a recipient reloading a message must not be able to keep the
+//     sender's phone syncing. Kept in memory: no write on the public
+//     path. An instance each has its own memory, and there are at most
+//     three, so the true bound is three per window; Apple collapses what
+//     is still queued (the collapse id) and throttles background pushes
+//     on its side anyway;
+//   - the mailbox's devices are sent to at the same time, so how long the
+//     pixel takes does not count them;
 //   - it never fails the pixel and never holds it long: the caller gets
-//     its answer after `BUDGET_MS` at the latest. It is awaited, not left
-//     running behind the response — the function's CPU is only guaranteed
-//     while a request is in flight.
+//     its answer after `BUDGET_MS` at the latest. Within that it is
+//     awaited, because the function's CPU is only guaranteed while a
+//     request is in flight; a send still open when the budget runs out is
+//     left to finish or fail behind the response, and may not finish.
 
 /** The whole push. Frozen: nothing can be added to it on the way out. */
 export const PAYLOAD = Object.freeze({ aps: Object.freeze({ "content-available": 1 }), opens: 1 });
 
 /** At most one push per mailbox in this long (per instance). */
-export const WINDOW_MS = 60 * 1000;
+export const WINDOW_MS = 5 * 60 * 1000;
 /** The longest the pixel's answer waits for Apple. */
 export const BUDGET_MS = 1500;
 /** Mailboxes remembered before the oldest are forgotten. */
@@ -61,18 +66,22 @@ export function createOpenPush({ tokens, apns, now = Date.now, log = console, bu
     // Its own collapse id: a queued "opened" wake never replaces a queued
     // "new mail" wake for the same mailbox, or the other way round.
     const collapseId = `o${hash.slice(0, 15)}`;
-    for (const d of devices) {
-      let result;
-      try {
-        result = await apns.send({ token: d.token, env: d.env, payload: PAYLOAD, collapseId });
-      } catch (e) {
-        log.warn(`open-push ${hash.slice(0, 8)} ${d.env}: transport error ${e?.code ?? e?.name ?? "error"}`);
-        continue;
-      }
-      log.info(`open-push ${hash.slice(0, 8)} ${d.env} ${result.status}${result.reason ? " " + result.reason : ""}`);
-      // 410 = the device is gone for this topic (as in onMailChange).
-      if (result.status === 410) await tokens.remove(hash, d.token);
-    }
+    // All at once: one after the other, the pixel's latency would tell
+    // whoever fetched it how many devices the mailbox has.
+    await Promise.all(
+      devices.map(async (d) => {
+        let result;
+        try {
+          result = await apns.send({ token: d.token, env: d.env, payload: PAYLOAD, collapseId });
+        } catch (e) {
+          log.warn(`open-push ${hash.slice(0, 8)} ${d.env}: transport error ${e?.code ?? e?.name ?? "error"}`);
+          return;
+        }
+        log.info(`open-push ${hash.slice(0, 8)} ${d.env} ${result.status}${result.reason ? " " + result.reason : ""}`);
+        // 410 = the device is gone for this topic (as in onMailChange).
+        if (result.status === 410) await tokens.remove(hash, d.token);
+      }),
+    );
   }
 
   /** Never throws, never takes longer than the budget. */

@@ -245,8 +245,8 @@ switch, per mailbox, off until I turn it on.
   ordinary sync round and by itself shows nothing. It is only sent to
   devices that registered for "New mail (push)"; with push off the phone
   learns of opens at its next sync, and the Mac on its timer. A mailbox
-  is woken at most once a minute per relay instance, however many of its
-  messages are opened; the pixel's answer waits for Apple 1.5 seconds at
+  is woken at most once in five minutes per relay instance, however many of
+  its messages are opened; its devices are sent to at the same time; the pixel's answer waits for Apple 1.5 seconds at
   most and is never failed by it. The relay cannot see an account's
   setting: a push follows from a token, and a token exists only for
   mail tracked while read status was on. A device that has turned it off
@@ -854,8 +854,11 @@ Step 7, 2026-11-19 — **Verified with notes**. Not merged, not deployed.
   then shows "Opened" without being opened.
 - Whether the function's CPU is throttled after a response was not read
   off the project: the push is awaited within its bound either way.
-- The one-a-minute limit is per relay instance, kept in memory: with
-  three instances a mailbox can be woken three times in a minute.
+- The one-in-five-minutes limit is per relay instance, kept in memory: with
+  three instances a mailbox can be woken three times in five minutes.
+- A push writes a log line with the mailbox's hash prefix and the time; it
+  outlives the delete that turning read status off sends, for the project's
+  log retention.
 
 All seven steps are implemented. The feature is not "Verified" in this
 spec's sense until a real message has been sent, opened and seen on an

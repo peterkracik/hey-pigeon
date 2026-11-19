@@ -39,7 +39,10 @@ and key facts as one-line lists.
   says "track", or that carry a tracking number: one per email and host
   (an order with three "Track package" buttons is one row), never a picture
   or a tracking pixel. Each row names the email it came from; a tracking
-  number's fact gets a Track button with its link.
+  number's fact gets a Track button with its link. An address becomes a
+  link here only as a plain web address — http or https, no user or
+  password before the host (`MailLink.url`) — and the host a row shows
+  is the URL's own, so it is the one the tap opens.
 - **Key facts**, then the emails, open first, done dimmed and folded past
   three.
 - Every email row works like an inbox row: the same swipes, the same
@@ -466,7 +469,9 @@ threads, and a folded row needs its own place in that map.
 - `link` and `ai` memberships, facts, anchors and summaries stay local. Every
   device recomputes them, the same rule as "Jev's own results stay local".
 - Prefs: `bundles.fold_inbox` (unset = on); the parcel card's
-  `inbox.parcel_card` (unset = on) and `inbox.dismissed_parcels`. What
+  `inbox.parcel_card` (unset = on) and `inbox.dismissed_parcels` (per
+  dismissed parcel a digest of its tracking or order number, or its
+  thread id, and a time — never the number itself). What
   the mail says about a parcel (`thread_deliveries`) is derived on each
   device, like the anchors and the links. Later: `bundles.suggest`
   (default on) with suggested bundles.

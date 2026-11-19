@@ -104,11 +104,17 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   `AppModel.unique`; keep it that way when adding sources of rows.
 - **The parcel card is the list's first section, and the model's.**
   Parcels on their way (`docs/specs/parcel-card.md`) come with the
-  reload (`ListSnapshot.parcels`, one engine call) and are shown by
+  reload (`ListSnapshot.parcels`, one engine call, only ever made off
+  the main actor: `reload()` carries the ones the model holds and a
+  `reloadSoon()` follows, so a test awaits `settleReloads()` before it
+  looks at the card) and are shown by
   `ParcelCardView` — the same view at the head of the Mac's list. Which
   of them show, the words on a row and when a dismissed one returns are
   `ParcelCard`'s pure functions; the core decides what a parcel is and
-  what its mail says. A list's empty state asks `AppModel.listIsEmpty`,
+  what its mail says. A row names the host its button opens, never a
+  carrier or the sender; an address from mail becomes a link the app
+  names by host only through `MailLink.url` (`RustEngine`). A list's
+  empty state asks `AppModel.listIsEmpty`,
   not `groupedRows.isEmpty`: a card alone is not "All clear".
 - **Platform code goes in `Shared/Platform.swift`.** Haptics, keyboard,
   clipboard, app state, system settings, APNs registration, toolbar

@@ -135,7 +135,7 @@ that are on their way, as the one card in a list that otherwise has none
 ┌──────────────────────────────────────────────┐
 │ Parcels                                    ✕ │
 │ ┌──┐ Merino crew-neck jumper, navy + 1 more  │
-│ │🛍│ Expected tomorrow · 2 updates           │
+│ │🛍│ Expected tomorrow · www.dhl.com · 2 up… │
 │ └──┘ (Track parcel)  View details        ⋯   │
 │ ──────────────────────────────────────────── │
 │ ⌄ +1 more                                    │
@@ -145,7 +145,8 @@ that are on their way, as the one card in a list that otherwise has none
 The bundle's icon stands where Gmail shows the product: a picture would
 be a request to the shop from the inbox. Status, day and title are the
 core's, read from the mail (`core::parcels`); a row never says more than
-an email did. A bundle with a parcel here has no folded row — its quiet
+an email did, and its second line always names the host Track parcel
+opens — the link's own, never a carrier's name or the sender's. A bundle with a parcel here has no folded row — its quiet
 mail is counted on the parcel's line. The same view is the first row of
 the Mac window's list.
 

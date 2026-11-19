@@ -57,7 +57,7 @@ struct InboxPage: View {
             SkeletonList()
         } else if model.groupedRows.isEmpty && model.isSearching && model.isSearchPending {
             Color.clear
-        } else if model.groupedRows.isEmpty {
+        } else if model.listIsEmpty {
             EmptyState(view: model.view, searching: model.isSearching, lastSyncAt: model.lastSyncAt,
                        connect: model.connectFirstAccount)
         } else {
@@ -68,6 +68,18 @@ struct InboxPage: View {
     private var list: some View {
         ScrollViewReader { proxy in
             List {
+                // Parcels on their way, over the day groups of the plain
+                // inbox (docs/specs/parcel-card.md): the shared card on
+                // the list's white, as wide as a day's card. It is not a
+                // thread: the list's cursor (j / k) walks past it, and the
+                // palette has its actions.
+                if !model.inboxParcels.isEmpty {
+                    ParcelCardView(surface: MacTheme.groupCard)
+                        .padding(.horizontal, 16).padding(.top, 14)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
                 // No section headers: on the Mac a list's header floats on
                 // its own grey band. The group's title is a plain row, and
                 // its rows share one white card (MailRow draws its piece).

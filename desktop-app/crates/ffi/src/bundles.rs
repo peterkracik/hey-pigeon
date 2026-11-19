@@ -23,6 +23,7 @@ use std::sync::Arc;
 use heypigeon_core::bundles::{self as core_bundles, AnchorKind};
 use heypigeon_core::devsync;
 use heypigeon_core::domain::{self, now_ms, BundleOrigin, BundleSource, BundleStatus};
+use heypigeon_core::parcels as core_parcels;
 use heypigeon_core::ports::Store;
 
 use crate::engine::Engine;
@@ -163,6 +164,77 @@ pub struct BundleLink {
     pub thread_id: String,
     /// The email's subject, so the row says which order it tracks.
     pub subject: String,
+}
+
+/// How far along a parcel is, as its mail says
+/// (`core::domain::ParcelStatus`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ParcelStatus {
+    Shipped,
+    OutForDelivery,
+    Delivered,
+}
+
+impl From<domain::ParcelStatus> for ParcelStatus {
+    fn from(s: domain::ParcelStatus) -> Self {
+        match s {
+            domain::ParcelStatus::Shipped => Self::Shipped,
+            domain::ParcelStatus::OutForDelivery => Self::OutForDelivery,
+            domain::ParcelStatus::Delivered => Self::Delivered,
+        }
+    }
+}
+
+/// One parcel on the inbox's card (docs/specs/parcel-card.md): a
+/// shipment of an active bundle, with what its mail says about it.
+/// `status`, `expected_day` and `title` are None when no email states
+/// them — nothing is guessed.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Parcel {
+    /// The same on every device: `number:<16 hex digits of the tracking
+    /// or order number's SHA-256>` (never the number: dismissals sync), or
+    /// `thread:<thread id>`. What a dismissal names.
+    pub id: String,
+    pub bundle_id: String,
+    /// The newest email about it; `url` is that email's tracking link
+    /// (http or https, a link from the email's body, never the markup's
+    /// `trackingUrl`; its host has a name and no user, backslash or
+    /// non-ASCII character before the path: `core::parcels::host_of`).
+    pub thread_id: String,
+    /// The account that email is in.
+    pub account_id: String,
+    pub url: String,
+    /// The host `url` leads to, lower-cased: `track.dhl.com`.
+    pub host: String,
+    /// That email's subject and sender, as the list shows them.
+    pub subject: String,
+    pub sender: String,
+    /// That email's time, epoch ms.
+    pub at: i64,
+    pub status: Option<ParcelStatus>,
+    /// The day it is expected, a calendar date: `2026-11-20`.
+    pub expected_day: Option<String>,
+    /// What is in it, from the shop's markup.
+    pub title: Option<String>,
+}
+
+impl From<core_parcels::Parcel> for Parcel {
+    fn from(p: core_parcels::Parcel) -> Self {
+        Self {
+            id: p.id,
+            bundle_id: p.bundle_id,
+            thread_id: p.thread_id,
+            account_id: p.account_id,
+            url: p.url,
+            host: p.host,
+            subject: p.subject,
+            sender: p.sender,
+            at: p.at,
+            status: p.status.map(Into::into),
+            expected_day: p.expected_day,
+            title: p.title,
+        }
+    }
 }
 
 /// What the model says about a bundle as a whole.
@@ -372,6 +444,47 @@ impl Engine {
             links,
             threads,
         }))
+    }
+
+    /// The inbox's parcel card: the parcels of the active bundles that
+    /// are still on their way, in the card's order, twelve at most
+    /// (`core::parcels::overview`). `utc_offset_minutes` is the reader's
+    /// time zone, for "today" and for when an expected day is over.
+    ///
+    /// Reads no mail, like `bundle_detail`: a thread whose tracking links
+    /// were never read from its bodies has no parcel this time; they are
+    /// read on a background thread and `on_threads_updated` fires when
+    /// they are in. Bundles with no mail in the last 45 days are not
+    /// looked at, so this costs a few small queries per recent bundle —
+    /// it runs with every list reload, off the main thread.
+    pub fn tracking_overview(
+        self: Arc<Self>,
+        utc_offset_minutes: i32,
+    ) -> Result<Vec<Parcel>, EngineError> {
+        let now = now_ms();
+        let stats = self.store.bundle_stats()?;
+        let recent: Vec<domain::Bundle> = self
+            .store
+            .list_bundles()?
+            .into_iter()
+            .filter(|b| {
+                let s = stats.get(&b.id).cloned().unwrap_or_default();
+                // A model bundle of one email is still forming: hidden
+                // everywhere (`is_forming`), so here too.
+                let forming = b.origin == BundleOrigin::Ai && s.thread_count < 2;
+                b.status == BundleStatus::Active
+                    && !forming
+                    && s.last_activity_at >= now - core_parcels::WINDOW_MS
+            })
+            .collect();
+        if recent.is_empty() {
+            return Ok(Vec::new());
+        }
+        // No zone is further than fourteen hours from UTC.
+        let offset = utc_offset_minutes.clamp(-14 * 60, 14 * 60);
+        let overview = core_parcels::overview(&self.store, &recent, now, offset)?;
+        self.read_links_later(overview.unread);
+        Ok(overview.parcels.into_iter().map(Into::into).collect())
     }
 
     /// "New bundle…", optionally from selected threads ("New bundle from
@@ -1280,6 +1393,89 @@ mod tests {
             host_of("https://track.dpd.example/abc?x"),
             "track.dpd.example"
         );
+    }
+
+    /// docs/specs/parcel-card.md: a shipping email in a bundle is a parcel
+    /// once its links were read, with the status its subject states and
+    /// the day and title its markup did.
+    #[test]
+    fn tracking_overview_lists_a_bundles_parcel() {
+        let e = open("parcels");
+        let at = now_ms() - 3_600_000;
+        add(&e, "ship", "Your order #112-334 has shipped", at, false);
+        let message = heypigeon_core::domain::Message {
+            id: "ship-m1".into(),
+            thread_id: "ship".into(),
+            account_id: "me@x.com".into(),
+            from_addr: "shop@example.com".into(),
+            date: at,
+            body_html: Some(
+                r#"<a href="https://track.dpd.example/abc">Track your parcel</a>"#.into(),
+            ),
+            label_ids: vec!["INBOX".into()],
+            is_read: true,
+            ..Default::default()
+        };
+        e.store.upsert_message(&message).unwrap();
+        // No bundle, no parcel.
+        assert!(Arc::clone(&e).tracking_overview(60).unwrap().is_empty());
+        let b = e
+            .create_bundle(
+                "Gifts".into(),
+                BundleKind::Shopping,
+                "".into(),
+                vec!["ship".into()],
+            )
+            .unwrap();
+        // The sync round's scan reads the subject.
+        e.link_bundles_pending();
+        // The first look reads no mail; the links are in a moment later.
+        let mut parcels = Arc::clone(&e).tracking_overview(60).unwrap();
+        assert!(parcels.is_empty());
+        for _ in 0..200 {
+            if !parcels.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            parcels = Arc::clone(&e).tracking_overview(60).unwrap();
+        }
+        assert_eq!(parcels.len(), 1);
+        let p = &parcels[0];
+        assert_eq!(p.id, "thread:ship");
+        assert_eq!(p.bundle_id, b.id);
+        assert_eq!(p.thread_id, "ship");
+        assert_eq!(p.account_id, "me@x.com");
+        assert_eq!(p.url, "https://track.dpd.example/abc");
+        assert_eq!(p.host, "track.dpd.example");
+        assert_eq!(p.subject, "Your order #112-334 has shipped");
+        assert_eq!(p.at, at);
+        assert_eq!(p.status, Some(ParcelStatus::Shipped));
+        assert_eq!(
+            (p.expected_day.as_deref(), p.title.as_deref()),
+            (None, None)
+        );
+        // What a full fetch read from the shop's markup.
+        let tomorrow = at + 86_400_000;
+        let fetched = heypigeon_core::domain::Message {
+            delivery: heypigeon_core::parcels::from_markup(&format!(
+                r#"<script type="application/ld+json">{{"@context":"http://schema.org",
+                   "@type":"ParcelDelivery","expectedArrivalUntil":"{}",
+                   "itemShipped":{{"@type":"Product","name":"Kettle"}}}}</script>"#,
+                heypigeon_core::parcels::day_string(tomorrow)
+            )),
+            ..message
+        };
+        assert!(fetched.delivery.is_some());
+        heypigeon_core::parcels::remember_deliveries(&e.store, &[fetched]).unwrap();
+        let p = Arc::clone(&e).tracking_overview(0).unwrap().remove(0);
+        assert_eq!(p.title.as_deref(), Some("Kettle"));
+        assert_eq!(
+            p.expected_day,
+            Some(heypigeon_core::parcels::day_string(tomorrow))
+        );
+        // An archived bundle has no parcels.
+        e.set_bundle_archived(b.id, true).unwrap();
+        assert!(Arc::clone(&e).tracking_overview(0).unwrap().is_empty());
     }
 
     #[test]

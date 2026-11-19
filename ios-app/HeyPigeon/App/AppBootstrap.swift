@@ -10,12 +10,15 @@ enum AppBootstrap {
     /// Real engine unless the scheme asks for the mock (HEYPIGEON_MOCK=1) or
     /// no OAuth client id is configured — then the sample inbox, so the UI
     /// is always runnable (and CI builds without secrets). `clientIdKey` is
-    /// the Info.plist key the platform's client id is under.
+    /// the Info.plist key the platform's client id is under. The sample
+    /// inbox comes with an order on its way; HEYPIGEON_MOCK_ORDER=0 leaves
+    /// it out (the UI test that walks the list's rows).
     static func makeEngine(clientIdKey: String) -> MailEngine {
         let env = ProcessInfo.processInfo.environment
         let clientId = (Bundle.main.object(forInfoDictionaryKey: clientIdKey) as? String) ?? ""
         if env["HEYPIGEON_MOCK"] == "1" || clientId.isEmpty || clientId.hasPrefix("$(") {
-            return MockEngine()
+            // With an order on its way, so the parcel card shows too.
+            return env["HEYPIGEON_MOCK_ORDER"] == "0" ? MockEngine() : MockEngine.withSampleOrder()
         }
         do {
             let dir = try FileManager.default.url(

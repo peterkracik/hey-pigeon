@@ -481,13 +481,17 @@ final class RustEngine: MailEngine {
     func analyzePending() async -> AnalysisProgress { AnalysisProgress(await engine.analyzePending()) }
 
     func bundles() throws -> [BundleItem] { try reader.bundles() }
+    func parcels() throws -> [ParcelItem] { try reader.parcels() }
     func bundleContents(id: String) throws -> BundleContents? {
         try engine.bundleDetail(bundleId: id).map {
             BundleContents(
                 bundle: BundleItem($0.bundle),
                 facts: $0.facts.map(BundleFactItem.init),
-                links: $0.links.compactMap { l in
-                    URL(string: l.url).map { BundleLinkItem(url: $0, host: l.host, threadId: l.threadId, subject: l.subject) }
+                links: $0.links.compactMap { l -> BundleLinkItem? in
+                    // Shown by its host, so only an address whose host
+                    // can be named, and the URL's own host on the row.
+                    guard let url = MailLink.url(l.url), let host = MailLink.host(of: url) else { return nil }
+                    return BundleLinkItem(url: url, host: host, threadId: l.threadId, subject: l.subject)
                 },
                 threads: $0.threads.map { ThreadRow($0) }
             )
@@ -537,6 +541,13 @@ struct RustStoreReader: StoreReader, Sendable {
     }
 
     func bundles() throws -> [BundleItem] { try engine.listBundles().map(BundleItem.init) }
+
+    /// The core works in the reader's time zone ("today", "tomorrow",
+    /// when an expected day is over), which only the shell knows.
+    func parcels() throws -> [ParcelItem] {
+        let offset = Int32(clamping: TimeZone.current.secondsFromGMT() / 60)
+        return try engine.trackingOverview(utcOffsetMinutes: offset).compactMap { ParcelItem($0) }
+    }
 
     func unreadCounts(accountId: String?) throws -> [String: Int] {
         try engine.unreadCounts(accountId: accountId).mapValues(Int.init)
@@ -644,6 +655,26 @@ private extension BundleItem {
     }
 }
 
+private extension ParcelItem {
+    /// Nil for a link the card may not name by its host
+    /// (`MailLink.url(_:host:)`): not http or https, a user or password
+    /// before the host, or a host that is not the one the core read. The
+    /// host on the row is then, by construction, the one the button opens.
+    init?(_ p: Parcel) {
+        guard let url = MailLink.url(p.url, host: p.host) else { return nil }
+        let progress = p.status.map { status -> ParcelProgress in
+            switch status {
+            case .shipped: return .shipped
+            case .outForDelivery: return .outForDelivery
+            case .delivered: return .delivered
+            }
+        }
+        self.init(id: p.id, bundleId: p.bundleId, threadId: p.threadId, accountId: p.accountId, url: url,
+                  host: p.host, subject: p.subject, sender: p.sender, at: Date(epochMs: p.at),
+                  progress: progress, expectedDay: p.expectedDay, title: p.title)
+    }
+}
+
 private extension BundleFactItem {
     init(_ f: BundleFact) {
         let category: BundleFactCategory = switch f.kind {
@@ -654,7 +685,7 @@ private extension BundleFactItem {
         case .tracking: .tracking
         }
         self.init(category: category, value: f.value, threadId: f.threadId, at: Date(epochMs: f.at),
-                  url: f.url.flatMap(URL.init(string:)))
+                  url: f.url.flatMap { MailLink.url($0) })
     }
 }
 

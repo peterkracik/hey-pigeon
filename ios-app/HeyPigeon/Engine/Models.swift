@@ -738,15 +738,80 @@ struct BundleFactItem: Identifiable, Hashable {
     var id: String { "\(category.rawValue):\(value)" }
 }
 
+/// A web address taken from mail, before the app shows where it leads or
+/// opens it (the parcel card, a bundle's Info page).
+enum MailLink {
+    /// The address as a URL, or nil when it is not one the app may name
+    /// by its host: http or https only, a host, and no user or password
+    /// before it — `https://dhl.com@evil.example/`, and what
+    /// `URL(string:)` makes of `https://dhl.com\@evil.example/` (it
+    /// escapes the backslash, and the host is `evil.example`). With
+    /// `host`, the URL's own host must be that one: what the core read
+    /// off the text and what the system will open are then the same by
+    /// construction, whatever either parser does with an odd address.
+    static func url(_ string: String, host: String? = nil) -> URL? {
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              url.user() == nil, url.password() == nil,
+              let real = self.host(of: url) else { return nil }
+        if let host, real != host.lowercased() { return nil }
+        return url
+    }
+
+    /// The host a URL leads to, lower-cased; nil when it has none.
+    static func host(of url: URL) -> String? {
+        guard let host = url.host()?.lowercased(), !host.isEmpty else { return nil }
+        return host
+    }
+}
+
 /// A tracking link found in a bundle's mail ("Track your parcel").
 struct BundleLinkItem: Identifiable, Hashable {
     let url: URL
-    /// `track.dpd.example`, for the row.
+    /// `track.dpd.example`, for the row: the URL's own host
+    /// (`MailLink.host(of:)`), not a second reading of the address.
     let host: String
     let threadId: String
     /// The email's subject: which order the link tracks.
     var subject = ""
     var id: URL { url }
+}
+
+/// How far along a parcel is, as its mail says. Unknown is nil on the
+/// parcel: nothing is guessed (docs/specs/parcel-card.md R3).
+enum ParcelProgress: String, Hashable, Sendable {
+    case shipped, outForDelivery, delivered
+}
+
+/// One parcel on the inbox's card (docs/specs/parcel-card.md): a shipment
+/// of an active bundle, with what its mail says about it. The core works
+/// it out (`Engine.trackingOverview`); `progress`, `expectedDay` and
+/// `title` are nil when no email states them.
+struct ParcelItem: Identifiable, Hashable, Sendable {
+    /// The same on every device (`number:<a digest of the tracking or
+    /// order number>` or `thread:<thread id>`): what a dismissal names.
+    /// Opaque here; the core makes it (`parcels::number_id`).
+    let id: String
+    let bundleId: String
+    /// The newest email about it, and the account that email is in.
+    let threadId: String
+    let accountId: String
+    /// That email's tracking link: what Track parcel opens.
+    let url: URL
+    /// The host the link leads to: `track.dhl.com`. The URL's own host
+    /// (`MailLink.url(_:host:)` in `RustEngine`), a name and never an IP
+    /// address: the row and VoiceOver say it wherever Track parcel is.
+    let host: String
+    /// That email's subject, sender and time.
+    var subject = ""
+    var sender = ""
+    let at: Date
+    var progress: ParcelProgress? = nil
+    /// The day it is expected, a calendar date as the shop wrote it:
+    /// `2026-11-20`.
+    var expectedDay: String? = nil
+    /// What is in it, from the shop's markup.
+    var title: String? = nil
 }
 
 /// The model's brief on a bundle: where things stand and what is left for
@@ -1351,6 +1416,9 @@ protocol StoreReader: Sendable {
     func accounts() throws -> [MailAccount]
     func labels() throws -> [MailLabelItem]
     func bundles() throws -> [BundleItem]
+    /// The inbox card's parcels, every account's, in the card's order
+    /// (docs/specs/parcel-card.md). Local: read from mail already here.
+    func parcels() throws -> [ParcelItem]
     func unreadCounts(accountId: String?) throws -> [String: Int]
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func threadRow(id: String) throws -> ThreadRow?
@@ -1411,6 +1479,7 @@ struct MainActorStoreReader: StoreReader, @unchecked Sendable {
     func accounts() throws -> [MailAccount] { try MainActor.assumeIsolated { try engine.accounts() } }
     func labels() throws -> [MailLabelItem] { try MainActor.assumeIsolated { try engine.labels() } }
     func bundles() throws -> [BundleItem] { try MainActor.assumeIsolated { try engine.bundles() } }
+    func parcels() throws -> [ParcelItem] { try MainActor.assumeIsolated { try engine.parcels() } }
     func unreadCounts(accountId: String?) throws -> [String: Int] {
         try MainActor.assumeIsolated { try engine.unreadCounts(accountId: accountId) }
     }
@@ -1622,6 +1691,10 @@ protocol MailEngine: AnyObject {
     // Bundles (docs/bundles.md). App-local, synced between devices.
     /// Active first, then archived, each by name.
     func bundles() throws -> [BundleItem]
+    /// The inbox card's parcels (docs/specs/parcel-card.md): the shipments
+    /// of the active bundles that are still on their way, every
+    /// account's, in the card's order.
+    func parcels() throws -> [ParcelItem]
     /// Nil for an unknown id (deleted on another device).
     func bundleContents(id: String) throws -> BundleContents?
     /// "New bundle…", optionally from selected threads, which join it.

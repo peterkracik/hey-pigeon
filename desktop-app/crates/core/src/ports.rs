@@ -729,6 +729,25 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// The newest `limit` of `list_bundle_threads` whose last message is
+    /// at or after `since_ms`: what the parcel overview reads on every
+    /// list reload, where loading a 3,000-thread bundle to keep fifteen
+    /// is the whole cost. The default filters the full list; a store
+    /// with an index should ask for only these.
+    fn list_recent_bundle_threads(
+        &self,
+        bundle_id: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        Ok(self
+            .list_bundle_threads(bundle_id)?
+            .into_iter()
+            .filter(|t| t.last_msg_at >= since_ms)
+            .take(limit as usize)
+            .collect())
+    }
+
     /// Inbox threads of `account_id` whose list sender (`last_from_addr`)
     /// is one of `senders` (lowercase addresses), reminders and "needs
     /// reply" ones included: the candidates for the block rule
@@ -877,6 +896,28 @@ pub trait Store {
     ) -> Result<(), StoreError> {
         let _ = (thread_id, signature, links);
         Ok(())
+    }
+
+    /// Keep what a thread's mail says about a parcel, read from `source`
+    /// (`parcels`): `Some` replaces that thread's row for the source,
+    /// `None` removes it. One write for all of them — the link pass
+    /// hands over hundreds of threads a round. Default: not kept.
+    fn set_thread_deliveries(
+        &self,
+        source: DeliverySource,
+        items: &[(ThreadId, Option<Delivery>)],
+    ) -> Result<(), StoreError> {
+        let _ = (source, items);
+        Ok(())
+    }
+
+    /// What is kept for a thread, at most one per source. Default: none.
+    fn thread_deliveries(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Vec<(DeliverySource, Delivery)>, StoreError> {
+        let _ = thread_id;
+        Ok(Vec::new())
     }
 
     /// How many of a thread's stored messages have a body. The default

@@ -63,6 +63,7 @@ struct MemStoreInner {
     thread_anchors: HashMap<ThreadId, Vec<String>>,
     anchor_versions: HashMap<ThreadId, i64>,
     thread_links: HashMap<ThreadId, (String, Vec<String>)>,
+    thread_deliveries: HashMap<(ThreadId, DeliverySource), Delivery>,
     rule_marks: HashMap<(String, ThreadId), i64>,
     bundling_versions: HashMap<ThreadId, i64>,
 }
@@ -366,6 +367,7 @@ impl Store for MemStore {
         g.threads.remove(thread_id);
         g.messages.retain(|_, m| &m.thread_id != thread_id);
         g.thread_anchors.remove(thread_id);
+        g.thread_deliveries.retain(|(t, _), _| t != thread_id);
         Ok(())
     }
 
@@ -665,6 +667,26 @@ impl Store for MemStore {
         Ok(v)
     }
 
+    fn list_recent_bundle_threads(
+        &self,
+        bundle_id: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| t.bundle_id.as_deref() == Some(bundle_id))
+            .filter(|t| t.last_msg_at >= since_ms)
+            .filter(|t| !t.labels.iter().any(|l| l == "TRASH" || l == "SPAM"))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
     fn list_threads_needing_anchors(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
         let g = self.inner.lock().unwrap();
         let mut v: Vec<Thread> = g
@@ -778,6 +800,37 @@ impl Store for MemStore {
             .thread_links
             .insert(thread_id.clone(), (signature.to_string(), links.to_vec()));
         Ok(())
+    }
+
+    fn set_thread_deliveries(
+        &self,
+        source: DeliverySource,
+        items: &[(ThreadId, Option<Delivery>)],
+    ) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        for (thread_id, delivery) in items {
+            let key = (thread_id.clone(), source);
+            match delivery {
+                Some(d) => g.thread_deliveries.insert(key, d.clone()),
+                None => g.thread_deliveries.remove(&key),
+            };
+        }
+        Ok(())
+    }
+
+    fn thread_deliveries(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Vec<(DeliverySource, Delivery)>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        Ok([DeliverySource::Text, DeliverySource::Markup]
+            .into_iter()
+            .filter_map(|source| {
+                g.thread_deliveries
+                    .get(&(thread_id.clone(), source))
+                    .map(|d| (source, d.clone()))
+            })
+            .collect())
     }
 
     fn threads_with_anchors(

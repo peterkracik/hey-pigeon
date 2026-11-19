@@ -843,6 +843,11 @@ impl Engine {
     /// (best effort — the lease expires on its own within 7 days anyway).
     pub async fn remove_account(&self, account_id: String) -> Result<(), EngineError> {
         self.forget_push_for_account(&account_id).await;
+        // Read status: the relay is asked to forget the mailbox, and the
+        // account's setting is pushed, before the rows that say so are
+        // gone (readstatus.rs). Bounded; removal never waits on it long
+        // and never fails for it.
+        self.leave_read_status(&account_id).await;
         self.store.delete_account(&account_id)?;
         let _ = self
             .secrets
@@ -1669,8 +1674,11 @@ impl Engine {
             self.renew_watch(account_id).await;
             // Where read status lives, asked of the relay once a day and
             // only for an account that has it on (readstatus.rs).
-            self.discover_opens(account_id).await;
+            self.discover_opens(account_id, false).await;
         }
+        // A pending "forget this mailbox" is tried on every round, whether
+        // or not Gmail answered this time: it is the relay's to answer.
+        self.flush_opens_delete(account_id).await;
         // Read status: a pending "forget this mailbox", what the relay
         // recorded, and the tokens of mail sent from another device.
         let opened = result.is_ok() && self.read_status_round(account_id).await;
@@ -1713,7 +1721,7 @@ impl Engine {
         changed || synced || ruled || restored || opened
     }
 
-    async fn devsync_account(&self, account_id: &AccountId) -> bool {
+    pub(crate) async fn devsync_account(&self, account_id: &AccountId) -> bool {
         let result = {
             let provider = self.provider.read().await;
             devsync::sync_account(&*provider, &self.store, account_id).await

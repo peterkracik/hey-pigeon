@@ -29,6 +29,10 @@ pub(crate) const OPENS_URL: &str = "opens.url";
 /// When the relay was last asked (epoch ms).
 const OPENS_ASKED_AT: &str = "opens.asked_at_ms";
 
+/// How long removing an account may wait for the relay and the settings
+/// sync before it goes ahead without them.
+const LEAVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(6);
+
 /// The relay is asked where `opens` is at most this often.
 const ASK_EVERY_MS: i64 = 24 * 3_600_000;
 
@@ -83,7 +87,10 @@ impl Engine {
     pub fn read_status_available(&self) -> bool {
         matches!(self.secrets.get(RELAY_URL), Ok(Some(url)) if !url.is_empty())
     }
+}
 
+#[uniffi::export(async_runtime = "tokio")]
+impl Engine {
     /// The read-status switch of one mailbox (R8). Stored on the account
     /// and recorded for the user's other devices. Turning it on needs a
     /// relay; turning it off never fails for the lack of one.
@@ -91,12 +98,18 @@ impl Engine {
     /// On: the relay is asked where its read-status half is, so the next
     /// message can be tracked. Off **here** (R12): from this moment no
     /// pixel is added and nothing is polled for the account, and the relay
-    /// is asked to delete the mailbox's tokens — now if it can be reached,
-    /// on the following sync rounds until it has answered. A device that
-    /// learns "off" from another one never comes through here, and sends
-    /// no delete (R13).
-    pub fn set_read_status(
-        self: &Arc<Self>,
+    /// is asked to delete the mailbox's tokens — at once if it can be
+    /// reached, then on every sync round until it has answered. A device
+    /// that learns "off" from another one never comes through here (R13).
+    ///
+    /// Async so that it runs on the engine's runtime: the setting is
+    /// written and the call returns; the push of the setting to the
+    /// user's other devices and the relay call run right behind it, as
+    /// tasks that finish whether or not the caller waits. (As a plain
+    /// call from Swift there was no runtime to start them on, and both
+    /// waited for the next sync round.)
+    pub async fn set_read_status(
+        self: Arc<Self>,
         account_id: String,
         enabled: bool,
     ) -> Result<(), EngineError> {
@@ -120,22 +133,27 @@ impl Engine {
         if enabled {
             readstatus::cancel_delete(&self.store, &account_id)?;
         } else {
-            readstatus::request_delete(&self.store, &account_id)?;
+            // With the address the relay's `opens` function has now: the
+            // delete must still find it if the app forgets it meanwhile.
+            readstatus::request_delete(
+                &self.store,
+                &account_id,
+                &self.opens_url().unwrap_or_default(),
+            )?;
         }
         self.notify_threads_updated();
-        self.push_devsync_later(account_id.clone());
-        // Outside a runtime (a plain sync call from Swift) there is
-        // nothing to spawn on; the next sync round does the same.
-        let engine = Arc::clone(self);
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                if enabled {
-                    engine.discover_opens(&account_id).await;
-                } else {
-                    engine.flush_opens_delete(&account_id).await;
-                }
-            });
-        }
+        let engine = Arc::clone(&self);
+        tokio::spawn(async move {
+            if enabled {
+                engine.discover_opens(&account_id, false).await;
+            } else {
+                engine.flush_opens_delete(&account_id).await;
+            }
+            // The setting itself, for the user's other devices.
+            if engine.devsync_account(&account_id).await {
+                engine.notify_threads_updated();
+            }
+        });
         Ok(())
     }
 }
@@ -154,7 +172,11 @@ impl Engine {
     /// Ask the relay where `opens` is, when that is due (`discovery_due`),
     /// with this account's token. One write-free GET to `register-token`;
     /// a failure changes nothing and is asked again on a later round.
-    pub(crate) async fn discover_opens(&self, account_id: &AccountId) {
+    ///
+    /// `for_delete`: a delete is waiting and the address is not known —
+    /// the one case in which the relay is asked for an account that has
+    /// read status off, and regardless of when it was last asked.
+    pub(crate) async fn discover_opens(&self, account_id: &AccountId, for_delete: bool) {
         let read_status = self
             .store
             .list_accounts()
@@ -168,7 +190,12 @@ impl Engine {
             .ok()
             .flatten()
             .and_then(|v| v.parse::<i64>().ok());
-        if !discovery_due(read_status, relay_url.as_deref(), asked_at, now_ms()) {
+        let due = if for_delete {
+            relay_url.as_deref().is_some_and(|url| !url.is_empty())
+        } else {
+            discovery_due(read_status, relay_url.as_deref(), asked_at, now_ms())
+        };
+        if !due {
             return;
         }
         let Some(relay_url) = relay_url else { return };
@@ -178,10 +205,10 @@ impl Engine {
         };
         match info {
             Ok(info) => {
-                let stored = match info.opens_url.as_deref().map(str::trim) {
-                    Some(url) if url.starts_with("https://") => {
-                        self.secrets.set(OPENS_URL, url.trim_end_matches('/'))
-                    }
+                // Only an https origin is kept (`opens_origin`): this
+                // address goes into the mail the user sends.
+                let stored = match info.opens_url.as_deref().and_then(readstatus::opens_origin) {
+                    Some(origin) => self.secrets.set(OPENS_URL, &origin),
                     // No read status on this relay (or not yet): forget
                     // an address it gave before.
                     _ => self.secrets.delete(OPENS_URL),
@@ -202,11 +229,66 @@ impl Engine {
         }
     }
 
+    /// Make sure the provider knows where to send a delete: the address
+    /// it has, else the one the request was recorded with, else — while
+    /// a relay is configured — the relay is asked.
+    async fn find_opens_for_delete(&self, account_id: &AccountId) {
+        if self.provider.read().await.has_opens_url() {
+            return;
+        }
+        if let Ok(Some(url)) = readstatus::pending_delete_url(&self.store, account_id) {
+            self.provider.read().await.set_opens_url(Some(url));
+            return;
+        }
+        self.discover_opens(account_id, true).await;
+    }
+
     /// Send a pending "forget this mailbox" (R12), if there is one.
     pub(crate) async fn flush_opens_delete(&self, account_id: &AccountId) {
+        if !readstatus::delete_pending(&self.store, account_id).unwrap_or(false) {
+            return;
+        }
+        self.find_opens_for_delete(account_id).await;
         let provider = self.provider.read().await;
         if let Err(e) = readstatus::flush_delete(&*provider, &self.store, account_id).await {
             log::warn!("read status: pending delete not read: {e}");
+        }
+    }
+
+    /// The account is being removed from this device: one bounded attempt
+    /// to have the relay forget the mailbox (when read status is on for
+    /// it, or a delete is still pending) and to push what this device
+    /// last decided about the account to the user's other devices — an
+    /// "off" that has not reached them must not come back as "on" when
+    /// the account is added again. Never fails and never takes longer
+    /// than `LEAVE_BUDGET`: removal goes ahead offline, and what the relay
+    /// then still holds expires within 30 days.
+    pub(crate) async fn leave_read_status(&self, account_id: &AccountId) {
+        let tracked = self
+            .store
+            .list_accounts()
+            .ok()
+            .and_then(|all| all.into_iter().find(|a| &a.id == account_id))
+            .is_some_and(|a| a.read_status);
+        let pending = readstatus::delete_pending(&self.store, account_id).unwrap_or(false);
+        if !tracked && !pending {
+            return;
+        }
+        let work = async {
+            self.find_opens_for_delete(account_id).await;
+            let forgotten = {
+                let provider = self.provider.read().await;
+                readstatus::forget_mailbox(&*provider, &self.store, account_id).await
+            };
+            if !forgotten {
+                log::info!(
+                    "read status: an account left with its relay records in place; they expire"
+                );
+            }
+            self.devsync_account(account_id).await;
+        };
+        if tokio::time::timeout(LEAVE_BUDGET, work).await.is_err() {
+            log::info!("read status: no time left to tell the relay an account is leaving");
         }
     }
 
@@ -214,7 +296,6 @@ impl Engine {
     /// whether anything a view shows changed. With read status off (and
     /// no delete pending) it reads two rows and makes no request.
     pub(crate) async fn read_status_round(&self, account_id: &AccountId) -> bool {
-        self.flush_opens_delete(account_id).await;
         let now = now_ms();
         let added = {
             let provider = self.provider.read().await;
@@ -305,16 +386,20 @@ mod tests {
 
     /// R8, R10: off for every account until turned on, and it cannot be
     /// turned on in a build without a relay.
-    #[test]
-    fn read_status_is_off_by_default_and_needs_a_relay() {
+    #[tokio::test]
+    async fn read_status_is_off_by_default_and_needs_a_relay() {
         let (engine, dir) = open("default");
         assert!(!on(&engine, "a@x.com") && !on(&engine, "b@x.com"));
         assert!(!engine.read_status_available());
-        let err = engine.set_read_status("a@x.com".into(), true).unwrap_err();
+        let err = Arc::clone(&engine)
+            .set_read_status("a@x.com".into().await, true)
+            .unwrap_err();
         assert!(matches!(err, EngineError::Invalid(_)), "{err}");
         assert!(!on(&engine, "a@x.com"));
         // Off is always allowed, relay or not.
-        engine.set_read_status("a@x.com".into(), false).unwrap();
+        Arc::clone(&engine)
+            .set_read_status("a@x.com".into().await, false)
+            .unwrap();
 
         assert!(matches!(
             engine.configure_relay("http://plain.example".into()),
@@ -332,11 +417,13 @@ mod tests {
 
     /// R8, R9, R25: the switch is one mailbox's, it is kept, and it is
     /// recorded for the user's other devices under `account:read_status`.
-    #[test]
-    fn the_switch_is_per_account_and_recorded_for_other_devices() {
+    #[tokio::test]
+    async fn the_switch_is_per_account_and_recorded_for_other_devices() {
         let (engine, dir) = open("switch");
         engine.configure_relay(RELAY.into()).unwrap();
-        engine.set_read_status("a@x.com".into(), true).unwrap();
+        Arc::clone(&engine)
+            .set_read_status("a@x.com".into().await, true)
+            .unwrap();
         assert!(on(&engine, "a@x.com"));
         assert!(!on(&engine, "b@x.com"));
         let key = devsync::account_field_key(devsync::ACCOUNT_FIELD_READ_STATUS);
@@ -352,11 +439,13 @@ mod tests {
         assert_eq!(recorded("a@x.com"), Some(serde_json::json!(true)));
         assert_eq!(recorded("b@x.com"), None);
 
-        engine.set_read_status("a@x.com".into(), false).unwrap();
+        Arc::clone(&engine)
+            .set_read_status("a@x.com".into().await, false)
+            .unwrap();
         assert!(!on(&engine, "a@x.com"));
         assert_eq!(recorded("a@x.com"), Some(serde_json::json!(false)));
         assert!(matches!(
-            engine.set_read_status("nobody@x.com".into(), false),
+            Arc::clone(&engine).set_read_status("nobody@x.com".into().await, false),
             Err(EngineError::Invalid(_))
         ));
         let _ = std::fs::remove_dir_all(dir);
@@ -366,8 +455,8 @@ mod tests {
     /// mailbox" for the relay, kept until it has been sent; turning it on
     /// again takes it back. (That a device which only learns "off" through
     /// sync leaves none is the core's test.)
-    #[test]
-    fn turning_off_here_asks_the_relay_to_forget_the_mailbox() {
+    #[tokio::test]
+    async fn turning_off_here_asks_the_relay_to_forget_the_mailbox() {
         let (engine, dir) = open("off-switch");
         engine.configure_relay(RELAY.into()).unwrap();
         let a = "a@x.com".to_string();
@@ -379,17 +468,27 @@ mod tests {
                 .is_some_and(|v| !v.is_empty())
         };
         assert!(!pending());
-        engine.set_read_status(a.clone(), true).unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone().await, true)
+            .unwrap();
         assert!(!pending());
-        engine.set_read_status(a.clone(), false).unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone().await, false)
+            .unwrap();
         assert!(pending());
         // Off again changes nothing; on takes the request back.
-        engine.set_read_status(a.clone(), false).unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone().await, false)
+            .unwrap();
         assert!(pending());
-        engine.set_read_status(a.clone(), true).unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone().await, true)
+            .unwrap();
         assert!(!pending());
         // Only this mailbox's.
-        engine.set_read_status(a.clone(), false).unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone().await, false)
+            .unwrap();
         assert!(engine
             .store
             .sync_meta_get(&"b@x.com".to_string(), readstatus::META_DELETE_PENDING)

@@ -411,7 +411,7 @@ impl Engine {
         let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
-            messages: thread_messages(messages),
+            messages: thread_messages(messages, &self.store.open_events_for_thread(&thread_id)?),
         }))
     }
 
@@ -429,7 +429,7 @@ impl Engine {
         let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
-            messages: thread_messages(messages),
+            messages: thread_messages(messages, &self.store.open_events_for_thread(&thread_id)?),
         }))
     }
 
@@ -2062,6 +2062,7 @@ mod tests {
                     attachments: vec![],
                     reply_to_thread: None,
                     from_addr: None,
+                    track_opens: false,
                 },
             )
             .await;
@@ -2648,21 +2649,24 @@ mod tests {
             status("s1"),
             Some(MessageReadStatus {
                 state: MessageReadState::Replied,
-                at: Some(2_000)
+                at: Some(2_000),
+                events: vec![],
             })
         );
         assert_eq!(
             status("s2"),
             Some(MessageReadStatus {
                 state: MessageReadState::NotDelivered,
-                at: Some(4_000)
+                at: Some(4_000),
+                events: vec![],
             })
         );
         assert_eq!(
             status("s3"),
             Some(MessageReadStatus {
                 state: MessageReadState::Sent,
-                at: None
+                at: None,
+                events: vec![],
             })
         );
         assert_eq!(status("r"), None);

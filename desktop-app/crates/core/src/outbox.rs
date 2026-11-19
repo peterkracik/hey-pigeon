@@ -2,8 +2,9 @@
 //! This is the entire "feels instant" trick (DESIGN.md).
 
 use crate::devsync;
-use crate::domain::{AccountId, Message, Mutation};
+use crate::domain::{now_ms, AccountId, Message, Mutation};
 use crate::ports::{MailError, MailProvider, Store, StoreError};
+use crate::readstatus;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OutboxError {
@@ -40,7 +41,7 @@ pub fn enqueue_item<S: Store>(
     account_id: &AccountId,
     mutation: Mutation,
 ) -> Result<(i64, bool), OutboxError> {
-    let mutation = with_reply_headers(store, mutation);
+    let mutation = readstatus::with_token(with_reply_headers(store, mutation));
     store.apply_local(&mutation)?;
     let id = store.outbox_push(account_id, &mutation)?;
     let cleared = match &mutation {
@@ -184,8 +185,33 @@ pub async fn drain_report<M: MailProvider, S: Store>(
             let Some(item) = store.outbox_get(id)? else {
                 continue;
             };
-            match provider.apply(&item.account_id, &item.mutation).await {
+            // How a send leaves (docs/specs/read-status.md R16): tracked,
+            // with its pixel, only when everything for that holds now;
+            // otherwise as queued. Never held back.
+            let prepared =
+                readstatus::prepare_send(provider, store, &item.account_id, &item.mutation).await;
+            let outgoing = prepared.outgoing.as_ref().unwrap_or(&item.mutation);
+            match provider.apply(&item.account_id, outgoing).await {
                 Ok(()) => {
+                    if let Some(token) = &prepared.tracked {
+                        let thread = match &item.mutation {
+                            Mutation::Send {
+                                reply_to_thread, ..
+                            } => reply_to_thread.as_ref(),
+                            _ => None,
+                        };
+                        // The mail is gone; a token that could not be kept
+                        // here is read back from the sent message later.
+                        if let Err(e) = readstatus::remember_sent(
+                            store,
+                            &item.account_id,
+                            token,
+                            thread,
+                            now_ms(),
+                        ) {
+                            log::warn!("read status: token not kept: {e}");
+                        }
+                    }
                     store.outbox_delete(item.id)?;
                     report.applied += 1;
                     if let Some(id) = unreached.take() {
@@ -551,6 +577,8 @@ mod tests {
             from_addr: None,
             in_reply_to: in_reply_to.map(str::to_string),
             references: None,
+            track_opens: false,
+            open_token: None,
         };
         let a1 = "a1".to_string();
         enqueue(&store, &a1, reply(&thread.id, None)).unwrap();

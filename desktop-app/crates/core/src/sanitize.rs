@@ -552,6 +552,41 @@ pub fn own_pixel_token(raw_html: &str) -> Option<String> {
     found
 }
 
+/// `raw_html` without any `<img>` that has the shape of the app's own
+/// pixel. For HTML on its way *out*: what the composer quoted is built
+/// from sanitized bodies and holds none, but a message must leave with
+/// exactly the one pixel it was registered with — never a second, and
+/// never another message's — whatever it was assembled from.
+pub fn without_own_pixels(raw_html: &str) -> Cow<'_, str> {
+    let lower = raw_html.to_ascii_lowercase();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find("<img") {
+        let tag = from + pos;
+        let inside = tag + 4;
+        let end = lower[inside..]
+            .find('>')
+            .map_or(lower.len(), |i| inside + i);
+        from = end;
+        if raw_src(&raw_html[inside..end])
+            .and_then(own_pixel_token_of_url)
+            .is_some()
+        {
+            let out = out.get_or_insert_with(|| String::with_capacity(raw_html.len()));
+            out.push_str(&raw_html[copied..tag]);
+            copied = (end + 1).min(raw_html.len());
+        }
+    }
+    match out {
+        Some(mut out) => {
+            out.push_str(&raw_html[copied..]);
+            Cow::Owned(out)
+        }
+        None => Cow::Borrowed(raw_html),
+    }
+}
+
 /// The value of the `src` attribute in the inside of a raw `<img …>` tag.
 fn raw_src(attributes: &str) -> Option<&str> {
     let lower = attributes.to_ascii_lowercase();
@@ -2341,6 +2376,32 @@ mod tests {
             assert_eq!(html(&once), once, "{input}");
             assert!(!once.contains("heypigeon.app"));
         }
+    }
+
+    /// Outgoing HTML loses every picture of the pixel's shape and nothing
+    /// else, so a message can be given exactly one.
+    #[test]
+    fn outgoing_html_loses_own_pixels_and_only_those() {
+        let own = format!(r#"<img src="{OWN}" width="1" height="1" alt="">"#);
+        let logo = r#"<img src="https://cdn.example/logo.png" width="120">"#;
+        let foreign = r#"<img src="https://track.example/o.gif" width="1" height="1">"#;
+        let html = format!(
+            "<p>Hi</p>{own}<blockquote>{logo}<IMG WIDTH=1 SRC='{OWN_SHOUTED}'>{foreign}</blockquote>{own}"
+        );
+        assert_eq!(
+            without_own_pixels(&html),
+            format!("<p>Hi</p><blockquote>{logo}{foreign}</blockquote>")
+        );
+        assert_eq!(own_pixel_token(&without_own_pixels(&html)), None);
+        // Nothing to take out: the same string, not a copy.
+        let plain = format!("<p>Hi</p>{logo}{foreign}");
+        assert!(matches!(without_own_pixels(&plain), Cow::Borrowed(_)));
+        // An unclosed tag at the end does not panic or loop.
+        assert_eq!(
+            without_own_pixels(&format!("<p>a</p><img src=\"{OWN}\"")),
+            "<p>a</p>"
+        );
+        assert_eq!(without_own_pixels("<img"), "<img");
     }
 
     /// R19's reader: the token is read from the message as received, the

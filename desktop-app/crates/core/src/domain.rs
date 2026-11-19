@@ -442,6 +442,68 @@ pub struct Message {
     pub open_token: Option<String>,
 }
 
+/// What the relay reports of one fetch of a message's read-status pixel
+/// (docs/specs/read-status.md R21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenLabel {
+    /// A mail client, a browser or Gmail's image proxy fetched it.
+    Opened,
+    /// Apple's mail privacy proxy fetched it: delivered to a device that
+    /// hides opens. Never the same as opened.
+    Hidden,
+}
+
+impl OpenLabel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OpenLabel::Opened => "opened",
+            OpenLabel::Hidden => "hidden",
+        }
+    }
+
+    /// None for a label this build does not know: it is left out, never
+    /// guessed to be an open.
+    pub fn parse(label: &str) -> Option<Self> {
+        match label {
+            "opened" => Some(OpenLabel::Opened),
+            "hidden" => Some(OpenLabel::Hidden),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OpenEvent {
+    pub label: OpenLabel,
+    /// Epoch milliseconds, the relay's clock.
+    pub at: i64,
+}
+
+/// A tracked message the user sent, as this device knows it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OpenToken {
+    pub token: String,
+    pub account_id: AccountId,
+    /// The sent message, once it has been seen with its pixel (R19).
+    pub message_id: Option<MessageId>,
+    pub thread_id: Option<ThreadId>,
+    pub sent_at: i64,
+    /// When the relay forgets the token; nothing is asked about it after.
+    pub expires_at: i64,
+    pub polled_at: Option<i64>,
+}
+
+// Log hygiene: a token is what the relay counts by, and stays out of logs.
+impl std::fmt::Debug for OpenToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenToken")
+            .field("linked", &self.message_id.is_some())
+            .field("sent_at", &self.sent_at)
+            .finish_non_exhaustive()
+    }
+}
+
 // Log hygiene: no bodies or addresses in Debug output (DESIGN.md Security).
 impl std::fmt::Debug for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -519,6 +581,18 @@ pub enum Mutation {
         in_reply_to: Option<String>,
         #[serde(default)]
         references: Option<String>,
+        /// Read status: the user sent this with "Read status" on, for an
+        /// account that had it on (docs/specs/read-status.md R15). Whether
+        /// the message really goes out tracked is decided when it leaves
+        /// the outbox (`readstatus::prepare_send`, R16).
+        #[serde(default)]
+        track_opens: bool,
+        /// The message's read-status token, 32 hex digits: made when the
+        /// mutation is queued and kept here, so a send that is retried
+        /// registers and carries the same one. None when not tracked.
+        /// Never written to a log (`Debug` leaves it out).
+        #[serde(default)]
+        open_token: Option<String>,
     },
     /// Create or update the Gmail draft for an open composer. `key` is the
     /// composer's own id (stable across saves), so repeated saves update one

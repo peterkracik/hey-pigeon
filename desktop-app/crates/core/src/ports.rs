@@ -250,6 +250,45 @@ pub trait MailProvider {
         let _ = account_id;
         async { Ok(()) }
     }
+
+    // ---- read status (docs/specs/read-status.md): the relay's `opens`
+    // function, reached with the account's own access token. Defaults
+    // error: a provider without a relay tracks nothing, and says so.
+
+    /// Register `token` for a message about to be sent. Returns the pixel's
+    /// URL — on the relay's own pixel host, ending in this token; an
+    /// implementation must not return anything else.
+    fn register_open_token(
+        &self,
+        account_id: &AccountId,
+        token: &str,
+    ) -> impl std::future::Future<Output = Result<String, MailError>> + Send {
+        let _ = (account_id, token);
+        async { Err(MailError::Provider("read status not supported".into())) }
+    }
+
+    /// What the relay recorded for `tokens` (at most 100) of this account's
+    /// mailbox. A token it does not know, or another mailbox's, is absent.
+    fn query_opens(
+        &self,
+        account_id: &AccountId,
+        tokens: &[String],
+    ) -> impl std::future::Future<
+        Output = Result<std::collections::HashMap<String, Vec<OpenEvent>>, MailError>,
+    > + Send {
+        let _ = (account_id, tokens);
+        async { Err(MailError::Provider("read status not supported".into())) }
+    }
+
+    /// Delete every token of this account's mailbox at the relay. Asking
+    /// twice is harmless.
+    fn delete_open_tokens(
+        &self,
+        account_id: &AccountId,
+    ) -> impl std::future::Future<Output = Result<(), MailError>> + Send {
+        let _ = account_id;
+        async { Err(MailError::Provider("read status not supported".into())) }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1005,6 +1044,62 @@ pub trait Store {
         thread_id: &ThreadId,
         follow_up_since: Option<i64>,
     ) -> Result<bool, StoreError>;
+
+    // ---- read status (docs/specs/read-status.md) ----
+    // Defaults keep other stores compiling and track nothing; the SQLite
+    // adapter and MemStore implement all of them.
+
+    /// Keep a tracked message's token. A token already kept gains the
+    /// message and thread ids it lacked and is otherwise left as it is.
+    fn open_token_put(&self, token: &OpenToken) -> Result<(), StoreError> {
+        let _ = token;
+        Ok(())
+    }
+
+    /// The account's tokens the relay still holds (`expires_at > now`).
+    fn open_tokens_live(
+        &self,
+        account_id: &AccountId,
+        now: i64,
+    ) -> Result<Vec<OpenToken>, StoreError> {
+        let _ = (account_id, now);
+        Ok(Vec::new())
+    }
+
+    /// Record what the relay said of one token and when it was asked.
+    /// Events already kept are not kept twice. Returns how many were new.
+    fn open_events_add(
+        &self,
+        token: &str,
+        events: &[OpenEvent],
+        polled_at: i64,
+    ) -> Result<usize, StoreError> {
+        let _ = (token, events, polled_at);
+        Ok(0)
+    }
+
+    /// The events of a thread's tracked messages, by message, oldest first.
+    /// Only tokens whose sent message is known are in it.
+    fn open_events_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<std::collections::HashMap<MessageId, Vec<OpenEvent>>, StoreError> {
+        let _ = thread_id;
+        Ok(std::collections::HashMap::new())
+    }
+
+    /// Threads holding mail the user sent since `since` whose body this
+    /// device has not fetched — where a token may still be unread (R19).
+    /// Newest first, at most `limit`.
+    fn sent_threads_without_bodies(
+        &self,
+        account_id: &AccountId,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<ThreadId>, StoreError> {
+        let _ = (account_id, since, limit);
+        Ok(Vec::new())
+    }
 
     // ---- cross-device sync map (DESIGN.md "Cross-device sync") ----
     // Default impls keep pre-sync adapters compiling; the SQLite adapter

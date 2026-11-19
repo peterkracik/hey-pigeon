@@ -228,16 +228,35 @@ pub struct MailMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MessageReadState {
     Sent,
+    /// The pixel was fetched by Apple's mail privacy proxy: delivered to
+    /// a device that hides opens. Never to be shown as opened.
+    Hidden,
+    /// The pixel was fetched by a mail client or Gmail's image proxy.
+    Opened,
     NotDelivered,
     Replied,
+}
+
+/// One fetch of a tracked message's pixel, as the relay reported it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageOpenEvent {
+    /// True for an open; false for "delivered to a device that hides
+    /// opens" (Apple's mail privacy proxy).
+    pub opened: bool,
+    /// Epoch milliseconds.
+    pub at: i64,
 }
 
 /// A sent message's status and when it came about.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MessageReadStatus {
     pub state: MessageReadState,
-    /// Epoch milliseconds of the reply or the bounce; None for `Sent`.
+    /// Epoch milliseconds of the reply or the bounce, or of the newest
+    /// open / hidden fetch; None for `Sent`.
     pub at: Option<i64>,
+    /// Everything the relay reported of this message's pixel, newest
+    /// first — whatever `state` is. Empty for an untracked message.
+    pub events: Vec<MessageOpenEvent>,
 }
 
 impl From<heypigeon_core::readstatus::ReadStatus> for MessageReadStatus {
@@ -246,10 +265,13 @@ impl From<heypigeon_core::readstatus::ReadStatus> for MessageReadStatus {
         Self {
             state: match s.state {
                 ReadState::Sent => MessageReadState::Sent,
+                ReadState::Hidden => MessageReadState::Hidden,
+                ReadState::Opened => MessageReadState::Opened,
                 ReadState::NotDelivered => MessageReadState::NotDelivered,
                 ReadState::Replied => MessageReadState::Replied,
             },
             at: s.at,
+            events: Vec::new(),
         }
     }
 }
@@ -258,14 +280,37 @@ impl From<heypigeon_core::readstatus::ReadStatus> for MessageReadStatus {
 /// status. The status is a fact about the thread (what followed the
 /// message), so it is worked out here, over all of them, and not in
 /// `From<domain::Message>`.
-pub fn thread_messages(messages: Vec<domain::Message>) -> Vec<MailMessage> {
-    let statuses = heypigeon_core::readstatus::statuses(&messages);
+pub fn thread_messages(
+    messages: Vec<domain::Message>,
+    events: &std::collections::HashMap<String, Vec<domain::OpenEvent>>,
+) -> Vec<MailMessage> {
+    let statuses = heypigeon_core::readstatus::statuses_with(&messages, events);
     messages
         .into_iter()
         .zip(statuses)
-        .map(|(m, status)| MailMessage {
-            read_status: status.map(Into::into),
-            ..m.into()
+        .map(|(m, status)| {
+            let read_status = status.map(|status| {
+                let mut list: Vec<MessageOpenEvent> = events
+                    .get(&m.id)
+                    .map(|all| {
+                        all.iter()
+                            .map(|e| MessageOpenEvent {
+                                opened: e.label == domain::OpenLabel::Opened,
+                                at: e.at,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                list.sort_by(|a, b| b.at.cmp(&a.at));
+                MessageReadStatus {
+                    events: list,
+                    ..status.into()
+                }
+            });
+            MailMessage {
+                read_status,
+                ..m.into()
+            }
         })
         .collect()
 }
@@ -527,6 +572,11 @@ pub enum Mutation {
         /// Send from this address — one of `list_send_as` — instead of the
         /// account's default. None = the default.
         from_addr: Option<String>,
+        /// Read status (docs/specs/read-status.md R15): the composer's
+        /// "Read status" was on and the account's setting was on when Send
+        /// was pressed. The core decides again when the message leaves the
+        /// outbox, and sends it untracked when anything has changed.
+        track_opens: bool,
     },
     /// Create/update the Gmail draft of an open composer; `key` is the
     /// composer's stable id.
@@ -586,6 +636,7 @@ impl From<Mutation> for domain::Mutation {
                 attachments,
                 reply_to_thread,
                 from_addr,
+                track_opens,
             } => Self::Send {
                 to,
                 cc,
@@ -599,6 +650,9 @@ impl From<Mutation> for domain::Mutation {
                 // Filled when the mutation is queued (`Engine::mutate`).
                 in_reply_to: None,
                 references: None,
+                track_opens,
+                // Made when the mutation is queued (`outbox::enqueue_item`).
+                open_token: None,
             },
             Mutation::SaveDraft {
                 key,

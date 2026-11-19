@@ -3,6 +3,7 @@
 
 pub mod drive;
 pub mod oauth;
+pub mod opens;
 pub mod push;
 
 use std::collections::HashMap;
@@ -146,6 +147,9 @@ pub struct GmailProvider {
     inline_parts: std::sync::Mutex<HashMap<(MessageId, usize), String>>,
     /// account → its send-as addresses, for the session.
     send_as: Mutex<HashMap<AccountId, Vec<SendAs>>>,
+    /// Where the relay's `opens` function answers (read status), when the
+    /// relay has said (`set_opens_url`); None = no read status here.
+    opens_url: std::sync::Mutex<Option<String>>,
 }
 
 impl GmailProvider {
@@ -161,6 +165,7 @@ impl GmailProvider {
             cooldown: std::sync::Mutex::new(HashMap::new()),
             inline_parts: std::sync::Mutex::new(HashMap::new()),
             send_as: Mutex::new(HashMap::new()),
+            opens_url: std::sync::Mutex::new(None),
         }
     }
 
@@ -2085,6 +2090,11 @@ impl MailProvider for GmailProvider {
             from_addr,
             in_reply_to,
             references,
+            // Read status is decided before the mutation gets here
+            // (`readstatus::prepare_send`): a tracked message arrives with
+            // its pixel already in `body_html`.
+            track_opens: _,
+            open_token: _,
         } = mutation
         {
             let extra = MimeExtra {
@@ -2259,6 +2269,28 @@ impl MailProvider for GmailProvider {
     async fn stop_watch(&self, account_id: &AccountId) -> Result<(), MailError> {
         self.post_json(account_id, &format!("{API}/stop"), &serde_json::json!({}))
             .await
+    }
+
+    // Read status: the relay's `opens` function (opens.rs).
+
+    async fn register_open_token(
+        &self,
+        account_id: &AccountId,
+        token: &str,
+    ) -> Result<String, MailError> {
+        self.opens_register(account_id, token).await
+    }
+
+    async fn query_opens(
+        &self,
+        account_id: &AccountId,
+        tokens: &[String],
+    ) -> Result<HashMap<String, Vec<OpenEvent>>, MailError> {
+        self.opens_query(account_id, tokens).await
+    }
+
+    async fn delete_open_tokens(&self, account_id: &AccountId) -> Result<(), MailError> {
+        self.opens_delete(account_id).await
     }
 }
 

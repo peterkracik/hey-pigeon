@@ -41,6 +41,9 @@ struct MemStoreInner {
     /// account → key → entry (the cross-device LWW map).
     sync_kv: HashMap<AccountId, HashMap<String, SyncEntry>>,
     sync_meta: HashMap<(AccountId, String), String>,
+    /// Read status: token → what is kept of it, and its events.
+    open_tokens: HashMap<String, OpenToken>,
+    open_events: HashMap<String, Vec<OpenEvent>>,
     triage_labels: Vec<TriageLabel>,
     next_triage_label_id: i64,
     /// thread → `msg_count` at its last Jev classification. Missing/stale
@@ -85,6 +88,16 @@ impl MemStore {
         g.labels.remove(account_id);
         g.sync_kv.remove(account_id);
         g.sync_meta.retain(|(a, _), _| a != account_id);
+        let gone: Vec<String> = g
+            .open_tokens
+            .values()
+            .filter(|t| t.account_id == account_id)
+            .map(|t| t.token.clone())
+            .collect();
+        for token in gone {
+            g.open_tokens.remove(&token);
+            g.open_events.remove(&token);
+        }
     }
 }
 
@@ -95,6 +108,118 @@ fn matches_filter(t: &Thread, filter: &ThreadFilter) -> bool {
 }
 
 impl Store for MemStore {
+    fn open_token_put(&self, token: &OpenToken) -> Result<(), StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        match g.open_tokens.get_mut(&token.token) {
+            Some(kept) => {
+                if kept.message_id.is_none() {
+                    kept.message_id = token.message_id.clone();
+                }
+                if kept.thread_id.is_none() {
+                    kept.thread_id = token.thread_id.clone();
+                }
+            }
+            None => {
+                g.open_tokens.insert(token.token.clone(), token.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn open_tokens_live(
+        &self,
+        account_id: &AccountId,
+        now: i64,
+    ) -> Result<Vec<OpenToken>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut live: Vec<OpenToken> = g
+            .open_tokens
+            .values()
+            .filter(|t| &t.account_id == account_id && t.expires_at > now)
+            .cloned()
+            .collect();
+        live.sort_by(|a, b| (a.sent_at, &a.token).cmp(&(b.sent_at, &b.token)));
+        Ok(live)
+    }
+
+    fn open_events_add(
+        &self,
+        token: &str,
+        events: &[OpenEvent],
+        polled_at: i64,
+    ) -> Result<usize, StoreError> {
+        let mut g = self.inner.lock().unwrap();
+        let Some(kept) = g.open_tokens.get_mut(token) else {
+            return Ok(0);
+        };
+        kept.polled_at = Some(polled_at);
+        let list = g.open_events.entry(token.to_string()).or_default();
+        let mut added = 0;
+        for event in events {
+            if !list.contains(event) {
+                list.push(*event);
+                added += 1;
+            }
+        }
+        list.sort_by_key(|e| e.at);
+        Ok(added)
+    }
+
+    fn open_events_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<HashMap<MessageId, Vec<OpenEvent>>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut out: HashMap<MessageId, Vec<OpenEvent>> = HashMap::new();
+        for t in g.open_tokens.values() {
+            let (Some(message_id), Some(thread)) = (&t.message_id, &t.thread_id) else {
+                continue;
+            };
+            if thread != thread_id {
+                continue;
+            }
+            if let Some(events) = g.open_events.get(&t.token) {
+                out.entry(message_id.clone())
+                    .or_default()
+                    .extend(events.iter().copied());
+            }
+        }
+        for events in out.values_mut() {
+            events.sort_by_key(|e| e.at);
+        }
+        Ok(out)
+    }
+
+    fn sent_threads_without_bodies(
+        &self,
+        account_id: &AccountId,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<ThreadId>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut found: Vec<(i64, ThreadId)> = g
+            .messages
+            .values()
+            .filter(|m| {
+                &m.account_id == account_id
+                    && m.date >= since
+                    && !m.body_fetched
+                    && m.label_ids.iter().any(|l| l == "SENT")
+                    && !m.label_ids.iter().any(|l| l == "DRAFT")
+            })
+            .map(|m| (m.date, m.thread_id.clone()))
+            .collect();
+        found.sort_by(|a, b| b.cmp(a));
+        let mut threads: Vec<ThreadId> = Vec::new();
+        for (_, thread) in found {
+            if !threads.contains(&thread) {
+                threads.push(thread);
+            }
+        }
+        threads.truncate(limit as usize);
+        Ok(threads)
+    }
+
     fn upsert_account(&self, account: &Account) -> Result<(), StoreError> {
         let mut g = self.inner.lock().unwrap();
         g.accounts.insert(account.id.clone(), account.clone());
@@ -1145,7 +1270,28 @@ pub struct FakeProvider {
     stop_calls: Mutex<Vec<AccountId>>,
     watch_expiration_ms: Mutex<i64>,
     fail_watch: Mutex<bool>,
+    /// Read status: the relay's `opens` function, faked. Every call made
+    /// to it, in order; what it would answer; and how it fails.
+    pub opens_calls: Mutex<Vec<OpensCall>>,
+    /// token → events the next `query_opens` reports.
+    pub opens_events: Mutex<HashMap<String, Vec<OpenEvent>>>,
+    /// Some(error) makes every opens call fail with it.
+    pub opens_failure: Mutex<Option<fn() -> MailError>>,
+    /// Some(url) is what `register_open_token` answers instead of the
+    /// honest pixel URL (a relay that misbehaves).
+    pub opens_pixel_override: Mutex<Option<String>>,
 }
+
+/// One call to the faked `opens` function.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpensCall {
+    Register(AccountId, String),
+    Query(AccountId, Vec<String>),
+    Delete(AccountId),
+}
+
+/// Where the fake relay serves its pixel.
+pub const FAKE_PIXEL_HOST: &str = "https://o.example.test";
 
 impl FakeProvider {
     /// `n` threads, one message each, newest first, paged by `page_size`.
@@ -1211,6 +1357,10 @@ impl FakeProvider {
             stop_calls: Mutex::new(Vec::new()),
             watch_expiration_ms: Mutex::new(0),
             fail_watch: Mutex::new(false),
+            opens_calls: Mutex::new(Vec::new()),
+            opens_events: Mutex::new(HashMap::new()),
+            opens_failure: Mutex::new(None),
+            opens_pixel_override: Mutex::new(None),
         }
     }
 
@@ -1412,6 +1562,55 @@ impl MailProvider for FakeProvider {
             return Err(MailError::Provider("fake stop failure".to_string()));
         }
         self.stop_calls.lock().unwrap().push(account_id.clone());
+        Ok(())
+    }
+
+    async fn register_open_token(
+        &self,
+        account_id: &AccountId,
+        token: &str,
+    ) -> Result<String, MailError> {
+        self.opens_calls
+            .lock()
+            .unwrap()
+            .push(OpensCall::Register(account_id.clone(), token.to_string()));
+        if let Some(fail) = *self.opens_failure.lock().unwrap() {
+            return Err(fail());
+        }
+        if let Some(url) = self.opens_pixel_override.lock().unwrap().clone() {
+            return Ok(url);
+        }
+        Ok(format!("{FAKE_PIXEL_HOST}/o/{token}.gif"))
+    }
+
+    async fn query_opens(
+        &self,
+        account_id: &AccountId,
+        tokens: &[String],
+    ) -> Result<HashMap<String, Vec<OpenEvent>>, MailError> {
+        self.opens_calls
+            .lock()
+            .unwrap()
+            .push(OpensCall::Query(account_id.clone(), tokens.to_vec()));
+        if let Some(fail) = *self.opens_failure.lock().unwrap() {
+            return Err(fail());
+        }
+        let known = self.opens_events.lock().unwrap();
+        Ok(tokens
+            .iter()
+            .filter_map(|t| known.get(t).map(|e| (t.clone(), e.clone())))
+            .collect())
+    }
+
+    async fn delete_open_tokens(&self, account_id: &AccountId) -> Result<(), MailError> {
+        self.opens_calls
+            .lock()
+            .unwrap()
+            .push(OpensCall::Delete(account_id.clone()));
+        if let Some(fail) = *self.opens_failure.lock().unwrap() {
+            return Err(fail());
+        }
+        self.opens_events.lock().unwrap().clear();
         Ok(())
     }
 }

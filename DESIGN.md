@@ -127,7 +127,10 @@ Three tiers — the first two need no server, the third is the one optional one:
    status the user turned on (off by default); for any other account
    nothing is added to outgoing mail and the function is not called —
    with one exception: an account just turned off (or removed) sends one
-   request to delete its records, repeated until the relay has answered. The core owns the watch lease (`core::push`,
+   request to delete its records, repeated until the relay has answered. When
+   an open is recorded the function sends the mailbox's registered
+   phones a silent push that says only that (`{content-available: 1,
+   opens: 1}`), so they ask at once; the Mac asks on its timer. The core owns the watch lease (`core::push`,
    renewed daily from the sync round); the iOS shell owns the toggle. Note
    for tier 2: `users.watch` itself needs no Pub/Sub scope — only consuming
    the topic from the desktop would.

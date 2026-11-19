@@ -7,8 +7,11 @@
 //            a trailing slash; "" while there is none — registration is
 //            then refused, so no pixel ever names another host
 //   now:     () → epoch ms
-//   onOpen:  (mailboxHash) → void — called after an event was stored. The
-//            seam for the silent push of R24; nothing is wired to it yet.
+//   onOpen:  (mailboxHash) → Promise — called after an `opened` event was
+//            stored (never for `hidden`, never for a fetch that stored
+//            nothing): the silent push of R24 (src/open-push.js). It is
+//            given the mailbox hash and nothing else, bounds its own time
+//            and does not throw.
 //   log:     console-like
 //
 // Privacy contract. What this function stores, per tracked message: the
@@ -126,7 +129,10 @@ export function createOpensHandler({ opens, auth, ranges, publicUrl = "", now = 
           // decided again inside the store's transaction.
           if (label && nextEvents(doc.events, label, at)) {
             const stored = await opens.record(token, (events) => nextEvents(events, label, at), at);
-            if (stored && onOpen) await onOpen(doc.mailboxHash);
+            // An open, newly stored: the phone is told there is something
+            // to ask about. Not for "hidden" — that is not an open, and
+            // nothing in the app waits for it.
+            if (stored && label === "opened" && onOpen) await onOpen(doc.mailboxHash);
           }
         }
       }

@@ -269,6 +269,8 @@ struct AppModelTests {
         let footer = ReadStatusSetting.footer
         for part in ["invisible picture", "a small relay records", "never who or where", "never the message itself",
                      "30 days", "require their consent", "Apple Mail hides opens", "Gmail on the web",
+                     "the relay also sends a silent push when one of your messages is opened",
+                     "that push says only that something was opened",
                      "Turning this off stops it on this device at once",
                      "asks the relay to delete what it holds for this account",
                      "your other devices follow when they next sync",

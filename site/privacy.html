@@ -87,7 +87,10 @@
     request. The relay's code does not store or log them, and its request logs are
     discarded, not stored. The app sends the relay your Google access
     token, checked with Google and not stored, to register a message and to ask what was
-    opened.</p>
+    opened. If push notifications are on as well, the relay sends your iPhone or iPad a
+    silent push through Apple when one of your messages is opened, so the app asks
+    sooner; that push says only that something was opened, not which message or by
+    whom.</p>
     <p>Turning read status off stops it on that device at once: nothing more is added to
     mail sent from it, and it asks the relay to delete the account's records, right away
     if it is online and otherwise when it next syncs. Your other devices follow when they

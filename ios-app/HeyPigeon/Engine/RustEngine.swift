@@ -626,8 +626,20 @@ private extension MessageItem {
             cc: m.ccAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) },
             listUnsubscribe: m.listUnsubscribe,
             unsubscribeOneClick: m.listUnsubscribeOneClick,
-            replyTo: m.replyToAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) }
+            replyTo: m.replyToAddrs.map { a in EmailAddress.same(a, myEmail) ? "me" : EmailAddress.address(in: a) },
+            readStatus: m.readStatus.map { ReadStatus($0) }
         )
+    }
+}
+
+private extension ReadStatus {
+    init(_ s: MessageReadStatus) {
+        let state: ReadState = switch s.state {
+        case .sent: .sent
+        case .notDelivered: .notDelivered
+        case .replied: .replied
+        }
+        self.init(state: state, at: s.at.map { Date(epochMs: $0) })
     }
 }
 

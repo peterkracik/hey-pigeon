@@ -141,6 +141,10 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     /// (a list, a booking system writing from a no-reply address). Empty
     /// when it set none, and for mail stored before the header was kept.
     var replyTo: [String] = []
+    /// What became of this message when the user sent it: sent, bounced
+    /// or answered (docs/specs/read-status.md). The core works it out
+    /// from the thread; nil on anyone else's mail and on a draft.
+    var readStatus: ReadStatus?
 
     /// Where a reply to this message goes when that is not its sender:
     /// the Reply-To addresses that are neither the sender nor the user.
@@ -150,6 +154,53 @@ struct MessageItem: Identifiable, Hashable, Sendable {
         guard !isMine else { return [] }
         let asked = replyTo.filter { $0 != "me" && !$0.isEmpty }
         return asked.contains { EmailAddress.same($0, fromAddress) } ? [] : asked
+    }
+}
+
+/// The status of a message the user sent (docs/specs/read-status.md, R1).
+/// The core decides it (`heypigeon_core::readstatus`); the shells only
+/// show it. These are the states the mailbox itself can tell.
+enum ReadState: Hashable, Sendable {
+    /// Gmail accepted the message.
+    case sent
+    /// A bounce followed it in its thread.
+    case notDelivered
+    /// Someone answered in its thread.
+    case replied
+}
+
+struct ReadStatus: Hashable, Sendable {
+    let state: ReadState
+    /// When the reply or the bounce arrived; nil for `.sent`.
+    var at: Date?
+}
+
+/// The words and the symbol of a read status: one place, so the phone,
+/// the iPad and the Mac say the same thing.
+enum ReadStatusText {
+    /// "Sent", "Not delivered", "Replied 10:42" / "Replied yesterday" /
+    /// "Replied Mon" / "Replied Oct 3".
+    static func line(_ status: ReadStatus, now: Date = Date()) -> String {
+        switch status.state {
+        case .sent: "Sent"
+        case .notDelivered: "Not delivered"
+        case .replied: status.at.map { "Replied \(when($0, now: now))" } ?? "Replied"
+        }
+    }
+
+    /// The list rows' time, inside a sentence: "Yesterday" loses its
+    /// capital, the rest (a time, a weekday, a date) stays as it is.
+    static func when(_ date: Date, now: Date = Date()) -> String {
+        let text = Formatters.rowTime(date, now: now)
+        return text == "Yesterday" ? "yesterday" : text
+    }
+
+    static func symbol(_ state: ReadState) -> String {
+        switch state {
+        case .sent: "checkmark"
+        case .notDelivered: "exclamationmark.circle"
+        case .replied: "arrowshape.turn.up.left"
+        }
     }
 }
 

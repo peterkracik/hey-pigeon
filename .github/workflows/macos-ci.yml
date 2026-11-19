@@ -116,10 +116,6 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" \
             | grep -E "error:|warning: .*/(HeyPigeon[A-Za-z]*|macos-app)/|Test (Suite|Case)|[✔✘◇]|\*\* "
           status=${PIPESTATUS[0]}
-          # PROBE (temporary): what the web content processes said around a
-          # window-server or launch-services call, with the tests around it.
-          grep -nE "Conn 0x0|launchserivcesd|Test [a-zA-Z]+\\(\\) (started|passed|failed|recorded)|PROBE (SLOW|summary)" "$RUNNER_TEMP/xcodebuild.log" \
-            | grep -B2 -A2 -E "Conn 0x0|launchserivcesd" | cut -c1-260 | sed 's/^/◇ WEBLOG /' | head -400 || true
           exit "$status"
 
       - name: Upload result bundle

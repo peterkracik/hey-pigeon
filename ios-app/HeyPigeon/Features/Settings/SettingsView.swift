@@ -348,6 +348,19 @@ private struct AccountRow: View {
                     .onDisappear { saveSignature() }
                 Text("Appended to new messages from this account").font(.caption).foregroundStyle(Theme.textTertiary)
             }
+            // docs/specs/read-status.md R8, R10: this mailbox's switch.
+            // Not shown until a build sends what it says (ReadStatusSetting).
+            if ReadStatusSetting.isShown {
+                let available = model.readStatusAvailable
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(ReadStatusSetting.title, isOn: Binding(
+                        get: { account.readStatus },
+                        set: { model.setReadStatus($0, for: account) }))
+                        .disabled(!available)
+                    Text(available ? ReadStatusSetting.footer : ReadStatusSetting.unavailable)
+                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
             if disconnected {
                 Button { Task { await model.addAccount(loginHint: account.id) } } label: { Label("Reconnect", systemImage: "arrow.clockwise") }
             }

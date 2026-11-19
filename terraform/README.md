@@ -174,6 +174,7 @@ deployment branches limited to `main` — gate every apply.
 | `GCP_DEPLOYER_SA` | bootstrap output `deployer_sa_email` |
 | `APNS_KEY_ID`, `APNS_TEAM_ID` | from Apple |
 | `HEYPIGEON_IOS_OAUTH_CLIENT_ID` | the iOS OAuth client id |
+| `HEYPIGEON_MAC_OAUTH_CLIENT_ID` (optional) | the Mac app's OAuth client id — the value the `macos` environment already holds for `publish-macos`; a job only sees its own environment, so it has to be on `infra` too. Unset, or equal to the iOS one: nothing changes. Set: `register-token` and `opens` get a new revision that also accepts the Mac's tokens |
 | `OPENS_DOMAIN` (optional) | `o.heypigeon.app`, once the two steps under "The pixel's own domain" are done; unset = the apps are told there is no read status |
 
 ## The pixel's own domain (`o.heypigeon.app`)

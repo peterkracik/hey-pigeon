@@ -26,8 +26,14 @@ variable "apns_topic" {
 }
 
 variable "google_client_ids" {
-  description = "OAuth client ids whose access tokens register-token accepts: the iOS client(s) only. The desktop never registers a device."
+  description = "OAuth client ids whose access tokens the relay accepts: the iOS client(s). The Mac's goes in google_mac_client_id."
   type        = list(string)
+}
+
+variable "google_mac_client_id" {
+  description = "The Mac app's OAuth client id (GOOGLE_MAC_CLIENT_ID in its build; HEYPIGEON_MAC_OAUTH_CLIENT_ID in CI). The Mac registers no device, but it asks register-token where read status lives and will use opens; without this its tokens are refused. Empty: only the ids above are accepted (also right when the Mac is built with the iOS client)."
+  type        = string
+  default     = ""
 }
 
 variable "opens_domain" {
@@ -47,4 +53,9 @@ locals {
   relay_fn_sa    = "relay-fn@${var.project_id}.iam.gserviceaccount.com"
   relay_build_sa = "relay-build@${var.project_id}.iam.gserviceaccount.com"
   relay_dir      = "${path.module}/../relay"
+
+  # Every client the relay accepts, once each, without the empty strings an
+  # unset CI value leaves behind. Known at plan time, like everything in a
+  # function's environment has to be.
+  google_client_ids = distinct(compact(concat(var.google_client_ids, [var.google_mac_client_id])))
 }

@@ -29,9 +29,11 @@ name: publish-macos
 # Optional:
 #   SPARKLE_PUBLIC_ED_KEY              the key's public half (what `generate_keys` prints); left out,
 #                                      the build derives it from the private key
-# No HEYPIGEON_RELAY_URL: the Mac build has no push entitlement (that would
-# need a provisioning profile), so the relay is the phone's; the Mac syncs
-# itself every 30 seconds.
+#   HEYPIGEON_RELAY_URL                the relay's register-token URL (terraform output; the value
+#                                      publish-ios bakes). Not for push — the Mac build has no push
+#                                      entitlement (that would need a provisioning profile) and syncs
+#                                      itself every 30 seconds — but read status needs a relay. Left
+#                                      out, read status is "Not available in this build" on the Mac.
 #
 # One-time setup outside CI: nothing beyond the certificate and the key. The
 # first archive registers the App IDs (app.heypigeon.mac and its two
@@ -156,6 +158,7 @@ jobs:
       - name: Write Local.xcconfig (team + Google OAuth client) and the update key
         env:
           CLIENT_ID: ${{ secrets.HEYPIGEON_MAC_OAUTH_CLIENT_ID }}
+          RELAY_URL: ${{ vars.HEYPIGEON_RELAY_URL || secrets.HEYPIGEON_RELAY_URL }}
           SPARKLE_PRIVATE: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
           SPARKLE_PUBLIC: ${{ vars.SPARKLE_PUBLIC_ED_KEY || secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: |
@@ -185,12 +188,16 @@ jobs:
           # value may contain "//", which an xcconfig reads as a comment.
           echo "SPARKLE_PUBLIC_ED_KEY=$SPARKLE_PUBLIC" >> "$GITHUB_ENV"
           reversed="$(echo "$CLIENT_ID" | tr '.' '\n' | tail -r | paste -sd '.' -)"
+          # xcconfig treats "//" as the start of a comment, so a URL must be
+          # written as https:/$()/host — Xcode resolves the empty $() away.
+          relay_xc="$(printf '%s' "$RELAY_URL" | sed 's#://#:/$()/#g')"
           cat > macos-app/Config/Local.xcconfig <<EOF
           DEVELOPMENT_TEAM = ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_MAC_CLIENT_ID = ${CLIENT_ID}
           GOOGLE_MAC_REVERSED_CLIENT_ID = ${reversed}
-          HEYPIGEON_RELAY_URL =
+          HEYPIGEON_RELAY_URL = ${relay_xc}
           EOF
+          if [[ -n "$RELAY_URL" ]]; then echo "Relay URL baked in (read status; the Mac has no push)."; else echo "::notice::HEYPIGEON_RELAY_URL is not set in the macos environment: read status will be 'Not available in this build'."; fi
 
       - name: Build Rust core for macOS (Apple Silicon) + Swift bindings
         env:

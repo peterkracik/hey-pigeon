@@ -89,7 +89,7 @@ targets:
         # "group." name would make macOS 15+ ask the user. Every target reads
         # the resolved name back from its Info.plist (HeyPigeonAppGroup).
         # No push entitlement for the same reason (aps-environment needs a
-        # profile): the Mac syncs itself every 30 s, the relay is the phone's.
+        # profile): the Mac syncs itself every 30 s, push is the phone's.
         com.apple.security.application-groups:
           - $(TeamIdentifierPrefix)group.app.heypigeon
         # Sparkle's installer helpers: a sandboxed app may talk to the two

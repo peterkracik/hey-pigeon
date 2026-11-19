@@ -47,7 +47,7 @@ macos-app/
 | After Mark done | Undo toast, back to the list | Undo toast, and `Z` / ⌘Z for two minutes after it; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
 | Several at once | — | ⌘/⇧-click rows, or ⇧J / ⇧K / X and ⌘A from the keyboard: a batch bar on a bordered panel at the bottom; rows drag onto a label, a bundle or a folder in the sidebar |
 | Reading | A thread in the list's place | The same, or beside the list with View › Reading Pane (⌥⌘P) on a wide window; Space previews a row in place and pages a thread; ⌘P prints or saves a PDF |
-| Sync | On open, pull, background refresh, the optional relay | Every 30 s while open (2 min in Low Power Mode, not without a network), every activation, ⇧⌘N; no relay — the Mac build has no push entitlement |
+| Sync | On open, pull, background refresh, the optional relay | Every 30 s while open (2 min in Low Power Mode, not without a network), every activation, ⇧⌘N; no push — the Mac build has no push entitlement |
 | New mail | A relay push → banner | The timer's diff → banner (Settings › Notifications), communication-style with the sender's initial, with Mark Done · Remind Me in 1 Hour · Reply |
 | Siri, Spotlight, Shortcuts | App Intents, the Mail schema, the index | The same files; "Ask my inbox" and "triage my inbox" through the Mailbox menu and the palette |
 | Widgets | Unread · Next reminder · Need reply, Live Activities, Controls | The three widgets; Done and 1 h are `heypigeon://` links the app acts on |
@@ -86,7 +86,9 @@ signed with Developer ID and carries no provisioning profile, so it holds
 no entitlement that needs one: the App Group is the team-prefixed
 `<TEAMID>.group.app.heypigeon` (the form macOS honors without a profile;
 `AppGroup.identifier` reads it from the Info.plist) and there is no push
-entitlement — the Mac syncs itself, the relay is the phone's.
+entitlement — the Mac syncs itself, push is the phone's. (`HEYPIGEON_RELAY_URL`
+may still be baked into the build: read status needs a relay. It never
+makes a push switch appear.)
 Its data lives in the container's Application Support; OAuth tokens and keys
 in the Keychain.
 

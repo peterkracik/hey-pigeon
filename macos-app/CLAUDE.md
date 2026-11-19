@@ -277,7 +277,12 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   acted on by the shared `NewMailNotifier.perform`). The Mac build has no push entitlement — it is
   signed with Developer ID and no provisioning profile, which also makes
   the App Group the team-prefixed name (`AppGroup.identifier` reads it
-  from the Info.plist) — so the relay is the phone's.
+  from the Info.plist) — so push is the phone's. The build may still
+  carry the relay's URL (`HeyPigeonRelayURL`), for read status
+  (`docs/specs/read-status.md`): `PushController.isBaked` says there is a
+  relay, `canEnable` that the app can be pushed to
+  (`RemoteNotifications.isSupported`, false here), and only the second
+  shows "New mail (push)".
 - **Widgets act through links.** A Mac widget's button runs in the
   extension, which has no engine; Done and Snooze are
   `heypigeon://done/<id>` and `heypigeon://snooze/<id>/<h>`

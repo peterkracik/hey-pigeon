@@ -153,7 +153,7 @@ resource "google_cloudfunctions2_function" "register_token" {
     min_instance_count    = 0
     max_instance_count    = 3
     environment_variables = merge(local.apns_env, {
-      GOOGLE_CLIENT_IDS = join(",", var.google_client_ids)
+      GOOGLE_CLIENT_IDS = join(",", local.google_client_ids)
       PUBSUB_TOPIC      = google_pubsub_topic.gmail_push.id # projects/<p>/topics/gmail-push
       # Where read status lives, reported to the app beside the topic so it
       # still needs one setting: the pixel's own domain once it is mapped,
@@ -248,7 +248,7 @@ resource "google_cloudfunctions2_function" "opens" {
     # runs for seconds a day, far inside the free tier.
     max_instance_count = 3
     environment_variables = {
-      GOOGLE_CLIENT_IDS = join(",", var.google_client_ids)
+      GOOGLE_CLIENT_IDS = join(",", local.google_client_ids)
       # The pixel's address, and the only one registration ever hands out.
       # Empty until the domain is mapped: registration is then refused
       # (503), so no message is sent pointing at a run.app address.

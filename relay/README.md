@@ -192,7 +192,9 @@ GOOGLE_CLIENT_IDS=x PUBSUB_TOPIC=projects/p/topics/gmail-push npm run start:regi
 
 Environment (set by Terraform): `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`
 (= `app.heypigeon.ios`), `APNS_SECRET_NAME` (`projects/<p>/secrets/apns-key`),
-`GOOGLE_CLIENT_IDS` (iOS OAuth client ids, comma-separated), `PUBSUB_TOPIC`,
+`GOOGLE_CLIENT_IDS` (the OAuth client ids whose tokens are accepted,
+comma-separated: the iOS client, and the Mac's when it has its own),
+`PUBSUB_TOPIC`,
 `OPENS_URL` (on `register-token`: what it reports as `opensUrl`; the pixel's
 custom domain, empty until it is mapped). The `opens`
 function gets `GOOGLE_CLIENT_IDS` and `OPENS_PUBLIC_URL` (the pixel's custom
@@ -243,9 +245,11 @@ manual prerequisites: [../terraform/README.md](../terraform/README.md).
   Sent mail in Gmail on the web counts as an open, a recipient who blocks
   remote images never does, and Apple Mail's privacy proxy only ever says
   "hidden".
-- `GOOGLE_CLIENT_IDS` holds the iOS OAuth client only, so a token from the
-  Mac app's client is refused by `register-token` and `opens` alike. It has
-  to be added before the Mac can use read status.
+- A token from an OAuth client that is not in `GOOGLE_CLIENT_IDS` is
+  refused by `register-token` and `opens` alike. The Mac app's client gets
+  there through `google_mac_client_id` (Terraform) /
+  `HEYPIGEON_MAC_OAUTH_CLIENT_ID` on the `infra` environment; until that
+  value is set, a Mac built with its own client is refused.
 - The memory of `opens` (512M) has not been measured on the deployed
   function. A synthetic 300,000-line list parsed at about 237 MB locally,
   so 256M would not do.

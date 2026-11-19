@@ -732,6 +732,10 @@ final class AppModel {
     init(engine: MailEngine) {
         self.engine = engine
         push = PushController(engine: engine)
+        // The relay this build was made with, for what needs one besides
+        // push (read status). Empty in a build without: the engine then
+        // forgets a relay an earlier build told it of.
+        try? engine.configureRelay(url: push.relayURL)
         engine.onThreadsUpdated = { [weak self] in self?.reloadSoon() }
         engine.onAccountDisconnected = { [weak self] id in
             self?.disconnectedAccountId = id
@@ -2791,6 +2795,20 @@ final class AppModel {
             try engine.updateAccount(id: account.id, displayName: displayName, color: color, signature: signature)
             reloadAccounts()
         } catch { show(error.localizedDescription) }
+    }
+
+    /// Whether read status can be turned on here: the build has a relay
+    /// (docs/specs/read-status.md R10).
+    var readStatusAvailable: Bool { engine.readStatusAvailable() }
+
+    /// The read-status switch of one mailbox (R8). The engine stores it on
+    /// the account and syncs it; the accounts are read back either way, so
+    /// a switch the engine refused shows what is true.
+    func setReadStatus(_ on: Bool, for account: MailAccount) {
+        do {
+            try engine.setReadStatus(accountId: account.id, enabled: on)
+        } catch { show(error.localizedDescription) }
+        reloadAccounts()
     }
 
     func removeAccount(_ account: MailAccount) async {

@@ -29,7 +29,12 @@ struct InboxPage: View {
         }
         .frame(maxWidth: MacLayout.maxWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MacTheme.listBackground)
+        // One wash to the window's edges and under the toolbar, behind
+        // the readable column and its margins alike. (A bundle's pages
+        // keep the flat grey: each paints its own column inside the
+        // page's background, and two washes of different sizes would
+        // meet in an edge.)
+        .background(MacTheme.listWash)
         .safeAreaInset(edge: .bottom) {
             if state.selection.count > 1 {
                 BatchBar(state: state)

@@ -25,6 +25,20 @@ enum Theme {
     // Dark: a warm dark grey, canvas and card a small step apart.
     static let canvas = Color(light: Color(hex: 0xFBFBFB), dark: Color(hex: 0x1C1B1E))
     static let card = Color(light: .white, dark: Color(hex: 0x232226))
+    /// The two ends of the wash behind a mail list (`listWash`), each the
+    /// canvas with a tag hue laid over it and worked out ahead: a bright
+    /// coral at 5 % for the corner the light comes from, a bright
+    /// lavender at 4.2 % for the far one; 60 % of both on dark, where a
+    /// bright hue moves a dark grey much further. A few steps of 255 at
+    /// most: felt, not seen.
+    static let washWarm = Color(light: Color(hex: 0xFBF6F4), dark: Color(hex: 0x231F20))
+    static let washCool = Color(light: Color(hex: 0xF6F5FB), dark: Color(hex: 0x1F1D23))
+    /// Behind the phone's and the iPad's mail lists, in place of the flat
+    /// canvas. The rows are opaque cards, so it shows behind the top bar
+    /// and the day titles, in the gap between rows, under a short list
+    /// and across the empty state. Never a row's background, and not
+    /// behind a thread, Settings or a sheet: those stay `canvas`.
+    static let listWash = Wash(base: canvas, warm: washWarm, cool: washCool)
     /// Sunken blocks (summaries, chips, inputs): the desktop's --surface-sunken.
     static let sunken = Color(light: navy100, dark: Color(hex: 0x2E2D31))
     static let textPrimary = Color(light: Color(hex: 0x0D0D10), dark: navy50)
@@ -145,6 +159,33 @@ enum Theme {
         #else
         return .system(style)
         #endif
+    }
+}
+
+/// A list's background with a trace of light across it, so the surface
+/// does not read as one machine-flat grey: `warm` in the top leading
+/// corner, `cool` in the bottom trailing one, and `base` itself through
+/// the middle, where the mail is. One opaque gradient along the diagonal
+/// and a shape style, so it goes wherever the flat colour went
+/// (`.background(Theme.listWash)` still runs under the bars and to the
+/// screen's edges). With Increase Contrast it is the flat `base`.
+struct Wash: ShapeStyle {
+    let base: Color
+    let warm: Color
+    let cool: Color
+
+    func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
+        guard environment.colorSchemeContrast != .increased else { return AnyShapeStyle(base) }
+        return AnyShapeStyle(LinearGradient(
+            stops: [
+                Gradient.Stop(color: warm, location: 0),
+                Gradient.Stop(color: base, location: 0.48),
+                Gradient.Stop(color: base, location: 0.52),
+                Gradient.Stop(color: cool, location: 1),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ))
     }
 }
 

@@ -135,7 +135,15 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   on a grey band): each day group's title is a plain row and its rows
   share one white card (`MailRow.Position`); the hover and cursor tint
   fills a row to 1 pt of the card's edge, rounded only where the card
-  is. The command palette's ⌘B stage lists the bundles, the recently
+  is. Behind the inbox's list the grey carries a wash
+  (`MacTheme.listWash`, the shared `Wash`): a trace of coral in the top
+  leading corner and of lavender in the bottom trailing one, a few steps
+  of 255, the plain `listBackground` through the middle and the flat
+  colour with Increase Contrast. It is one background to the window's
+  edges, never a row's or a card's; the sidebar, a thread, Settings and
+  the panels stay flat, and so do a bundle's pages, whose columns paint
+  their own background inside the page's (two washes of different sizes
+  would meet in an edge). The command palette's ⌘B stage lists the bundles, the recently
   active first, and one opens as the Bundles page
   (`PaletteStage.bundles`, `MailCommand.bundles`). Rows are single lines; Done
   is the first hover action (a done circle at the start read as a

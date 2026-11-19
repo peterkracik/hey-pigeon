@@ -62,7 +62,9 @@ struct MailListScreen: View {
             // inset it reached the label bar's scroll view too: a slightly
             // vertical swipe on the labels pulled the bar down with a spinner.
             .refreshable { await model.sync() }
-            .background(Theme.canvas)
+            // The wash, not the flat canvas: behind the list, the
+            // skeleton and "All clear" alike, in all three tabs.
+            .background(Theme.listWash)
             // ListTitle is the principal item. No .toolbar(removing: .title)
             // here: the principal counts as the title and went with it.
             .navigationTitle(tab == .inbox ? model.folder.title : tab.title)
@@ -705,7 +707,9 @@ struct SkeletonList: View {
                     RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(width: 220, height: 10)
                 }
                 .padding(.vertical, 8)
-                .listRowBackground(Theme.canvas)
+                // Clear, so the skeleton stands on what the list will (the
+                // wash; the Mac window's grey), not on a flat canvas over it.
+                .listRowBackground(Color.clear)
             }
         }
         .listStyle(.plain)

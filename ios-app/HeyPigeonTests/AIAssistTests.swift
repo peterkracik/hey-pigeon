@@ -18,6 +18,28 @@ struct AIAssistTests {
         #expect(AIAssist.replies.first?.notes == nil)
     }
 
+    /// Proofreading and a new message have their own engine calls: the
+    /// sample engine returns a proofread text as it is, an edit with the
+    /// instruction after it, and a brief inside a whole message.
+    @MainActor @Test func proofreadingAndWritingHaveTheirOwnCalls() async throws {
+        let model = AppModel(engine: MockEngine())
+        let runner = AIAssistRunner()
+        func settle() async throws {
+            for _ in 0..<100 where runner.running { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        #expect(AIAssist.edits.contains(AIAssist.proofread))
+        runner.edit(AIAssist.proofread.instruction, text: "Helo Ana", hasSelection: false, history: nil, context: nil,
+                    shown: nil, in: model)
+        try await settle()
+        #expect(runner.result?.text == "Helo Ana")
+        runner.edit("Shorten", text: "Helo Ana", hasSelection: false, history: nil, context: nil, shown: nil, in: model)
+        try await settle()
+        #expect(runner.result?.text == "Helo Ana\n\n(shorten)")
+        runner.write(notes: "Ask about Friday", subject: "Lunch", history: nil, context: nil, shown: nil, in: model)
+        try await settle()
+        #expect(runner.result?.written == true && runner.result?.text.contains("Ask about Friday") == true)
+    }
+
     @Test func whenARequestMayRun() {
         #expect(AIAssist.startMode(text: "  \n") == .write)
         #expect(AIAssist.startMode(text: "Hello") == .edit)

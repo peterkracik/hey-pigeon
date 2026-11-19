@@ -803,6 +803,25 @@ pub struct AiPrompts {
     pub thread_summary: String,
     pub draft_reply: String,
     pub edit: String,
+    pub proofread: String,
+    pub write: String,
+    pub translate: String,
+}
+
+/// What a completion is for, so the shell's backend treats its prompt and
+/// its sampling accordingly. The keyed providers take every prompt whole
+/// and ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum CompletionStyle {
+    /// A summary: a prompt that does not fit the model's window may be
+    /// split, each part answered, and the answers answered once more.
+    Digest,
+    /// Writing (an edit, a new message, a reply): the prompt goes whole or
+    /// not at all, since the parts of a draft cannot be answered apart.
+    Writing,
+    /// The text back with as little invention as possible (a translation,
+    /// a proofread): whole like `Writing`, and decoded without sampling.
+    Exact,
 }
 
 /// One email's contribution to a group summary — subject + snippet only,

@@ -39,9 +39,15 @@ pub trait AiBackend: Send + Sync {
     /// What Settings shows as the model: one entry for the system model.
     fn models(&self) -> Vec<AiModel>;
     /// One completion: a system instruction and one user prompt, the whole
-    /// answer back. The backend owns the context-window handling (chunking
-    /// a prompt that does not fit, never an error for a long thread).
-    async fn complete(&self, system: String, user: String) -> Result<String, EngineError>;
+    /// answer back. The backend owns the context-window handling, by
+    /// `style`: a digest that does not fit is chunked (never an error for
+    /// a long thread), writing and exact text go whole or fail.
+    async fn complete(
+        &self,
+        system: String,
+        user: String,
+        style: CompletionStyle,
+    ) -> Result<String, EngineError>;
     /// Triage one email against the user's labels: a priority and the ids
     /// of the labels that apply (zero or more), as structured output.
     async fn classify(
@@ -111,6 +117,23 @@ impl AiProvider for ForeignAiProvider {
     /// order, which is exactly the shape every caller in `settings.rs`
     /// builds anyway.
     async fn complete(&self, req: CompletionRequest) -> Result<String, AiError> {
+        self.complete_styled(req, CompletionStyle::Digest).await
+    }
+
+    /// The shell already knows whether the model is available before it
+    /// hands the backend over; nothing to spend here.
+    async fn verify(&self) -> Result<(), AiError> {
+        Ok(())
+    }
+}
+
+impl ForeignAiProvider {
+    /// `AiProvider::complete` with the style the backend needs to know.
+    pub(crate) async fn complete_styled(
+        &self,
+        req: CompletionRequest,
+        style: CompletionStyle,
+    ) -> Result<String, AiError> {
         let mut system = Vec::new();
         let mut user = Vec::new();
         for m in req.messages {
@@ -120,15 +143,9 @@ impl AiProvider for ForeignAiProvider {
             }
         }
         self.backend
-            .complete(system.join("\n\n"), user.join("\n\n"))
+            .complete(system.join("\n\n"), user.join("\n\n"), style)
             .await
             .map_err(|e| AiError::Provider(e.to_string()))
-    }
-
-    /// The shell already knows whether the model is available before it
-    /// hands the backend over; nothing to spend here.
-    async fn verify(&self) -> Result<(), AiError> {
-        Ok(())
     }
 }
 
@@ -141,6 +158,8 @@ pub(crate) mod fakes {
     pub(crate) struct ScriptedBackend {
         pub(crate) provider_id: String,
         pub(crate) completions: Mutex<Vec<(String, String)>>,
+        /// The style of each completion, in the same order.
+        pub(crate) styles: Mutex<Vec<CompletionStyle>>,
         pub(crate) classifications: Mutex<Vec<String>>,
         /// Subjects and bodies `suggest` was asked about, in order.
         pub(crate) suggestions_asked: Mutex<Vec<(String, String)>>,
@@ -167,6 +186,7 @@ pub(crate) mod fakes {
             Arc::new(Self {
                 provider_id: provider_id.to_string(),
                 completions: Mutex::new(Vec::new()),
+                styles: Mutex::new(Vec::new()),
                 classifications: Mutex::new(Vec::new()),
                 suggestions_asked: Mutex::new(Vec::new()),
                 suggestion: Mutex::new(Ok(None)),
@@ -189,8 +209,14 @@ pub(crate) mod fakes {
                 label: "On this device".into(),
             }]
         }
-        async fn complete(&self, system: String, user: String) -> Result<String, EngineError> {
+        async fn complete(
+            &self,
+            system: String,
+            user: String,
+            style: CompletionStyle,
+        ) -> Result<String, EngineError> {
             self.completions.lock().unwrap().push((system, user));
+            self.styles.lock().unwrap().push(style);
             Ok(self.answer.clone())
         }
         async fn classify(

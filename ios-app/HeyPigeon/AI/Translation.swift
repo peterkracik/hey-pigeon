@@ -1,31 +1,24 @@
 // Translating a selection of a received message (Features/Thread/
-// TranslationPanel.swift): the instruction the engine's edit endpoint gets
-// (the core's `ai_edit_text` wraps it in the edit system prompt and picks
-// the provider; no second AI door), which language it asks for, and where
-// the translate circle sits beside a selection. Pure Foundation, so the
-// language and placement rules are tested without a view or a model.
+// TranslationPanel.swift): which language it asks for, which language the
+// passage is in, how a long passage is cut into parts a model can hold,
+// the check that an answer really left the source language, and where the
+// translate circle sits beside a selection. Apple's translation answers
+// first (AI/SystemTranslator.swift); what it cannot do goes to the
+// engine's `ai_translate`, which has its own instruction. It used to go
+// through the edit call, whose prompt said "the sender's own draft, keep
+// its language": the answer came back in two languages. Foundation and
+// NaturalLanguage only, so the rules are tested without a view or a model.
 
 import Foundation
+import NaturalLanguage
 
 /// The translation request as the AI provider sees it, and the target
 /// language choices Settings never had to learn about.
 enum Translation {
-    /// Opening words of the instruction (MockEngine keys on them).
-    static let instructionPrefix = "Translate the text into"
-
     /// UserDefaults key for the last language picked in the panel. Device
     /// local on purpose: a Mac and a phone in different languages each
     /// keep their own.
     static let languageKey = "translation.language"
-
-    /// The instruction `ai_edit_text` runs: the edit system prompt already
-    /// says "apply the instruction to the text and return only the revised
-    /// text", so this only has to say what a good translation keeps.
-    static func instruction(to language: String) -> String {
-        "\(instructionPrefix) \(language). Keep the meaning, tone, names, numbers, dates, links and the line "
-            + "breaks; translate greetings and sign-offs too. If the text is already in \(language), return it "
-            + "unchanged. Return only the translation, nothing else."
-    }
 
     /// The English name of a language code ("sk" → "Slovak"): the model
     /// reads the instruction in English, whatever the device speaks.
@@ -58,9 +51,132 @@ enum Translation {
         "Ukrainian", "Russian", "Turkish", "Arabic", "Hindi", "Chinese", "Japanese", "Korean",
     ]
 
-    /// A selection longer than this is cut before it goes to the provider:
-    /// the panel is for a paragraph or a page, and the on-device model's
-    /// window is short (ModelProviders, `promptBudget`).
+    /// The language code of an English language name ("Slovak" → "sk"),
+    /// the reverse of `languageName(for:)`: the panel keeps names, Apple's
+    /// translation and the language check want codes.
+    static func code(for name: String) -> String? { codes[name] }
+
+    /// Every ISO language by its English name, the shortest code winning
+    /// ("sk" over "slk"). Built once.
+    private static let codes: [String: String] = {
+        var out: [String: String] = [:]
+        for code in Locale.LanguageCode.isoLanguageCodes.map(\.identifier) {
+            guard let name = Locale(identifier: "en").localizedString(forLanguageCode: code), !name.isEmpty else { continue }
+            if let have = out[name], have.count <= code.count { continue }
+            out[name] = code
+        }
+        return out
+    }()
+
+    /// The language part of a code ("pt-BR" → "pt", "zh-Hans" → "zh").
+    static func base(_ code: String) -> String {
+        Locale.Language(identifier: code).languageCode?.identifier ?? code
+    }
+
+    /// Whether two codes name the same language, whatever the region.
+    static func same(_ a: String, _ b: String) -> Bool { base(a) == base(b) }
+
+    /// The language a passage is written in, as a code, or nil when it is
+    /// too short or too mixed to say with `atLeast` that much confidence.
+    /// On device (NaturalLanguage).
+    static func detectedLanguage(of text: String, atLeast confidence: Double = 0.6) -> String? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(String(text.prefix(2_000)))
+        guard let best = recognizer.languageHypotheses(withMaximum: 1).first, best.value >= confidence else { return nil }
+        return best.key.rawValue
+    }
+
+    /// Whether a translation still has a paragraph in the source language:
+    /// what a small model does to a long passage. Only paragraphs long
+    /// enough to tell are judged, and nothing is said without both codes.
+    static func leftInSource(_ output: String, source: String?, target: String?) -> Bool {
+        guard let source, let target, !same(source, target) else { return false }
+        return paragraphs(output).contains { paragraph in
+            guard paragraph.count >= 40, let got = detectedLanguage(of: paragraph) else { return false }
+            return same(got, source)
+        }
+    }
+
+    /// What one request to the on-device model carries: a passage and its
+    /// translation have to fit a window of about 4,000 tokens together
+    /// with the instruction, and a small model handed more than a few
+    /// paragraphs drifts back into the source language.
+    static let deviceSegment = 1_200
+
+    /// A passage's paragraphs: runs of lines between blank lines, trimmed.
+    static func paragraphs(_ text: String) -> [String] {
+        var out: [String] = []
+        var current: [String] = []
+        for line in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                if !current.isEmpty { out.append(current.joined(separator: "\n")); current = [] }
+            } else {
+                current.append(line)
+            }
+        }
+        if !current.isEmpty { out.append(current.joined(separator: "\n")) }
+        return out
+    }
+
+    /// The passage in parts of at most `limit` characters, each translated
+    /// by its own request and joined with a blank line: whole paragraphs
+    /// packed together, a paragraph longer than the limit cut between
+    /// sentences, a sentence longer than that between words.
+    static func segments(_ text: String, limit: Int) -> [String] {
+        var out: [String] = []
+        var current = ""
+        for paragraph in paragraphs(text) {
+            for piece in pieces(paragraph, limit: limit) {
+                if current.isEmpty {
+                    current = piece
+                } else if current.count + 2 + piece.count <= limit {
+                    current += "\n\n" + piece
+                } else {
+                    out.append(current)
+                    current = piece
+                }
+            }
+        }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+
+    /// One paragraph in parts that fit `limit`.
+    private static func pieces(_ paragraph: String, limit: Int) -> [String] {
+        guard paragraph.count > limit else { return [paragraph] }
+        var sentences: [String] = []
+        paragraph.enumerateSubstrings(in: paragraph.startIndex..., options: [.bySentences, .substringNotRequired]) { _, _, enclosing, _ in
+            sentences.append(String(paragraph[enclosing]))
+        }
+        if sentences.isEmpty { sentences = [paragraph] }
+        var out: [String] = []
+        var current = ""
+        func close() {
+            let t = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { out.append(t) }
+            current = ""
+        }
+        for sentence in sentences {
+            if current.count + sentence.count > limit { close() }
+            var rest = Substring(sentence)
+            // A sentence no part can hold: cut on a word.
+            while rest.count > limit {
+                let head = rest.prefix(limit)
+                let cut = head.lastIndex(where: { $0.isWhitespace }) ?? head.endIndex
+                let part = cut > rest.startIndex ? rest[..<cut] : head
+                current = String(part)
+                close()
+                rest = rest[part.endIndex...]
+            }
+            current += rest
+        }
+        close()
+        return out
+    }
+
+    /// A selection longer than this is cut before it is translated: the
+    /// panel is for a paragraph or a page. It is also what one request to
+    /// a large model carries.
     static let maxCharacters = 6_000
 
     /// The selection as sent: trimmed and cut to `maxCharacters` on a word.

@@ -362,7 +362,8 @@ title follow a pushed page (`WindowState.settingsPath`).
   Powers "Summarize N active" on the day groups, "Summarize thread", the ✨
   draft reply, Edit with AI in compose (tone and edit presets or a freeform
   instruction), the translate circle beside a selection in a received
-  message, and the triage, Ask and attachment features of
+  message (for the language pairs Apple's on-device translation does not
+  have), and the triage, Ask and attachment features of
   [ios-intelligence.md](./ios-intelligence.md).
 - **Siri & Search** — *Let Siri see your inbox* (the on-device Spotlight
   index Siri, Spotlight and "Ask my inbox" read), *Ask my inbox*, the Siri

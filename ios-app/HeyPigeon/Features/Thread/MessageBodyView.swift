@@ -15,9 +15,9 @@
 //
 // Both report the user's text selection (the native view through its
 // delegate, the web view through an app user script, which runs with the
-// mail's own scripts off): for a received message with an AI provider
-// configured, a translate circle follows the selection and opens the
-// translation beside it (TranslationPanel.swift).
+// mail's own scripts off): for a received message a translate circle
+// follows the selection and opens the translation beside it
+// (TranslationPanel.swift).
 
 import SwiftUI
 import WebKit
@@ -35,8 +35,7 @@ struct MessageBodyView: View {
     /// as `cid:` (a signature logo). Fetched from Gmail and inlined as
     /// `data:` URIs, which the CSP allows; a web view cannot load `cid:`.
     var inlineImages: [AttachmentItem] = []
-    /// Whether a selection offers the translate circle (received mail; the
-    /// circle also needs an AI provider that can answer).
+    /// Whether a selection offers the translate circle (received mail).
     var translatable = false
     /// The HTML with its `cid:` pictures inlined, once they are here.
     @State private var inlinedHTML: String?
@@ -139,9 +138,10 @@ struct MessageBodyView: View {
         }
     }
 
-    /// The translate circle needs received mail and a provider that answers
-    /// (Settings › AI); without one the selection stays the system's alone.
-    private var offersTranslation: Bool { translatable && model.aiConfigured }
+    /// The translate circle needs received mail only: Apple's translation
+    /// answers on the device with no AI provider at all, and the panel
+    /// says so when a language pair needs one that is not there.
+    private var offersTranslation: Bool { translatable }
 
     /// A view's selection changed. Only the view that holds the selection
     /// may clear it: the views report in no fixed order when the selection

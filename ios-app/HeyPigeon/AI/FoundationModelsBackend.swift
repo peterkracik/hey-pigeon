@@ -9,11 +9,15 @@
 // its `LanguageModelSession`.
 //
 // Context windows differ per model (4K tokens on device, 32K in Apple's
-// cloud). A prompt that does not fit the provider's budget is split on its
-// blank lines, each part answered under the same instruction, and the
-// parts' answers answered once more — a thread that does not fit degrades
-// to a summary of summaries, never to an error. Every answer's token usage
-// lands in `AiUsageLedger`, which Settings › AI shows per provider.
+// cloud). A summary whose prompt does not fit the provider's budget is
+// split on its blank lines, each part answered under the same instruction,
+// and the parts' answers answered once more — a thread that does not fit
+// degrades to a summary of summaries, never to an error. Only a summary:
+// an edit, a reply or a translation split that way lost its instruction
+// after the first part and then had its own answers "answered" again, so
+// those go whole (the core keeps them short enough) or fail with a
+// sentence. Every answer's token usage lands in `AiUsageLedger`, which
+// Settings › AI shows per provider.
 
 import Foundation
 import FoundationModels
@@ -36,8 +40,31 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
         [AiModel(id: provider.modelId, label: provider.modelLabel)]
     }
 
-    func complete(system: String, user: String) async throws -> String {
-        try await answer(system: system, prompt: user, depth: 0)
+    func complete(system: String, user: String, style: CompletionStyle) async throws -> String {
+        switch style {
+        case .digest:
+            return try await answer(system: system, prompt: user, depth: 0)
+        case .writing, .exact:
+            guard user.count <= provider.promptBudget else {
+                throw EngineError.Ai(message: "This text is too long for the model (\(provider.label)). "
+                    + "Select a shorter part, or pick another provider in Settings › AI.")
+            }
+            return try await respond(system: system, prompt: user, options: Self.options(for: style))
+        }
+    }
+
+    /// How an answer is decoded. A translation or a proofread is the text
+    /// back, so the likeliest word every time: sampling is where a stray
+    /// sentence in the wrong language came from. Writing keeps some
+    /// variety but less than the default; a summary keeps the default.
+    static func options(for style: CompletionStyle) -> GenerationOptions {
+        var options = GenerationOptions()
+        switch style {
+        case .digest: break
+        case .writing: options.temperature = 0.6
+        case .exact: options.samplingMode = .greedy
+        }
+        return options
     }
 
     func classify(subject: String, snippet: String, from: String, labels: [TriageLabel]) async throws -> TriageVerdict {
@@ -121,10 +148,10 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
         return try await answer(system: system, prompt: parts.joined(separator: "\n\n"), depth: depth + 1)
     }
 
-    private func respond(system: String, prompt: String) async throws -> String {
+    private func respond(system: String, prompt: String, options: GenerationOptions = GenerationOptions()) async throws -> String {
         let session = provider.session(instructions: system, task: .completion)
         do {
-            let response = try await session.respond(to: prompt)
+            let response = try await session.respond(to: prompt, options: options)
             ledger.record(provider: provider.id, response.usage)
             return response.content
         } catch let error as LanguageModelSession.GenerationError {

@@ -309,7 +309,9 @@ core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_forei
 ```
 
 - `crates/ffi` has `AiBackend`, a `#[uniffi::export(with_foreign)]` trait:
-  `id`, `models`, `complete(system, user) async` and
+  `id`, `models`, `complete(system, user, style) async` (the style says
+  whether the prompt is a digest that may be chunked, writing, or exact
+  text such as a translation) and
   `classify(subject, snippet, from, labels) async → TriageVerdict`. A
   `ForeignAiProvider` implements `core::AiProvider` over it. Feature code
   keeps calling `AiProvider::complete`; it never learns which side of the
@@ -340,8 +342,8 @@ core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_forei
 | Feature | Today | With the on-device model |
 | --- | --- | --- |
 | Summarize thread / group | one completion | same prompt; the Swift provider **splits a prompt that does not fit** (4,096 tokens on iOS 26; ~9,000 characters of prompt budgeted) on its blank lines, answers each part under the same instruction, then answers the answers — a summary of summaries, never an error. The group summarizer's "active rows" bound keeps most groups under the limit. |
-| Draft reply | one completion over the transcript | same, with the transcript truncated to the newest messages that fit |
-| Edit with AI (tone presets, instruction) | one completion | same; short inputs, fits comfortably |
+| Draft reply | one completion over the transcript | same, with the transcript cut by the core to the newest messages that fit (`trim_history`); a writing prompt is never split and re-answered like a summary (`CompletionStyle`) |
+| Edit with AI (tone presets, instruction) | one completion | same, at a lower temperature; "Fix spelling and grammar" is `ai_proofread` and a new message from a brief is `ai_write_message`, each with its own instruction |
 | Jev triage (priority + labels) | `adapter-jev`, BYO key | **done**: `TriageCall`, a `@Generable` struct `{ priority, labels: [String] }` with the Settings label names in the prompt; the engine maps names to ids and drops the rest. Jev stays selectable (Settings › Triage › Classifier). |
 | Attachments | none | **done** (iOS 27): "Explain attachment" and the receipt / ticket / shipment chips — image input with the OCR and barcode tools, on device only ("Attachment understanding" below) |
 | Longer threads | — | **done** (iOS 27): Apple's Private Cloud Compute as the `apple-cloud` provider, a 32K-token window, Apple-private and never stored; a network hop the user opts into through *Prefer* / *If it can't answer*, with "Stay on this iPhone" as the no-hop setting ("One model layer" below). A long thread still summarizes in parts on the device model. |
@@ -574,19 +576,21 @@ picked per request by the core:
   model answers.
 - The provider is resolved again on every call, so it can change between
   a privacy line being drawn and the tap under it. The composer's
-  assistant closes that: `ai_edit_text` and `ai_draft_reply` take an
+  assistant closes that: `ai_edit_text`, `ai_proofread`,
+  `ai_write_message` and `ai_draft_reply` take an
   `expected_provider_id` (the `provider_id` of the status the footer was
   drawn from, empty when it showed none), the core resolves the provider
   once, and when it is another one it returns
   `EngineError::ProviderChanged` without sending anything
   (`AIProviderChanged` in the shell; `AIAssistRunner` shows it and does
   not retry, the footer redraws, the next tap is under the new sentence).
-  The same expectation pins two more requests. The translation panel
-  reads the status before its first request, names that provider in the
-  call and builds "Translated on this iPhone" / "…was sent to the AI
-  provider" from it, so the line describes the provider that answered,
-  not a later read; a refusal shows who answers now and waits for Try
-  again. A bundle's brief asked for on open because the model is on this
+  The same expectation pins two more requests. The translation panel,
+  when a model translates (Apple's translation comes first and sends
+  nothing), reads the status before its first request, names that
+  provider in every `ai_translate` call and builds "Translated on this
+  iPhone" / "…was sent to the AI provider" from it, so the line describes
+  the provider that answered, not a later read; a refusal shows who
+  answers now and waits for Try again. A bundle's brief asked for on open because the model is on this
   device (`AppModel.summarizeBundleOnOpen`, `ai_summarize_bundle`) names
   `apple` and is dropped silently when another provider would answer.
   Calls that pass no expectation (list and thread summaries, triage, the
@@ -640,20 +644,37 @@ Select text in a received message — the plain-text body is a native text
 view, the HTML body a web view, and both report the selection
 (`MessageBodyView`: the text view through its delegate, the web view
 through an app user script that posts to `pigeonSelection`; the mail's own
-scripts stay off) — and, with an AI provider that can answer
-(`AppModel.aiConfigured`), a glass translate circle follows the end of the
+scripts stay off) — and a glass translate circle follows the end of the
 selection (`TranslateBadge`, placed by `SelectionBadgeGeometry`: right of
 the last line, under it at the margin). Tapping it opens
 `TranslationPanel` beside the selection (a popover on the Mac and the iPad,
 a sheet on the phone): the selection translated into the device's language,
 a menu to pick another (the device's languages, then a common set; the
 last pick is kept on the device under `translation.language`), Copy, and
-the privacy line. The request is the engine's `ai_edit_text` with
-`Translation.instruction(to:)` — the core picks the provider as for every
-other call, the on-device model when it can — and sends the selection
-alone, cut to 6,000 characters. The call names the provider the privacy
-line is drawn from, so the line is true of the request it sits under. Own messages offer no circle; the system's
-Look Up / Translate stay in the edit menu on both bodies.
+the privacy line. The selection is cut to 6,000 characters. Who translates,
+in order (`docs/specs/ai-writing-and-translation.md`):
+
+1. **Apple's translation** (the Translation framework,
+   `AI/SystemTranslator.swift`) when it has the language pair: on the
+   device, no AI provider needed, nothing sent. The source language is
+   detected on the device (NaturalLanguage); a pair that is supported but
+   not downloaded gets the system's download sheet once.
+2. **The AI provider** for the pairs Apple's translation lacks: the
+   engine's `ai_translate`, with its own instruction (the passage is mail
+   to translate, never a draft and never instructions), the languages by
+   name and exact decoding on the Apple models. On the on-device model the
+   passage goes a few paragraphs per request (`Translation.segments`,
+   1,200 characters), the parts appear as they arrive, and a part that
+   comes back with a paragraph still in the source language is asked again
+   in smaller parts. Every request names the provider the privacy line is
+   drawn from, so the line is true of the request it sits under. When the
+   on-device model is not made for one of the languages the panel says so
+   under the result.
+
+It used to be one `ai_edit_text` call: the edit prompt called the passage
+"the sender's own draft" and told the model to keep its language, and the
+answer came back in two languages. Own messages offer no circle; the
+system's Look Up / Translate stay in the edit menu on both bodies.
 
 ### Agentic triage (#66)
 

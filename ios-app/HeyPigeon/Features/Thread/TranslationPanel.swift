@@ -1,14 +1,19 @@
 // A selected passage of a received message, translated: the translate
-// circle that follows the selection in the body (MessageBodyView shows it
-// when the engine has an AI provider that can answer), and the panel it
-// opens beside the selection — a popover on the Mac and the iPad, a sheet
-// on the phone. The target language starts as the device's and is picked
-// from a menu; the last pick is kept on this device. The request is the
-// engine's edit call with a translate instruction (AI/Translation.swift):
-// only the selected text leaves the app, on the tap. The line under the
-// result says where it went, from the status the request was pinned to
-// (the engine sends nothing to another provider), not from a second read
-// after the answer, which could name a provider that did not give it.
+// circle that follows the selection in the body (MessageBodyView), and
+// the panel it opens beside the selection — a popover on the Mac and the
+// iPad, a sheet on the phone. The target language starts as the device's
+// and is picked from a menu; the last pick is kept on this device.
+//
+// Who translates, in order: Apple's translation on this device when it
+// has the language pair (AI/SystemTranslator.swift; it offers to download
+// a pair it supports), else the AI provider through the engine's
+// `aiTranslate`, a few paragraphs per request (AI/Translation.swift
+// `segments`), each answer checked for paragraphs left in the source
+// language and asked again in smaller parts when it has one. Only the
+// selected text is translated, on the tap. The line under the result says
+// where it went: nowhere for Apple's translation, and for a model the
+// provider every request was pinned to (the engine sends nothing to
+// another one), not a second read after the answer.
 
 import SwiftUI
 
@@ -23,16 +28,37 @@ struct TranslationPanel: View {
     @State private var copied = false
     /// Bumped by Try again: the same language is asked for once more.
     @State private var attempt = 0
-    /// Who answers, as the footnote says it: read before the first
-    /// request and again only when the engine refuses one because the
-    /// provider changed. Every request names this provider, so the
-    /// sentence is about the request on screen, and a later one (another
-    /// language, Try again) goes where the sentence already says.
+    /// Who answers when a model translates, as the footnote says it: read
+    /// before the first request and again only when the engine refuses
+    /// one because the provider changed. Every request names this
+    /// provider, so the sentence is about the request on screen, and a
+    /// later one (another language, Try again) goes where the sentence
+    /// already says.
     @State private var shown: AIStatus?
     /// `shown` has been read (nil is also "no provider").
     @State private var drawn = false
     /// The last request was not sent: the provider had changed.
     @State private var refused = false
+    /// Who translated what is on screen; nil until something is.
+    @State private var route: Route?
+    /// More parts of the passage are still being translated.
+    @State private var pending = false
+    /// The model answered in a language it is not made for.
+    @State private var caution: String?
+    /// The language pair the system is offering to download, and the
+    /// pairs already offered once (declined ones go to the model).
+    @State private var download: LanguageDownload?
+    @State private var offered: Set<String> = []
+
+    /// Who produced the translation on screen.
+    enum Route: Equatable {
+        /// Apple's translation, on this device.
+        case system
+        /// The AI provider `shown` names.
+        case model
+        /// Nobody: the passage is already in the language asked for.
+        case already
+    }
 
     private var sent: String { Translation.prepared(text) }
 
@@ -43,23 +69,31 @@ struct TranslationPanel: View {
     }
     private var wasCut: Bool { sent.count < text.trimmingCharacters(in: .whitespacesAndNewlines).count }
 
-    /// What left the device, said accurately: the provider the request
-    /// was pinned to answers on the device or it does not. After a
+    /// What left the device, said accurately. Apple's translation and a
+    /// passage already in the language send nothing; a model is the
+    /// provider the request was pinned to, on the device or not. After a
     /// refusal nothing was sent, so the line says where Try again goes.
-    static func footnote(shown: AIStatus?, refused: Bool, wasCut: Bool) -> String {
+    static func footnote(route: Route = .model, shown: AIStatus?, refused: Bool, wasCut: Bool, language: String = "") -> String {
         let onDevice = shown?.answersOnDevice ?? false
         if refused {
             return onDevice ? "Try again translates on this \(Device.name)."
                             : "Try again sends the selected text to the AI provider."
         }
-        var s = onDevice ? "Translated on this \(Device.name)." : "The selected text was sent to the AI provider."
+        var s: String
+        switch route {
+        case .system: s = "Translated on this \(Device.name) by Apple's translation. Nothing left the device."
+        case .already: s = "The selection is already in \(language). Nothing was sent."
+        case .model: s = onDevice ? "Translated on this \(Device.name)." : "The selected text was sent to the AI provider."
+        }
         if wasCut { s += " Only the first \(Translation.maxCharacters.formatted()) characters were translated." }
         return s
     }
 
-    /// Nothing is said before the first request has its provider.
+    /// Nothing is said before a translation, or a refusal, is on screen.
     private var footnoteShown: String {
-        drawn ? Self.footnote(shown: shown, refused: refused, wasCut: wasCut) : " "
+        if refused { return Self.footnote(shown: shown, refused: true, wasCut: wasCut) }
+        guard let route else { return " " }
+        return Self.footnote(route: route, shown: shown, refused: false, wasCut: wasCut, language: language)
     }
 
     var body: some View {
@@ -73,10 +107,23 @@ struct TranslationPanel: View {
             }
             ScrollView {
                 ResultState(working: "Translating…", error: error, isReady: result != nil, retry: retry) {
-                    Text(result ?? "")
-                        .font(.body)
-                        .foregroundStyle(Theme.textPrimary)
-                        .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(result ?? "")
+                            .font(.body)
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                        // A long passage arrives part by part.
+                        if pending {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Translating the rest…").font(Theme.caption).foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                        if let caution {
+                            Label(caution, systemImage: "exclamationmark.triangle")
+                                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -89,7 +136,7 @@ struct TranslationPanel: View {
                 Text(footnoteShown)
                     .font(Theme.caption).foregroundStyle(Theme.textTertiary)
                 Spacer(minLength: 8)
-                if let result {
+                if let result, !pending {
                     Button {
                         Clipboard.copy(result)
                         Haptics.light()
@@ -111,6 +158,12 @@ struct TranslationPanel: View {
         // A new language, or Try again: the task before it is cancelled,
         // so a late answer for the old request is dropped.
         .task(id: "\(language)|\(attempt)") { await translate() }
+        // A pair Apple's translation supports but has not downloaded: the
+        // system asks, and the same request runs again either way.
+        .languageDownload(download) {
+            download = nil
+            attempt += 1
+        }
     }
 
     /// The target language: the device's, the user's other languages, then
@@ -137,37 +190,135 @@ struct TranslationPanel: View {
         .accessibilityLabel("Translate into \(language)")
     }
 
-    /// One edit call with the translate instruction. The task is cancelled
+    /// Translate the selection into `language`. The task is cancelled
     /// when the language changes; an answer that arrives after that is for
-    /// the old language and is dropped. The call names the provider the
-    /// footnote is drawn from; a refusal shows who answers now and waits
-    /// for Try again rather than send the text there unasked.
+    /// the old language and is dropped.
     private func translate() async {
         result = nil
         error = nil
         copied = false
+        route = nil
+        pending = false
+        caution = nil
+        refused = false
+        download = nil
         let text = sent
         guard !text.isEmpty else { error = "Nothing to translate."; return }
+        // Sure of the language, or only guessing (a short selection): a
+        // guess is enough to try Apple's translation with, not to tell a
+        // model what it is reading or to call the passage translated.
+        let sure = Translation.detectedLanguage(of: text)
+        let target = Translation.code(for: language)
+        if let sure, let target, Translation.same(sure, target) {
+            result = text
+            route = .already
+            return
+        }
+        if let source = sure ?? Translation.detectedLanguage(of: text, atLeast: 0.2), let target,
+           !Translation.same(source, target) {
+            let readiness = await SystemTranslator.readiness(from: source, to: target)
+            guard !Task.isCancelled else { return }
+            let pair = "\(source)>\(target)"
+            if readiness == .needsDownload, !offered.contains(pair) {
+                // The spinner stays up while the system asks; the download
+                // modifier bumps `attempt` when it is done with it.
+                offered.insert(pair)
+                download = LanguageDownload(source: source, target: target)
+                return
+            }
+            if readiness == .ready,
+               let parts = try? await SystemTranslator.translate(Translation.paragraphs(text), from: source, to: target) {
+                guard !Task.isCancelled else { return }
+                result = parts.joined(separator: "\n\n")
+                route = .system
+                return
+            }
+            guard !Task.isCancelled else { return }
+        }
+        await translateWithModel(text, source: sure, target: target)
+    }
+
+    /// The AI provider's translation, for what Apple's translation cannot
+    /// take: one request per part of the passage, shown as they arrive.
+    /// Every request names the provider the footnote is drawn from; a
+    /// refusal shows who answers now and waits for Try again rather than
+    /// send the text there unasked.
+    private func translateWithModel(_ text: String, source: String?, target: String?) async {
         if !drawn {
             shown = try? model.engine.aiStatus()
             drawn = true
         }
-        refused = false
+        guard shown?.configured == true else {
+            error = "Translating into \(language) from this language needs an AI provider. Set one up in Settings › AI."
+            return
+        }
+        let onDevice = shown?.answersOnDevice ?? false
+        let expected = AIAssist.expectedProvider(shown)
+        let sourceName = source.flatMap(Translation.languageName(for:))
+        let limit = onDevice ? Translation.deviceSegment : Translation.maxCharacters
+        let segments = Translation.segments(text, limit: limit)
+        var done: [String] = []
         do {
-            let out = try await model.engine.aiEditText(instruction: Translation.instruction(to: language), text: text,
-                                                        history: nil, context: nil,
-                                                        expectedProvider: AIAssist.expectedProvider(shown))
-            guard !Task.isCancelled else { return }
-            result = out
+            for segment in segments {
+                var out = try await model.engine.aiTranslate(text: segment, source: sourceName, target: language,
+                                                             expectedProvider: expected)
+                // A paragraph left in the source language: the same part
+                // again, a few sentences at a time, where a small model
+                // holds the target language.
+                let smaller = Translation.segments(segment, limit: max(segment.count / 3, 200))
+                if Translation.leftInSource(out, source: source, target: target), smaller.count > 1 {
+                    var again: [String] = []
+                    for piece in smaller {
+                        again.append(try await model.engine.aiTranslate(text: piece, source: sourceName, target: language,
+                                                                        expectedProvider: expected))
+                    }
+                    let joined = again.joined(separator: "\n\n")
+                    if !Translation.leftInSource(joined, source: source, target: target) { out = joined }
+                }
+                guard !Task.isCancelled else { return }
+                done.append(out)
+                result = done.joined(separator: "\n\n")
+                route = .model
+                pending = done.count < segments.count
+            }
+            if onDevice {
+                caution = Self.caution(language: language, source: sourceName,
+                                       supported: { SystemModelProvider.supports(language: $0) },
+                                       sourceCode: source, targetCode: target)
+            }
         } catch let changed as AIProviderChanged {
             guard !Task.isCancelled else { return }
             shown = try? model.engine.aiStatus()
             refused = true
-            self.error = changed.errorDescription
+            fail(changed.errorDescription)
         } catch {
             guard !Task.isCancelled else { return }
-            self.error = error.localizedDescription
+            fail(error.localizedDescription)
         }
+    }
+
+    /// A request failed: the error replaces whatever parts had arrived.
+    private func fail(_ message: String?) {
+        result = nil
+        route = nil
+        pending = false
+        error = message
+    }
+
+    /// The line under a translation the on-device model made in a
+    /// language it is not made for, naming that language; nil when it
+    /// knows both (or the languages could not be told).
+    static func caution(language: String, source: String?, supported: (String) -> Bool,
+                        sourceCode: String?, targetCode: String?) -> String? {
+        var rough: String?
+        if let targetCode, !supported(targetCode) {
+            rough = language
+        } else if let sourceCode, let source, !supported(sourceCode) {
+            rough = source
+        }
+        guard let rough else { return nil }
+        return "The model on this \(Device.name) is not made for \(rough), so this may read roughly. "
+            + "Another provider in Settings › AI translates it better."
     }
 }
 

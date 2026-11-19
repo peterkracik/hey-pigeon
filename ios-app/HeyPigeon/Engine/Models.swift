@@ -705,6 +705,10 @@ struct AIPrompts: Hashable {
     let threadSummary: String
     let draftReply: String
     let edit: String
+    /// The proofread, write-from-a-brief and translate instructions.
+    var proofread = ""
+    var write = ""
+    var translate = ""
 }
 
 /// Who is writing to whom, for the writing assistant (crates/ffi
@@ -1298,6 +1302,17 @@ protocol MailEngine: AnyObject {
                     expectedProvider: String?) async throws -> String
     func aiDraftReply(subject: String, history: String, notes: String?, context: AIWriteContext?,
                       expectedProvider: String?) async throws -> String
+    /// Spelling, grammar and punctuation corrected, nothing else changed
+    /// (its own prompt: under the edit one a small model rewrote).
+    func aiProofread(text: String, expectedProvider: String?) async throws -> String
+    /// A new message written from the user's brief.
+    func aiWriteMessage(brief: String, subject: String, context: AIWriteContext?,
+                        expectedProvider: String?) async throws -> String
+    /// One passage of received mail translated into `target` (a language
+    /// name in English); `source` is the language it is in, when known.
+    /// The panel sends a long selection a few paragraphs at a time
+    /// (`Translation.segments`).
+    func aiTranslate(text: String, source: String?, target: String, expectedProvider: String?) async throws -> String
     func aiSummarizeThread(subject: String, items: [(from: String, snippet: String)]) async throws -> String
     func aiSummarizeGroup(items: [(from: String, subject: String, snippet: String)]) async throws -> String
     /// The system prompts the engine runs (summary, thread summary, draft

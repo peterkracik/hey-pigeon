@@ -45,25 +45,33 @@ enum AIAssist {
         let hasSelection: Bool
     }
 
-    /// The edit presets; the first is the one Superhuman leads with.
+    /// The proofread preset. It does not go through the edit call: it has
+    /// the engine's own `aiProofread`, which corrects and changes nothing
+    /// else (`AIAssistRunner.edit` routes it by this instruction).
+    static let proofread = Preset(title: "Fix spelling and grammar",
+                                  instruction: "Fix spelling, grammar and punctuation mistakes. Change nothing else.")
+
+    /// The edit presets; the first is the one Superhuman leads with. Each
+    /// says what to change, how far, and what must survive: a one-line
+    /// "make it better" left a small model to guess all three.
     static let edits: [Preset] = [
-        Preset(title: "Improve writing", instruction: "Improve the writing: clearer, smoother and better structured, keeping the meaning, the tone and roughly the length."),
-        Preset(title: "Fix spelling and grammar", instruction: "Fix spelling, grammar and punctuation mistakes. Change nothing else."),
-        Preset(title: "Shorten", instruction: "Make this more concise without losing the key points."),
-        Preset(title: "Lengthen", instruction: "Expand this with a bit more detail and context, keeping the tone."),
-        Preset(title: "Simplify", instruction: "Simplify the wording: shorter sentences and plain words, same meaning."),
-        Preset(title: "More formal", instruction: "Rewrite this in a more formal, professional tone."),
-        Preset(title: "More casual", instruction: "Rewrite this in a more casual, friendly tone."),
+        Preset(title: "Improve writing", instruction: "Improve the writing. Make each sentence clear and direct, replace awkward or wordy phrasing, fix any mistakes, and put the points in a sensible order. Keep every point, the meaning, the tone and roughly the length. Do not make it more formal and do not add anything new."),
+        proofread,
+        Preset(title: "Shorten", instruction: "Shorten this to about half its length. Keep every request, question, date, number and name; cut repetition, filler and pleasantries."),
+        Preset(title: "Lengthen", instruction: "Make this about a third longer by spelling out what is already implied and adding a connecting sentence where the text jumps. Keep the tone. Do not invent facts, dates or commitments."),
+        Preset(title: "Simplify", instruction: "Rewrite this in plain, everyday words and short sentences, so it can be read quickly. Same meaning, same points, nothing added."),
+        Preset(title: "More formal", instruction: "Rewrite this in a formal, professional tone: full sentences, no slang and no contractions, polite but not stiff. Same content and about the same length."),
+        Preset(title: "More casual", instruction: "Rewrite this in a casual, friendly tone, the way one writes to a colleague one knows well: simple words, contractions, no stiff phrases. Same content and about the same length."),
     ]
 
     /// Tone, to dial a result in (they chain: Warmer, then More concise).
     static let tones: [Preset] = [
-        Preset(title: "Warmer", instruction: "Make the tone warmer and friendlier, without changing the meaning."),
-        Preset(title: "More formal", instruction: "Make the tone more formal and professional, without changing the meaning."),
-        Preset(title: "More casual", instruction: "Make the tone more casual and relaxed, without changing the meaning."),
-        Preset(title: "More confident", instruction: "Make the tone more confident and direct, without changing the meaning."),
-        Preset(title: "Softer", instruction: "Soften the tone — more polite and less blunt — without changing the meaning."),
-        Preset(title: "More concise", instruction: "Make it more concise without losing the key points."),
+        Preset(title: "Warmer", instruction: "Make the tone warmer and friendlier — a kind word where it fits, nothing gushing. Same content, same length."),
+        Preset(title: "More formal", instruction: "Make the tone more formal and professional: full sentences, no slang, polite but not stiff. Same content."),
+        Preset(title: "More casual", instruction: "Make the tone more casual and relaxed: simple words, contractions, no stiff phrases. Same content."),
+        Preset(title: "More confident", instruction: "Make the tone more confident and direct: say things plainly, drop hedges such as \"I think\", \"maybe\" and \"just\". Same content, and still polite."),
+        Preset(title: "Softer", instruction: "Soften the tone: more polite and less blunt, a request instead of a demand. Same content."),
+        Preset(title: "More concise", instruction: "Make it more concise: cut repetition and filler, keep every request, question, date, number and name."),
     ]
 
     /// The tones the edit presets do not already offer by name, for a
@@ -117,20 +125,6 @@ enum AIAssist {
             : "Review before it replaces the message"
     }
 
-    /// Opening words of the compose instruction (MockEngine keys on them).
-    static let writePrefix = "Write a complete email from the brief below"
-
-    /// The edit endpoint doubles as the writer for a new message: the brief
-    /// is the "text", and the instruction asks for a whole email built from
-    /// it, with the same guardrails as the desktop's draft-reply prompt.
-    static func writeInstruction(subject: String) -> String {
-        var s = writePrefix + ", in the first person as the sender. "
-        let subj = subject.trimmingCharacters(in: .whitespaces)
-        if !subj.isEmpty { s += "The subject line is \"\(subj)\". " }
-        s += "Be concise and natural. Never invent facts, dates, or commitments the brief does not support — put a short placeholder in square brackets where the sender must fill something in. Return ONLY the email body as plain text: no subject line, no markdown, and no signature block (the sender's signature is added separately)."
-        return s
-    }
-
     // MARK: What a request sends
 
     /// What starts a request, in the platform's word: the footer is under
@@ -170,11 +164,14 @@ enum AIAssist {
 
     /// The privacy line under the assistant: what a tap sends, and to
     /// whom. It must stay literally true (ios-app/CLAUDE.md): the pieces
-    /// are the arguments of the engine's `aiEditText` / `aiDraftReply`
-    /// (crates/ffi/src/settings.rs `build_edit_prompt`,
-    /// `build_draft_reply_prompt`). `sendsWriter` is the Mac's
-    /// `AIWriteContext` — the sender's and recipients' names and
-    /// addresses.
+    /// are the arguments of the engine's `aiEditText` / `aiDraftReply` /
+    /// `aiWriteMessage` (crates/ffi/src/settings.rs `build_edit_prompt`,
+    /// `build_draft_reply_prompt`, `build_write_prompt`). `sendsWriter` is
+    /// the composer's `AIWriteContext` — the sender's and recipients'
+    /// names and addresses — which both the phone's sheet and the Mac's
+    /// panel send. The sentence is drawn before a button is picked, so it
+    /// lists the most a tap sends: "Fix spelling and grammar" sends the
+    /// text alone (`aiProofread`).
     /// With a result under review (`refining`) a tap is a tone: it sends
     /// that draft, not the brief or the original text.
     /// The destination holds for the request too: the view hands the
@@ -196,8 +193,8 @@ enum AIAssist {
         case (.write, false): parts = ["your brief", "the subject"]
         }
         if sendsWriter {
-            // The Mac's AIWriteContext carries the subject with the names
-            // and addresses, in every mode.
+            // The AIWriteContext carries the subject with the names and
+            // addresses, in every mode.
             if !parts.contains(where: { $0.contains("subject") }) { parts.append("the subject") }
             parts.append("who is writing to whom")
         }
@@ -304,8 +301,12 @@ final class AIAssistRunner {
         }
         let expected = AIAssist.expectedProvider(shown)
         run {
-            try await model.engine.aiEditText(instruction: instruction, text: text, history: history, context: context,
-                                              expectedProvider: expected)
+            // Proofreading has its own call: the text alone, corrected.
+            if instruction == AIAssist.proofread.instruction {
+                return try await model.engine.aiProofread(text: text, expectedProvider: expected)
+            }
+            return try await model.engine.aiEditText(instruction: instruction, text: text, history: history, context: context,
+                                                     expectedProvider: expected)
         } done: { out in
             AIAssist.Outcome(text: out, written: false, hasSelection: hasSelection)
         }
@@ -325,7 +326,8 @@ final class AIAssistRunner {
     }
 
     /// A reply from the transcript (the notes steer it), or a new message
-    /// from the brief through the edit endpoint.
+    /// from the brief (the engine's `aiWriteMessage`; it used to be an
+    /// "edit" of the brief, under a prompt that called it a draft).
     func write(notes: String, subject: String, history: String?, context: AIWriteContext?, shown: AIStatus?,
                in model: AppModel) {
         let expected = AIAssist.expectedProvider(shown)
@@ -343,9 +345,8 @@ final class AIAssistRunner {
                 return
             }
             run {
-                try await model.engine.aiEditText(instruction: AIAssist.writeInstruction(subject: subject),
-                                                  text: notes, history: nil, context: context,
-                                                  expectedProvider: expected)
+                try await model.engine.aiWriteMessage(brief: notes, subject: subject, context: context,
+                                                      expectedProvider: expected)
             } done: { out in
                 AIAssist.Outcome(text: out, written: true, hasSelection: false)
             }

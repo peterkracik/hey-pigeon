@@ -552,7 +552,12 @@ impl Engine {
             items.join("\n\n")
         );
         let answer = self
-            .complete_as(BUNDLE_SUMMARY_PROMPT, user, expected_provider_id.as_deref())
+            .complete_as(
+                BUNDLE_SUMMARY_PROMPT,
+                user,
+                CompletionStyle::Digest,
+                expected_provider_id.as_deref(),
+            )
             .await?;
         Ok(parse_bundle_summary(&answer))
     }

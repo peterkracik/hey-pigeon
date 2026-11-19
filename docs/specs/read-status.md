@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — step 1 (local statuses) merged, #142; step 2 (own-pixel rule, token reader) implemented, not merged; steps 3–7 not started
+Status: Approved — step 1 (local statuses) merged, #142; step 2 (own-pixel rule, token reader) merged, #144; step 3 (relay and infrastructure) implemented, not merged, not deployed; steps 4–7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -221,8 +221,8 @@ switch, per mailbox, off until I turn it on.
 | Shared shell (`ios-app/HeyPigeon`) | `AppModel.setReadStatus(_:for:)`, `AppModel.recentOpens`, `SendDraft.trackOpens` and its default (R15) as a static function; the status line in `MessageHeaderLine`; `Features/ReadStatus/RecentOpensView.swift` (the list, shared by all three); the "Read status" row and footer in `SettingsView`'s account editor; the composer's switch in `ComposeView`; the wording of R1 and R5 in one place (`ReadStatusText`, static, testable). |
 | iPhone / iPad only | The "Recent Opens" row in `SidebarSheet` (iPhone) and the iPad sidebar (`Features/Pad`). `AppDelegate` needs no change: a push without `email` already syncs every account (`NewMailNotifier.handle`). |
 | Mac only (`macos-app/HeyPigeonMac`) | Entry points only: "Recent Opens" in `SidebarColumn`, a palette entry, `g o` in `KeyboardMap.resolve` / `characters` / `ShortcutsSheet.groups`, all through `WindowState.run`. The Mac build gets the relay URL (`HEYPIGEON_RELAY_URL` in `publish-macos` and `macos-ci`) without the push entitlement. |
-| Relay (`relay/`) | `index.js`: `functions.http("opens", …)`. `src/handlers.js`: the four routes, pure. New `src/opens.js` (Firestore `opens` collection), `src/classify.js` (pure: address + user agent + age → label), `src/ranges.js` (Apple's egress list, loaded once per instance). `registerToken` gains `GET` and `opensUrl` ("Discovery of the opens URL", below). |
-| Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, `depends_on` the other two so the three do not race for the staging bucket), `OPENS_URL` in `register-token`'s environment, the domain mapping for `o.heypigeon.app`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`. `bootstrap/`: a `google_logging_project_exclusion` for the `opens` service's request logs (new `logging.tf`), applied by hand from a laptop like the rest of bootstrap. |
+| Relay (`relay/`) | `index.js`: `functions.http("opens", …)`. New `src/opens-handlers.js`: the four routes, pure, with the `onOpen` seam for R24. New `src/opens.js` (Firestore `opens` collection), `src/classify.js` (pure: address + user agent + age → label), `src/ranges.js` (Apple's egress list, fetched once per instance, never bundled; unavailable → the classifier works from the user agent, where Apple's proxy is still `hidden`). `registerToken` gains `GET` and `opensUrl` ("Discovery of the opens URL", below). |
+| Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, 512M, at most 5 instances), `OPENS_URL` in `register-token`'s environment (which also orders the three so they do not race for the staging bucket), the domain mapping for `o.heypigeon.app` behind `opens_domain` (off by default). `logging.tf`: the `google_logging_project_exclusion` for the `opens` service's request logs, which the function and its invoker `depends_on`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`, `opens_run_url`, `opens_domain_records`. `bootstrap/iam.tf`: the custom role `relayLogExclusions` for the deployer — the one part applied by hand. `deploy-relay.yml`: `workflow_dispatch` (plan or apply, `main` only). |
 
 **SQLite, migration v32** (the next free number; v31 is the newest today):
 
@@ -351,9 +351,9 @@ Core (`cargo test`, against `MemStore` / `FakeProvider`):
 
 Relay (`node --test`, no network):
 
-- [ ] R20 — `opens.test.js`: register needs a valid Google token; unknown token → GIF and zero store calls; known token → GIF, one append, one push; query returns only the caller's tokens; delete is `204` twice in a row
-- [ ] R21 — `classify.test.js`: Gmail proxy, direct client, Apple range, grace window, scanner, `HEAD`; the event cap
-- [ ] R20, R21 — no handler test can find an IP or user agent in what the store, the push or the log received
+- [x] R20 — `opens.test.js`: register needs a valid Google token; unknown token → GIF, one lookup and nothing else; known token → GIF, one append, one `onOpen`; query returns only the caller's tokens; delete is `204` twice in a row. `register-token.test.js`: `GET` answers `{ topic, opensUrl }` and writes nothing
+- [x] R21 — `classify.test.js`: Gmail proxy, direct client, Apple range, Apple's list unavailable, grace window, scanner, `HEAD`; `ranges.test.js`: parsing, lookup, one fetch per instance, failure and retry; the event cap in `opens.test.js`
+- [x] R20, R21 — no handler test can find an IP or user agent in what the store, the push or the log received (`no address, user agent or URL reaches the store, the notification or the log`)
 
 Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 
@@ -386,9 +386,10 @@ Whole feature:
    reader). Inert until something sends a pixel; must be in every
    installed build before step 5 so no device ever loads one.
 3. **Relay and infrastructure.** `opens` function, classifier, tests;
-   Terraform (function, TTL, `OPENS_URL`, `GET` on `register-token`);
-   bootstrap log exclusion applied by hand **before** the function is
-   public; the domain mapping. Nothing calls it yet.
+   Terraform (function, TTL, `OPENS_URL`, `GET` on `register-token`, the
+   log exclusion the function depends on, the domain mapping behind a
+   variable). By hand, once, before the merge: a bootstrap apply that
+   lets the deployer manage log exclusions. Nothing calls it yet.
 4. **Store and setting.** Migration v32, `Account.read_status`, the
    devsync field, `set_read_status`, the Settings row (disabled or off
    everywhere), the Mac build's relay URL. Still sends no pixel.
@@ -422,8 +423,21 @@ Whole feature:
   recreated); a load balancer (about $18 a month, breaks "$0 at personal
   volume"); Cloudflare Workers (would split the relay across two
   providers while push and the device tokens stay in Google Cloud).
-- The request-log exclusion lives in `terraform/bootstrap/` and is applied
-  by hand.
+- The Terraform for read status is applied by the `deploy-relay` Action,
+  not from a laptop. The request-log exclusion is in the root stack and
+  the `opens` function depends on it, so the function cannot exist
+  without it. The one laptop step is a bootstrap apply granting the
+  deployer a custom role for log exclusions (`relayLogExclusions`), since
+  CI never holds project IAM. Accepted cost: the CI identity can then
+  create, change or delete any log exclusion of the project.
+- The domain mapping is created by the same Action once `OPENS_DOMAIN` is
+  set, after the deployer service account is made a verified owner of
+  `heypigeon.app` in Search Console and the CNAME exists. Until then the
+  pixel is served from the function's run.app URL.
+- Apple's egress ranges are fetched by the function at cold start, not
+  bundled. If they cannot be loaded, the fetch is labelled by user agent:
+  Apple's proxy stays `hidden`, and only a fetch that names a mail client
+  or browser is `opened`.
 - Cost stays $0 at personal volume.
 - Link-click tracking and blocker evasion are out.
 - **Not delivered outranks Opened** when one of several recipients
@@ -458,14 +472,13 @@ Assumed, following how the app already behaves — say no to any of them:
 
 Still open — needs the owner or a measurement:
 
-- **Memory for `opens`**: 256M like the other two, or 512M for Apple's
-  egress ranges. Unmeasured; decided by the acceptance measurement.
-- **Domain verification for the mapping**: the mapping is created by the
-  CI deployer (`relay-deployer`, which has `roles/run.admin`), and Google
-  requires the identity creating it to be a verified owner of
-  `heypigeon.app`. Either that service account is added as an owner in
-  Search Console (a manual prerequisite for `terraform/README.md`) or the
-  mapping is created by hand once and imported.
+- **Memory for `opens`**: set to 512M, twice the other two, for Apple's
+  egress ranges. Unmeasured; the acceptance measurement decides whether
+  256M is enough.
+- **OAuth clients the relay accepts**: `google_client_ids` holds the iOS
+  client only, and the Mac app signs in with its own (`GoogleMacClientID`).
+  Until the Mac's client id is added, `register-token` and `opens` refuse
+  the Mac's tokens — to settle in step 4, with the Mac build's relay URL.
 - **EU ePrivacy / UK PECR.** Reading that a mail was opened is access to
   information on the recipient's device and, for recipients in the EU and
   the UK, generally needs their prior consent (ePrivacy Directive
@@ -495,12 +508,10 @@ Step 1, 2026-11-19 — **Verified with notes**. Merged as #142.
   a bounce as a reply, so a bounce ends a "remind me if no reply"
   follow-up while read status says "Not delivered".
 
-Step 2, 2026-11-19 — **Verified with notes**. Not merged.
+Step 2, 2026-11-19 — **Verified with notes**. Merged as #144.
 
 - Rust only; no Swift, bridge, schema, relay, setting or copy changed.
-  `cargo fmt --all -- --check` and the `cargo test` line of `rust-ci`
-  pass locally. `ios-ci` and `macos-ci` rebuild both apps on any crate
-  change and have not run on it.
+  `rust-ci`, `ios-ci` and `macos-ci` were green on it.
 - Inert: nothing writes a pixel, and `Message.open_token` is read by
   nothing yet.
 - The pixel is known by its path shape on any host (R18), not by
@@ -508,4 +519,21 @@ Step 2, 2026-11-19 — **Verified with notes**. Not merged.
 - Not covered: a pixel reached other than through an `<img>` (a CSS
   background) — the app never writes one that way.
 
-Steps 3–7: not started.
+Step 3, 2026-11-19 — **Verified with notes**. Not merged, not deployed.
+
+- `npm ci && npm test` in `relay/`: 53 tests pass. `terraform fmt -check
+  -recursive` and `terraform validate` (root and bootstrap, 1.9.8,
+  `-backend=false`) pass.
+- Not run, and not runnable without the project: `terraform plan` and
+  `apply`. Whether the custom role is enough for the exclusion, whether
+  the deployer may set the TTL policy, the real cold start and memory of
+  `opens`, the domain mapping, and that the request log is really gone
+  after the first pixel request are all unverified until it is deployed.
+- The classifier's signals (Gmail's proxy name, the bare `Mozilla/5.0` of
+  Apple's proxy, the shape of Apple's list) are from memory of how those
+  services behave, tested against fixtures, not against live traffic.
+- Nothing in the apps or the core calls the function; no privacy copy in
+  the apps or the site changed. `relay/README.md` and
+  `terraform/README.md` describe what is deployed after the merge.
+
+Steps 4–7: not started.

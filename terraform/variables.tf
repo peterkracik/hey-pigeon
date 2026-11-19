@@ -30,6 +30,12 @@ variable "google_client_ids" {
   type        = list(string)
 }
 
+variable "opens_domain" {
+  description = "Custom domain for the read-status pixel (o.heypigeon.app). Empty: the opens function is used at its run.app URL and no mapping is created. Set it only after the deployer service account is a verified owner of the domain and the DNS record exists (README)."
+  type        = string
+  default     = ""
+}
+
 variable "node_runtime" {
   description = "Cloud Run functions runtime. Node 20 is end-of-life; 22 is the floor."
   type        = string

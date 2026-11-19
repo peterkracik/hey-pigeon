@@ -1,6 +1,21 @@
 output "register_token_url" {
-  description = "Paste this into the iOS app: Settings → Notifications → Relay URL."
+  description = "The relay URL the apps are built with (HEYPIGEON_RELAY_URL); it also reports the topic and the opens URL."
   value       = google_cloudfunctions2_function.register_token.service_config[0].uri
+}
+
+output "opens_url" {
+  description = "Where read status lives: the pixel (/o/<token>.gif) and the app's register / query / delete routes."
+  value       = local.opens_url
+}
+
+output "opens_run_url" {
+  description = "The opens function's own run.app URL; works with or without the custom domain."
+  value       = google_cloudfunctions2_function.opens.service_config[0].uri
+}
+
+output "opens_domain_records" {
+  description = "The DNS records Google asks for once opens_domain is mapped (a CNAME to ghs.googlehosted.com for a subdomain)."
+  value       = var.opens_domain != "" ? google_cloud_run_domain_mapping.opens[0].status[0].resource_records : []
 }
 
 output "pubsub_topic" {

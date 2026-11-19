@@ -35,7 +35,7 @@ export const MAX_QUERY = 100;
 const TOKEN_RE = /^[0-9a-f]{32}$/;
 const PIXEL_RE = /^\/o\/([0-9a-f]{32})\.gif$/;
 
-/** A transparent 1 × 1 GIF89a, 43 bytes. */
+/** A transparent 1 × 1 GIF89a, 42 bytes. */
 export const PIXEL = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
 
 /**

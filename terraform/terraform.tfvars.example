@@ -5,3 +5,4 @@ apns_key_id       = "ABC123DEFG"
 apns_team_id      = "TEAM123456"
 apns_topic        = "app.heypigeon.ios"
 google_client_ids = ["1234567890-abc.apps.googleusercontent.com"] # the iOS OAuth client only
+# opens_domain    = "o.heypigeon.app" # read-status pixel on a custom domain; leave unset until the README's two steps are done

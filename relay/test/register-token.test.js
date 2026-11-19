@@ -81,7 +81,7 @@ test("bad bodies are 400", async () => {
 test("other methods are 405", async () => {
   const { h } = setup();
   const res = fakeRes();
-  await h.registerToken(fakeReq({ method: "GET", headers: good }), res);
+  await h.registerToken(fakeReq({ method: "PUT", headers: good }), res);
   assert.equal(res.statusCode, 405);
   assert.equal(res.headers.Allow, "GET, POST, DELETE");
 });

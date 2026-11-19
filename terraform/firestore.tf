@@ -11,3 +11,14 @@ resource "google_firestore_database" "default" {
   type                    = "FIRESTORE_NATIVE"
   delete_protection_state = "DELETE_PROTECTION_ENABLED"
 }
+
+# Read status: opens/{token} → { mailboxHash, createdAt, expiresAt, events }.
+# Firestore deletes a document once its `expiresAt` has passed (within about
+# a day), 30 days after the message was registered (relay/src/opens.js).
+resource "google_firestore_field" "opens_ttl" {
+  database   = google_firestore_database.default.name
+  collection = "opens"
+  field      = "expiresAt"
+
+  ttl_config {}
+}

@@ -155,6 +155,10 @@ resource "google_cloudfunctions2_function" "register_token" {
     environment_variables = merge(local.apns_env, {
       GOOGLE_CLIENT_IDS = join(",", var.google_client_ids)
       PUBSUB_TOPIC      = google_pubsub_topic.gmail_push.id # projects/<p>/topics/gmail-push
+      # Where read status lives, reported to the app beside the topic so it
+      # still needs one setting. The reference also orders the functions:
+      # opens, then this one, then on-mail-change (see there for why).
+      OPENS_URL = local.opens_url
     })
   }
 
@@ -166,4 +170,98 @@ resource "google_cloud_run_v2_service_iam_member" "register_token_public" {
   name     = google_cloudfunctions2_function.register_token.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# ---------------------------------------------------------------------------
+# Read status (docs/specs/read-status.md): the `opens` function. Public
+# HTTPS like register-token; its four routes do their own checking
+# (relay/src/opens-handlers.js). The pixel route is the one endpoint of the
+# relay that strangers' mail clients call.
+
+locals {
+  # The address the pixel is served from and the app is told about: the
+  # custom domain once it is mapped (var.opens_domain), the function's own
+  # run.app URL until then. Both keep working after the switch — a pixel in
+  # mail already sent names whichever it was sent with.
+  opens_url = var.opens_domain != "" ? "https://${var.opens_domain}" : google_cloudfunctions2_function.opens.service_config[0].uri
+}
+
+resource "google_cloudfunctions2_function" "opens" {
+  name        = "opens"
+  location    = var.region
+  description = "Hey Pigeon relay: read status for sent mail (token, mailbox hash, open times; never mail, never addresses)"
+
+  build_config {
+    runtime           = var.node_runtime
+    entry_point       = "opens"
+    service_account   = "projects/${var.project_id}/serviceAccounts/${local.relay_build_sa}"
+    docker_repository = google_artifact_registry_repository.relay.id
+
+    source {
+      storage_source {
+        bucket = google_storage_bucket.relay_src.name
+        object = google_storage_bucket_object.relay.name
+      }
+    }
+  }
+
+  service_config {
+    service_account_email = local.relay_fn_sa
+    ingress_settings      = "ALLOW_ALL"
+    # Twice the other two: an instance holds Apple's egress ranges in memory
+    # (relay/src/ranges.js), some hundreds of thousands of them. Unmeasured —
+    # the spec's acceptance criteria ask for the number from the deployed
+    # function; lower this to 256M if it allows.
+    available_memory   = "512M"
+    timeout_seconds    = 30
+    min_instance_count = 0
+    # A ceiling on what a flood of pixel requests can cost.
+    max_instance_count = 5
+    environment_variables = {
+      GOOGLE_CLIENT_IDS = join(",", var.google_client_ids)
+      # Empty until the domain is mapped: the function then answers with the
+      # host it was called on, which is its run.app URL.
+      OPENS_PUBLIC_URL = var.opens_domain != "" ? "https://${var.opens_domain}" : ""
+    }
+  }
+
+  # The request-log exclusion first (logging.tf): Cloud Run writes one log
+  # line per request, with the caller's IP address, user agent and the full
+  # URL — for the pixel, who opened which message from where. This function
+  # must never exist without the exclusion. If the exclusion cannot be
+  # created (the deployer lacks the role from terraform/bootstrap), the
+  # apply fails there and this function is not created at all.
+  depends_on = [
+    time_sleep.iam_propagation,
+    google_logging_project_exclusion.opens_requests,
+  ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "opens_public" {
+  location = var.region
+  name     = google_cloudfunctions2_function.opens.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+
+  depends_on = [google_logging_project_exclusion.opens_requests]
+}
+
+# o.heypigeon.app → the opens service. Off until var.opens_domain is set:
+# Google only lets a verified owner of the domain map it, so the deployer
+# service account has to be added as an owner in Search Console first, and
+# the DNS record is the domain owner's to add (terraform/README.md). Cloud
+# Run domain mappings are free and "preview" at Google.
+resource "google_cloud_run_domain_mapping" "opens" {
+  count = var.opens_domain != "" ? 1 : 0
+
+  location = var.region
+  name     = var.opens_domain
+
+  metadata {
+    namespace = var.project_id
+  }
+
+  spec {
+    route_name = google_cloudfunctions2_function.opens.name
+  }
 }

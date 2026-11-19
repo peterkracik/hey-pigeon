@@ -49,7 +49,7 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
                 throw EngineError.Ai(message: "This text is too long for the model (\(provider.label)). "
                     + "Select a shorter part, or pick another provider in Settings › AI.")
             }
-            return try await respond(system: system, prompt: user, options: Self.options(for: style))
+            return try await respond(system: system, prompt: user, options: Self.options(for: style), transforms: true)
         }
     }
 
@@ -78,8 +78,8 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
             )
             ledger.record(provider: provider.id, response.usage)
             verdict = response.content
-        } catch let error as LanguageModelSession.GenerationError {
-            throw EngineError.Ai(message: Self.describe(error))
+        } catch {
+            throw Self.engineError(error)
         }
         return TriageVerdict(priority: verdict.priority.ffi, labelIds: TriagePrompt.labelIds(for: verdict.labels, in: labels))
     }
@@ -96,8 +96,8 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
             let response = try await session.respond(to: prompt, generating: SuggestionCall.self)
             ledger.record(provider: provider.id, response.usage)
             call = response.content
-        } catch let error as LanguageModelSession.GenerationError {
-            throw EngineError.Ai(message: Self.describe(error))
+        } catch {
+            throw Self.engineError(error)
         }
         switch SuggestionPrompt.suggestion(action: call.action.rawValue, remindOn: call.remindOn, hour: call.hour) {
         case .needsReply: return .needsReply
@@ -118,8 +118,8 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
             let response = try await session.respond(to: String(prompt.prefix(provider.promptBudget)), generating: BundleCall.self)
             ledger.record(provider: provider.id, response.usage)
             call = response.content
-        } catch let error as LanguageModelSession.GenerationError {
-            throw EngineError.Ai(message: Self.describe(error))
+        } catch {
+            throw Self.engineError(error)
         }
         let decision = BundlePrompt.decision(
             action: call.action.rawValue, bundle: call.bundle, name: call.name, kind: call.kind.rawValue,
@@ -148,14 +148,19 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
         return try await answer(system: system, prompt: parts.joined(separator: "\n\n"), depth: depth + 1)
     }
 
-    private func respond(system: String, prompt: String, options: GenerationOptions = GenerationOptions()) async throws -> String {
-        let session = provider.session(instructions: system, task: .completion)
+    private func respond(system: String, prompt: String, options: GenerationOptions = GenerationOptions(),
+                         transforms: Bool = false) async throws -> String {
+        // An edit or a translation hands the user's own text back changed:
+        // the on-device model then runs under the guardrails Apple makes
+        // for transforming text, which do not refuse a passage for what
+        // it says (a registrar's notice was "unsafe content").
+        let session = provider.session(instructions: system, task: transforms ? .transformation : .completion)
         do {
             let response = try await session.respond(to: prompt, options: options)
             ledger.record(provider: provider.id, response.usage)
             return response.content
-        } catch let error as LanguageModelSession.GenerationError {
-            throw EngineError.Ai(message: Self.describe(error))
+        } catch {
+            throw Self.engineError(error)
         }
     }
 
@@ -181,10 +186,36 @@ final class FoundationModelsBackend: AiBackend, @unchecked Sendable {
         return out
     }
 
+    /// Any failure of a session as the error the core expects. A request
+    /// built against the iOS 27 SDK throws `LanguageModelError`, not the
+    /// `GenerationError` this file used to catch alone: everything else
+    /// crossed the bridge as "UnexpectedUniFFICallbackError(…)", raw, into
+    /// the translation panel.
+    static func engineError(_ error: any Error) -> EngineError {
+        if let error = error as? EngineError { return error }
+        if let error = error as? LanguageModelError { return .Ai(message: describe(error)) }
+        if let error = error as? LanguageModelSession.GenerationError { return .Ai(message: describe(error)) }
+        return .Ai(message: error.localizedDescription)
+    }
+
+    /// What the user reads when the model declines a text.
+    static let declined = "The model declined this text as possibly unsafe. Try a shorter selection, or pick another provider in Settings › AI."
+
+    static func describe(_ error: LanguageModelError) -> String {
+        switch error {
+        case .contextSizeExceeded: "The text is too long for this model."
+        case .guardrailViolation, .refusal: declined
+        case .unsupportedLanguageOrLocale: "The model doesn't support this language."
+        case .rateLimited: "The model is busy. Try again in a moment."
+        case .timeout: "The model took too long. Try again."
+        default: error.localizedDescription
+        }
+    }
+
     static func describe(_ error: LanguageModelSession.GenerationError) -> String {
         switch error {
         case .exceededContextWindowSize: "The text is too long for this model."
-        case .guardrailViolation: "The model declined this content."
+        case .guardrailViolation: declined
         case .unsupportedLanguageOrLocale: "The model doesn't support this language."
         case .assetsUnavailable: "The model isn't ready. Try again later."
         default: error.localizedDescription

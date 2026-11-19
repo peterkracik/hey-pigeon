@@ -5,10 +5,14 @@
 // floating glass bars at the bottom: the Reply button — tap for the default
 // action, chevron for Reply · Reply all · Forward, as in Superhuman — with
 // the AI draft circle beside it, and one triage bar in the desktop's words:
-// Done · Remind · Need reply · Pin · Delete. The Mac window puts the same
-// pieces on one small card and names the thread in its own toolbar
-// (ThreadChrome). Unsent reply drafts sit under the messages, marked as
-// drafts, to edit or delete; the Reply button then continues the draft.
+// Done · Remind · Need reply · Pin · Delete. The header, the dates, the
+// fold and the hierarchy are the same on the three devices; only what
+// holds them differs (ThreadChrome): flat and edge to edge on the phone,
+// a 760 pt column on the iPad, and on the Mac the same column with the
+// messages as one rounded card, Reply · Reply all · Forward as pills at
+// the last message's foot and the triage alone on the floating card.
+// Unsent reply drafts sit under the messages, marked as drafts, to edit
+// or delete; the Reply button then continues the draft.
 
 import AppIntents
 import SwiftUI
@@ -114,25 +118,25 @@ struct ThreadView: View {
                     Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                         .font(Theme.display(22, relativeTo: .title2))
                         .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 16).padding(.top, 6)
+                        .padding(.horizontal, ThreadChrome.headerInset).padding(.top, 6)
 
-                    metaLine.padding(.horizontal, 16).padding(.top, 8)
+                    metaLine.padding(.horizontal, ThreadChrome.headerInset).padding(.top, 8)
                     if let s = current.openSuggestion {
                         SuggestionCard(suggestion: s, row: current)
-                            .padding(.horizontal, 16).padding(.top, 10)
+                            .padding(.horizontal, ThreadChrome.headerInset).padding(.top, 10)
                     }
                     if let invite {
                         InviteCard(invite: invite, row: current)
-                            .padding(.horizontal, 16).padding(.top, 10)
+                            .padding(.horizontal, ThreadChrome.headerInset).padding(.top, 10)
                     }
                     if !hintActions.isEmpty {
                         AttachmentActionChips(actions: hintActions, row: current)
-                            .padding(.horizontal, 16).padding(.top, 8)
+                            .padding(.horizontal, ThreadChrome.headerInset).padding(.top, 8)
                             .accessibilityLabel("Suggested from the attachment")
                     }
 
                     if let detail {
-                        messageList(detail.mail).padding(.top, 14)
+                        messageList(detail.mail, names: ThreadDetail.knownNames(detail.messages)).padding(.top, 14)
                         // The draft being written under the thread is not a
                         // card to edit as well.
                         let pending = drafts.filter { $0.id != inlineDraft?.draftKey }
@@ -142,7 +146,8 @@ struct ThreadView: View {
                                     DraftRow(draft: d) { edit(d) } onDelete: { discard(d) }
                                 }
                             }
-                            .padding(.horizontal, 12).padding(.top, 10)
+                            // Under the Mac's card, at its edges.
+                            .padding(.horizontal, max(12, ThreadChrome.cardInset)).padding(.top, 10)
                         }
                     } else if let failed {
                         // With the way to ask again: the only one was to
@@ -185,8 +190,10 @@ struct ThreadView: View {
                 .padding(.bottom, inlineDraft == nil ? 150 : max(150, viewportHeight / 2))
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
-            // On a wide iPad the messages keep to a readable column.
+            // On a wide iPad the messages keep to a readable column; the
+            // Mac's is the same width, with the bars centred under it.
             .readableColumn()
+            .threadColumn()
             // The reply opens in the middle of the view: a moment after it
             // is there, so the lazy stack has laid it out.
             .onChange(of: inlineDraftShown) { _, key in
@@ -199,7 +206,7 @@ struct ThreadView: View {
                 }
             }
         }
-        .background(Theme.canvas)
+        .background(ThreadChrome.page)
         // The names are the principal item. No .toolbar(removing: .title)
         // here: a plain-text principal counts as the title and went with it.
         .navigationTitle(participants)
@@ -388,7 +395,10 @@ struct ThreadView: View {
     /// The messages with 1 pt gaps, as in the list. Long threads fold their
     /// middle into one row: the first message, "N earlier", then the last
     /// two and any unread run before them. Opening a message unfolds.
-    private func messageList(_ messages: [MessageItem]) -> some View {
+    /// On the Mac they are one rounded card (`threadCard`) that ends
+    /// with Reply · Reply all · Forward, unless a reply is being written
+    /// under it. `names` is the thread's people, for the "to" lines.
+    private func messageList(_ messages: [MessageItem], names: [String: String]) -> some View {
         let lastIndex = messages.count - 1
         // Folded unless the user unfolded it or opened a message inside it.
         let folded = unfolded ? nil : ThreadDetail.foldedRange(messages).flatMap { range in
@@ -401,15 +411,18 @@ struct ThreadView: View {
                         EarlierRow(count: folded.count) { withAnimation(.snappy) { unfolded = true } }
                     }
                 } else {
-                    MessageRow(message: m, expanded: !allCollapsed && (expanded.contains(m.id) || index == lastIndex),
-                               attachments: attachments[m.id] ?? []) {
+                    let open = !allCollapsed && (expanded.contains(m.id) || index == lastIndex)
+                    // The first and the last message are never in the fold.
+                    MessageRow(message: m, expanded: open, attachments: attachments[m.id] ?? [], names: names,
+                               shape: ThreadChrome.rowShape(first: index == 0, last: index == lastIndex),
+                               replyFoot: ThreadChrome.replyAtFoot && index == lastIndex && inlineDraft == nil) {
                         allCollapsed = false
                         if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
                     } onAction: { kind in run(kind, on: m) }
                 }
             }
         }
-        .background(Theme.separator.opacity(0.6))
+        .threadCard()
     }
 
     // MARK: Header pieces
@@ -438,8 +451,10 @@ struct ThreadView: View {
     @ViewBuilder private var messageCount: some View {
         let count = detail?.mail.count ?? row.messageCount
         if count > 1 {
-            Text("\(count)").font(Theme.meta.weight(.semibold)).foregroundStyle(Theme.textTertiary).monospacedDigit()
-                .accessibilityLabel("\(count) messages")
+            // In words, as under a row's preview on the Mac: a bare
+            // number beside the chips read as one more badge.
+            Text("\(count) messages").font(Theme.meta).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                .lineLimit(1).fixedSize()
         }
     }
 
@@ -486,7 +501,8 @@ struct ThreadView: View {
     // MARK: Bottom bars
 
     /// The Reply pill, then the triage actions as one glass bar; on the
-    /// Mac both on one card (ThreadChrome.oneBar).
+    /// Mac the triage alone on one small card (ThreadChrome.oneBar): its
+    /// reply buttons end the last message (ThreadChrome.replyAtFoot).
     /// State colours, shared by the header badges and the active bar buttons.
     private static let remindTone = AccountColor.lavender
     private static let replyTone = AccountColor.sky
@@ -496,16 +512,10 @@ struct ThreadView: View {
         Group {
             if ThreadChrome.oneBar {
                 // The Mac: one card as wide as its contents, in the middle.
-                // The keys (e · h · n · s · r · ⌘⌫) run the same actions,
-                // so the bar stays small.
-                HStack(spacing: 4) {
-                    if inlineDraft == nil {
-                        replyPill
-                        if model.aiConfigured { aiButton.padding(.leading, 4) }
-                        Rectangle().fill(Theme.separator).frame(width: 1, height: 20).padding(.horizontal, 6)
-                    }
-                    triageButtons
-                }
+                // The keys (e · h · n · s · ⌘⌫) run the same actions, so
+                // the bar stays small. Reply is not on it: its pills are
+                // at the last message's foot, where the reply is written.
+                HStack(spacing: 4) { triageButtons }
                 .padding(5)
                 .floatingBar()
                 .padding(.bottom, 12)
@@ -528,14 +538,15 @@ struct ThreadView: View {
         }
     }
 
-    /// The AI draft circle, in the accent, beside the Reply pill.
+    /// The AI draft circle, in the accent, beside the Reply pill (the
+    /// phone and the iPad; the Mac drafts from the palette, the menu bar
+    /// and the composer's ⌘J).
     private var aiButton: some View {
-        let size: CGFloat = ThreadChrome.oneBar ? 32 : 48
-        return Button { Task { await draftReply() } } label: {
+        Button { Task { await draftReply() } } label: {
             Image(systemName: "sparkles")
-                .font(ThreadChrome.oneBar ? .system(size: 14, weight: .semibold) : .title3)
+                .font(.title3)
                 .foregroundStyle(.white)
-                .frame(width: size, height: size)
+                .frame(width: 48, height: 48)
                 .background(Theme.accent.opacity(drafting ? 0.4 : 0.9), in: Circle())
         }
         .buttonStyle(.plain)
@@ -571,12 +582,11 @@ struct ThreadView: View {
 
     /// Superhuman's reply button: the chevron picks Reply · Reply all ·
     /// Forward (kept for this thread), the label runs it on the latest
-    /// message. The AI draft is its own circle next to it. The phone's
-    /// fills its row on glass; the Mac's is a sunken pill as wide as its
-    /// words, on the bar's card.
+    /// message. The AI draft is its own circle next to it. It fills its
+    /// row on glass. (The phone and the iPad; the Mac has its three
+    /// pills at the last message's foot, `ThreadReplyFoot`.)
     private var replyPill: some View {
-        let compact = ThreadChrome.oneBar
-        return HStack(spacing: 0) {
+        HStack(spacing: 0) {
             Menu {
                 ForEach(ReplyKind.allCases) { kind in
                     Button { replyChoice = kind; run(kind) } label: {
@@ -589,7 +599,7 @@ struct ThreadView: View {
                     Image(systemName: replyKind.systemImage)
                     Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
                 }
-                .padding(.leading, compact ? 12 : 18).padding(.trailing, compact ? 8 : 12)
+                .padding(.leading, 18).padding(.trailing, 12)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }
@@ -597,19 +607,18 @@ struct ThreadView: View {
             // bezel and a second chevron around them.
             .labelOnlyMenu()
             .accessibilityLabel("Choose reply type")
-            Rectangle().fill(Theme.separator).frame(width: 1, height: compact ? 16 : 22)
+            Rectangle().fill(Theme.separator).frame(width: 1, height: 22)
             Button { if let d = drafts.last { edit(d) } else { run(replyKind) } } label: {
                 Text(drafts.isEmpty ? replyKind.title : "Continue draft")
-                    .font(compact ? Font.system(size: 13, weight: .semibold) : nil)
-                    .padding(.horizontal, compact ? 12 : 14)
-                    .frame(maxWidth: compact ? nil : CGFloat.infinity, maxHeight: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .threadKey("r")
         }
         .foregroundStyle(Theme.textPrimary)
-        .frame(height: compact ? 32 : 48)
+        .frame(height: 48)
         .replyPillSurface()
         .disabled(detail == nil)
     }
@@ -621,10 +630,7 @@ struct ThreadView: View {
         case .forward: return "Choose recipients"
         case .reply, .replyAll:
             let d = replyDraft(to: last, all: kind == .replyAll)
-            let names = (d.to + d.cc).map { address in
-                detail?.messages.first { $0.fromAddress == address }?.fromName ?? address
-            }
-            return names.joined(separator: ", ")
+            return ThreadDetail.recipientLine(d.to + d.cc, names: ThreadDetail.knownNames(detail?.messages ?? []))
         }
     }
 
@@ -867,8 +873,10 @@ enum ReplyKind: String, CaseIterable, Identifiable {
 
 /// One message as the inbox row: sender · time, one snippet line; the
 /// unread bar on the left edge. Expanded, it sits on the card surface with
-/// the recipients and the body, and its ••• (or a long press on the
-/// header line) replies to or forwards this message. The body is outside
+/// the recipients and the body, and its ••• at the end of the "to" line
+/// (or a long press on the header line) replies to or forwards this
+/// message. The thread's last message ends with the Mac's reply pills
+/// (`replyFoot`). The body is outside
 /// that menu on purpose: a context menu on the whole row took the long
 /// press before the web view or the text view saw it, so no selection
 /// could ever start in a message on the phone.
@@ -876,6 +884,13 @@ struct MessageRow: View {
     let message: MessageItem
     let expanded: Bool
     var attachments: [AttachmentItem] = []
+    /// The thread's people by address, for the "to" line.
+    var names: [String: String] = [:]
+    /// The row's surface: the card's corners on the Mac's first and last
+    /// messages (`ThreadChrome.rowShape`), square everywhere else.
+    var shape = ThreadChrome.rowShape(first: false, last: false)
+    /// Ends with Reply · Reply all · Forward (the Mac's last message).
+    var replyFoot = false
     let onToggle: () -> Void
     let onAction: (ReplyKind) -> Void
 
@@ -883,8 +898,9 @@ struct MessageRow: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
                 // The header the composer's history shows too
-                // (MessageHeaderLine), with this row's ••• after the time.
-                MessageHeaderLine(message: message, expanded: expanded) {
+                // (MessageHeaderLine), with this row's ••• ending its
+                // "to" line.
+                MessageHeaderLine(message: message, expanded: expanded, names: names) {
                     if expanded { actionsMenu }
                 }
             }
@@ -909,12 +925,26 @@ struct MessageRow: View {
                     AttachmentChips(attachments: files).padding(.top, 10)
                 }
             }
+            // Under a closed last message too (everything collapsed):
+            // the pills are the Mac's only reply buttons.
+            if replyFoot {
+                ThreadReplyFoot(onAction: onAction).padding(.top, expanded ? 14 : 10)
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, expanded ? 12 : 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(expanded ? Theme.card : Theme.canvas)
+        .threadRowHover(!expanded, in: shape)
+        .threadRowSurface(expanded ? ThreadChrome.openRow : ThreadChrome.closedRow, in: shape)
         .overlay(alignment: .leading) {
-            if !message.isRead { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
+            // Cut to the row's shape: at a card's corner the bar's own
+            // stood out past the curve. (Only the bar is clipped, never
+            // the row: it holds the message's web view.)
+            if !message.isRead {
+                Rectangle().fill(Theme.unreadBar).frame(width: 3)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .clipShape(shape)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
@@ -925,31 +955,36 @@ struct MessageRow: View {
             }
         } label: {
             Image(systemName: "ellipsis").font(Theme.secondary.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-                .frame(width: 28, height: 22)
-                // 28 × 22 as drawn; 44 × 44 to the finger.
+                .frame(width: ThreadChrome.actionsSize.width, height: ThreadChrome.actionsSize.height)
+                // 28 × 22 as drawn on the phone; 44 × 44 to the finger.
                 .tapArea(horizontal: 8, vertical: 11)
         }
         .labelOnlyMenu()
+        .threadIconHover()
+        .help("Actions for this message")
         .accessibilityLabel("Actions for this message")
     }
 }
 
-/// The folded middle of a long thread: "4 earlier messages".
+/// The folded middle of a long thread: "4 earlier messages", as a quiet
+/// line between the rows it stands for, not a row among them.
 private struct EarlierRow: View {
     let count: Int
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 10) {
-                Image(systemName: "line.3.horizontal").font(Theme.caption.weight(.bold))
-                Text("\(count) earlier messages").font(Theme.secondary.weight(.semibold))
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
+                Text("\(count) earlier messages").font(Theme.meta.weight(.medium))
                 Spacer()
             }
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            .background(Theme.canvas)
-            .contentShape(Rectangle())
+            .foregroundStyle(Theme.textTertiary)
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            // The line is some 28 pt tall: taller to the finger.
+            .tapArea(vertical: 8)
+            .threadRowHover()
+            .background(ThreadChrome.closedRow)
         }
         .buttonStyle(.plain)
     }

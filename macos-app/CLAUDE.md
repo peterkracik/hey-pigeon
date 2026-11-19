@@ -115,17 +115,37 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   the page. A page over the list (a full thread; a bundle or an email
   on the Bundles page) gets the window's own Back as the first item over
   the content column (`WindowState.canGoBack`, `run(.back)`) and its
-  name after the tabs (`MainToolbar.otherTitle`: the thread's people);
-  the stacks' own Back is hidden (`backInWindowToolbar` — it sat beside
+  name after the tabs (`MainToolbar.otherTitle`) — but for a thread,
+  which has none: the people's names were there, and said a third time
+  what the subject at the head of the column and each message's sender
+  already do; the stacks' own Back is hidden (`backInWindowToolbar` — it sat beside
   the traffic lights, over the sidebar) and ThreadView's principal item
   is the phone's only (`ThreadChrome.titleInBar` — here it was a
   bordered pill in the middle of the window). The thread's trailing
   items (sparkle, actions menu) are the shared view's; a shared view's
   sheet-only item goes behind a helper (`sheetCloseButton`,
-  `composeChrome`). The thread's bottom bars are one small card in the
-  middle (`ThreadChrome.oneBar`, `floatingBar`, `replyPillSurface`,
-  `barButton`): the phone's two glass capsules stretched across the
-  thread smeared the message under them. A `Menu` whose label is a chip
+  `composeChrome`). An open thread is the phone's, in another
+  container (`ThreadChrome`): a reading column of
+  `MacLayout.readingWidth` in the middle of the window or of the
+  reading pane (`threadColumn`, the shared view's own, so a thread
+  window and an email on the Bundles page have it too) on the list's
+  background, its messages as one white card (`threadCard`: 16 pt in,
+  14 pt corners carried by its first and last rows
+  (`ThreadChrome.rowShape`) — no clip and no shadow, either would lie
+  over the messages' web views; closed messages and the fold on
+  the card's surface with the pointer's tint, hairlines between), the
+  subject and the chips 32 pt in so they start where the card's text
+  does, and the body at 15 px on a line of 1.5 (`MailTypography`; the
+  phone keeps Dynamic Type). The last message ends with Reply · Reply
+  all · Forward as the preview's pills (`ThreadReplyFoot`,
+  `ThreadChrome.replyAtFoot`; gone while a reply is written under it),
+  and the triage buttons alone are one small card in the middle of the
+  bottom edge (`ThreadChrome.oneBar`, `floatingBar`, `barButton`): the
+  Reply pill and the AI circle sat on that card too, a second place
+  for what the keys (`r` · `a` · `f`) and the foot of the message do,
+  and the phone's two glass capsules stretched across the thread
+  smeared the message under them. The AI draft is the palette's and
+  the menu bar's "Draft Reply with AI", and ⌘J in the composer. A `Menu` whose label is a chip
   or an icon takes `labelOnlyMenu()`: the Mac's default draws a white
   bezel around it under the pointer. The triage labels are the phone's
   glass pill (`TriageSplitBar`) at the bottom of the list. Search and the command
@@ -196,8 +216,10 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   request (`shown:`), so a request goes to the provider the line named
   or is not sent (`AIProviderChanged`).
   The AI's prompt carries who writes to whom (`AIWriteContext`) and the
-  core keeps the draft's language. The list and the thread keep to
-  `MacLayout.maxWidth`.
+  core keeps the draft's language. The list keeps to
+  `MacLayout.maxWidth` (1120 pt, for its single-line rows), a thread to
+  `MacLayout.readingWidth` (760 pt, the iPad's `ReadableLayout.maxWidth`):
+  a line of mail across the list's width was too long to read.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the

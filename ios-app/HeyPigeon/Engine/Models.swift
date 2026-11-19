@@ -229,6 +229,24 @@ struct ThreadDetail: Hashable, Sendable {
         return seen.isEmpty ? nil : seen.joined(separator: ", ")
     }
 
+    /// Who the thread's people are, by address (lowercased): a message's
+    /// "to" line then reads "to Ana, Ben" where it listed raw addresses.
+    /// The first name an address wrote under wins.
+    static func knownNames(_ messages: [MessageItem]) -> [String: String] {
+        var names: [String: String] = [:]
+        for m in messages where !m.fromName.isEmpty {
+            let key = m.fromAddress.lowercased()
+            if names[key] == nil { names[key] = m.fromName }
+        }
+        return names
+    }
+
+    /// A message's recipients as one line: the name of each address the
+    /// thread knows, the address itself (or "me") for the rest.
+    static func recipientLine(_ addresses: [String], names: [String: String]) -> String {
+        addresses.map { names[$0.lowercased()] ?? $0 }.joined(separator: ", ")
+    }
+
     /// Long threads fold their middle into one "N earlier" row: the first
     /// message stays, then the last two and any unread run just before
     /// them. Returns the indices folded away (never fewer than two), or nil

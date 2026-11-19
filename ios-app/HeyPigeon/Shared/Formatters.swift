@@ -25,6 +25,12 @@ enum Formatters {
         return f
     }()
 
+    private static let monthDayYear: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("MMM d y")
+        return f
+    }()
+
     private static let full: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
@@ -46,6 +52,26 @@ enum Formatters {
     }
 
     static func fullDate(_ date: Date) -> String { full.string(from: date) }
+
+    /// An open message's time, as short as the day allows: "05:57" today,
+    /// "Yesterday, 05:57", "Thu, 09:12" within the week, then "Nov 12,
+    /// 09:12", with the year only when it is not `now`'s. (The header
+    /// showed the full date on every open message, the year included for
+    /// mail of this morning; `fullDate` is still its tooltip.)
+    static func messageTime(_ date: Date, now: Date = Date()) -> String {
+        let cal = Calendar.current
+        let t = time.string(from: date)
+        if cal.isDate(date, inSameDayAs: now) { return t }
+        if let yesterday = cal.date(byAdding: .day, value: -1, to: now), cal.isDate(date, inSameDayAs: yesterday) {
+            return "Yesterday, \(t)"
+        }
+        // The week behind `now` only: a date ahead of it (a sender's clock
+        // that runs fast) is not "Thu".
+        let age = now.timeIntervalSince(date)
+        if age >= 0, age < 7 * 86_400 { return "\(weekday.string(from: date)), \(t)" }
+        let sameYear = cal.component(.year, from: date) == cal.component(.year, from: now)
+        return "\((sameYear ? monthDay : monthDayYear).string(from: date)), \(t)"
+    }
 
     /// Section header for the day groups — the desktop's buckets exactly:
     /// Today · Last 7 days · Older.

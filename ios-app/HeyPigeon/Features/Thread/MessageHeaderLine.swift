@@ -1,6 +1,7 @@
 // A message's header as the thread shows it: who it is from and when,
 // then one line under it — the snippet while the message is closed, who
-// it went to once it is open. The thread's rows (ThreadView's MessageRow)
+// it went to once it is open, by name where the thread knows it, with the
+// row's own control at that line's end. The thread's rows (ThreadView's MessageRow)
 // and the conversation inside the composer (ComposeThreadHistory) each
 // drew it; they are the same message at the same sizes.
 
@@ -14,7 +15,12 @@ struct MessageHeaderLine<Trailing: View>: View {
     /// (docs/specs/reply-recipients.md). The composer's history is for
     /// reading back, and shows neither.
     var inThread = true
-    /// What sits after the time (the thread's ••• on an open message).
+    /// The thread's people by address (`ThreadDetail.knownNames`), for
+    /// the "to" line; an address it does not know is shown as it is.
+    var names: [String: String] = [:]
+    /// What ends the "to" line of an open message (the thread's •••).
+    /// Not after the time: the times of open and closed messages then
+    /// ended at two different right edges.
     @ViewBuilder let trailing: () -> Trailing
 
     var body: some View {
@@ -22,18 +28,28 @@ struct MessageHeaderLine<Trailing: View>: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(message.isMine ? "Me" : message.fromName)
                     .font(Theme.sender(!message.isRead))
-                    .foregroundStyle(Theme.textPrimary)
+                    // A closed message that was read steps back; the
+                    // open one and the unread ones carry the thread.
+                    .foregroundStyle(expanded || !message.isRead ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                Text(expanded ? Formatters.fullDate(message.date) : Formatters.rowTime(message.date))
+                Text(expanded ? Formatters.messageTime(message.date) : Formatters.rowTime(message.date))
                     .font(Theme.meta)
                     .foregroundStyle(inThread && !message.isRead ? Theme.textSecondary : Theme.textTertiary)
                     .monospacedDigit()
-                trailing()
+                    // The whole date, for the pointer and for VoiceOver.
+                    .help(Formatters.fullDate(message.date))
+                    .accessibilityLabel(Formatters.fullDate(message.date))
             }
             if expanded {
-                Text("to \(message.to.joined(separator: ", "))")
-                    .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                HStack(spacing: 8) {
+                    Text("to \(ThreadDetail.recipientLine(message.to, names: names))")
+                        .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    Spacer(minLength: 0)
+                    // Taller than the line it ends: it overhangs it, so
+                    // the header keeps its height.
+                    trailing().padding(.vertical, -4)
+                }
                 // The sender asked for replies elsewhere: said here, not
                 // first in the composer's To field.
                 if inThread, !message.repliesGoTo.isEmpty {
@@ -49,8 +65,8 @@ struct MessageHeaderLine<Trailing: View>: View {
 }
 
 extension MessageHeaderLine where Trailing == EmptyView {
-    /// The header with nothing after the time.
-    init(message: MessageItem, expanded: Bool, inThread: Bool = true) {
-        self.init(message: message, expanded: expanded, inThread: inThread) { EmptyView() }
+    /// The header with nothing at the end of its "to" line.
+    init(message: MessageItem, expanded: Bool, inThread: Bool = true, names: [String: String] = [:]) {
+        self.init(message: message, expanded: expanded, inThread: inThread, names: names) { EmptyView() }
     }
 }

@@ -430,8 +430,9 @@ struct MailPreview: View {
 /// an icon first, a stronger fill under the pointer) and "Open full
 /// thread ›" (`strong`: the one that goes somewhere — primary ink, the
 /// selected fill, its chevron after the words). One 28 pt capsule; the
-/// strong one was spelled out beside the others.
-private struct PillButton: View {
+/// strong one was spelled out beside the others. The open thread's last
+/// message ends with the same three (the shared shell's `ThreadReplyFoot`).
+struct PillButton: View {
     let title: String
     var systemImage: String? = nil
     /// A symbol after the title (the strong pill's chevron).
@@ -439,6 +440,15 @@ private struct PillButton: View {
     var strong = false
     let action: () -> Void
     @State private var hovering = false
+
+    init(title: String, systemImage: String? = nil, trailingImage: String? = nil, strong: Bool = false,
+         action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.trailingImage = trailingImage
+        self.strong = strong
+        self.action = action
+    }
 
     private var fill: Color {
         strong || hovering ? MacTheme.selected : MacTheme.hover

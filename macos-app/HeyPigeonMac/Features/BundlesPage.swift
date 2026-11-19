@@ -34,7 +34,9 @@ struct BundlesPage: View {
             // off the path: a flag the screen set as it appeared was not
             // always set, and the page then stood on a grey column
             // between two strips of the canvas.
-            .background(state.showsBundleScreen ? MacTheme.listBackground : MacTheme.content)
+            // An email open in the bundle stands on it as well: the
+            // thread's own page colour (`ThreadChrome.page`).
+            .background(state.showsBundleScreen || state.openThread != nil ? MacTheme.listBackground : MacTheme.content)
             // Focusable so the key map works after a click on the page, with
             // no ring drawn around it.
             .focusable()

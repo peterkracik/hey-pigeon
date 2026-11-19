@@ -10,8 +10,9 @@
 // the app menu (⌘,). A page over the list (a thread; a bundle or an email
 // on the Bundles page) gets the window's own Back as the first item over
 // the content column — the stack's sat beside the traffic lights, over the
-// sidebar — and its name after the tabs; the shared view's items (the
-// thread's sparkle and actions menu) join at the trailing end. While the
+// sidebar — and, but for a thread, its name after the tabs; the shared
+// view's items (the thread's sparkle and actions menu) join at the
+// trailing end. While the
 // search or the command palette floats over the window the bar is left
 // empty, so nothing sharp sits above the blur.
 
@@ -24,12 +25,14 @@ struct MainToolbar: ToolbarContent {
     /// The panels float over the window: the bar stays out of the way.
     private var overlaid: Bool { state.searching || state.showPalette }
 
-    /// The view when it is none of the three tabs (the open thread's
-    /// people, a folder, a label, Settings, the Bundles page, a search),
-    /// for the title after them.
+    /// The view when it is none of the three tabs (a folder, a label,
+    /// Settings, the Bundles page, a search), for the title after them.
+    /// An open thread has none: its subject heads the reading column and
+    /// every message names its sender, so the people's names up here
+    /// said it a third time, in the heaviest type of the window.
     private var otherTitle: String? {
         if state.showSettings { return state.settingsPath.last?.title ?? "Settings" }
-        if let open = state.openThread { return open.fromSummary }
+        if state.openThread != nil { return nil }
         if state.showBundles { return state.bundlesTitle(in: model) }
         if model.isSearching { return "Search" }
         return ViewTabs.views.contains(model.view) ? nil : model.view.title

@@ -215,12 +215,15 @@ struct MessageBodyView: View {
 
     private var quoteButton: some View {
         Button { showQuoted = true } label: {
-            Text("•••").font(.callout.weight(.bold)).kerning(2).foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 10).padding(.bottom, 4).padding(.top, 1)
-                .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .tapArea(horizontal: 4, vertical: 10)
+            // A quiet handle, not a second headline under the message.
+            Text("•••").font(Theme.caption2.weight(.bold)).kerning(2).foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .tapArea(horizontal: 8, vertical: 14)
         }
         .buttonStyle(.plain)
+        .padding(.top, 8)
+        .help("Show quoted text")
         .accessibilityLabel("Show quoted text")
     }
 
@@ -236,13 +239,16 @@ struct MessageBodyView: View {
         // Kept per text, style and type size: the body re-renders on every
         // move of a selection handle, and each time built a detector and
         // scanned the whole message again.
-        let font = PlatformFont.preferredFont(forTextStyle: style)
+        let font = MailTypography.font(style)
         let key = "\(style.rawValue)|\(font.pointSize)|\(text)" as NSString
         if let known = linkCache.object(forKey: key) { return known }
         let out = NSMutableAttributedString(string: text, attributes: [
             .font: font,
             .foregroundColor: PlatformColor(color),
         ])
+        if let paragraph = MailTypography.paragraphStyle(for: font) {
+            out.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: out.length))
+        }
         if let detector = linkDetector {
             for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme ?? "") else { continue }
@@ -610,7 +616,7 @@ enum MailDocument {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; \(img); style-src 'unsafe-inline'; font-src data:; frame-src 'none'; form-action 'none'; base-uri 'none'">
         <style>
           :root { color-scheme: \(dark ? "dark" : "light"); }
-          body { margin: 0; font: -apple-system-body; font-family: -apple-system, system-ui; color: \(fg); word-wrap: break-word; -webkit-text-size-adjust: 100%; }
+          body { margin: 0; \(MailTypography.bodyCSS) color: \(fg); word-wrap: break-word; -webkit-text-size-adjust: 100%; }
           img, table { max-width: 100% !important; height: auto; }
           /* Some mail turns selection off; the user can always select and copy. */
           body, body * { -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important; }

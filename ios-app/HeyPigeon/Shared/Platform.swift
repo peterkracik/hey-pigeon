@@ -723,17 +723,211 @@ enum ThreadChrome {
     /// Two full-width glass capsules at the bottom: Reply with the AI
     /// circle beside it, then the triage bar.
     static let oneBar = false
+    /// Reply · Reply all · Forward are the Reply pill's, over the triage bar.
+    static let replyAtFoot = false
+    /// The messages run edge to edge, flat: no card, no inset, square.
+    static let cardInset: CGFloat = 0
+    static let cardRadius: CGFloat = 0
+    /// The subject's and the chips' margin: the messages' own.
+    static let headerInset: CGFloat = 16
+    /// Behind the thread; a closed message sinks into it, the open one
+    /// sits on the card surface, as the list's read and unread rows do.
+    static let page = Theme.canvas
+    static let closedRow = Theme.canvas
+    static let openRow = Theme.card
+    /// A message's ••• as drawn (`tapArea` makes it 44 pt to the finger).
+    static let actionsSize = CGSize(width: 28, height: 22)
     #else
     /// The window's toolbar names the thread itself (macos-app
     /// MainToolbar), after its Back: a principal item there is a bordered
     /// pill in the middle of the window, half over the sidebar.
     static let titleInBar = false
     /// One card as wide as its contents, in the middle of the bottom
-    /// edge: the Reply pill, the AI circle, a hairline, the triage
-    /// buttons. The phone's two capsules, stacked and stretched across
-    /// the thread, read as a smear of the message under them.
+    /// edge: the triage buttons. The phone's two capsules, stacked and
+    /// stretched across the thread, read as a smear of the message under
+    /// them.
     static let oneBar = true
+    /// Reply · Reply all · Forward are pills at the foot of the last
+    /// message (`ThreadReplyFoot`), as under a row's preview in the
+    /// list; the floating card keeps the triage alone.
+    static let replyAtFoot = true
+    /// The messages are one rounded card (`threadCard`, `rowShape`),
+    /// this far in from the column's edges.
+    static let cardInset: CGFloat = 16
+    static let cardRadius: CGFloat = 14
+    /// The subject's and the chips' margin: the card's inset and a
+    /// message's own padding, so they start where the text in the card
+    /// does.
+    static let headerInset: CGFloat = 32
+    /// The thread stands on the list's background and its messages on
+    /// one white card, as a day group's rows do: closed and open
+    /// messages share the surface, and the hairlines part them.
+    static let page = MacTheme.listBackground
+    static let closedRow = MacTheme.groupCard
+    static let openRow = MacTheme.groupCard
+    /// A message's •••: the square of a row's own button
+    /// (`IconButton.Size.small`).
+    static let actionsSize = CGSize(width: 26, height: 26)
     #endif
+
+    /// The surface of one row of the thread's messages: the card's
+    /// corners on its first and last rows, square between them (and
+    /// everywhere on the phone). The rows carry the card's shape
+    /// themselves, as the rows of a day group in the Mac's list do: the
+    /// card is not clipped, because a clip, like a shadow, would lie
+    /// over the web view of every message in it.
+    static func rowShape(first: Bool, last: Bool) -> UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: first ? cardRadius : 0, bottomLeadingRadius: last ? cardRadius : 0,
+                               bottomTrailingRadius: last ? cardRadius : 0, topTrailingRadius: first ? cardRadius : 0,
+                               style: .continuous)
+    }
+}
+
+extension View {
+    /// The thread's reading column on the Mac: `MacLayout.readingWidth`,
+    /// in the middle of whatever holds the thread (the window, the
+    /// reading pane, a thread window, the Bundles page) — a line of mail
+    /// ran the list's whole 1120 pt. The iPad has `readableColumn` for
+    /// the same width; the phone is as wide as it is.
+    @ViewBuilder
+    func threadColumn() -> some View {
+        #if os(macOS)
+        frame(maxWidth: MacLayout.readingWidth).frame(maxWidth: .infinity)
+        #else
+        self
+        #endif
+    }
+
+    /// The thread's messages as one card: the hairlines between the
+    /// rows, in the card's shape, and the card's inset from the column's
+    /// edges (the Mac's 16 pt and 14 pt corners; nothing and square on
+    /// the phone and the iPad, whose rows stay flat and edge to edge).
+    /// No shadow and no clip: both would fall on the web view of every
+    /// message in it — the rows are shaped instead (`ThreadChrome.rowShape`).
+    @ViewBuilder
+    func threadCard() -> some View {
+        #if os(macOS)
+        background(Theme.separator.opacity(0.6), in: ThreadChrome.rowShape(first: true, last: true))
+            .padding(.horizontal, ThreadChrome.cardInset)
+        #else
+        background(Theme.separator.opacity(0.6))
+        #endif
+    }
+
+    /// A message row's surface colour: in the row's shape on the Mac
+    /// (the card's corners); the phone's plain fill, which also runs
+    /// under the safe area's sides in landscape, as it always did.
+    @ViewBuilder
+    func threadRowSurface(_ color: Color, in shape: UnevenRoundedRectangle) -> some View {
+        #if os(macOS)
+        background(color, in: shape)
+        #else
+        background(color)
+        #endif
+    }
+
+    /// The pointer's tint on a row of the thread that a click opens (a
+    /// closed message, the fold), as on a row of the Mac's list. Goes
+    /// under the row's own surface colour, in the row's shape. Nothing
+    /// on a touch screen.
+    @ViewBuilder
+    func threadRowHover(_ enabled: Bool = true,
+                        in shape: UnevenRoundedRectangle = ThreadChrome.rowShape(first: false, last: false)) -> some View {
+        #if os(macOS)
+        modifier(MacHoverTint(color: MacTheme.hover, shape: shape, enabled: enabled))
+        #else
+        self
+        #endif
+    }
+
+    /// The pointer's tint behind a small icon control of the thread (a
+    /// message's •••): the rounded square of the Mac's row buttons.
+    @ViewBuilder
+    func threadIconHover() -> some View {
+        #if os(macOS)
+        modifier(MacHoverTint(color: MacTheme.selected, shape: RoundedRectangle(cornerRadius: 6, style: .continuous),
+                              enabled: true))
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(macOS)
+/// A fill behind a view while the pointer is over it.
+private struct MacHoverTint<S: Shape>: ViewModifier {
+    let color: Color
+    let shape: S
+    let enabled: Bool
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(hovering && enabled ? color : Color.clear, in: shape)
+            .onHover { hovering = $0 }
+    }
+}
+#endif
+
+/// Reply · Reply all · Forward at the foot of the thread's last message
+/// on the Mac: the pills under a row's preview in the list (macos-app
+/// `PillButton`). Nothing on the phone and the iPad, whose Reply pill
+/// floats over the triage bar.
+struct ThreadReplyFoot: View {
+    let onAction: (ReplyKind) -> Void
+
+    var body: some View {
+        #if os(macOS)
+        HStack(spacing: 6) {
+            ForEach(ReplyKind.allCases) { kind in
+                PillButton(title: kind.title, systemImage: kind.systemImage) { onAction(kind) }
+            }
+            Spacer(minLength: 0)
+        }
+        #else
+        EmptyView()
+        #endif
+    }
+}
+
+/// A message body's type. The phone and the iPad follow Dynamic Type;
+/// the Mac, whose body text style is 13 pt, reads mail at 15 on a line
+/// half as tall again — the measure of a 760 pt column.
+enum MailTypography {
+    #if os(macOS)
+    /// The body size and its line height, as a multiple.
+    static let bodySize: CGFloat = 15
+    static let lineHeight: CGFloat = 1.5
+    /// The `font` declarations of the page a message's HTML is shown in
+    /// (`MailDocument.wrap`). Mail that sets its own sizes keeps them.
+    static let bodyCSS = "font: 15px/1.5 -apple-system, system-ui;"
+    #else
+    static let bodyCSS = "font: -apple-system-body; font-family: -apple-system, system-ui;"
+    #endif
+
+    /// The font of plain-text mail: the text style's on iOS; on the Mac
+    /// the body's 15 pt, and the list's 13 for the quoted part (the
+    /// styles themselves are 13 and 11 there).
+    static func font(_ style: PlatformFont.TextStyle) -> PlatformFont {
+        #if os(macOS)
+        return .systemFont(ofSize: style == .body ? bodySize : 13)
+        #else
+        return .preferredFont(forTextStyle: style)
+        #endif
+    }
+
+    /// The paragraph style that gives plain-text mail the HTML body's
+    /// line height on the Mac; nil where the font's own is right.
+    static func paragraphStyle(for font: PlatformFont) -> NSParagraphStyle? {
+        #if os(macOS)
+        let natural = font.ascender - font.descender + font.leading
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = max(0, font.pointSize * lineHeight - natural)
+        return style
+        #else
+        return nil
+        #endif
+    }
 }
 
 #if os(macOS)

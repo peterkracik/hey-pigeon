@@ -90,11 +90,88 @@
     for that when you turn it on.</p>
 
     <h2>AI features (optional)</h2>
-    <p>If you enable an AI feature (e.g. summarize, draft), Hey Pigeon sends only the
-    specific content needed for that action directly from your device to the AI
-    provider you configure (OpenAI first), using an API key you provide and control.
-    The developer never sees this traffic or holds your API key. Use of that provider
-    is subject to its own privacy policy and terms.</p>
+    <p>Hey Pigeon works without AI. Its AI features (summaries, drafting and rewriting,
+    translation, &ldquo;Ask my inbox&rdquo;, reading an attachment, suggestions for new
+    mail, bundles and triage) run on a model you choose in Settings. Nothing they read
+    or write goes to a server operated by the developer, and the developer never holds
+    your API keys.</p>
+
+    <p>Who can answer:</p>
+    <ul>
+      <li>Apple Intelligence on your iPhone, iPad or Mac, where the device has it. This
+      is the default there. It needs no key and no account, and what it reads does not
+      leave the device.</li>
+      <li>ChatGPT (OpenAI), Claude (Anthropic) or Gemini (Google), each with an API key
+      you paste. Requests go from your device directly to that company's API with your
+      key, and its own terms and privacy policy apply. Pasting a key sends one request
+      to that company to check the key.</li>
+      <li>Jev (jevtypesafeai.com), a third-party classification service that is not part
+      of Hey Pigeon, for triage only, with a key you paste. Its own terms and privacy
+      policy apply.</li>
+      <li>Apple's Private Cloud Compute (Apple's servers, no key) is listed in Settings,
+      but current builds do not include it and send nothing to it.</li>
+    </ul>
+
+    <p>If the provider you prefer cannot answer on a device (Apple Intelligence is not
+    available there, or that device has no key for it), the request goes to the next one
+    that can. Unless you change the order, that is Apple Intelligence on the device, then
+    ChatGPT, Claude or Gemini, whichever that device has a key for. A request can
+    therefore go to a different provider than the one you prefer, but never to
+    ChatGPT, Claude or Gemini without a key you pasted on that device. You can limit this
+    fallback to the device itself, and Settings shows which provider is answering
+    now.</p>
+
+    <p>What is sent when you ask for something:</p>
+    <ul>
+      <li>A summary of a list: the sender, subject and preview line of the emails in it.
+      A summary of a thread: its subject, and each message's sender name and up to 1,500
+      characters of its text. A summary of a bundle: the bundle's name and description,
+      and the sender, subject and beginning of the latest message of its emails.</li>
+      <li>Drafting, rewriting and proofreading: the text you are working on and your
+      instruction or notes; when drafting or rewriting, also the subject and the names
+      and addresses of who is writing to whom; in a reply, the conversation so far.</li>
+      <li>Translation: the text you selected. Apple's translation on the device does it
+      when it has the language pair; otherwise the selected text goes to the provider
+      that answers.</li>
+      <li>&ldquo;Ask my inbox&rdquo; and reading an attachment use Apple Intelligence on
+      the device only, whatever provider you picked. &ldquo;Ask my inbox&rdquo; reads the
+      search index Hey Pigeon keeps on the device for Spotlight and Siri (subject, sender,
+      people, labels, and message text already stored on the device); you can turn that
+      index off in Settings.</li>
+      <li>Triage run from Siri or Settings uses Apple's models only. It proposes changes
+      and applies them after you confirm; it cannot send or delete mail.</li>
+    </ul>
+
+    <p>What reads mail without a tap. The first four each have a switch in Settings:</p>
+    <ul>
+      <li>Auto-summarize (off unless you turn it on): summaries are made without a tap,
+      of lists ahead of time, and of a thread or a bundle when you open it. They send
+      what the same summary sends when you ask for it (above) to whichever provider
+      answers, including ChatGPT, Claude or Gemini.</li>
+      <li>Suggest for new mail (on where the device has Apple Intelligence): the sender,
+      subject, time and up to 4,000 characters of each new unread email are read to
+      propose Need reply or a reminder. Apple's models only, never ChatGPT, Claude or
+      Gemini. Nothing changes until you accept.</li>
+      <li>Make bundles (on where the device has Apple Intelligence): the sender, subject
+      and preview line of each new email, with the names and descriptions of your
+      bundles and a few subjects of emails in or taken out of them. Apple's models
+      only.</li>
+      <li>Auto-triage (off unless you turn it on): the sender, subject and preview line
+      of new mail, with the names of your labels, never the full message, go to the
+      classifier you pick. If it cannot run, Apple Intelligence or, if you pasted its
+      key, Jev classifies instead; ChatGPT, Claude and Gemini only when you picked
+      them.</li>
+      <li>Opening a bundle summarizes it, with Auto-summarize off too, when Apple
+      Intelligence on the device is the one answering. Nothing leaves the device for
+      it.</li>
+    </ul>
+
+    <p>API keys are stored in the system keychain of the device you paste them on.
+    Hey Pigeon does not sync them. Your AI choices (provider, model, fallback order, the
+    switches above, triage labels, labels you set by hand, and bundles you have edited)
+    sync between your devices through the hidden folder in your own Google Drive.
+    Summaries, suggestions, automatic triage results and bundles you have not edited
+    stay on the device that made them.</p>
 
     <h2>Limited Use disclosure</h2>
     <p>Hey Pigeon's use and transfer of information received from Google APIs to any

@@ -379,7 +379,7 @@ is tiny — a few KB:
 | Follow-up marker (`threads.follow_up_since`) — "remind me if no reply", cleared by the sync loop once someone else writes in the thread | SQLite, per thread, per account | yes — same path (`follow_up:<thread_id>` keys) |
 | Account name, color, signature | SQLite `accounts` | yes — `account:<field>` keys on the account's own file |
 | Jev triage labels, manual per-thread label edits | SQLite `triage_labels` / `threads` | yes — `triage_label:<id>` (app-wide, random ids) and `thread_triage:<thread_id>` keys; Jev's own results stay local, every device can reclassify |
-| Prefs: hidden sidebar folders, label colours, hover actions, pinned list, auto-summarize, AI model, triage on/off | SQLite `prefs` (localStorage is only the first paint) | yes — `pref:<name>` keys, app-wide |
+| Prefs: hidden sidebar folders, label colours, hover actions, pinned list, auto-summarize, AI model, triage on/off, the parcel card's switch and its dismissed parcels (`inbox.dismissed_parcels`: per parcel a digest of its tracking or order number, or its Gmail thread id, and a time — never the number; `docs/specs/parcel-card.md`) | SQLite `prefs` (localStorage is only the first paint) | yes — `pref:<name>` keys, app-wide |
 | OAuth refresh tokens, AI / Jev API keys | OS keychain | **no** — each device logs in on its own; keys pasted per device (or iCloud Keychain, below); Settings says so |
 
 ### Decision: Google Drive `appDataFolder`, one per connected account

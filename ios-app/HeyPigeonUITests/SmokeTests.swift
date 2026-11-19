@@ -3,6 +3,11 @@
 // list, and Back returns to it. Nothing here checks a pixel; it is
 // there so that a crash or a hang on launch, or a list that never appears,
 // fails CI instead of showing up on the phone.
+//
+// The walk through the rows runs without the sample order
+// (HEYPIGEON_MOCK_ORDER=0): its parcel card stands over the list, and on
+// a small simulator a lazy list had not made the rows the walk waits for.
+// The card has a launch of its own.
 
 import XCTest
 
@@ -34,6 +39,7 @@ final class SmokeTests: XCTestCase {
     func testTheInboxOpensAThreadAndComesBack() {
         let app = XCUIApplication()
         app.launchEnvironment["HEYPIGEON_MOCK"] = "1"
+        app.launchEnvironment["HEYPIGEON_MOCK_ORDER"] = "0"
         app.launch()
         dismissSystemAlert()
 
@@ -60,5 +66,20 @@ final class SmokeTests: XCTestCase {
             edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
         }
         XCTAssertTrue(other.waitForExistence(timeout: 20), "the list did not come back")
+    }
+
+    /// The sample inbox as the app runs it without an account: an order
+    /// on its way, so the parcel card heads the list
+    /// (docs/specs/parcel-card.md), saying where its button leads.
+    func testTheSampleOrderShowsTheParcelCard() {
+        let app = XCUIApplication()
+        app.launchEnvironment["HEYPIGEON_MOCK"] = "1"
+        app.launch()
+        dismissSystemAlert()
+
+        let track = element(app, containing: "Track parcel")
+        XCTAssertTrue(track.waitForExistence(timeout: 40), "the parcel card never showed")
+        let host = element(app, containing: "www.dhl.test")
+        XCTAssertTrue(host.waitForExistence(timeout: 10), "the card does not name the host its button opens")
     }
 }

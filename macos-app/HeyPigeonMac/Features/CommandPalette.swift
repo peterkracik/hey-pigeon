@@ -405,6 +405,7 @@ struct CommandPalette: View {
                 state.run(.back, in: model)
             })
         }
+        out += Self.parcelItems(model.inboxParcels, bundle: { model.bundle(id: $0) }, dismissAll: { model.dismissAllParcels() })
         out.append(PaletteItem(id: "stage.bundles", title: "Bundles…", subtitle: bundlesSubtitle,
                                systemImage: "square.stack", key: "⌘B") {
             state.paletteStage = .bundles
@@ -499,6 +500,28 @@ struct CommandPalette: View {
                                subtitle: model.activeBundles.isEmpty ? "No bundles yet" : nil,
                                systemImage: "square.stack") {
             state.openBundles(at: nil)
+        })
+        return out
+    }
+
+    /// The parcel card's actions (docs/specs/parcel-card.md), while the
+    /// card is on screen: the list's cursor does not reach it, so each
+    /// parcel's Track parcel is here by its title, and Dismiss all with
+    /// them. Static, for the tests.
+    static func parcelItems(_ parcels: [ParcelItem], bundle: (String) -> BundleItem?,
+                            dismissAll: @escaping @MainActor () -> Void, now: Date = .now) -> [PaletteItem] {
+        guard !parcels.isEmpty else { return [] }
+        var out = parcels.map { parcel in
+            PaletteItem(id: "parcel.track.\(parcel.id)",
+                        title: "Track parcel · \(ParcelCard.title(parcel, bundle: bundle(parcel.bundleId)))",
+                        // The card's own line: it names the host the link opens.
+                        subtitle: ParcelCard.statusLine(parcel, now: now),
+                        systemImage: "shippingbox") {
+                Browser.open(parcel.url)
+            }
+        }
+        out.append(PaletteItem(id: "parcel.dismissAll", title: "Dismiss all parcels", systemImage: "xmark") {
+            dismissAll()
         })
         return out
     }

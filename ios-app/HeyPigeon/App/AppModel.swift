@@ -98,6 +98,9 @@ struct ListRequest: Equatable, Sendable {
     let accountId: String?
     let accountIds: [String]
     let limit: Int
+    /// Whether the inbox's parcel card is on (Settings › Inbox): off, the
+    /// reload does not ask the store for parcels at all.
+    var parcels = true
 
     /// Whether `other` asks for the same list, however many rows.
     func sameList(as other: ListRequest) -> Bool {
@@ -112,6 +115,8 @@ struct ListRequest: Equatable, Sendable {
 struct ListSnapshot: Sendable {
     let request: ListRequest
     let bundles: [BundleItem]
+    /// The parcel card's items, every account's (docs/specs/parcel-card.md).
+    var parcels: [ParcelItem] = []
     let rows: [ThreadRow]
     /// Unread per folder for the account shown (nil = unified).
     let counts: [String: Int]
@@ -473,6 +478,10 @@ final class AppModel {
         /// their mail out of the inbox (ffi: mail rules).
         static let mutedThreads = "mute.threads"
         static let blockedSenders = "block.senders"
+        /// Settings › Inbox › "Show parcels" (unset = on), and the parcels
+        /// dismissed from the card, as "id@time" (`ParcelCard.entry`).
+        static let parcelCard = "inbox.parcel_card"
+        static let dismissedParcels = "inbox.dismissed_parcels"
     }
 
     /// The user's order of the triage labels, by id. The core lists them
@@ -549,6 +558,102 @@ final class AppModel {
     /// the sidebar is the same on every device.
     var hiddenBundleIds: Set<String> = [] {
         didSet { savePref(PrefName.hiddenBundles, hiddenBundleIds.sorted()) }
+    }
+
+    // MARK: Parcel card (docs/specs/parcel-card.md)
+
+    /// Settings › Inbox › "Show parcels": the card at the top of the plain
+    /// inbox. Synced, on unless turned off.
+    var parcelCardEnabled = true {
+        didSet {
+            savePref(PrefName.parcelCard, parcelCardEnabled)
+            guard parcelCardEnabled != oldValue else { return }
+            // Off: nothing to show, now. On: the parcels have to be read.
+            if parcelCardEnabled { reloadSoon() } else { regroup() }
+        }
+    }
+
+    /// The parcels dismissed from the card (`ParcelCard.entry`). Synced: a
+    /// parcel dismissed on the phone is gone from the Mac's card too, and
+    /// comes back on both when a newer email about it arrives.
+    private(set) var dismissedParcels: [String] = [] {
+        didSet {
+            savePref(PrefName.dismissedParcels, dismissedParcels)
+            if dismissedParcels != oldValue { regroup() }
+        }
+    }
+
+    /// The card open on every parcel, or folded to the first. This
+    /// device's own: a phone's screen and a Mac's window are not the same
+    /// room for it.
+    var parcelsExpanded = UserDefaults.standard.bool(forKey: "parcelCard.expanded") {
+        didSet { UserDefaults.standard.set(parcelsExpanded, forKey: "parcelCard.expanded") }
+    }
+
+    /// Every parcel the last reload read, all accounts, dismissed or not.
+    private(set) var parcels: [ParcelItem] = []
+    /// What the card shows now: empty anywhere but the plain inbox, with
+    /// the card off, and when every parcel is dismissed (`regroup`).
+    private(set) var inboxParcels: [ParcelItem] = []
+    /// The quiet inbox mail of each bundle that has a parcel in the card,
+    /// by bundle id: what would be that bundle's folded row. Where the
+    /// inbox folds it stands under the parcel instead of in a row of its
+    /// own; everywhere it is what the parcel's "Mark all done" acts on.
+    private(set) var parcelFolds: [String: BundleFold] = [:]
+    /// The bundle whose screen opens on its Info page ("View details");
+    /// the screen takes it when it appears (`BundleScreen`). Cleared with
+    /// `bundlesStartId` — by the next `openBundles` and when the phone's
+    /// cover closes — so a screen that never appeared (the bundle went on
+    /// another device) leaves nothing behind for a later opening.
+    var bundlesStartInfoId: String?
+
+    /// What the card should show for the list as it is now (R9): the
+    /// account's parcels that are not dismissed, over the plain inbox —
+    /// no search, no label filter, the condition folding has — and
+    /// nothing anywhere else or with the card off.
+    private var cardParcels: [ParcelItem] {
+        let plainInbox = tab == .inbox && view == .inbox && !showsSearchResults && triageFilterId == nil
+        guard parcelCardEnabled, plainInbox else { return [] }
+        // A reload after the user's own action carries the parcels over
+        // and reads them again in the background, but it has the bundles
+        // at once: a parcel of a bundle archived just now leaves with it.
+        return ParcelCard.visible(parcels, dismissed: dismissedParcels, accountId: selectedAccountId)
+            .filter { bundle(id: $0.bundleId)?.isArchived != true }
+    }
+
+    /// Nothing to list and no card either: the empty state ("All clear").
+    var listIsEmpty: Bool { groupedRows.isEmpty && inboxParcels.isEmpty }
+
+    /// How many folded emails a parcel's row answers for (R17).
+    func parcelUpdates(_ parcel: ParcelItem) -> Int {
+        ParcelCard.updates(for: parcel, in: inboxParcels, folds: parcelFolds,
+                           folding: Self.foldsOnThisPlatform && foldBundlesEnabled)
+    }
+
+    /// "View details": the parcel's bundle, on its Info page.
+    func openParcelDetails(_ parcel: ParcelItem) {
+        openBundles(at: parcel.bundleId)
+        // After: any other way into Bundles clears it (`openBundles`).
+        bundlesStartInfoId = parcel.bundleId
+    }
+
+    /// "Dismiss": this parcel leaves the card until a newer email about
+    /// it arrives.
+    func dismiss(_ parcel: ParcelItem) { dismissParcels([parcel]) }
+
+    /// X and "Dismiss all": every parcel now in the card.
+    func dismissAllParcels() { dismissParcels(inboxParcels) }
+
+    private func dismissParcels(_ gone: [ParcelItem]) {
+        guard !gone.isEmpty else { return }
+        Haptics.light()
+        let entries = Set(gone.map(ParcelCard.entry))
+        dismissedParcels = ParcelCard.dismissing(gone, from: dismissedParcels)
+        show(ParcelCard.dismissedToast(gone.count)) { [weak self] in
+            guard let self else { return }
+            // These entries only: another dismissal since stays.
+            dismissedParcels = dismissedParcels.filter { !entries.contains($0) }
+        }
     }
 
     func toggleHidden(_ bundle: BundleItem) {
@@ -732,6 +837,8 @@ final class AppModel {
         if let v = prefs[PrefName.autoBundles] as? Bool { autoBundlesEnabled = v }
         if let v = prefs[PrefName.pinnedLabels] as? [String] { pinnedLabelIds = Set(v) }
         if let v = prefs[PrefName.hiddenBundles] as? [String] { hiddenBundleIds = Set(v) }
+        if let v = prefs[PrefName.parcelCard] as? Bool { parcelCardEnabled = v }
+        if let v = prefs[PrefName.dismissedParcels] as? [String] { dismissedParcels = v }
         if let v = prefs[PrefName.remoteImages] as? Bool { loadRemoteImages = v }
         if let v = prefs[PrefName.imageSenders] as? [String] { imageSenders = Set(v) }
         if let v = prefs[PrefName.triageLabelOrder] as? [String] { triageLabelOrder = v }
@@ -851,10 +958,18 @@ final class AppModel {
     /// store now, on the main actor: for navigation and the user's own
     /// actions, whose result should be on screen when the call returns.
     /// The engine's change notices go through `reloadSoon` instead.
+    ///
+    /// The parcels are the exception: working them out reads every active
+    /// bundle's recent mail (milliseconds that grow with the bundles), so
+    /// this carries the ones the model holds, as `reloadForNavigation`
+    /// does, and a reload off the main actor follows for them. Dismiss
+    /// and Undo need no read: they filter the carried list (`regroup`).
     func reload() {
         Trace.interval("reload") {
-            apply(Self.readList(MainActorStoreReader(engine: engine), listRequest))
+            apply(Self.readList(MainActorStoreReader(engine: engine), listRequest,
+                                carrying: parcelCardEnabled ? parcels : []))
         }
+        if parcelCardEnabled { reloadSoon() }
     }
 
     /// A tab, folder or account switch: the new list's rows now, on the
@@ -868,7 +983,7 @@ final class AppModel {
         let request = listRequest
         let rows = Self.unique((try? engine.threads(in: request.view, accountId: request.accountId, before: nil, limit: request.limit)) ?? [])
         let counts = request.accountId.map { id in countsByAccount[id] ?? ((try? engine.unreadCounts(accountId: id)) ?? [:]) } ?? unifiedCounts
-        apply(ListSnapshot(request: request, bundles: bundles, rows: rows, counts: counts, unifiedCounts: unifiedCounts,
+        apply(ListSnapshot(request: request, bundles: bundles, parcels: parcels, rows: rows, counts: counts, unifiedCounts: unifiedCounts,
                            countsByAccount: countsByAccount, scheduledAcrossAccounts: scheduledAcrossAccounts,
                            needReplyAcrossAccounts: needReplyAcrossAccounts, draftsCount: draftsCount))
         reloadSoon()
@@ -920,15 +1035,20 @@ final class AppModel {
     /// 120 rows loaded asks for 150, and a full answer means there may be
     /// more, as with a page. Another view (or account) starts over at one.
     private var listRequest: ListRequest {
-        let one = ListRequest(view: view, accountId: selectedAccountId, accountIds: accounts.map(\.id), limit: Self.pageSize)
+        let one = ListRequest(view: view, accountId: selectedAccountId, accountIds: accounts.map(\.id), limit: Self.pageSize,
+                              parcels: parcelCardEnabled)
         guard let loaded = loadedRequest, loaded.sameList(as: one) else { return one }
         let pages = max(1, (rows.count + Self.pageSize - 1) / Self.pageSize)
-        return ListRequest(view: one.view, accountId: one.accountId, accountIds: one.accountIds, limit: pages * Self.pageSize)
+        return ListRequest(view: one.view, accountId: one.accountId, accountIds: one.accountIds, limit: pages * Self.pageSize,
+                           parcels: one.parcels)
     }
 
     /// The store's side of a reload, in one pass, from any thread. A read
     /// that fails leaves its part empty, as the separate reads used to.
-    nonisolated static func readList(_ store: any StoreReader, _ request: ListRequest) -> ListSnapshot {
+    /// `carrying`: the parcels to keep instead of asking the store for
+    /// them (the main actor's `reload`).
+    nonisolated static func readList(_ store: any StoreReader, _ request: ListRequest,
+                                     carrying parcels: [ParcelItem]? = nil) -> ListSnapshot {
         let rows = unique((try? store.threads(in: request.view, accountId: request.accountId, before: nil, limit: request.limit)) ?? [])
         let unified = (try? store.unreadCounts(accountId: nil)) ?? [:]
         var byAccount: [String: [String: Int]] = [:]
@@ -944,6 +1064,7 @@ final class AppModel {
         return ListSnapshot(
             request: request,
             bundles: (try? store.bundles()) ?? [],
+            parcels: parcels ?? (request.parcels ? ((try? store.parcels()) ?? []) : []),
             rows: rows,
             counts: counts,
             unifiedCounts: unified,
@@ -966,11 +1087,19 @@ final class AppModel {
         guard snapshot.request.view == view, snapshot.request.accountId == selectedAccountId else { return }
         loadedRequest = snapshot.request
         // Before the rows: their regroup folds by bundle.
-        let bundlesMoved = snapshot.bundles != bundles
+        var bundlesMoved = snapshot.bundles != bundles
         if bundlesMoved { bundles = snapshot.bundles }
+        // The parcels too: which bundles' quiet mail stands under the card.
+        if snapshot.parcels != parcels {
+            parcels = snapshot.parcels
+            bundlesMoved = true
+        }
         let more = snapshot.request.view.isPaged && snapshot.rows.count >= snapshot.request.limit
         if more != hasMore { hasMore = more }
-        if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved { regroup() }
+        // The card follows the folder and the account as well as the rows:
+        // from an empty inbox to another empty folder no row moves, and
+        // the card stood over Spam.
+        if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved || cardParcels != inboxParcels { regroup() }
         if snapshot.counts != counts { counts = snapshot.counts }
         if snapshot.unifiedCounts != unifiedCounts { unifiedCounts = snapshot.unifiedCounts }
         if snapshot.countsByAccount != countsByAccount { countsByAccount = snapshot.countsByAccount }
@@ -1205,12 +1334,23 @@ final class AppModel {
     func listIndex(of id: String) -> Int? { flatRowIndex[id] }
 
     private func regroup() {
+        // The parcel card first (docs/specs/parcel-card.md R9): only over
+        // the plain inbox, the condition folding has. A bundle with a
+        // parcel in it gets no folded row; its quiet mail is under the
+        // parcel (R17).
+        let shown = cardParcels
+        if shown != inboxParcels { inboxParcels = shown }
+        let inCard = Set(shown.map(\.bundleId))
+        let under = inCard.isEmpty ? [] : Self.fold(rows, bundles: bundles.filter { inCard.contains($0.id) }).folds
+        let folds = Dictionary(under.map { ($0.bundle.id, $0) }, uniquingKeysWith: { a, _ in a })
+        if folds != parcelFolds { parcelFolds = folds }
         groupedRows = Self.group(
             showsSearchResults ? searchResults : rows,
             view: view, searching: showsSearchResults,
             triageFilterId: tab == .inbox ? triageFilterId : nil,
             pinList: pinListEnabled,
-            bundles: Self.foldsOnThisPlatform && foldBundlesEnabled ? bundles : []
+            bundles: Self.foldsOnThisPlatform && foldBundlesEnabled ? bundles : [],
+            underParcels: inCard
         )
         let ids = groupedRows.flatMap { $0.rows.map(\.id) }
         guard ids != flatRowIds else { return }
@@ -1255,9 +1395,12 @@ final class AppModel {
     }
 
     /// Pure grouping; the day boundaries are computed once for the list.
+    /// `underParcels`: bundles with a parcel in the inbox's card. Their
+    /// quiet mail folds as any bundle's does but gets no row: it stands
+    /// under the parcel (`AppModel.parcelFolds`).
     static func group(_ rows: [ThreadRow], view: MailView, searching: Bool,
                       triageFilterId: String?, pinList: Bool, bundles: [BundleItem] = [],
-                      now: Date = Date()) -> [RowGroup] {
+                      underParcels: Set<String> = [], now: Date = Date()) -> [RowGroup] {
         var source = rows
         if let f = triageFilterId, !searching {
             source = source.filter { $0.triageLabelIds.contains(f) }
@@ -1267,7 +1410,7 @@ final class AppModel {
         var folds: [BundleFold] = []
         if view == .inbox && !searching && triageFilterId == nil && !bundles.isEmpty {
             let split = fold(source, bundles: bundles)
-            folds = split.folds
+            folds = split.folds.filter { !underParcels.contains($0.bundle.id) }
             source = split.rest
         }
         if view == .scheduled && !searching {
@@ -2628,6 +2771,7 @@ final class AppModel {
     /// The Bundles sheet, on the list or on one bundle.
     func openBundles(at id: String? = nil) {
         bundlesStartId = id
+        bundlesStartInfoId = nil
         showSidebar = false
         showBundles = true
     }

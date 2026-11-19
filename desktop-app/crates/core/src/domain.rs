@@ -440,6 +440,95 @@ pub struct Message {
     /// a message read back from one has None.
     #[serde(default)]
     pub open_token: Option<String>,
+    /// What the message's schema.org markup says about a parcel
+    /// (docs/specs/parcel-card.md R3): read from the HTML as received
+    /// (`parcels::from_markup`) by the provider's full fetch, since the
+    /// sanitizer takes that markup out of the stored body. Set on the
+    /// fetch's result only, like `open_token`; kept per thread by
+    /// `parcels::remember_deliveries`.
+    #[serde(default)]
+    pub delivery: Option<Delivery>,
+}
+
+/// How far along a parcel is, as its mail says (docs/specs/parcel-card.md
+/// R3). Ordered: a later status is further along.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParcelStatus {
+    Shipped,
+    OutForDelivery,
+    Delivered,
+}
+
+impl ParcelStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ParcelStatus::Shipped => "shipped",
+            ParcelStatus::OutForDelivery => "out_for_delivery",
+            ParcelStatus::Delivered => "delivered",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "shipped" => ParcelStatus::Shipped,
+            "out_for_delivery" => ParcelStatus::OutForDelivery,
+            "delivered" => ParcelStatus::Delivered,
+            _ => return None,
+        })
+    }
+}
+
+/// Where a `Delivery` was read from: the subject and preview line, or the
+/// schema.org markup of a fetched body. A thread keeps one of each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeliverySource {
+    Text,
+    Markup,
+}
+
+impl DeliverySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeliverySource::Text => "text",
+            DeliverySource::Markup => "markup",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "text" => DeliverySource::Text,
+            "markup" => DeliverySource::Markup,
+            _ => return None,
+        })
+    }
+}
+
+/// What one email says about a parcel (docs/specs/parcel-card.md R3).
+/// Every field is "unknown" when None: nothing here is ever guessed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Delivery {
+    pub status: Option<ParcelStatus>,
+    /// The day it is expected, as the email wrote it: `2026-11-20`.
+    pub expected_day: Option<String>,
+    /// "Today" (0) or "tomorrow" (1), counted from the day the email
+    /// arrived; resolved against the reader's time zone when shown.
+    pub expected_in_days: Option<u8>,
+    /// What is in the parcel, from the shop's markup only.
+    pub title: Option<String>,
+    /// The email's time, epoch ms.
+    pub at: i64,
+}
+
+impl Delivery {
+    /// Nothing known: not worth keeping.
+    pub fn is_empty(&self) -> bool {
+        self.status.is_none()
+            && self.expected_day.is_none()
+            && self.expected_in_days.is_none()
+            && self.title.is_none()
+    }
 }
 
 /// What the relay reports of one fetch of a message's read-status pixel

@@ -622,6 +622,47 @@ const MIGRATIONS: &[&str] = &[
     ) WITHOUT ROWID;
     CREATE INDEX open_events_recent ON open_events(label, at DESC);
     ",
+    // v35 — what a thread's mail says about a parcel (docs/specs/
+    // parcel-card.md R3): a status, the day it is expected, what is in
+    // it. One row per thread and source: `text` is read from the subject
+    // and preview line when the thread's identifiers are scanned,
+    // `markup` from the shop's schema.org markup when a body is fetched
+    // (the sanitizer takes that markup out of the stored body, so it
+    // cannot be read later). Derived, never synced, gone with the thread.
+    //
+    // Mail that is already here was scanned and fetched before either
+    // was read. Once, for the bundled threads of the last 45 days — the
+    // only mail a parcel comes from: they are scanned again (local
+    // string work, on the next sync rounds) and their bodies are fetched
+    // again on their next open or prefetch, as v32 and v33 did for the
+    // attachment flag — so a parcel on its way today gets its status and
+    // day. Mail in no bundle is left alone: scanning it again would send
+    // it through the link pass again, which can join a thread to a
+    // bundle or reopen an archived one, and an upgrade must not change
+    // what syncs between devices.
+    "
+    CREATE TABLE thread_deliveries (
+        thread_id        TEXT NOT NULL,
+        source           TEXT NOT NULL,
+        at               INTEGER NOT NULL,
+        status           TEXT,
+        expected_day     TEXT,
+        expected_in_days INTEGER,
+        title            TEXT,
+        PRIMARY KEY (thread_id, source)
+    ) WITHOUT ROWID;
+    CREATE TRIGGER threads_deliveries_ad AFTER DELETE ON threads BEGIN
+        DELETE FROM thread_deliveries WHERE thread_id = old.id;
+    END;
+    UPDATE threads SET anchors_msg_count = NULL
+     WHERE bundle_id IS NOT NULL
+       AND last_msg_at > (CAST(strftime('%s', 'now') AS INTEGER) - 45 * 86400) * 1000;
+    UPDATE messages SET body_fetched = 0
+     WHERE thread_id IN (
+        SELECT id FROM threads
+         WHERE bundle_id IS NOT NULL
+           AND last_msg_at > (CAST(strftime('%s', 'now') AS INTEGER) - 45 * 86400) * 1000);
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1599,6 +1640,7 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         reply_to_addrs: serde_json::from_str(&reply_to_addrs).unwrap_or_default(),
         // Not a column: only the provider's full fetch knows it.
         open_token: None,
+        delivery: None,
     })
 }
 
@@ -2329,6 +2371,29 @@ impl Store for SqliteStore {
         })
     }
 
+    fn list_recent_bundle_threads(
+        &self,
+        bundle_id: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let junk = format!(
+            "({} OR {})",
+            has_label_sql("labels", "TRASH"),
+            has_label_sql("labels", "SPAM")
+        );
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                  WHERE bundle_id = ?1 AND last_msg_at >= ?2 AND NOT {junk}
+                  ORDER BY last_msg_at DESC
+                  LIMIT ?3"
+            ))?;
+            let rows = stmt.query_map(params![bundle_id, since_ms, limit], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
     /// One grouped query over the bundled threads (`threads_by_bundle`),
     /// trash and spam left out through `thread_labels`.
     fn bundle_stats(&self) -> Result<HashMap<String, BundleStats>, StoreError> {
@@ -2517,6 +2582,86 @@ impl Store for SqliteStore {
                 params![thread_id, signature, links],
             )
             .map(|_| ())
+        })
+    }
+
+    fn set_thread_deliveries(
+        &self,
+        source: DeliverySource,
+        items: &[(ThreadId, Option<Delivery>)],
+    ) -> Result<(), StoreError> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            {
+                let mut clear = tx.prepare_cached(
+                    "DELETE FROM thread_deliveries WHERE thread_id = ?1 AND source = ?2",
+                )?;
+                let mut put = tx.prepare_cached(
+                    "INSERT INTO thread_deliveries
+                        (thread_id, source, at, status, expected_day, expected_in_days, title)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(thread_id, source) DO UPDATE SET
+                        at = excluded.at, status = excluded.status,
+                        expected_day = excluded.expected_day,
+                        expected_in_days = excluded.expected_in_days,
+                        title = excluded.title",
+                )?;
+                for (thread_id, delivery) in items {
+                    match delivery {
+                        Some(d) => put.execute(params![
+                            thread_id,
+                            source.as_str(),
+                            d.at,
+                            d.status.map(|s| s.as_str()),
+                            d.expected_day,
+                            d.expected_in_days,
+                            d.title
+                        ])?,
+                        None => clear.execute(params![thread_id, source.as_str()])?,
+                    };
+                }
+            }
+            tx.commit()
+        })
+    }
+
+    /// (On a reader, like the anchors: the list's reload asks this for
+    /// every thread of a parcel.)
+    fn thread_deliveries(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Vec<(DeliverySource, Delivery)>, StoreError> {
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT source, at, status, expected_day, expected_in_days, title
+                   FROM thread_deliveries WHERE thread_id = ?1 ORDER BY source DESC",
+            )?;
+            let rows = stmt.query_map(params![thread_id], |r| {
+                let source: String = r.get(0)?;
+                let status: Option<String> = r.get(2)?;
+                Ok((
+                    source,
+                    Delivery {
+                        at: r.get(1)?,
+                        status: status.as_deref().and_then(ParcelStatus::parse),
+                        expected_day: r.get(3)?,
+                        expected_in_days: r.get(4)?,
+                        title: r.get(5)?,
+                    },
+                ))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (source, delivery) = row?;
+                // A source a newer build wrote is not this build's to read.
+                if let Some(source) = DeliverySource::parse(&source) {
+                    out.push((source, delivery));
+                }
+            }
+            Ok(out)
         })
     }
 
@@ -7216,7 +7361,7 @@ mod tests {
     /// the 27th, as it shipped, and this branch's follow it.
     #[test]
     fn the_steps_after_v26_are_mains_then_this_branchs() {
-        assert_eq!(MIGRATIONS.len(), 34);
+        assert_eq!(MIGRATIONS.len(), 35);
         for (version, names) in [
             (27, "reply_to_addrs"),
             (28, "last_error"),
@@ -7226,6 +7371,7 @@ mod tests {
             (32, "has_attachment = 0"),
             (33, "has_attachment = 1"),
             (34, "open_tokens"),
+            (35, "thread_deliveries"),
         ] {
             assert!(MIGRATIONS[version - 1].contains(names), "v{version}");
             assert!(!MIGRATIONS[version - 2].contains(names), "v{version}");
@@ -7253,8 +7399,8 @@ mod tests {
             (version, listed)
         };
         let fresh = schema(0);
-        assert_eq!(fresh.0, 34);
-        for from in [26, 27, 28, 29, 30, 31, 32, 33] {
+        assert_eq!(fresh.0, 35);
+        for from in [26, 27, 28, 29, 30, 31, 32, 33, 34] {
             assert_eq!(schema(from), fresh, "from v{from}");
         }
     }
@@ -7509,5 +7655,189 @@ mod tests {
 
         s.delete_thread(&t1).unwrap();
         assert_eq!(s.thread_links(&t1).unwrap(), None);
+    }
+
+    /// docs/specs/parcel-card.md R3: what a thread's mail says about a
+    /// parcel, one row per source.
+    #[test]
+    fn thread_deliveries_round_trip_and_go_with_the_thread() {
+        let s = store();
+        seed_thread(&s, "t1", "Shipped", "shop@x.com", "on its way", 1000, false);
+        seed_thread(&s, "t2", "Hello", "ana@x.com", "hi", 1000, false);
+        let (t1, t2) = ("t1".to_string(), "t2".to_string());
+        assert!(s.thread_deliveries(&t1).unwrap().is_empty());
+        let text = Delivery {
+            status: Some(ParcelStatus::Shipped),
+            expected_in_days: Some(1),
+            at: 1000,
+            ..Default::default()
+        };
+        let markup = Delivery {
+            status: Some(ParcelStatus::OutForDelivery),
+            expected_day: Some("2026-11-20".into()),
+            title: Some("Kettle".into()),
+            at: 2000,
+            ..Default::default()
+        };
+        s.set_thread_deliveries(
+            DeliverySource::Text,
+            &[(t1.clone(), Some(text.clone())), (t2.clone(), None)],
+        )
+        .unwrap();
+        s.set_thread_deliveries(
+            DeliverySource::Markup,
+            &[(t1.clone(), Some(markup.clone()))],
+        )
+        .unwrap();
+        assert_eq!(
+            s.thread_deliveries(&t1).unwrap(),
+            vec![
+                (DeliverySource::Text, text.clone()),
+                (DeliverySource::Markup, markup.clone())
+            ]
+        );
+        assert!(s.thread_deliveries(&t2).unwrap().is_empty());
+        // A source's row is replaced, or removed, alone.
+        let delivered = Delivery {
+            status: Some(ParcelStatus::Delivered),
+            at: 3000,
+            ..Default::default()
+        };
+        s.set_thread_deliveries(
+            DeliverySource::Text,
+            &[(t1.clone(), Some(delivered.clone()))],
+        )
+        .unwrap();
+        s.set_thread_deliveries(DeliverySource::Markup, &[(t1.clone(), None)])
+            .unwrap();
+        assert_eq!(
+            s.thread_deliveries(&t1).unwrap(),
+            vec![(DeliverySource::Text, delivered)]
+        );
+        // The link pass writes the text row from the subject.
+        heypigeon_core::bundles::link_pass(&s, 100).unwrap();
+        let kept = s.thread_deliveries(&t1).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].1.status, Some(ParcelStatus::Shipped));
+        s.delete_thread(&t1).unwrap();
+        assert!(s.thread_deliveries(&t1).unwrap().is_empty());
+    }
+
+    /// What the parcel overview asks for on every list reload: a bundle's
+    /// newest few threads of the last weeks, not all of them.
+    #[test]
+    fn recent_bundle_threads_are_the_newest_within_the_window() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        for (id, labels, at) in [
+            ("old", &["INBOX"][..], 1000),
+            ("mid", &["INBOX"][..], 2000),
+            ("new", &[][..], 3000),
+            ("newest", &["INBOX"][..], 4000),
+            ("binned", &["TRASH"][..], 5000),
+            ("elsewhere", &["INBOX"][..], 6000),
+        ] {
+            seed_labelled(&s, id, labels, true, false, at);
+        }
+        s.with(|c| {
+            c.execute_batch(
+                "UPDATE threads SET bundle_id = 'b1' WHERE id != 'elsewhere';
+                 UPDATE threads SET bundle_id = 'b2' WHERE id = 'elsewhere';",
+            )
+        })
+        .unwrap();
+        let ids = |since: i64, limit: u32| -> Vec<String> {
+            s.list_recent_bundle_threads("b1", since, limit)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert_eq!(ids(0, 10), ["newest", "new", "mid", "old"]);
+        assert_eq!(ids(0, 2), ["newest", "new"]);
+        assert_eq!(ids(2000, 10), ["newest", "new", "mid"]);
+        assert_eq!(ids(4001, 10), Vec::<String>::new());
+        // The same rows, in the same order, as the full list's head.
+        let all: Vec<String> = s
+            .list_bundle_threads("b1")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids(0, 10), all);
+    }
+
+    /// The upgrade reads bundled mail of the last 45 days again, for the
+    /// parcels already on their way — and nothing else: mail in no bundle
+    /// scanned again would go through the link pass again, which can join
+    /// it to a bundle or reopen an archived one because of an upgrade.
+    #[test]
+    fn v35_upgrade_rereads_only_recent_bundled_mail() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v35-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v34.db");
+        let _ = std::fs::remove_file(&path);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let day = 86_400_000;
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 34).unwrap();
+            old_account(&s, "a1");
+            for (id, bundle, at) in [
+                ("bundled", Some("b1"), now - day),
+                ("loose", None, now - day),
+                ("bundled-old", Some("b1"), now - 60 * day),
+            ] {
+                seed_labelled(&s, id, &["INBOX"], true, false, at);
+                s.with(|c| {
+                    c.execute(
+                        "UPDATE threads SET bundle_id = ?2, anchors_msg_count = 1 WHERE id = ?1",
+                        params![id, bundle],
+                    )?;
+                    c.execute(
+                        "INSERT INTO messages
+                           (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                            body_text, label_ids, is_read, body_fetched)
+                         VALUES (?1, ?2, 'a1', 'shop@example.com', '[]', ?3, '', 'hi', '[]', 1, 1)",
+                        params![format!("m-{id}"), id, at],
+                    )
+                })
+                .unwrap();
+            }
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v35
+        let state = |id: &str| -> (Option<i64>, bool) {
+            s.with(|c| {
+                c.query_row(
+                    "SELECT t.anchors_msg_count, m.body_fetched FROM threads t
+                       JOIN messages m ON m.thread_id = t.id WHERE t.id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap()
+        };
+        assert_eq!(state("bundled"), (None, false), "scanned and fetched again");
+        assert_eq!(
+            state("loose"),
+            (Some(1), true),
+            "mail in no bundle is left alone"
+        );
+        assert_eq!(
+            state("bundled-old"),
+            (Some(1), true),
+            "older than the window"
+        );
+        let again: Vec<String> = s
+            .list_threads_needing_anchors(10)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(again, ["bundled"]);
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -8,7 +8,8 @@ bundle shows a summary of the key facts first, then its threads.
 Status: built — bundles make themselves (the model groups new mail:
 "Automatic bundles" below), shared booking, order and tracking numbers link
 mail, key facts, the chip, the Bundles list, the bundle view, "Add to
-bundle…", and folded inbox rows on iPhone and iPad. Not built yet: the AI
+bundle…", folded inbox rows on iPhone and iPad, and the parcel card at
+the top of the inbox (`docs/specs/parcel-card.md`). Not built yet: the AI
 narrative and attention line, auto-archive, folding on the Mac. Code:
 `crates/core/src/bundles.rs` (extraction, linking, facts),
 `crates/ffi/src/bundles.rs` (the engine API and the model pass),
@@ -60,8 +61,14 @@ and key facts as one-line lists.
   wins over a redirect's), or the same tracking or order number from
   the key facts in both addresses; the newest email's link is the row,
   the earlier emails are under its context menu ("+2 earlier"). Two
-  emails from one shop with nothing else in common stay two rows: the
-  core gives a link no shipment id, status or date. A click opens the
+  emails from one shop with nothing else in common stay two rows: a
+  link carries no shipment id. (What an email says about the parcel —
+  shipped, out for delivery, delivered, the day it is expected, what is
+  in it — the core does read, per email, for the inbox's parcel card:
+  `core::parcels`, `docs/specs/parcel-card.md`. This page does not show
+  it yet, and groups by its own copy of the rule: the card's, in the
+  core, also folds an email's number-less link into that email's
+  numbered one.) A click opens the
   tracking page. **Key facts** stand kind by kind, the kind named on
   its first row; a click copies the value, "Track" is a pill on a
   tracking number that has a link, and the email a fact came from is
@@ -387,7 +394,11 @@ on open (cheap, no model) and is the only part that is.
 
 ## UI
 
-Three touchpoints. Nothing else is added.
+Three touchpoints, and since the parcel card a fourth: parcels that are
+on their way stand in a card at the top of the plain inbox, one row per
+parcel with a Track parcel button (`docs/specs/parcel-card.md` — what a
+parcel is, what is read about it and from where, when it leaves, how it
+is dismissed). Nothing else is added.
 
 1. **Row chip.** One small chip (icon + short name) on rows in a bundle, next to
    the triage chips. At most one, because a thread is in at most one bundle.
@@ -430,7 +441,11 @@ is:
 - not pinned, not a draft
 
 A bundle folds only with **two or more** quiet threads in the inbox; one
-alone stays a normal row. The folded row sits at the top of the day group
+alone stays a normal row. A bundle that has a parcel in the inbox's parcel
+card gets no folded row: the same mail stands under its parcel there,
+counted on the parcel's line ("· 3 updates"), with Mark all done in the
+parcel's menu; when the parcel leaves the card the folded row is back
+(`docs/specs/parcel-card.md` R17). The folded row sits at the top of the day group
 of its newest email. Tapping it opens the bundle; its swipe (and its menu)
 is **Mark all done**, with one Undo. Folding applies to the plain inbox
 only: a search, a label filter or another folder lists every thread.
@@ -450,7 +465,10 @@ threads, and a folded row needs its own place in that map.
   - user exclusions, which must sync because they are user intent
 - `link` and `ai` memberships, facts, anchors and summaries stay local. Every
   device recomputes them, the same rule as "Jev's own results stay local".
-- Prefs: `bundles.fold_inbox` (unset = on). Later: `bundles.suggest`
+- Prefs: `bundles.fold_inbox` (unset = on); the parcel card's
+  `inbox.parcel_card` (unset = on) and `inbox.dismissed_parcels`. What
+  the mail says about a parcel (`thread_deliveries`) is derived on each
+  device, like the anchors and the links. Later: `bundles.suggest`
   (default on) with suggested bundles.
 
 ## Quality

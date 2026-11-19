@@ -120,7 +120,7 @@ final class MockEngine: MailEngine {
                                              isArchived: false, createdAt: now.addingTimeInterval(-86_400 * 3)))
         // The day as the shop would write it: tomorrow's date.
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now) ?? now
-        let day = tomorrow.formatted(.iso8601.year().month().day().dateSeparator(.dash))
+        let day = ParcelCard.dayString(tomorrow)
         engine.parcelStore = [
             URL(string: "https://www.dhl.test/track?id=00340434161094000017").map {
                 ParcelItem(id: "number:00340434161094000017", bundleId: "b2", threadId: "t9",

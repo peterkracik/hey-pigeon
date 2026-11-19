@@ -102,6 +102,14 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   the sample inbox. Every wait in a test has a timeout.
 - **SwiftUI `List` aborts on duplicate ids.** Rows go through
   `AppModel.unique`; keep it that way when adding sources of rows.
+- **The parcel card is the list's first section, and the model's.**
+  Parcels on their way (`docs/specs/parcel-card.md`) come with the
+  reload (`ListSnapshot.parcels`, one engine call) and are shown by
+  `ParcelCardView` — the same view at the head of the Mac's list. Which
+  of them show, the words on a row and when a dismissed one returns are
+  `ParcelCard`'s pure functions; the core decides what a parcel is and
+  what its mail says. A list's empty state asks `AppModel.listIsEmpty`,
+  not `groupedRows.isEmpty`: a card alone is not "All clear".
 - **Platform code goes in `Shared/Platform.swift`.** Haptics, keyboard,
   clipboard, app state, system settings, APNs registration, toolbar
   placements (`.barLeading` / `.barTrailing`), `inlineNavigationTitle()`,

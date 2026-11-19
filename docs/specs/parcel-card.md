@@ -35,11 +35,16 @@ an X on the header) in Hey Pigeon's own tokens.
 What a parcel is and what is known about it (core):
 
 - R1. A **parcel** is a shipment of an **active** bundle (not archived, not
-  a model bundle still forming): its tracking links grouped as the bundle's
-  Info page groups them (`docs/bundles.md`) — links are one parcel when
-  they come from the same email, or when the same tracking or order number
-  (six characters or more) from the bundle's mail is in both addresses.
-  Within one email the carrier's own link wins over a click-redirect's.
+  a model bundle still forming): its tracking links grouped by the rule of
+  the bundle's Info page (`docs/bundles.md`) — links are one parcel when
+  the same tracking or order number (six characters or more) from the
+  bundle's mail is in both addresses, and an email's links without a
+  number belong to that email's first link with one; an email with no
+  numbered link is one parcel. Two different numbers in one email are two
+  parcels. Within one email the carrier's own link wins over a
+  click-redirect's. A link that names a user before its host
+  (`https://dhl.com@evil.example/`) is never a parcel's link. The same
+  number in two bundles is one parcel, the first bundle's.
   The parcel's link and email are the newest email's. Only the bundle's
   fifteen newest threads are read, and none older than 45 days.
 - R2. A shipment is a parcel only with a sign that it is one: the bundle is
@@ -86,8 +91,8 @@ The card (shared shell):
 - R9. The card shows in the **plain inbox** only — the Inbox view with no
   search and no triage-label filter, for one account or all (a parcel
   shows for the account its email is in) — as the first thing in the
-  list, above Pinned, and also over "All clear" when the inbox is empty.
-  With no parcel to show there is no card.
+  list, above Pinned. An inbox with no mail but a parcel shows the card
+  alone, not "All clear". With no parcel to show there is no card.
 - R10. Title **Parcels**, an **X** ("Dismiss all"). Collapsed (the
   default): the first parcel and "+N more". Expanded: every parcel, and
   a footer with **Show less** and **Dismiss all**. With one parcel there
@@ -103,9 +108,10 @@ The card (shared shell):
   "· N updates".
 - R13. **Track parcel** opens the parcel's link in the default browser
   (`Browser.open`). **View details** opens the bundle on its Info page.
-  **…**: Open bundle (Emails page), Open email (the parcel's newest
-  email), Mark all done (only with R17's mail), Dismiss; its first line
-  names the host the Track button opens.
+  **…**: a first section headed "Opens <host>" — the host the link
+  really leads to — with Track parcel; then Open bundle (Emails page),
+  Open email (the parcel's newest email), Mark all done (only when the
+  bundle has quiet inbox mail, R18), Dismiss.
 - R14. **Dismiss** hides one parcel; **Dismiss all** / X hides every
   parcel now in the card. Both show a toast with **Undo** ("Parcel
   dismissed", "3 parcels dismissed"), which is also on the Undo stack.
@@ -115,9 +121,10 @@ The card (shared shell):
   thread id, the same on every device). Entries older than 180 days are
   dropped when the list is next written.
 - R15. Settings › Inbox › **Show parcels** (`inbox.parcel_card`, synced,
-  unset = on): "Parcels on their way get a card at the top of your inbox,
-  with a Track button. Read from your mail on this \(Device.name); nothing
-  is sent anywhere."
+  unset = on): "Parcels on their way get a card at the top of your inbox.
+  Worked out on this \(Device.name) from your mail; Track parcel opens
+  the email's own link in your browser." Off, the reload does not ask
+  the store for parcels.
 - R16. The items come with the list's reload (one engine call,
   `tracking_overview`, read off the main thread into the list snapshot);
   no view asks the store. A parcel's link is known once its email's text
@@ -152,9 +159,12 @@ The card (shared shell):
 | Mac only (`macos-app/HeyPigeonMac`) | The card as the first row of `InboxPage`'s list; palette entries. |
 
 Syncs between devices: the two prefs, whole-value, last writer wins like
-every pref (`inbox.dismissed_parcels`, `inbox.parcel_card`). Statuses,
-days, titles and links are derived from mail on each device and never
-sync.
+every pref (`inbox.dismissed_parcels`, `inbox.parcel_card`), through the
+owner's Drive app data like the others. A dismissal names its parcel by
+tracking or order number, or by Gmail thread id — the first identifiers
+from mail in a pref besides muted thread ids and blocked addresses.
+Statuses, days, titles and links are derived from mail on each device and
+never sync.
 Leaves the device: nothing. The Track button opens the email's own link
 in the browser when the user presses it — the same request the link in
 the email makes.

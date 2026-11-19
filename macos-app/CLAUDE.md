@@ -228,6 +228,18 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   `MacLayout.maxWidth` (1120 pt, for its single-line rows), a thread to
   `MacLayout.readingWidth` (760 pt, the iPad's `ReadableLayout.maxWidth`):
   a line of mail across the list's width was too long to read.
+- **The parcel card is the shared view, outside the cursor.** Parcels on
+  their way (`docs/specs/parcel-card.md`) are the first row of the
+  inbox's list: the shell's `ParcelCardView` on the list's white
+  (`MacTheme.groupCard`), as wide as a day's card. It is not a thread:
+  `j` / `k`, the selection and the batch bar walk `flatRowIds` and never
+  see it, and it has no bare key. Its actions are the pointer's (the
+  buttons, the "…" menu, the same menu on a right-click) and the
+  palette's (`CommandPalette.parcelItems`: "Track parcel · <title>" per
+  parcel and "Dismiss all parcels", while the card is on screen). The
+  Mac's inbox does not fold, so a parcel's line carries no "· N updates"
+  here; Mark all done in its menu acts on the same quiet mail as the
+  phone's.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the

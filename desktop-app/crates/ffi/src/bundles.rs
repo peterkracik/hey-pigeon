@@ -1604,3 +1604,34 @@ mod tests {
         assert!(e.bundle_detail(b.id).unwrap().is_none());
     }
 }
+#[cfg(test)]
+mod bench_tmp {
+    use super::*;
+    use crate::engine::tests_support::sample_thread;
+    #[test]
+    fn overview_cost() {
+        let dir = std::env::temp_dir().join(format!("hp-bench-{}", now_ms()));
+        let e = Engine::open(dir.to_string_lossy().into_owned(), OauthClient { client_id: "123-abc.apps.googleusercontent.com".into(), client_secret: None }).unwrap();
+        e.store.upsert_account(&heypigeon_core::domain::Account { id: "me@x.com".into(), email: "me@x.com".into(), display_name: "me".into(), color: "sky".into(), history_id: None, avatar_url: None, signature: String::new(), read_status: false }).unwrap();
+        let now = now_ms();
+        for b in 0..8 {
+            let mut ids = vec![];
+            for t in 0..40 {
+                let id = format!("b{b}t{t}");
+                let mut th = sample_thread(&id, "me@x.com");
+                th.subject = format!("Your order #77{b}-{t:04} has shipped");
+                th.last_msg_at = now - (t as i64) * 3_600_000;
+                e.store.upsert_thread(&th).unwrap();
+                e.store.upsert_message(&heypigeon_core::domain::Message { id: format!("m{id}"), thread_id: id.clone(), account_id: "me@x.com".into(), date: th.last_msg_at, body_html: Some(format!("<a href=\"https://track.dpd.example/{id}\">Track your parcel</a>")), ..Default::default() }).unwrap();
+                ids.push(id);
+            }
+            e.create_bundle(format!("Shop {b}"), BundleKind::Shopping, "".into(), ids).unwrap();
+        }
+        e.link_bundles_pending();
+        let mut n = 0;
+        for _ in 0..300 { n = Arc::clone(&e).tracking_overview(60).unwrap().len(); if n > 0 && e.links_pending.lock().unwrap().is_empty() { break; } std::thread::sleep(std::time::Duration::from_millis(10)); }
+        let start = std::time::Instant::now();
+        for _ in 0..50 { n = Arc::clone(&e).tracking_overview(60).unwrap().len(); }
+        eprintln!("overview: {n} parcels, {:?} per call (debug build)", start.elapsed() / 50);
+    }
+}

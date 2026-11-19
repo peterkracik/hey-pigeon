@@ -419,8 +419,9 @@ struct ParcelPaletteTests {
     @Test func eachParcelCanBeTrackedAndAllDismissed() throws {
         #expect(CommandPalette.parcelItems([], bundle: { _ in nil }, dismissAll: {}).isEmpty)
         var dismissed = 0
-        let items = CommandPalette.parcelItems([try parcel("thread:a", title: "Kettle"), try parcel("number:1Z9")],
-                                               bundle: { _ in nil }, dismissAll: { dismissed += 1 })
+        let kettle = try parcel("thread:a", title: "Kettle")
+        let other = try parcel("number:1Z9")
+        let items = CommandPalette.parcelItems([kettle, other], bundle: { _ in nil }, dismissAll: { dismissed += 1 })
         #expect(items.map(\.id) == ["parcel.track.thread:a", "parcel.track.number:1Z9", "parcel.dismissAll"])
         #expect(items.map(\.title) == ["Track parcel · Kettle", "Track parcel · Your order has shipped", "Dismiss all parcels"])
         // The second line says where things stand and where the link leads.
@@ -434,7 +435,8 @@ struct ParcelPaletteTests {
     /// card is on screen.
     @Test func theCardsParcelsAreTheModels() throws {
         let engine = MockEngine()
-        engine.parcelStore = [try parcel("thread:t4")]
+        let shown = try parcel("thread:t4")
+        engine.parcelStore = [shown]
         let model = AppModel(engine: engine)
         model.reload()
         #expect(model.inboxParcels.count == 1)

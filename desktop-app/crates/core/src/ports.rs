@@ -879,6 +879,28 @@ pub trait Store {
         Ok(())
     }
 
+    /// Keep what a thread's mail says about a parcel, read from `source`
+    /// (`parcels`): `Some` replaces that thread's row for the source,
+    /// `None` removes it. One write for all of them — the link pass
+    /// hands over hundreds of threads a round. Default: not kept.
+    fn set_thread_deliveries(
+        &self,
+        source: DeliverySource,
+        items: &[(ThreadId, Option<Delivery>)],
+    ) -> Result<(), StoreError> {
+        let _ = (source, items);
+        Ok(())
+    }
+
+    /// What is kept for a thread, at most one per source. Default: none.
+    fn thread_deliveries(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<Vec<(DeliverySource, Delivery)>, StoreError> {
+        let _ = thread_id;
+        Ok(Vec::new())
+    }
+
     /// How many of a thread's stored messages have a body. The default
     /// reads them; the SQLite adapter counts without reading any.
     fn thread_body_count(&self, thread_id: &ThreadId) -> Result<i64, StoreError> {

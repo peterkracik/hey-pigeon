@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine;
 use heypigeon_core::domain::*;
+use heypigeon_core::parcels;
 use heypigeon_core::ports::{
     HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage, WatchState,
 };
@@ -469,6 +470,14 @@ impl GmailProvider {
                 // another message.
                 if m.label_ids.iter().any(|l| l == "SENT") {
                     m.open_token = m.body_html.as_deref().and_then(sanitize::own_pixel_token);
+                }
+                // What the shop's schema.org markup says about a parcel
+                // (docs/specs/parcel-card.md R3), for the same reason:
+                // the sanitizer takes scripts and `itemprop` out. Not
+                // from the user's own mail — a parcel is something sent
+                // to them.
+                if !m.label_ids.iter().any(|l| l == "SENT" || l == "DRAFT") {
+                    m.delivery = m.body_html.as_deref().and_then(parcels::from_markup);
                 }
                 m.body_html = m.body_html.as_deref().map(sanitize::html);
                 m.body_fetched = true;
@@ -1546,6 +1555,7 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
         // Read from the full message's HTML before it is sanitized
         // (`full_fetch`); the list tier has no body to read it from.
         open_token: None,
+        delivery: None,
     }
 }
 
@@ -3610,6 +3620,60 @@ mod tests {
         let listed = to_message(&"acc".to_string(), "t1", &wire);
         assert!(!listed.body_fetched);
         assert_eq!(listed.body_html.as_deref(), Some(RAW_HTML));
+    }
+
+    /// docs/specs/parcel-card.md R3: the shop's schema.org markup is read
+    /// from the HTML as received — the stored body no longer has it — and
+    /// never from mail the user sent.
+    #[test]
+    fn full_fetch_reads_delivery_markup_before_sanitizing() {
+        let html = concat!(
+            "<html><head><script type=\"application/ld+json\">",
+            "{\"@context\":\"http://schema.org\",\"@type\":\"ParcelDelivery\",",
+            "\"expectedArrivalUntil\":\"2026-11-20T18:00:00+01:00\",",
+            "\"itemShipped\":{\"@type\":\"Product\",\"name\":\"Kettle\"},",
+            "\"partOfOrder\":{\"@type\":\"Order\",\"orderStatus\":\"http://schema.org/OrderInTransit\"}}",
+            "</script></head><body><p itemprop=\"name\">On its way</p></body></html>",
+        );
+        let message = |labels: &[&str]| -> WireMessage {
+            serde_json::from_value(serde_json::json!({
+                "id": "m1", "labelIds": labels, "internalDate": "1",
+                "payload": {"mimeType": "text/html", "headers": [
+                    {"name": "From", "value": "Shop <shop@y.com>"},
+                    {"name": "Subject", "value": "Shipped"}
+                ], "body": {"data": part_data(html)}}
+            }))
+            .unwrap()
+        };
+        let p = provider();
+        let fetch = |labels: &[&str]| {
+            p.full_fetch(
+                &"acc".to_string(),
+                &"t1".to_string(),
+                std::slice::from_ref(&message(labels)),
+                true,
+            )
+            .messages
+            .remove(0)
+        };
+        let m = fetch(&["INBOX"]);
+        let d = m.delivery.expect("the markup was read");
+        assert_eq!(
+            d.status,
+            Some(heypigeon_core::domain::ParcelStatus::Shipped)
+        );
+        assert_eq!(d.expected_day.as_deref(), Some("2026-11-20"));
+        assert_eq!(d.title.as_deref(), Some("Kettle"));
+        // The stored body has neither the script nor the property, which
+        // is why it is read here.
+        let stored = m.body_html.unwrap();
+        assert!(!stored.contains("ld+json") && !stored.contains("itemprop"));
+        assert_eq!(parcels::from_markup(&stored), None);
+        assert!(fetch(&["SENT"]).delivery.is_none());
+        // The list tier has no body to read it from.
+        assert!(to_message(&"acc".to_string(), "t1", &message(&["INBOX"]))
+            .delivery
+            .is_none());
     }
 
     /// docs/specs/read-status.md R19: a sent message's token is read from

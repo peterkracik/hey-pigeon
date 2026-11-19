@@ -1506,6 +1506,14 @@ impl Engine {
         if let Err(e) = heypigeon_core::readstatus::remember_tokens(&self.store, &full.messages) {
             log::warn!("read status: token of a sent message not kept: {e}");
         }
+        // What the shop's markup said about a parcel, read from the
+        // messages as received (the stored bodies no longer have it):
+        // kept beside the thread. Not worth failing the open for either.
+        let deliveries = heypigeon_core::parcels::remember_deliveries(&self.store, &full.messages)
+            .unwrap_or_else(|e| {
+                log::warn!("parcels: a message's delivery markup not kept: {e}");
+                0
+            });
         if full.whole_thread {
             // A stored message the whole thread no longer has was deleted
             // at Gmail and the sync has not caught up: there is nothing
@@ -1548,6 +1556,18 @@ impl Engine {
         if thread.bundle_id.is_some() {
             if let Err(e) = self.refresh_links(thread) {
                 log::warn!("bundles: links of {} not read: {e}", thread.id);
+            }
+            // The inbox's parcel card is made of these (a link, a day, a
+            // title): it reads them again now, not on the next change.
+            // A fetch that brought neither says nothing.
+            let has_links = self
+                .store
+                .thread_links(&thread.id)
+                .ok()
+                .flatten()
+                .is_some_and(|(_, links)| !links.is_empty());
+            if deliveries > 0 || has_links {
+                self.notify_threads_updated();
             }
         }
         if full.whole_thread {

@@ -17,7 +17,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
-use crate::domain::{now_ms, Bundle, BundleOrigin, BundleSource, BundleStatus, Thread, ThreadId};
+use crate::domain::{
+    now_ms, Bundle, BundleOrigin, BundleSource, BundleStatus, Delivery, DeliverySource, Thread,
+    ThreadId,
+};
+use crate::parcels;
 use crate::ports::{Store, StoreError};
 
 /// What an anchor identifies. Decides how the bundle view labels the fact.
@@ -323,6 +327,27 @@ fn thread_text<S: Store>(store: &S, thread_id: &ThreadId, subject: &str, snippet
     text
 }
 
+/// Scan one thread outside the link pass (the picker or an "Add to
+/// bundle" reached it first): its identifiers, and what its subject and
+/// preview line say about a parcel — everything the pass would have kept,
+/// since the thread then counts as scanned. Returns the anchors.
+fn scan_thread<S: Store>(store: &S, t: &Thread) -> Result<Vec<String>, StoreError> {
+    let text = thread_text(store, &t.id, &t.subject, &t.snippet);
+    let anchors: Vec<String> = extract_anchors(&text)
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+    store.set_thread_anchors(&t.id, &anchors, t.msg_count)?;
+    store.set_thread_deliveries(
+        DeliverySource::Text,
+        &[(
+            t.id.clone(),
+            parcels::from_text(&t.subject, &t.snippet, t.last_msg_at),
+        )],
+    )?;
+    Ok(anchors)
+}
+
 /// What one `link_pass` did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LinkOutcome {
@@ -365,6 +390,19 @@ pub fn link_pass<S: Store>(store: &S, limit: u32) -> Result<LinkOutcome, StoreEr
         })
         .collect();
     store.set_thread_anchors_batch(&scanned)?;
+    // What each scanned thread's subject and preview line say about a
+    // parcel (docs/specs/parcel-card.md R3), kept the same way: one
+    // write, and a thread that says nothing loses what it said before.
+    let deliveries: Vec<(ThreadId, Option<Delivery>)> = stale
+        .iter()
+        .map(|t| {
+            (
+                t.id.clone(),
+                parcels::from_text(&t.subject, &t.snippet, t.last_msg_at),
+            )
+        })
+        .collect();
+    store.set_thread_deliveries(DeliverySource::Text, &deliveries)?;
     outcome.scanned = scanned.len();
     for (t, (_, anchors, _)) in stale.iter().zip(&scanned) {
         if t.bundle_id.is_some() || anchors.is_empty() {
@@ -422,12 +460,7 @@ pub fn suggest_for<S: Store>(
     };
     let mut anchors = store.thread_anchors(thread_id)?;
     if anchors.is_empty() {
-        let text = thread_text(store, &t.id, &t.subject, &t.snippet);
-        anchors = extract_anchors(&text)
-            .iter()
-            .map(|a| a.to_string())
-            .collect();
-        store.set_thread_anchors(&t.id, &anchors, t.msg_count)?;
+        anchors = scan_thread(store, &t)?;
     }
     if anchors.is_empty() {
         return Ok(None);
@@ -468,12 +501,7 @@ pub fn spread_from<S: Store>(
     if anchors.is_empty() {
         // Not scanned yet (older mail): scan it now.
         if let Some(t) = store.get_thread(thread_id)? {
-            let text = thread_text(store, &t.id, &t.subject, &t.snippet);
-            anchors = extract_anchors(&text)
-                .iter()
-                .map(|a| a.to_string())
-                .collect();
-            store.set_thread_anchors(&t.id, &anchors, t.msg_count)?;
+            anchors = scan_thread(store, &t)?;
         }
     }
     let mut joined = Vec::new();
@@ -498,7 +526,11 @@ pub fn spread_from<S: Store>(
 /// any link that carries one of `numbers` (the tracking numbers found).
 /// Deduplicated, in order of appearance, at most five.
 pub fn tracking_links(text: &str, numbers: &[String]) -> Vec<String> {
-    let lower = text.to_lowercase();
+    // ASCII lower-casing: every byte stays where it was, so a place found
+    // in `lower` is the same place in `text`. Full lower-casing changes
+    // the length of some letters ("İ"), and the slices below then fell
+    // inside a character — a panic, on mail anyone can send.
+    let lower = text.to_ascii_lowercase();
     let mut out: Vec<String> = Vec::new();
     let mut start = 0;
     while let Some(pos) = lower[start..].find("http") {
@@ -938,6 +970,17 @@ mod tests {
             &[]
         )
         .is_empty());
+    }
+
+    /// Letters whose lower case is longer than they are ("İ") used to
+    /// move every index after them, and a slice fell inside a character.
+    #[test]
+    fn tracking_links_survive_letters_that_grow_in_lower_case() {
+        let html = "İİİ İstanbul’a kargo <a href=\"https://kargo.example/track/İ1\">Track İt</a> é";
+        assert_eq!(
+            tracking_links(html, &[]),
+            vec!["https://kargo.example/track/İ1".to_string()]
+        );
     }
 
     #[test]

@@ -53,6 +53,7 @@ recipient's mail app ─► GET /o/<token>.gif          (public, no auth)
                           ├─ always: a 1×1 GIF, 200, no-store, no redirect, no cookie
                           ├─ unknown / expired / malformed token: nothing else — one lookup, no write, no log
                           └─ known token: classify the fetch in memory → record { label, at } (at most 25 per label)
+                             └─ a newly stored "opened" → silent APNs push {content-available: 1, opens: 1} to the mailbox's devices
 
 app, on sync ─────────► POST /v1/opens {tokens}     (Google access token) → { token: [{label, at}] }, own mailbox only
 app, switch turned off ► DELETE /v1/tokens          (Google access token) → every document of that mailbox, 204
@@ -122,9 +123,32 @@ through `console` (Node's own process warnings do; they carry nothing of a
 request), and the two answers above still go to the caller as Express's
 HTML 400, which names the error to the one who sent it.
 
-**Not built yet:** telling the phone about an open. The handler has the seam
-(`onOpen(mailboxHash)`), `index.js` wires nothing to it, and the function
-holds no APNs configuration.
+**Telling the phone** (`src/open-push.js`). When a fetch stores an `opened`
+event — not `hidden`, not a fetch that stored nothing — the function sends a
+silent APNs push to the devices registered for that mailbox (the push
+half's token table), so the phone asks about its opens at once instead of
+at its next sync. The push is `{ "aps": { "content-available": 1 }, "opens":
+1 }` and nothing else: no address, no token, no message. A mailbox with no
+registered device is a no-op; the Mac has no push and keeps asking on its
+timer. Bounds, because the pixel is public: an `opened` event is stored at
+most once a minute per message; a mailbox is woken at most once in five
+minutes per instance, however many of its messages are opened (three
+instances at most, and Apple collapses and throttles background pushes
+itself); `apns-priority` 5, `apns-push-type: background`, a collapse id of
+its own per mailbox. A mailbox's devices are sent to at the same time. The
+pixel's answer waits for Apple 1.5 seconds at most and is never failed by
+it. Within that bound the push is awaited, because the function's CPU is
+only guaranteed while a request is in flight; a send still open when the
+bound is reached is left behind the response and may not finish. Without
+APNs settings on the function nothing is sent.
+
+The relay cannot see an account's setting; it only has tokens, and a token
+exists only for a message registered while read status was on. So a push
+follows only from mail that was tracked. What it cannot rule out: a device
+that has since turned read status off — or has not yet synced that it was
+turned off elsewhere — is still woken while the mailbox's tokens are not
+yet deleted. Such a wake runs an ordinary sync and asks the relay nothing
+about opens.
 
 ## What the relay sees and stores
 
@@ -145,8 +169,9 @@ Read status (`opens`):
 | Kept for | 30 days from registration (Firestore TTL on `expiresAt`, which can lag by about a day; the function itself treats an expired document as absent), or until the mailbox's owner calls delete |
 | Seen per pixel request, not kept | The fetching client's IP address and user agent, for the length of the request, to choose the label. Passed to nothing: not Firestore, not a log line |
 | Seen per app request | The Google access token (verified at Google, not stored) and the tokens named |
-| Sent to Apple | One download of the public egress list per instance. Nothing about any request |
-| Logged by the function | Its own lines: `opens <hash prefix> registered`, `… deleted <n>`, `… at its token limit`, the state of the Apple list, and a failed store call's error code. Never a token, an address, a user agent, a URL or a request body; a pixel request that goes well writes no line. Anything a library prints on the instance is reduced to the error's class name — `opens: output withheld (URIError)` — because the framework rejects an unparseable request before the handler runs and would otherwise print its path or a piece of its body (`src/quiet.js`; reproduction below) |
+| Sent to Apple | One download of the public egress list per instance, which says nothing about any request. And, when an open is stored and the mailbox has a device registered for push: a silent push to that device's token, whose whole content is `{ aps: { content-available: 1 }, opens: 1 }` — Apple learns that this device was woken by this app, when, and that it was for an open (the payload says `opens`, and the collapse id starts with `o`); not which message or who opened it. The collapse id is `o` and 15 hex digits of the mailbox hash, the same stable per-mailbox value the new-mail push already gives Apple in 16 digits: not the address, but someone holding it could confirm a guessed address |
+| Sent to the phone | That same push: "something was opened for the mailbox this device registered". The phone then asks the relay itself, with its Google token |
+| Logged by the function | Its own lines: `opens <hash prefix> registered`, `… deleted <n>`, `… at its token limit`, the state of the Apple list, `open-push <hash prefix> <sandbox|production> <APNs status>` per push (and `… not waited for` when Apple was slow), and a failed store call's error code. Never a token, an address, a user agent, a URL or a request body. A pixel request writes no line unless it sends a push; a push line records that a mailbox, by hash prefix, had an open at that time, and it stays for as long as the project keeps logs — turning read status off deletes the relay's records, not these lines. Anything a library prints on the instance is reduced to the error's class name — `opens: output withheld (URIError)` — because the framework rejects an unparseable request before the handler runs and would otherwise print its path or a piece of its body (`src/quiet.js`; reproduction below) |
 | Logged by Cloud Run | Its request log (IP, user agent, URL per request) is written by the platform and dropped before it is stored: a project log exclusion that Terraform creates before the function (`terraform/logging.tf`) keeps it out of the project's log storage. A log sink someone adds to the project by hand would still receive it — there is none in this repository |
 
 Anyone can ask for any pixel URL; an unknown token costs one document read

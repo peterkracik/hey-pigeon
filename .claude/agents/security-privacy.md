@@ -42,7 +42,9 @@ and truthfully described.
    mail and `opens` is not called, with one exception: an account just
    turned off or being removed sends one delete, retried until answered.
    Serving the pixel, the relay sees the fetching client's IP address and
-   user agent in passing and does not store them. It is optional and runs
+   user agent in passing and does not store them. A stored open sends the
+   mailbox's registered phones a silent push whose whole content is
+   `{ aps: { content-available: 1 }, opens: 1 }`. It is optional and runs
    in the owner's own cloud project.
 5. **Cross-device state goes through the owner's own Drive app data
    folder** and carries app state (reminders, flags, prefs, labels,

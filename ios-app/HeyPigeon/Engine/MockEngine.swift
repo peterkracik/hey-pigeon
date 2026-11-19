@@ -432,13 +432,21 @@ final class MockEngine: MailEngine {
         onThreadsUpdated?()
     }
 
+    /// How often each kind of round was asked for (the tests' view of
+    /// what a push led to).
+    private(set) var syncAllCount = 0
+    private(set) var syncNowCount = 0
+
     func syncAll() async throws -> Bool {
+        syncAllCount += 1
         try? await Task.sleep(for: .milliseconds(600))
         return false
     }
 
     func syncNow(accountId: String) async throws -> Bool {
-        try await syncAll()
+        syncNowCount += 1
+        try? await Task.sleep(for: .milliseconds(600))
+        return false
     }
 
     func backfillOlder() async throws -> Bool { false }

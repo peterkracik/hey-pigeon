@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — steps 1–5 merged (#142, #144, #147, #150, #152), the relay deployed and `o.heypigeon.app` live; step 6 (Recent Opens) implemented, not merged; step 7 not started
+Status: Implemented — steps 1–6 merged (#142, #144, #147, #150, #152, #153), the relay deployed and `o.heypigeon.app` live; step 7 (silent push on open) implemented, not merged. Not yet verified with a real send, or on a device
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -237,11 +237,21 @@ switch, per mailbox, off until I turn it on.
   hours after that, at most 100 a round, longest unasked first. A round
   with no token due makes no request. A failed query changes
   nothing and is not reported to the user; the next round asks again.
-- R24. The silent push for an open carries no address and no token:
+- R24. When a fetch stores an `opened` event — not `hidden`, not a fetch
+  that stored nothing — the relay sends a silent push to the devices
+  registered for that mailbox, so the phone asks about its opens at once.
+  The push carries no address, no token and no message:
   `{ aps: { content-available: 1 }, opens: 1 }`. The device runs its
-  ordinary sync round. It is only sent to devices that registered for
-  "New mail (push)"; with push off the phone learns of opens at its next
-  sync.
+  ordinary sync round and by itself shows nothing. It is only sent to
+  devices that registered for "New mail (push)"; with push off the phone
+  learns of opens at its next sync, and the Mac on its timer. A mailbox
+  is woken at most once in five minutes per relay instance, however many of
+  its messages are opened; its devices are sent to at the same time; the pixel's answer waits for Apple 1.5 seconds at
+  most and is never failed by it. The relay cannot see an account's
+  setting: a push follows from a token, and a token exists only for
+  mail tracked while read status was on. A device that has turned it off
+  since, or has not yet synced "off", can still be woken until the
+  mailbox's tokens are deleted; that wake asks the relay nothing.
 
 ### Edge cases
 
@@ -436,12 +446,14 @@ Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 - [x] R1, R5, R6 — `openedAndHiddenHaveTheirWords`, `detailsListWhatTheRelayReported`, `theMockRanksOpensLikeTheCore`, `aTranscriptCarriesNoPictureAddress` (`ModelTests`) — green in `ios-ci` and `macos-ci` on #152
 - [x] R15, R16 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens`, `aScheduledMessageKeepsTheChoiceMadeWhenItWasSent`, `mailSentWithoutAComposerIsNotTracked`, `theReadStatusRowSaysWhatItDoes` (`AppModelTests`) — green in `ios-ci` and `macos-ci` on #152
 - [x] R7, the query — `recent_opens_are_local_opened_and_newest_first` (`core::readstatus`: opens only, the window, one account or all, kept after "off", gone with the account, zero relay calls), `recent_opens_come_from_the_stored_events` (`adapter-sqlite`), and at the bridge in `a_thread_carries_opens_and_hidden_fetches`
-- [ ] R7, the sheet — `recentOpensAreNewestFirstAndRespectTheAccountFilter` (`AppModelTests`), `recentOpensNameOneRecipientAndNobodyOfSeveral`, `recentOpensSayWhyTheyAreEmpty` (`ModelTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
+- [x] R7, the sheet — `recentOpensAreNewestFirstAndRespectTheAccountFilter` (`AppModelTests`), `recentOpensNameOneRecipientAndNobodyOfSeveral`, `recentOpensStandUnderTheirHeadings`, `recentOpensSayWhenInTheUsersWords`, `recentOpensSayWhyTheyAreEmpty` (`ModelTests`) — green in `ios-ci` and `macos-ci` on #153
 - [x] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`, `pushIsOfferedOnlyWhereTheAppCanBePushedTo` (`AppModelTests`) — green in `ios-ci` and `macos-ci` on #150 (`theReadStatusRowIsNotShownYet`, green there too, is replaced in step 5 by `theReadStatusRowSaysWhatItDoes`)
 
 Mac (`macos-app/HeyPigeonMacTests`):
 
-- [ ] `g o` resolves to Recent Opens and is on the shortcuts sheet (`gArmsAChordAndTheNextKeyGoesSomewhere`); the command opens the shared sheet (`theCommandOpensTheSharedSheet`) (`MacWindowTests`) — written, not yet compiled. A chord is not a bare key, so `KeyboardMap.characters` does not change
+- [x] `g o` resolves to Recent Opens and is on the shortcuts sheet (`gArmsAChordAndTheNextKeyGoesSomewhere`); the command opens the shared sheet (`theCommandOpensTheSharedSheet`) (`MacWindowTests`) — green in `macos-ci` on #153
+- [x] R24, the relay — `open-push.test.js`: an open that is stored wakes each registered device once with exactly `{ aps: { content-available: 1 }, opens: 1 }`; hidden, ignored, repeated and unknown fetches push nothing; one wake a mailbox a minute; no device, no log line; a failing or slow APNs call still answers the GIF; nothing of the request reaches Apple or the log
+- [ ] R24, the phone — `aPushForAnOpenSyncsAndShowsNothing` (`MailFlowTests`) — written, not yet compiled
 
 Whole feature:
 
@@ -570,6 +582,10 @@ Still open — needs the owner or a measurement:
   client only, and the Mac app signs in with its own (`GoogleMacClientID`).
   Until the Mac's client id is added, `register-token` and `opens` refuse
   the Mac's tokens — to settle in step 4, with the Mac build's relay URL.
+- **Where "Recent Opens" sits on the phone.** Proposed: next to "Sent" in
+  the sidebar's folder card, since it is a view of sent mail; today it is
+  in the bottom card beside Settings. The owner's feedback is noted and
+  not acted on. The sheet's header keeps the app's standard layout.
 - **EU ePrivacy / UK PECR.** Reading that a mail was opened is access to
   information on the recipient's device and, for recipients in the EU and
   the UK, generally needs their prior consent (ePrivacy Directive
@@ -807,4 +823,43 @@ calendar and locale; tests `recentOpensStandUnderTheirHeadings`,
 compiled. The Mac's menus show no chords (the bare-letter keys are not
 menu equivalents), so the Go menu's item carries none.
 
-Step 7: not started.
+Since step 6, 2026-11-19: merged as #153 (squash d6c4d93); `rust-ci`,
+`ios-ci` (iPhone tests, iPad build) and `macos-ci` were green on its
+head, the Recent Opens rework included, so that Swift compiled and its
+tests passed. Still unseen on a device. On the deployed project, from the
+#152 merge: `Apply complete! Resources: 1 added, 3 changed, 1
+destroyed`; the pixel on `https://o.heypigeon.app` answers 200 with the
+GIF; an unauthenticated query and `register-token` `GET` answer 401; the
+Mac's OAuth client id is in `GOOGLE_CLIENT_IDS`. `HEYPIGEON_RELAY_URL` is
+now on the `macos` environment; that the Mac build after #153 carries it
+is not yet confirmed. Still the owner's: a real send to a real mailbox;
+the request-log exclusion's effect and Cloud Trace on the deployed
+project.
+
+Step 7, 2026-11-19 — **Verified with notes**. Not merged, not deployed.
+
+- `npm ci && npm test` in `relay/`: 74 tests pass. `terraform fmt -check
+  -recursive` and `validate` pass for both stacks. No Rust changed.
+- Swift: one test and two counters in `MockEngine`, and one sentence in
+  the Settings footer — unbuilt here. No change to the app's push
+  handling was needed: a push without `email` already runs a round for
+  every account (`NewMailNotifier.handle`), by reading and by the new
+  test. No new permission or background mode; no Mac change.
+- The merge's apply gives the `opens` function the APNs settings the
+  other two have; `relay-fn` already reads the key.
+- Only a real open on a real device shows: that APNs accepts and
+  delivers the push; that iOS wakes the app for it (it throttles silent
+  pushes, and drops them in Low Power Mode); how long a first push
+  takes on a cold instance against the 1.5-second bound; that the phone
+  then shows "Opened" without being opened.
+- Whether the function's CPU is throttled after a response was not read
+  off the project: the push is awaited within its bound either way.
+- The one-in-five-minutes limit is per relay instance, kept in memory: with
+  three instances a mailbox can be woken three times in five minutes.
+- A push writes a log line with the mailbox's hash prefix and the time; it
+  outlives the delete that turning read status off sends, for the project's
+  log retention.
+
+All seven steps are implemented. The feature is not "Verified" in this
+spec's sense until a real message has been sent, opened and seen on an
+iPhone and a Mac, and the two deployed-project checks are done.

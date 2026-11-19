@@ -206,7 +206,7 @@ locals {
 resource "google_cloudfunctions2_function" "opens" {
   name        = "opens"
   location    = var.region
-  description = "Hey Pigeon relay: read status for sent mail (token, mailbox hash, open times; never mail, never addresses)"
+  description = "Hey Pigeon relay: read status for sent mail (token, mailbox hash, open times; never mail, never addresses); a stored open sends a silent push"
 
   build_config {
     runtime           = var.node_runtime
@@ -247,12 +247,29 @@ resource "google_cloudfunctions2_function" "opens" {
     # cost: three CPUs busy, never more. At personal volume the function
     # runs for seconds a day, far inside the free tier.
     max_instance_count = 3
-    environment_variables = {
+    # APNs as the other two have it: a stored open wakes the mailbox's
+    # registered phones with a silent push that says only "ask"
+    # (relay/src/open-push.js). The key is read from Secret Manager on the
+    # first push, by relay-fn, which may already read it (secrets.tf).
+    # Every value here is known at plan time — the same ones register-token
+    # carries; an unknown one would make the provider plan the map away
+    # (the postcondition below fails the plan if that happens).
+    environment_variables = merge(local.apns_env, {
       GOOGLE_CLIENT_IDS = join(",", local.google_client_ids)
       # The pixel's address, and the only one registration ever hands out.
       # Empty until the domain is mapped: registration is then refused
       # (503), so no message is sent pointing at a run.app address.
       OPENS_PUBLIC_URL = var.opens_domain != "" ? "https://${var.opens_domain}" : ""
+    })
+  }
+
+  lifecycle {
+    postcondition {
+      condition = alltrue([
+        for name in ["GOOGLE_CLIENT_IDS", "APNS_SECRET_NAME", "APNS_KEY_ID"] :
+        try(self.service_config[0].environment_variables[name], "") != ""
+      ])
+      error_message = "opens would lose its environment variables: a value in the map is unknown at plan time."
     }
   }
 

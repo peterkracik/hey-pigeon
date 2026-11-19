@@ -19,6 +19,7 @@ import { createOpensHandler } from "./src/opens-handlers.js";
 import { createOpenStore } from "./src/opens.js";
 import { createAppleRanges } from "./src/ranges.js";
 import { installQuietConsole } from "./src/quiet.js";
+import { createOpenPush } from "./src/open-push.js";
 
 function env(name, fallback) {
   const v = process.env[name];
@@ -47,17 +48,20 @@ const auth = createAuth({
   log,
 });
 
+const tokens = createTokenStore(db);
+// APNs is lazy: the key is read from Secret Manager on the first push, so
+// `registerToken` instances never touch it and a missing key surfaces as
+// a logged push failure rather than a crash at startup.
+const apns = createApns({
+  keyId: env("APNS_KEY_ID", ""),
+  teamId: env("APNS_TEAM_ID", ""),
+  topic: env("APNS_TOPIC", "app.heypigeon.ios"),
+  loadKey: () => loadSecret(env("APNS_SECRET_NAME")),
+});
+
 const handlers = createHandlers({
-  tokens: createTokenStore(db),
-  // APNs is lazy: the key is read from Secret Manager on the first push, so
-  // `registerToken` instances never touch it and a missing key surfaces as
-  // a logged push failure rather than a crash at startup.
-  apns: createApns({
-    keyId: env("APNS_KEY_ID", ""),
-    teamId: env("APNS_TEAM_ID", ""),
-    topic: env("APNS_TOPIC", "app.heypigeon.ios"),
-    loadKey: () => loadSecret(env("APNS_SECRET_NAME")),
-  }),
+  tokens,
+  apns,
   auth,
   topic: env("PUBSUB_TOPIC", ""),
   opensUrl: env("OPENS_URL", "").replace(/\/+$/, ""),
@@ -67,8 +71,10 @@ const handlers = createHandlers({
 functions.cloudEvent("onMailChange", handlers.onMailChange);
 functions.http("registerToken", handlers.registerToken);
 
-// Read status. No APNs here: telling the phone about an open (`onOpen`) is
-// not built yet, so this function has no reason to hold the key.
+// Read status. A stored open wakes the mailbox's registered phones with a
+// silent push that says only "ask" (src/open-push.js); without APNs
+// settings on this function nothing is wired and the phones learn of an
+// open at their next sync, as the Mac always does.
 functions.http(
   "opens",
   createOpensHandler({
@@ -76,6 +82,7 @@ functions.http(
     auth,
     ranges: createAppleRanges({ log }),
     publicUrl: env("OPENS_PUBLIC_URL", "").replace(/\/+$/, ""),
+    onOpen: env("APNS_KEY_ID", "") && env("APNS_SECRET_NAME", "") ? createOpenPush({ tokens, apns, log }) : undefined,
     log,
   }),
 );

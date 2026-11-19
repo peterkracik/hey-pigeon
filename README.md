@@ -48,7 +48,8 @@ yourself in your own Google Cloud project, which never receives mail — see
   Accounts). For an account with it on, mail you send carries an invisible
   picture served by the relay, and the relay holds a random token per sent
   message and when it was opened, for 30 days — never the message, its
-  subject or its recipients. Turning it off, or removing the account, has
+  subject or its recipients. With push on too, an open makes the relay
+  send the phone a silent push that says only "something was opened". Turning it off, or removing the account, has
   the app ask the relay to delete those records; if the account is removed
   or signed out before the relay could be reached they expire within 30
   days. Your other devices follow when they next sync. For an

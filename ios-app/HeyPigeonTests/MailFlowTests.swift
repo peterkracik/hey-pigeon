@@ -117,6 +117,37 @@ struct BannerActionTests {
         await NewMailNotifier.perform("com.apple.UNNotificationDefaultActionIdentifier", threadId: id, model: model)
         #expect(model.pendingThreadId == id)
     }
+
+    /// docs/specs/read-status.md R24: the relay's push for an open carries
+    /// no address (`{ aps: { content-available: 1 }, opens: 1 }`), so the
+    /// app delegate hands the notifier no email. That runs one ordinary
+    /// round for every account — which is where opens are asked about —
+    /// and by itself shows nothing: no banner, no thread opened, the
+    /// unread count as it was. A push that names an address syncs that
+    /// account alone, as before.
+    @Test func aPushForAnOpenSyncsAndShowsNothing() async {
+        let engine = MockEngine()
+        let model = AppModel(engine: engine)
+        await model.settleReloads()
+        let (all, one) = (engine.syncAllCount, engine.syncNowCount)
+        let unread = model.inboxUnreadAllAccounts
+        let rows = model.rows.map(\.id)
+
+        // What AppDelegate reads from the push: there is no "email" in it.
+        let userInfo: [AnyHashable: Any] = ["aps": ["content-available": 1], "opens": 1]
+        let result = await NewMailNotifier.handle(email: userInfo["email"] as? String, model: model)
+        #expect(engine.syncAllCount == all + 1)
+        #expect(engine.syncNowCount == one)
+        #expect(result == .noData)
+        await model.settleReloads()
+        #expect(model.inboxUnreadAllAccounts == unread)
+        #expect(model.rows.map(\.id) == rows)
+        #expect(model.pendingThreadId == nil && model.toast == nil)
+
+        _ = await NewMailNotifier.handle(email: "me@work.test", model: model)
+        #expect(engine.syncNowCount == one + 1)
+        #expect(engine.syncAllCount == all + 1)
+    }
 }
 
 @MainActor

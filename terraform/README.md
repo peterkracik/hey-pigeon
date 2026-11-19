@@ -59,7 +59,9 @@ allows that) and cannot read any log.
   authenticated by the caller's Google access token) and `opens` (public
   HTTPS: the read-status pixel, open to anyone, and three routes
   authenticated like `register-token`; 512M, one CPU, 80 requests per
-  instance, at most 3 instances).
+  instance, at most 3 instances). It carries the same APNs settings as
+  the other two and reads the same key: a stored open sends a silent
+  push to the mailbox's registered phones.
 - **Domain mapping** `o.heypigeon.app` → `opens`, only when `opens_domain`
   is set (below). Off by default.
 

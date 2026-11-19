@@ -68,7 +68,8 @@ export function fakeRes() {
       this.ended = true;
       return this;
     },
-    end() {
+    end(body) {
+      if (body !== undefined) this.body = body;
       this.ended = true;
       return this;
     },
@@ -76,9 +77,78 @@ export function fakeRes() {
   return res;
 }
 
-export function fakeReq({ method = "POST", headers = {}, body } = {}) {
+export function fakeReq({ method = "POST", headers = {}, body, path = "/" } = {}) {
   const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
-  return { method, body, get: (k) => lower[k.toLowerCase()] };
+  return { method, body, path, get: (k) => lower[k.toLowerCase()] };
+}
+
+/**
+ * The `opens` table in memory, with the shape of src/opens.js. `calls`
+ * lists every method the handler reached for, arguments included — what
+ * the tests search to show that an address or a user agent never got as
+ * far as the store.
+ */
+export function fakeOpens(initial = {}) {
+  const docs = new Map(Object.entries(initial).map(([k, v]) => [k, { events: [], ...v }]));
+  const calls = [];
+  const live = (token, nowMs) => {
+    const d = docs.get(token);
+    return d && d.expiresAt > nowMs ? d : null;
+  };
+  return {
+    docs,
+    calls,
+    writes: () => calls.filter((c) => c[0] !== "get" && c[0] !== "getMany"),
+    async get(token, nowMs) {
+      calls.push(["get", token, nowMs]);
+      return live(token, nowMs);
+    },
+    async register(token, mailboxHash, nowMs, ttlMs, maxPerMailbox) {
+      calls.push(["register", token, mailboxHash, nowMs, ttlMs, maxPerMailbox]);
+      const any = docs.get(token);
+      if (any && any.mailboxHash !== mailboxHash) return "taken";
+      if (live(token, nowMs)) return "exists";
+      const held = [...docs.values()].filter((d) => d.mailboxHash === mailboxHash).length;
+      if (held >= maxPerMailbox) return "full";
+      docs.set(token, { mailboxHash, createdAt: nowMs, expiresAt: nowMs + ttlMs, events: [] });
+      return "created";
+    },
+    async record(token, nextEvents, nowMs) {
+      const current = live(token, nowMs);
+      const events = current ? nextEvents(current.events) : null;
+      calls.push(["record", token, events, nowMs]);
+      if (!events) return false;
+      current.events = events;
+      return true;
+    },
+    async getMany(tokens, nowMs) {
+      calls.push(["getMany", tokens, nowMs]);
+      return new Map(tokens.map((t) => [t, live(t, nowMs)]).filter(([, d]) => d));
+    },
+    async removeMailbox(mailboxHash) {
+      calls.push(["removeMailbox", mailboxHash]);
+      let removed = 0;
+      for (const [token, d] of docs) {
+        if (d.mailboxHash === mailboxHash) {
+          docs.delete(token);
+          removed += 1;
+        }
+      }
+      return removed;
+    },
+  };
+}
+
+/** Apple's ranges as a fixed answer: true / false, or null for "not loaded". */
+export function fakeRanges(answer = false) {
+  const asked = [];
+  return {
+    asked,
+    async contains(ip) {
+      asked.push(ip);
+      return typeof answer === "function" ? answer(ip) : answer;
+    },
+  };
 }
 
 export const DEVICE = "a".repeat(64);

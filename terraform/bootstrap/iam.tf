@@ -24,6 +24,34 @@ locals {
   ])
 }
 
+# The one logging right the deployer has: project log exclusions, so the
+# root stack can drop the request logs of the `opens` service in the same
+# apply that creates it (../logging.tf). A custom role rather than
+# roles/logging.configWriter, which would also hand over sinks, log
+# buckets, views and links. What it does add: the CI identity can create,
+# change and delete any exclusion of this project — it could stop other
+# logs of the _Default bucket from being stored. It cannot touch the
+# Admin Activity audit log (never excludable) or read any log.
+resource "google_project_iam_custom_role" "relay_log_exclusions" {
+  role_id     = "relayLogExclusions"
+  title       = "Relay: manage log exclusions"
+  description = "Create, change and delete project log exclusions (the opens service's request logs). Nothing else in Logging."
+  permissions = [
+    "logging.exclusions.create",
+    "logging.exclusions.delete",
+    "logging.exclusions.get",
+    "logging.exclusions.list",
+    "logging.exclusions.update",
+  ]
+  depends_on = [google_project_service.api]
+}
+
+resource "google_project_iam_member" "relay_deployer_log_exclusions" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.relay_log_exclusions.id
+  member  = "serviceAccount:${google_service_account.relay_deployer.email}"
+}
+
 resource "google_project_iam_member" "relay_fn" {
   for_each = local.relay_fn_roles
 

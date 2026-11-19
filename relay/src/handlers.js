@@ -3,12 +3,20 @@
 //   apns:   { send({token, env, payload, collapseId}) → {status, reason} }
 //   auth:   { verify(bearer) → email | null }
 //   topic:  the Pub/Sub topic the app should `users.watch`
+//   opensUrl: where the `opens` function answers (src/opens-handlers.js),
+//           or "" when it is not deployed — reported so the app needs
+//           one setting, the relay URL
 //   log:    console-like
 //
 // Privacy contract (DESIGN.md "Push notifications", tier 3): the relay
 // learns `email → device tokens` and, per event, `email + historyId`.
 // Log lines carry a hash prefix and an APNs status, never an address or
 // a payload.
+//
+// That is the push half: these two functions. Read status is the third
+// (src/opens-handlers.js, with its own contract there): for a mailbox that
+// uses it, the relay also holds a random token per tracked message and
+// when it was opened. No app uses it yet, and neither half ever sees mail.
 
 import { createHash } from "node:crypto";
 
@@ -35,7 +43,11 @@ export function decodePubsub(cloudEvent) {
   return { emailAddress, historyId: String(historyId) };
 }
 
-export function createHandlers({ tokens, apns, auth, topic, log = console }) {
+export function createHandlers({ tokens, apns, auth, topic, opensUrl = "", log = console }) {
+  // What a caller learns about the relay: where to `watch`, and where read
+  // status lives (null: not deployed here).
+  const relayInfo = () => ({ topic, opensUrl: opensUrl || null });
+
   async function onMailChange(cloudEvent) {
     const change = decodePubsub(cloudEvent);
     if (!change) {
@@ -73,8 +85,8 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
   }
 
   async function registerToken(req, res) {
-    if (req.method !== "POST" && req.method !== "DELETE") {
-      res.set("Allow", "POST, DELETE").status(405).end();
+    if (req.method !== "GET" && req.method !== "POST" && req.method !== "DELETE") {
+      res.set("Allow", "GET, POST, DELETE").status(405).end();
       return;
     }
     const authz = req.get("authorization") ?? "";
@@ -96,6 +108,13 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
       res.status(401).json({ error: "token rejected" });
       return;
     }
+    // GET: the same answer as a registration, and nothing written. For a
+    // device with no APNs token to register (the Mac, a phone with push
+    // off) that only needs to know where the relay's other half is.
+    if (req.method === "GET") {
+      res.status(200).json(relayInfo());
+      return;
+    }
     const body = typeof req.body === "object" && req.body ? req.body : {};
     const deviceToken = typeof body.deviceToken === "string" ? body.deviceToken.trim() : "";
     if (!TOKEN_RE.test(deviceToken)) {
@@ -104,8 +123,21 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
     }
     const hash = emailHash(email);
 
+    // A failing store is answered here, with its code: left to the
+    // framework it would be logged with its stack, its message sent to the
+    // caller, and the instance shut down.
+    const unavailable = (e) => {
+      log.warn(`register ${hash.slice(0, 8)}: store failed (${e?.code ?? e?.name ?? "error"})`);
+      res.status(503).json({ error: "unavailable" });
+    };
+
     if (req.method === "DELETE") {
-      await tokens.remove(hash, deviceToken);
+      try {
+        await tokens.remove(hash, deviceToken);
+      } catch (e) {
+        unavailable(e);
+        return;
+      }
       res.status(204).end();
       return;
     }
@@ -118,8 +150,13 @@ export function createHandlers({ tokens, apns, auth, topic, log = console }) {
       res.status(400).json({ error: "environment must be sandbox or production" });
       return;
     }
-    await tokens.upsert(hash, { token: deviceToken, env: body.environment, platform: "ios" });
-    res.status(200).json({ topic });
+    try {
+      await tokens.upsert(hash, { token: deviceToken, env: body.environment, platform: "ios" });
+    } catch (e) {
+      unavailable(e);
+      return;
+    }
+    res.status(200).json(relayInfo());
   }
 
   return { onMailChange, registerToken };

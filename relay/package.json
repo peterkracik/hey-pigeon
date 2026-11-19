@@ -2,7 +2,7 @@
   "name": "heypigeon-relay",
   "version": "0.1.0",
   "private": true,
-  "description": "Optional iOS push relay for Hey Pigeon: Gmail watch → Pub/Sub → APNs silent push. Sees email + historyId, never mail.",
+  "description": "Optional relay for Hey Pigeon. Push: Gmail watch → Pub/Sub → APNs silent push (sees email + historyId). Read status: a pixel for sent mail (stores a token, a mailbox hash and open times). Never mail.",
   "type": "module",
   "main": "index.js",
   "engines": {
@@ -11,6 +11,7 @@
   "scripts": {
     "test": "node --test",
     "start:register": "functions-framework --target=registerToken --signature-type=http",
+    "start:opens": "functions-framework --target=opens --signature-type=http",
     "start:onchange": "functions-framework --target=onMailChange --signature-type=cloudevent"
   },
   "dependencies": {

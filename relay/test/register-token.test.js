@@ -27,7 +27,7 @@ test("POST with a valid token stores the device and returns the topic", async ()
   const res = fakeRes();
   await h.registerToken(fakeReq({ headers: good, body: { deviceToken: DEVICE, platform: "ios", environment: "sandbox" } }), res);
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body, { topic: TOPIC });
+  assert.deepEqual(res.body, { topic: TOPIC, opensUrl: null });
   const stored = await tokens.get(HASH);
   assert.equal(stored.length, 1);
   assert.equal(stored[0].token, DEVICE);
@@ -81,9 +81,9 @@ test("bad bodies are 400", async () => {
 test("other methods are 405", async () => {
   const { h } = setup();
   const res = fakeRes();
-  await h.registerToken(fakeReq({ method: "GET", headers: good }), res);
+  await h.registerToken(fakeReq({ method: "PUT", headers: good }), res);
   assert.equal(res.statusCode, 405);
-  assert.equal(res.headers.Allow, "POST, DELETE");
+  assert.equal(res.headers.Allow, "GET, POST, DELETE");
 });
 
 test("tokeninfo outage is 502, not 401", async () => {
@@ -98,4 +98,62 @@ test("tokeninfo outage is 502, not 401", async () => {
   const res = fakeRes();
   await h.registerToken(fakeReq({ headers: good, body: { deviceToken: DEVICE, platform: "ios", environment: "sandbox" } }), res);
   assert.equal(res.statusCode, 502);
+});
+
+test("GET answers where the relay is and writes nothing", async () => {
+  const tokens = fakeTokens();
+  const h = createHandlers({
+    tokens,
+    apns: fakeApns(),
+    auth: fakeAuth({ good: EMAIL }),
+    topic: TOPIC,
+    opensUrl: "https://o.example.test",
+    log: silentLog(),
+  });
+  const res = fakeRes();
+  // No body, no device token: the Mac has none to give.
+  await h.registerToken(fakeReq({ method: "GET", headers: good }), res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { topic: TOPIC, opensUrl: "https://o.example.test" });
+  assert.equal(tokens.docs.size, 0);
+
+  // And a registration reports the same.
+  const posted = fakeRes();
+  await h.registerToken(fakeReq({ headers: good, body: { deviceToken: DEVICE, platform: "ios", environment: "sandbox" } }), posted);
+  assert.deepEqual(posted.body, { topic: TOPIC, opensUrl: "https://o.example.test" });
+});
+
+test("GET needs the same Google token as a registration", async () => {
+  const { tokens, h } = setup();
+  const none = fakeRes();
+  await h.registerToken(fakeReq({ method: "GET" }), none);
+  assert.equal(none.statusCode, 401);
+  const bad = fakeRes();
+  await h.registerToken(fakeReq({ method: "GET", headers: { authorization: "Bearer bad" } }), bad);
+  assert.equal(bad.statusCode, 401);
+  assert.equal(bad.body.topic, undefined);
+  assert.equal(tokens.docs.size, 0);
+  // Without the opens function deployed, it says so.
+  const res = fakeRes();
+  await h.registerToken(fakeReq({ method: "GET", headers: good }), res);
+  assert.deepEqual(res.body, { topic: TOPIC, opensUrl: null });
+});
+
+test("a failing store is a 503 with a code in the log, not a crash", async () => {
+  for (const [method, request] of [
+    ["upsert", { headers: good, body: { deviceToken: DEVICE, platform: "ios", environment: "sandbox" } }],
+    ["remove", { method: "DELETE", headers: good, body: { deviceToken: DEVICE } }],
+  ]) {
+    const tokens = fakeTokens();
+    tokens[method] = async () => {
+      throw Object.assign(new Error(`unavailable for ${EMAIL}`), { code: 14 });
+    };
+    const log = silentLog();
+    const h = createHandlers({ tokens, apns: fakeApns(), auth: fakeAuth({ good: EMAIL }), topic: TOPIC, log });
+    const res = fakeRes();
+    await h.registerToken(fakeReq(request), res);
+    assert.equal(res.statusCode, 503);
+    assert.deepEqual(res.body, { error: "unavailable" });
+    assert.deepEqual(log.lines, [`warn register ${HASH.slice(0, 8)}: store failed (14)`]);
+  }
 });

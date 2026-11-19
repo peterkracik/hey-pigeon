@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — step 1 (local statuses) merged, #142; step 2 (own-pixel rule, token reader) implemented, not merged; steps 3–7 not started
+Status: Approved — step 1 (local statuses) merged, #142; step 2 (own-pixel rule, token reader) merged, #144; step 3 (relay and infrastructure) implemented, not merged, not deployed; steps 4–7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -157,7 +157,7 @@ switch, per mailbox, off until I turn it on.
 
   | Route | Auth | Does |
   | --- | --- | --- |
-  | `POST /v1/tokens` `{ token }` | Google access token, as `register-token` (tokeninfo + Gmail profile) | Stores `opens/{token} → { mailboxHash, createdAt, expiresAt, events: [] }`. Refuses a token that exists under another mailbox. Answers `{ pixelUrl }`. |
+  | `POST /v1/tokens` `{ token }` | Google access token, as `register-token` (tokeninfo + Gmail profile) | Stores `opens/{token} → { mailboxHash, createdAt, expiresAt, events: [] }`. `409` for a token that exists under another mailbox, expired or not (a token never changes hands). `429` when the mailbox already holds 20,000 live tokens. `503`, nothing stored, while the relay has no pixel domain. Answers `{ pixelUrl }`, always on the pixel's own domain, never the host the request came to. |
   | `GET /o/<token>.gif` | none (public) | Always answers a valid 1×1 GIF at once: `200`, `image/gif`, `Cache-Control: no-store, no-cache, must-revalidate, private`, no redirect, no cookie. Unknown, expired or malformed token: the GIF and nothing else — no read beyond the lookup, no write, no push, no log line. Known token: R21. |
   | `POST /v1/opens` `{ tokens: [...] }` (at most 100) | Google access token | Answers `{ <token>: [{ label, at }] }` for the tokens that belong to the caller's mailbox; other tokens are left out without saying why. |
   | `DELETE /v1/tokens` | Google access token | Deletes every `opens` document of the caller's mailbox. `204` whether or not there were any. |
@@ -174,13 +174,23 @@ switch, per mailbox, off until I turn it on.
   | Apple's mail privacy proxy (source address inside Apple's published egress ranges, loaded at cold start) | `hidden` | Delivered · opens hidden |
   | Anything within the grace window after `createdAt` (2 minutes), or scanner-like (security gateways, link checkers, a `HEAD`) | ignored | nothing stored |
 
-  `opened` and `hidden` append `{ label, at }` to the document (at most 50
-  events per token; later ones are dropped) and send the existing silent
-  APNs push to the devices registered for that mailbox. The source
+  `opened` and `hidden` record `{ label, at }` on the document and send
+  the existing silent APNs push to the devices registered for that
+  mailbox. A fetch with the same label within 60 seconds of that label's
+  last event records nothing. Each label keeps at most 25 events: the
+  first 24, and from then on always the latest (the newest replaces the
+  25th). So one label can never crowd out the other, and "last opened"
+  stays true however often a message is fetched. The source
   address and user agent are never stored, never logged and never sent to
   the app. If Apple's ranges could not be loaded, an instance labels by
   user agent alone and never guesses `opened` for a fetch it cannot tell
-  from Apple's proxy.
+  from Apple's proxy. A downloaded list with a range wider than a /8
+  (IPv4) or a /16 (IPv6) is not Apple's and counts as not loaded.
+
+  On the three authenticated routes a failing store answers `503
+  { error: "unavailable" }` and logs the error's code. Nothing printed on
+  an `opens` instance, by this code or by the framework under it, carries
+  a token, an address, a user agent, a URL or a request body.
 - R22. `opens` documents expire 30 days after registration (Firestore TTL
   on `expiresAt`). After that a pixel is an unknown token. The app shows
   the last status it stored.
@@ -221,8 +231,8 @@ switch, per mailbox, off until I turn it on.
 | Shared shell (`ios-app/HeyPigeon`) | `AppModel.setReadStatus(_:for:)`, `AppModel.recentOpens`, `SendDraft.trackOpens` and its default (R15) as a static function; the status line in `MessageHeaderLine`; `Features/ReadStatus/RecentOpensView.swift` (the list, shared by all three); the "Read status" row and footer in `SettingsView`'s account editor; the composer's switch in `ComposeView`; the wording of R1 and R5 in one place (`ReadStatusText`, static, testable). |
 | iPhone / iPad only | The "Recent Opens" row in `SidebarSheet` (iPhone) and the iPad sidebar (`Features/Pad`). `AppDelegate` needs no change: a push without `email` already syncs every account (`NewMailNotifier.handle`). |
 | Mac only (`macos-app/HeyPigeonMac`) | Entry points only: "Recent Opens" in `SidebarColumn`, a palette entry, `g o` in `KeyboardMap.resolve` / `characters` / `ShortcutsSheet.groups`, all through `WindowState.run`. The Mac build gets the relay URL (`HEYPIGEON_RELAY_URL` in `publish-macos` and `macos-ci`) without the push entitlement. |
-| Relay (`relay/`) | `index.js`: `functions.http("opens", …)`. `src/handlers.js`: the four routes, pure. New `src/opens.js` (Firestore `opens` collection), `src/classify.js` (pure: address + user agent + age → label), `src/ranges.js` (Apple's egress list, loaded once per instance). `registerToken` gains `GET` and `opensUrl` ("Discovery of the opens URL", below). |
-| Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, `depends_on` the other two so the three do not race for the staging bucket), `OPENS_URL` in `register-token`'s environment, the domain mapping for `o.heypigeon.app`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`. `bootstrap/`: a `google_logging_project_exclusion` for the `opens` service's request logs (new `logging.tf`), applied by hand from a laptop like the rest of bootstrap. |
+| Relay (`relay/`) | `index.js`: `functions.http("opens", …)`. New `src/opens-handlers.js`: the four routes, pure, with the `onOpen` seam for R24. New `src/opens.js` (Firestore `opens` collection), `src/classify.js` (pure: address + user agent + age → label), `src/ranges.js` (Apple's egress list, fetched once per instance, never bundled; unavailable → the classifier works from the user agent, where Apple's proxy is still `hidden`). `registerToken` gains `GET` and `opensUrl` ("Discovery of the opens URL", below). |
+| Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, 512M, one CPU, 80 requests per instance, at most 3 instances), `OPENS_URL` in `register-token`'s environment (the custom domain, empty until mapped; an explicit `depends_on` orders the three functions so they do not race for the staging bucket), the domain mapping for `o.heypigeon.app` behind `opens_domain` (off by default). `logging.tf`: the `google_logging_project_exclusion` for the `opens` service's request logs, which the function and its invoker `depends_on`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`, `opens_run_url`, `opens_domain_records`. `bootstrap/iam.tf`: the custom role `relayLogExclusions` for the deployer — the one part applied by hand. `deploy-relay.yml`: `workflow_dispatch` (plan or apply, `main` only). |
 
 **SQLite, migration v32** (the next free number; v31 is the newest today):
 
@@ -351,9 +361,11 @@ Core (`cargo test`, against `MemStore` / `FakeProvider`):
 
 Relay (`node --test`, no network):
 
-- [ ] R20 — `opens.test.js`: register needs a valid Google token; unknown token → GIF and zero store calls; known token → GIF, one append, one push; query returns only the caller's tokens; delete is `204` twice in a row
-- [ ] R21 — `classify.test.js`: Gmail proxy, direct client, Apple range, grace window, scanner, `HEAD`; the event cap
-- [ ] R20, R21 — no handler test can find an IP or user agent in what the store, the push or the log received
+- [x] R20 — `opens.test.js`: register needs a valid Google token; unknown token → GIF, one lookup and nothing else; known token → GIF, one append, one `onOpen`; query returns only the caller's tokens; delete is `204` twice in a row. `register-token.test.js`: `GET` answers `{ topic, opensUrl }` and writes nothing
+- [x] R21 — `classify.test.js`: Gmail proxy, direct client, Apple range, Apple's list unavailable, grace window, scanner, `HEAD`; `ranges.test.js`: parsing, lookup, one fetch per instance, failure and retry; the event rule in `opens.test.js` (`a repeat within a minute…`, `one label cannot fill a token…`, `the event rule on its own`)
+- [x] R20 — a token never changes hands after expiry; the per-mailbox cap answers 429; no `pixelUrl` without a pixel domain; a failing store answers 503 with a code in the log (`opens.test.js`, `register-token.test.js`)
+- [x] R21 — a damaged or over-wide range file is a failed load (`ranges.test.js`); what a library prints on the instance is reduced to a class name (`quiet.test.js`, and the reproduction in `relay/README.md`)
+- [x] R20, R21 — no handler test can find an IP or user agent in what the store, the push or the log received (`no address, user agent or URL reaches the store, the notification or the log`)
 
 Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 
@@ -374,7 +386,8 @@ Whole feature:
 - [ ] `rust-ci`, `ios-ci`, `macos-ci`, `deploy-relay` green
 - [ ] Every row of "Privacy copy" changed in the same PR that makes it necessary; reviewed by `security-privacy`
 - [ ] `terraform plan` shows a `$0` shape: no load balancer, no minimum instances; the log exclusion is confirmed in the console after the first pixel request
-- [ ] Measured on the deployed function: cold-start time and memory with Apple's ranges loaded (decides 256M or 512M)
+- [ ] Measured on the deployed function: cold-start time and memory with Apple's ranges loaded (a synthetic 300,000-line list parsed at about 237 MB locally, so 256M is out and 512M stays unless the real number says otherwise)
+- [ ] Checked on the deployed project: Cloud Trace spans of `opens` carry no URL or user agent (the log exclusion does not cover Trace); the real shape of `X-Forwarded-For` on the run.app URL and on the domain mapping (the handler takes the last entry); no other log sink or log-based metric receives the service's request log; `FUNCTION_TARGET` or `K_SERVICE` is `opens` on the instance, so the quiet console is installed
 
 ## Suggested order (each step merges on its own)
 
@@ -386,9 +399,10 @@ Whole feature:
    reader). Inert until something sends a pixel; must be in every
    installed build before step 5 so no device ever loads one.
 3. **Relay and infrastructure.** `opens` function, classifier, tests;
-   Terraform (function, TTL, `OPENS_URL`, `GET` on `register-token`);
-   bootstrap log exclusion applied by hand **before** the function is
-   public; the domain mapping. Nothing calls it yet.
+   Terraform (function, TTL, `OPENS_URL`, `GET` on `register-token`, the
+   log exclusion the function depends on, the domain mapping behind a
+   variable). By hand, once, before the merge: a bootstrap apply that
+   lets the deployer manage log exclusions. Nothing calls it yet.
 4. **Store and setting.** Migration v32, `Account.read_status`, the
    devsync field, `set_read_status`, the Settings row (disabled or off
    everywhere), the Mac build's relay URL. Still sends no pixel.
@@ -422,8 +436,23 @@ Whole feature:
   recreated); a load balancer (about $18 a month, breaks "$0 at personal
   volume"); Cloudflare Workers (would split the relay across two
   providers while push and the device tokens stay in Google Cloud).
-- The request-log exclusion lives in `terraform/bootstrap/` and is applied
-  by hand.
+- The Terraform for read status is applied by the `deploy-relay` Action,
+  not from a laptop. The request-log exclusion is in the root stack and
+  the `opens` function depends on it, so the function cannot exist
+  without it. The one laptop step is a bootstrap apply granting the
+  deployer a custom role for log exclusions (`relayLogExclusions`), since
+  CI never holds project IAM. Accepted cost: the CI identity can then
+  create, change or delete any log exclusion of the project.
+- The domain mapping is created by the same Action once `OPENS_DOMAIN` is
+  set, after the deployer service account is made a verified owner of
+  `heypigeon.app` in Search Console and the CNAME exists. Until then the
+  function answers at its run.app URL but `register-token` reports no
+  `opensUrl`, so the apps have no read status and no pixel carries a
+  run.app address.
+- Apple's egress ranges are fetched by the function at cold start, not
+  bundled. If they cannot be loaded, the fetch is labelled by user agent:
+  Apple's proxy stays `hidden`, and only a fetch that names a mail client
+  or browser is `opened`.
 - Cost stays $0 at personal volume.
 - Link-click tracking and blocker evasion are out.
 - **Not delivered outranks Opened** when one of several recipients
@@ -445,8 +474,10 @@ Assumed, following how the app already behaves — say no to any of them:
    name of both the setting and the composer switch.
 2. **The token is made at queue time and lives in the outbox row**, so a
    retry reuses it. It is registered only at flush.
-3. **Grace window of 2 minutes, 50 events per token, 100 tokens per
-   query.** Numbers to tune after real traffic.
+3. **Grace window of 2 minutes; 25 events per label and token, repeats
+   within 60 seconds dropped; 100 tokens per query; 20,000 live tokens
+   per mailbox** (Gmail's 500 recipients a day for 30 days is 15,000).
+   Numbers to tune after real traffic.
 4. **Catch-up (R19)** fetches bodies of the user's own recent sent mail.
    A cheaper variant is a custom header on the outgoing message (the
    metadata tier could read it without a body fetch); not chosen because
@@ -458,14 +489,13 @@ Assumed, following how the app already behaves — say no to any of them:
 
 Still open — needs the owner or a measurement:
 
-- **Memory for `opens`**: 256M like the other two, or 512M for Apple's
-  egress ranges. Unmeasured; decided by the acceptance measurement.
-- **Domain verification for the mapping**: the mapping is created by the
-  CI deployer (`relay-deployer`, which has `roles/run.admin`), and Google
-  requires the identity creating it to be a verified owner of
-  `heypigeon.app`. Either that service account is added as an owner in
-  Search Console (a manual prerequisite for `terraform/README.md`) or the
-  mapping is created by hand once and imported.
+- **Memory for `opens`**: set to 512M, twice the other two, for Apple's
+  egress ranges. Unmeasured; the acceptance measurement decides whether
+  256M is enough.
+- **OAuth clients the relay accepts**: `google_client_ids` holds the iOS
+  client only, and the Mac app signs in with its own (`GoogleMacClientID`).
+  Until the Mac's client id is added, `register-token` and `opens` refuse
+  the Mac's tokens — to settle in step 4, with the Mac build's relay URL.
 - **EU ePrivacy / UK PECR.** Reading that a mail was opened is access to
   information on the recipient's device and, for recipients in the EU and
   the UK, generally needs their prior consent (ePrivacy Directive
@@ -495,12 +525,10 @@ Step 1, 2026-11-19 — **Verified with notes**. Merged as #142.
   a bounce as a reply, so a bounce ends a "remind me if no reply"
   follow-up while read status says "Not delivered".
 
-Step 2, 2026-11-19 — **Verified with notes**. Not merged.
+Step 2, 2026-11-19 — **Verified with notes**. Merged as #144.
 
 - Rust only; no Swift, bridge, schema, relay, setting or copy changed.
-  `cargo fmt --all -- --check` and the `cargo test` line of `rust-ci`
-  pass locally. `ios-ci` and `macos-ci` rebuild both apps on any crate
-  change and have not run on it.
+  `rust-ci`, `ios-ci` and `macos-ci` were green on it.
 - Inert: nothing writes a pixel, and `Message.open_token` is read by
   nothing yet.
 - The pixel is known by its path shape on any host (R18), not by
@@ -508,4 +536,37 @@ Step 2, 2026-11-19 — **Verified with notes**. Not merged.
 - Not covered: a pixel reached other than through an `<img>` (a CSS
   background) — the app never writes one that way.
 
-Steps 3–7: not started.
+Step 3, 2026-11-19 — **Verified with notes**. Not merged, not deployed.
+Reworked after the security review of #147.
+
+- `npm ci && npm test` in `relay/`: 64 tests pass. `terraform fmt -check
+  -recursive` and `terraform validate` (root and bootstrap, 1.9.8,
+  `-backend=false`) pass.
+- The framework's pre-handler logging (a pixel path with a broken escape,
+  a malformed JSON body) was reproduced locally with `functions-framework
+  --target=opens` and is gone with `src/quiet.js` installed: stderr shows
+  the error's class name and nothing of the request.
+- Not run, and not runnable without the project: `terraform apply`.
+  Whether the custom role is enough for the exclusion, whether the
+  deployer may set the TTL policy, the domain mapping, and that the
+  request log is really gone after the first pixel request are
+  unverified until it is deployed.
+- To check on the deployed project (listed under the acceptance
+  criteria): Cloud Trace, the shape of `X-Forwarded-For`, other sinks and
+  log-based metrics, measured memory, and that the instance recognises
+  itself as `opens`.
+- The default CPU and concurrency of a function this size (a fraction of
+  a CPU, one request at a time) is from memory of Google's documentation,
+  not read off the project; the values are now set explicitly either way.
+- The classifier's signals (Gmail's proxy name, the bare `Mozilla/5.0` of
+  Apple's proxy, the shape of Apple's list) are from memory of how those
+  services behave, tested against fixtures, not against live traffic.
+- A manual workflow run is held to `main` by the `infra` environment's
+  deployment-branch rule in the repository settings, which this repository
+  cannot check; the step in the workflow is only a guard against a slip.
+- Nothing in the apps or the core calls the function; no privacy copy in
+  the apps or the site changed. `README.md`, `CLAUDE.md`, `DESIGN.md`,
+  `relay/README.md` and `terraform/README.md` describe what is deployed
+  after the merge.
+
+Steps 4–7: not started.

@@ -1,6 +1,7 @@
-// Cloud Run functions entry point. One zip, two functions: Terraform
-// deploys `onMailChange` (Pub/Sub-triggered) and `registerToken` (HTTPS)
-// from this file with different entry points (terraform/functions.tf).
+// Cloud Run functions entry point. One zip, three functions: Terraform
+// deploys `onMailChange` (Pub/Sub-triggered), `registerToken` (HTTPS) and
+// `opens` (HTTPS, read status) from this file with different entry points
+// (terraform/functions.tf).
 //
 // Everything with a network side is injected into src/handlers.js so the
 // handlers are unit-testable; this file is the only place that knows about
@@ -14,6 +15,10 @@ import { createTokenStore } from "./src/tokens.js";
 import { createApns } from "./src/apns.js";
 import { createAuth } from "./src/auth.js";
 import { loadSecret } from "./src/secret.js";
+import { createOpensHandler } from "./src/opens-handlers.js";
+import { createOpenStore } from "./src/opens.js";
+import { createAppleRanges } from "./src/ranges.js";
+import { installQuietConsole } from "./src/quiet.js";
 
 function env(name, fallback) {
   const v = process.env[name];
@@ -24,8 +29,26 @@ function env(name, fallback) {
   return v;
 }
 
+// One instance serves one function. On the one that serves `opens`,
+// nothing but this code's own lines may reach the log — the framework
+// would otherwise print the path or body of a request it rejects before
+// the handler runs (src/quiet.js). The other two functions keep their
+// ordinary error output: only the app calls them.
+const servesOpens =
+  process.env.FUNCTION_TARGET === "opens" || process.env.K_SERVICE === "opens" || process.argv.includes("--target=opens");
+const log = servesOpens ? installQuietConsole(console) : console;
+
+const db = new Firestore();
+const auth = createAuth({
+  clientIds: env("GOOGLE_CLIENT_IDS", "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+  log,
+});
+
 const handlers = createHandlers({
-  tokens: createTokenStore(new Firestore()),
+  tokens: createTokenStore(db),
   // APNs is lazy: the key is read from Secret Manager on the first push, so
   // `registerToken` instances never touch it and a missing key surfaces as
   // a logged push failure rather than a crash at startup.
@@ -35,16 +58,24 @@ const handlers = createHandlers({
     topic: env("APNS_TOPIC", "app.heypigeon.ios"),
     loadKey: () => loadSecret(env("APNS_SECRET_NAME")),
   }),
-  auth: createAuth({
-    clientIds: env("GOOGLE_CLIENT_IDS", "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    log: console,
-  }),
+  auth,
   topic: env("PUBSUB_TOPIC", ""),
-  log: console,
+  opensUrl: env("OPENS_URL", "").replace(/\/+$/, ""),
+  log,
 });
 
 functions.cloudEvent("onMailChange", handlers.onMailChange);
 functions.http("registerToken", handlers.registerToken);
+
+// Read status. No APNs here: telling the phone about an open (`onOpen`) is
+// not built yet, so this function has no reason to hold the key.
+functions.http(
+  "opens",
+  createOpensHandler({
+    opens: createOpenStore(db),
+    auth,
+    ranges: createAppleRanges({ log }),
+    publicUrl: env("OPENS_PUBLIC_URL", "").replace(/\/+$/, ""),
+    log,
+  }),
+);

@@ -392,13 +392,15 @@ mod tests {
         assert!(!on(&engine, "a@x.com") && !on(&engine, "b@x.com"));
         assert!(!engine.read_status_available());
         let err = Arc::clone(&engine)
-            .set_read_status("a@x.com".into().await, true)
+            .set_read_status("a@x.com".into(), true)
+            .await
             .unwrap_err();
         assert!(matches!(err, EngineError::Invalid(_)), "{err}");
         assert!(!on(&engine, "a@x.com"));
         // Off is always allowed, relay or not.
         Arc::clone(&engine)
-            .set_read_status("a@x.com".into().await, false)
+            .set_read_status("a@x.com".into(), false)
+            .await
             .unwrap();
 
         assert!(matches!(
@@ -422,7 +424,8 @@ mod tests {
         let (engine, dir) = open("switch");
         engine.configure_relay(RELAY.into()).unwrap();
         Arc::clone(&engine)
-            .set_read_status("a@x.com".into().await, true)
+            .set_read_status("a@x.com".into(), true)
+            .await
             .unwrap();
         assert!(on(&engine, "a@x.com"));
         assert!(!on(&engine, "b@x.com"));
@@ -440,12 +443,15 @@ mod tests {
         assert_eq!(recorded("b@x.com"), None);
 
         Arc::clone(&engine)
-            .set_read_status("a@x.com".into().await, false)
+            .set_read_status("a@x.com".into(), false)
+            .await
             .unwrap();
         assert!(!on(&engine, "a@x.com"));
         assert_eq!(recorded("a@x.com"), Some(serde_json::json!(false)));
         assert!(matches!(
-            Arc::clone(&engine).set_read_status("nobody@x.com".into().await, false),
+            Arc::clone(&engine)
+                .set_read_status("nobody@x.com".into(), false)
+                .await,
             Err(EngineError::Invalid(_))
         ));
         let _ = std::fs::remove_dir_all(dir);
@@ -469,25 +475,30 @@ mod tests {
         };
         assert!(!pending());
         Arc::clone(&engine)
-            .set_read_status(a.clone().await, true)
+            .set_read_status(a.clone(), true)
+            .await
             .unwrap();
         assert!(!pending());
         Arc::clone(&engine)
-            .set_read_status(a.clone().await, false)
+            .set_read_status(a.clone(), false)
+            .await
             .unwrap();
         assert!(pending());
         // Off again changes nothing; on takes the request back.
         Arc::clone(&engine)
-            .set_read_status(a.clone().await, false)
+            .set_read_status(a.clone(), false)
+            .await
             .unwrap();
         assert!(pending());
         Arc::clone(&engine)
-            .set_read_status(a.clone().await, true)
+            .set_read_status(a.clone(), true)
+            .await
             .unwrap();
         assert!(!pending());
         // Only this mailbox's.
         Arc::clone(&engine)
-            .set_read_status(a.clone().await, false)
+            .set_read_status(a.clone(), false)
+            .await
             .unwrap();
         assert!(engine
             .store

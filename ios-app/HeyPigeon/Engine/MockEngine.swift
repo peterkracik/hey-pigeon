@@ -228,9 +228,38 @@ final class MockEngine: MailEngine {
                     bodyHTML: "<p>\(row.snippet)</p><p>Second paragraph with a <a href=\"https://example.com\">link</a> and an image that must not load: <img src=\"https://tracker.example/pixel.gif\"></p>",
                     bodyText: row.snippet, isRead: true, isMine: mine))
             }
-            bodies[id] = msgs
+            bodies[id] = Self.withReadStatus(msgs)
         }
         return ThreadDetail(thread: row, messages: bodies[id] ?? [])
+    }
+
+    /// The core's read status (core/src/readstatus.rs), for the mock's
+    /// messages: each of the user's sent messages is Replied when someone
+    /// else wrote after it, Not delivered when only a bounce
+    /// (`mailer-daemon@` / `postmaster@`) did, and Sent otherwise, with
+    /// the time of the first such message. A draft and other people's
+    /// mail have none.
+    nonisolated static func withReadStatus(_ messages: [MessageItem]) -> [MessageItem] {
+        func isBounce(_ m: MessageItem) -> Bool {
+            let local = m.fromAddress.split(separator: "@").first.map { $0.lowercased() } ?? ""
+            return !m.isMine && !m.isDraft && (local == "mailer-daemon" || local == "postmaster")
+        }
+        return messages.map { sent in
+            var out = sent
+            guard sent.isMine, !sent.isDraft else {
+                out.readStatus = nil
+                return out
+            }
+            let after = messages.filter { $0.id != sent.id && $0.date > sent.date && !$0.isMine && !$0.isDraft }
+            if let reply = after.filter({ !isBounce($0) }).map(\.date).min() {
+                out.readStatus = ReadStatus(state: .replied, at: reply)
+            } else if let bounce = after.filter(isBounce).map(\.date).min() {
+                out.readStatus = ReadStatus(state: .notDelivered, at: bounce)
+            } else {
+                out.readStatus = ReadStatus(state: .sent)
+            }
+            return out
+        }
     }
 
     /// Bodies only once `thread(id:)` fetched them, like the store.

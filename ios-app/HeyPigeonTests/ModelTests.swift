@@ -21,9 +21,67 @@ func makeRow(_ id: String = "t", account: String = "me@work.test", subject: Stri
 }
 
 func makeMessage(_ id: String, from: String = "Ana", address: String = "ana@acme.test", to: [String] = ["me"],
-                 text: String? = nil, read: Bool = true, mine: Bool = false, draft: Bool = false) -> MessageItem {
-    MessageItem(id: id, fromName: from, fromAddress: address, to: to, date: Date(), snippet: "snippet \(id)",
+                 text: String? = nil, read: Bool = true, mine: Bool = false, draft: Bool = false,
+                 at: Date = Date()) -> MessageItem {
+    MessageItem(id: id, fromName: from, fromAddress: address, to: to, date: at, snippet: "snippet \(id)",
                 bodyHTML: nil, bodyText: text, isRead: read, isMine: mine, isDraft: draft)
+}
+
+/// docs/specs/read-status.md, step 1: the words of a sent message's
+/// status, and the mock's copy of the core's rule (R1, R3, R4).
+struct ReadStatusTests {
+    private let cal = Calendar.current
+    private var noon: Date { cal.date(bySettingHour: 12, minute: 0, second: 0, of: Date())! }
+
+    @Test func eachStateHasItsWords() {
+        let now = noon
+        #expect(ReadStatusText.line(ReadStatus(state: .sent), now: now) == "Sent")
+        #expect(ReadStatusText.line(ReadStatus(state: .notDelivered, at: now), now: now) == "Not delivered")
+        let yesterday = cal.date(byAdding: .day, value: -1, to: now)!
+        #expect(ReadStatusText.line(ReadStatus(state: .replied, at: yesterday), now: now) == "Replied yesterday")
+        let earlier = now.addingTimeInterval(-3_600)
+        #expect(ReadStatusText.line(ReadStatus(state: .replied, at: earlier), now: now)
+                == "Replied \(Formatters.rowTime(earlier, now: now))")
+        #expect(ReadStatusText.line(ReadStatus(state: .replied), now: now) == "Replied")
+        // Three states, three different symbols.
+        #expect(Set([ReadState.sent, .notDelivered, .replied].map(ReadStatusText.symbol)).count == 3)
+    }
+
+    @Test func theMockFollowsTheCoresRule() {
+        let t0 = noon
+        let thread = MockEngine.withReadStatus([
+            makeMessage("s1", from: "Me", address: "me@work.test", mine: true, at: t0),
+            makeMessage("r", at: t0.addingTimeInterval(60)),
+            makeMessage("s2", from: "Me", address: "me@work.test", mine: true, at: t0.addingTimeInterval(120)),
+            makeMessage("b", from: "Mail Delivery Subsystem", address: "MAILER-DAEMON@googlemail.com",
+                        at: t0.addingTimeInterval(180)),
+            makeMessage("s3", from: "Me", address: "me@work.test", mine: true, at: t0.addingTimeInterval(240)),
+            makeMessage("d", from: "Me", address: "me@work.test", mine: true, draft: true, at: t0.addingTimeInterval(300)),
+        ])
+        func status(_ id: String) -> ReadStatus? { thread.first { $0.id == id }.flatMap { $0.readStatus } }
+        #expect(thread.count == 6)
+        // A reply overrides the bounce that came later in the thread.
+        #expect(status("s1") == ReadStatus(state: .replied, at: t0.addingTimeInterval(60)))
+        // Only a bounce followed: not delivered, and not "replied".
+        #expect(status("s2") == ReadStatus(state: .notDelivered, at: t0.addingTimeInterval(180)))
+        // Nothing but the user's own draft followed.
+        #expect(status("s3") == ReadStatus(state: .sent))
+        // Other people's mail, the bounce and the draft have none.
+        #expect(status("r") == nil)
+        #expect(status("b") == nil)
+        #expect(status("d") == nil)
+    }
+
+    @Test @MainActor func aMockThreadShowsWhatBecameOfSentMail() async throws {
+        // t1 has three messages: theirs, mine, theirs.
+        let detail = try await MockEngine().thread(id: "t1")
+        let messages = try #require(detail?.messages)
+        #expect(messages.count == 3)
+        // The mock alternates them and me: my message with theirs after it
+        // is answered; anyone else's has no status.
+        #expect(messages[1].readStatus?.state == .replied)
+        #expect(messages[0].readStatus == nil)
+    }
 }
 
 struct SuggestionPromptTests {

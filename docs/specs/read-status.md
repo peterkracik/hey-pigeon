@@ -1,6 +1,6 @@
 # Read status
 
-Status: Draft — not approved, nothing implemented
+Status: Approved — step 1 (local statuses) implemented, not merged; steps 2–7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -316,7 +316,7 @@ new about its user, but the declaration must still be literally true.
 | Entry points | Tap the status for its events; sidebar sheet → "Recent Opens"; composer's ••• → "Read status" | Same; sidebar → "Recent Opens" | Click the status; sidebar → "Recent Opens"; `g o`; palette "Recent Opens"; composer's ••• → "Read status"; palette "Read status for this message" while composing |
 | Settings | Settings → Accounts → account → "Read status", off | same | same (Settings window) |
 | How it learns of opens | Sync on open, pull, background refresh; silent push when "New mail (push)" is on | same | The 30-second sync |
-| Status | Not started | Not started | Not started |
+| Status | Step 1 implemented (Sent / Not delivered / Replied in the open message's header); the rest not started | same | same |
 
 ## Platform differences
 
@@ -334,9 +334,10 @@ new about its user, but the declaration must still be literally true.
 
 Core (`cargo test`, against `MemStore` / `FakeProvider`):
 
-- [ ] R1, R5 — precedence and wording inputs: `status_precedence_reply_beats_bounce_beats_open_beats_hidden`
-- [ ] R2 — `local_statuses_need_no_relay_and_no_setting` (the fake's opens calls count zero)
-- [ ] R3, R4 — `bounce_is_not_a_reply`, `reply_after_send_is_replied`
+- [x] R1, local half — `status_precedence_reply_beats_bounce_beats_sent`, `only_sent_mail_has_a_status`, `each_sent_message_is_judged_by_what_followed_it` (`core::readstatus`); at the bridge, `a_thread_carries_the_read_status_of_its_sent_mail` (`ffi`)
+- [ ] R1, R5 — with opens (step 5): `status_precedence_reply_beats_bounce_beats_open_beats_hidden`
+- [x] R2 — `local_statuses_need_no_relay_and_no_setting` (step 1: the rule takes the thread's messages and nothing else; the "fake's opens calls count zero" half joins it in step 5, when there are such calls)
+- [x] R3, R4 — `bounce_is_not_a_reply`, `reply_after_send_is_replied`
 - [ ] R11 — `setting_off_makes_no_opens_request` (register, query, delete all zero over a send and a sync round)
 - [ ] R12, R13 — `turning_off_deletes_once_and_retries_until_sent`, `off_learned_from_sync_stops_without_delete`
 - [ ] R16 — `flush_tracks_only_when_choice_and_setting_and_relay`, `setting_off_before_flush_sends_untracked`, `failed_registration_sends_without_pixel`, `retry_reuses_token`
@@ -355,7 +356,8 @@ Relay (`node --test`, no network):
 
 Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 
-- [ ] R1, R5, R6 — `ReadStatusText` wording for every state, one and several recipients (`ModelTests`)
+- [ ] R1, local half — `eachStateHasItsWords`, `theMockFollowsTheCoresRule`, `aMockThreadShowsWhatBecameOfSentMail` (`ModelTests`, `ReadStatusTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
+- [ ] R1, R5, R6 — with opens (step 5): `ReadStatusText` wording for Opened and Hidden, one and several recipients (`ModelTests`)
 - [ ] R15 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens` (`AppModelTests`)
 - [ ] R7 — `recentOpensAreNewestFirstAndRespectTheAccountFilter`
 - [ ] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`
@@ -423,6 +425,15 @@ Whole feature:
   by hand.
 - Cost stays $0 at personal volume.
 - Link-click tracking and blocker evasion are out.
+- **Not delivered outranks Opened** when one of several recipients
+  bounced and another opened (R1). Showing both was the alternative.
+- **A failed relay registration sends the message on time, untracked**
+  (R16). Sending the pixel and registering later would lose the opens in
+  between.
+- **A tracked plain-text message gets an HTML part** generated from its
+  text (R17), rather than plain-text sends never being tracked.
+- **No notification when a message is opened.** The status and the Recent
+  Opens list are the whole surface.
 
 ## Open questions / assumptions
 
@@ -431,25 +442,17 @@ Assumed, following how the app already behaves — say no to any of them:
 1. **Wording**: "Delivered · opens hidden" for the third state; "Opened
    by one of N recipients" for several recipients; "Read status" as the
    name of both the setting and the composer switch.
-2. **Precedence of Not delivered over Opened** when one of several
-   recipients bounced and another opened. The alternative is to show
-   both.
-3. **A failed registration sends the message untracked** rather than
-   holding it (R16). The alternative — send the pixel and register
-   later — loses the opens in between and was not chosen.
-4. **A plain-text message gets an HTML part** when it is tracked (R17).
-   The alternative is that plain-text sends are never tracked.
-5. **The token is made at queue time and lives in the outbox row**, so a
+2. **The token is made at queue time and lives in the outbox row**, so a
    retry reuses it. It is registered only at flush.
-6. **Grace window of 2 minutes, 50 events per token, 100 tokens per
+3. **Grace window of 2 minutes, 50 events per token, 100 tokens per
    query.** Numbers to tune after real traffic.
-7. **Catch-up (R19)** fetches bodies of the user's own recent sent mail.
+4. **Catch-up (R19)** fetches bodies of the user's own recent sent mail.
    A cheaper variant is a custom header on the outgoing message (the
    metadata tier could read it without a body fetch); not chosen because
    the decision was "from the message's own HTML".
-8. **Bounce detection is by sender name only** (R3). A bounce from an
+5. **Bounce detection is by sender name only** (R3). A bounce from an
    unusual address is treated as a reply.
-9. **`g o`** for Recent Opens on the Mac (free in `KeyboardMap.chord`
+6. **`g o`** for Recent Opens on the Mac (free in `KeyboardMap.chord`
    today).
 
 Still open — needs the owner or a measurement:
@@ -476,4 +479,18 @@ Still open — needs the owner or a measurement:
 
 ## Verification
 
-Not verified: this is a draft specification; no code exists.
+Step 1, 2026-11-19 — **Verified with notes** (Rust only).
+
+- Rust: `cargo fmt --all -- --check`, the `cargo test` line of
+  `rust-ci` and its Swift bindgen step pass locally.
+- Swift (`Models`, `RustEngine`, `MockEngine`, `MessageHeaderLine`,
+  `ModelTests`) was written on Linux and has never been compiled:
+  `ios-ci` and `macos-ci` have not run. Nothing seen on a device.
+- Step 1 shows the status on an open message of the thread only (not on
+  a folded one, not in the composer's history), and has no event list
+  (R6): there are no events before step 5.
+- Known and left as it is: `core::sync::settle_follow_ups` still counts
+  a bounce as a reply, so a bounce ends a "remind me if no reply"
+  follow-up while read status says "Not delivered".
+
+Steps 2–7: not started.

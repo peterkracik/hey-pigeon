@@ -211,6 +211,59 @@ pub struct MailMessage {
     /// `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058): a
     /// POST to the https link unsubscribes, no page needs to open.
     pub list_unsubscribe_one_click: bool,
+    /// What became of this message, when the user sent it
+    /// (docs/specs/read-status.md): sent, bounced or answered, read from
+    /// the thread it is in. None for mail that is not the user's sent
+    /// mail, and on a message converted on its own, outside its thread —
+    /// `thread_messages` is what fills it.
+    pub read_status: Option<MessageReadStatus>,
+}
+
+/// `heypigeon_core::readstatus::ReadState`: the states a sent message can
+/// be in, lowest precedence first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum MessageReadState {
+    Sent,
+    NotDelivered,
+    Replied,
+}
+
+/// A sent message's status and when it came about.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageReadStatus {
+    pub state: MessageReadState,
+    /// Epoch milliseconds of the reply or the bounce; None for `Sent`.
+    pub at: Option<i64>,
+}
+
+impl From<heypigeon_core::readstatus::ReadStatus> for MessageReadStatus {
+    fn from(s: heypigeon_core::readstatus::ReadStatus) -> Self {
+        use heypigeon_core::readstatus::ReadState;
+        Self {
+            state: match s.state {
+                ReadState::Sent => MessageReadState::Sent,
+                ReadState::NotDelivered => MessageReadState::NotDelivered,
+                ReadState::Replied => MessageReadState::Replied,
+            },
+            at: s.at,
+        }
+    }
+}
+
+/// The messages of one thread for a shell, each sent one with its read
+/// status. The status is a fact about the thread (what followed the
+/// message), so it is worked out here, over all of them, and not in
+/// `From<domain::Message>`.
+pub fn thread_messages(messages: Vec<domain::Message>) -> Vec<MailMessage> {
+    let statuses = heypigeon_core::readstatus::statuses(&messages);
+    messages
+        .into_iter()
+        .zip(statuses)
+        .map(|(m, status)| MailMessage {
+            read_status: status.map(Into::into),
+            ..m.into()
+        })
+        .collect()
 }
 
 impl From<domain::Message> for MailMessage {
@@ -241,6 +294,7 @@ impl From<domain::Message> for MailMessage {
             is_read: m.is_read,
             list_unsubscribe: m.list_unsubscribe,
             list_unsubscribe_one_click: m.list_unsubscribe_one_click,
+            read_status: None,
         }
     }
 }

@@ -8,6 +8,7 @@ pub mod fakes;
 pub mod outbox;
 pub mod ports;
 pub mod push;
+pub mod readstatus;
 pub mod rules;
 pub mod sanitize;
 pub mod search;

@@ -10,9 +10,10 @@ struct MessageHeaderLine<Trailing: View>: View {
     let message: MessageItem
     let expanded: Bool
     /// In the thread itself: an unread message's time is a step darker,
-    /// and an open message says where its replies go
-    /// (docs/specs/reply-recipients.md). The composer's history is for
-    /// reading back, and shows neither.
+    /// an open message says where its replies go
+    /// (docs/specs/reply-recipients.md), and the user's own sent message
+    /// what became of it (docs/specs/read-status.md). The composer's
+    /// history is for reading back, and shows none of these.
     var inThread = true
     /// What sits after the time (the thread's ••• on an open message).
     @ViewBuilder let trailing: () -> Trailing
@@ -39,6 +40,14 @@ struct MessageHeaderLine<Trailing: View>: View {
                 if inThread, !message.repliesGoTo.isEmpty {
                     Text("replies go to \(message.repliesGoTo.joined(separator: ", "))")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                }
+                // What became of the user's own sent message
+                // (docs/specs/read-status.md): sent, bounced or answered.
+                if inThread, let status = message.readStatus {
+                    Label(ReadStatusText.line(status), systemImage: ReadStatusText.symbol(status.state))
+                        .font(Theme.caption)
+                        .foregroundStyle(status.state == .notDelivered ? Theme.dangerText : Theme.textTertiary)
+                        .lineLimit(1)
                 }
             } else {
                 Text(message.snippet).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(1)

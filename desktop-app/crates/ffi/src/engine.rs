@@ -411,7 +411,7 @@ impl Engine {
         let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
-            messages: messages.into_iter().map(Into::into).collect(),
+            messages: thread_messages(messages),
         }))
     }
 
@@ -429,7 +429,7 @@ impl Engine {
         let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
-            messages: messages.into_iter().map(Into::into).collect(),
+            messages: thread_messages(messages),
         }))
     }
 
@@ -2579,6 +2579,80 @@ mod tests {
             t.messages[0].body_text.as_deref(),
             Some("hi there, full text")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// docs/specs/read-status.md, step 1: a thread handed to a shell says
+    /// what became of each message the user sent — from the stored rows
+    /// alone, no fetch — and nothing on anyone else's mail.
+    #[test]
+    fn a_thread_carries_the_read_status_of_its_sent_mail() {
+        let dir = temp_dir("readstatus");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        e.store
+            .upsert_account(&domain::Account {
+                id: "me@x.com".into(),
+                email: "me@x.com".into(),
+                display_name: "me".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+            })
+            .unwrap();
+        e.store
+            .upsert_thread(&sample_thread("t1", "me@x.com"))
+            .unwrap();
+        let row = |id: &str, from: &str, date: i64, label: &str| domain::Message {
+            id: id.into(),
+            thread_id: "t1".into(),
+            account_id: "me@x.com".into(),
+            from_addr: from.into(),
+            date,
+            label_ids: vec![label.into()],
+            ..Default::default()
+        };
+        for m in [
+            row("s1", "me@x.com", 1_000, "SENT"),
+            row("r", "priya@example.com", 2_000, "INBOX"),
+            row("s2", "me@x.com", 3_000, "SENT"),
+            row("b", "mailer-daemon@googlemail.com", 4_000, "INBOX"),
+            row("s3", "me@x.com", 5_000, "SENT"),
+        ] {
+            e.store.upsert_message(&m).unwrap();
+        }
+        let t = e.get_thread_local("t1".into()).unwrap().unwrap();
+        let status = |id: &str| {
+            t.messages
+                .iter()
+                .find(|m| m.id == id)
+                .unwrap()
+                .read_status
+                .clone()
+        };
+        assert_eq!(
+            status("s1"),
+            Some(MessageReadStatus {
+                state: MessageReadState::Replied,
+                at: Some(2_000)
+            })
+        );
+        assert_eq!(
+            status("s2"),
+            Some(MessageReadStatus {
+                state: MessageReadState::NotDelivered,
+                at: Some(4_000)
+            })
+        );
+        assert_eq!(
+            status("s3"),
+            Some(MessageReadStatus {
+                state: MessageReadState::Sent,
+                at: None
+            })
+        );
+        assert_eq!(status("r"), None);
+        assert_eq!(status("b"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

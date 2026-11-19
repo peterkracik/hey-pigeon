@@ -173,9 +173,80 @@ pub fn with_token(mut mutation: Mutation) -> Mutation {
     mutation
 }
 
-/// The pixel, as it goes into a message (R17).
+/// Where a relay's `opens` function may live, as this app accepts it:
+/// `https://host` or `https://host:port`, the host made of letters,
+/// digits, dots and hyphens — and nothing else. No path, no query, no
+/// user, no other scheme. Lowercase, no trailing slash. None for
+/// anything else.
+///
+/// The relay names this address itself, and it ends up inside the HTML of
+/// mail the user sends: whatever is not exactly an origin could be markup
+/// (`https://x" onerror="…`) or point somewhere this build never agreed
+/// to. So it is parsed here, once, by every place that takes it in.
+pub fn opens_origin(url: &str) -> Option<String> {
+    let url = url.trim();
+    let scheme = url.get(..8)?;
+    if !scheme.eq_ignore_ascii_case("https://") {
+        return None;
+    }
+    let rest = &url[8..];
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (rest, None),
+    };
+    let host_ok = !host.is_empty()
+        && host.len() <= 253
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        && !host.starts_with(['.', '-'])
+        && !host.ends_with(['.', '-'])
+        && !host.contains("..");
+    let port_ok =
+        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    if !host_ok || !port_ok {
+        return None;
+    }
+    let host = host.to_ascii_lowercase();
+    Some(match port {
+        Some(port) => format!("https://{host}:{port}"),
+        None => format!("https://{host}"),
+    })
+}
+
+/// Whether `url` is exactly `token`'s pixel on an acceptable origin:
+/// `<origin>/o/<token>.gif`, nothing before, nothing after.
+pub fn is_pixel_url_for(url: &str, token: &str) -> bool {
+    let token_ok = token.len() == sanitize::OWN_PIXEL_TOKEN_DIGITS
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
+    let Some(origin) = url.strip_suffix(&format!(
+        "{}{token}{}",
+        sanitize::OWN_PIXEL_PATH_PREFIX,
+        sanitize::OWN_PIXEL_SUFFIX
+    )) else {
+        return false;
+    };
+    token_ok && opens_origin(origin).as_deref() == Some(origin)
+}
+
+/// The pixel, as it goes into a message (R17). The address is checked
+/// before it gets here (`is_pixel_url_for`) and escaped all the same: an
+/// attribute value is never written as it was received.
 fn pixel_tag(pixel_url: &str) -> String {
-    format!(r#"<img src="{pixel_url}" width="1" height="1" alt="">"#)
+    let mut src = String::with_capacity(pixel_url.len());
+    for c in pixel_url.chars() {
+        match c {
+            '&' => src.push_str("&amp;"),
+            '"' => src.push_str("&quot;"),
+            '<' => src.push_str("&lt;"),
+            '>' => src.push_str("&gt;"),
+            c => src.push(c),
+        }
+    }
+    format!(r#"<img src="{src}" width="1" height="1" alt="">"#)
 }
 
 /// A plain-text body as an HTML part: the text escaped, its line breaks
@@ -258,10 +329,7 @@ pub async fn prepare_send<M: MailProvider, S: Store>(
     if let (true, Some(token)) = (*track_opens, open_token.as_deref()) {
         if account_tracks(store, account_id) {
             match provider.register_open_token(account_id, token).await {
-                Ok(url)
-                    if sanitize::own_pixel_token_of_url(&url).as_deref() == Some(token)
-                        && url.starts_with("https://") =>
-                {
+                Ok(url) if is_pixel_url_for(&url, token) => {
                     pixel = Some((token.to_string(), url));
                 }
                 Ok(_) => log::warn!(
@@ -451,12 +519,89 @@ pub fn catch_up_threads<S: Store>(
 /// sync_meta: the relay still has to be told to forget this mailbox.
 pub const META_DELETE_PENDING: &str = "opens.delete_pending";
 
-/// The user turned read status off **on this device** (R12): the relay is
-/// to delete the mailbox's tokens. Recorded, so it survives being offline;
-/// `flush_delete` sends it. A device that only learns "off" through sync
-/// never calls this (R13).
-pub fn request_delete<S: Store>(store: &S, account_id: &AccountId) -> Result<(), StoreError> {
-    store.sync_meta_set(account_id, META_DELETE_PENDING, "1")
+/// The relay is to delete the mailbox's tokens: the user turned read
+/// status off **on this device** (R12), or this device learned "off" and
+/// had itself registered tokens after that decision (R13,
+/// `delete_if_sent_after`). Recorded, so it survives being offline;
+/// `flush_delete` sends it. `opens_url` is where the relay's `opens`
+/// function was when the request was made ("" when not known): kept with
+/// the request, so the delete can still be sent if the app forgets the
+/// address meanwhile (`pending_delete_url`).
+pub fn request_delete<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    opens_url: &str,
+) -> Result<(), StoreError> {
+    let hint = opens_origin(opens_url).unwrap_or_else(|| "1".to_string());
+    store.sync_meta_set(account_id, META_DELETE_PENDING, &hint)
+}
+
+/// The address a pending delete was recorded with, when it had one.
+pub fn pending_delete_url<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+) -> Result<Option<String>, StoreError> {
+    Ok(store
+        .sync_meta_get(account_id, META_DELETE_PENDING)?
+        .and_then(|v| opens_origin(&v)))
+}
+
+/// Whether a delete is waiting to be sent for the account.
+pub fn delete_pending<S: Store>(store: &S, account_id: &AccountId) -> Result<bool, StoreError> {
+    Ok(store
+        .sync_meta_get(account_id, META_DELETE_PENDING)?
+        .is_some_and(|v| !v.is_empty()))
+}
+
+/// This device just learned through sync that read status was turned off
+/// on another one at `decided_at` (R13). Ordinarily it sends nothing: the
+/// device that flipped the switch deletes. But a device that had not
+/// heard yet may have sent a tracked message after the decision — a token
+/// the other device's delete came too early for, which the relay would
+/// go on counting for 30 days. If this device holds such a token, it asks
+/// for the delete too (asking twice is harmless). Returns whether it did.
+pub fn delete_if_sent_after<S: Store>(
+    store: &S,
+    account_id: &AccountId,
+    decided_at: i64,
+    now: i64,
+) -> Result<bool, StoreError> {
+    let late = store
+        .open_tokens_live(account_id, now)?
+        .iter()
+        .any(|t| t.sent_at > decided_at);
+    if late {
+        request_delete(store, account_id, "")?;
+    }
+    Ok(late)
+}
+
+/// The account is leaving this device: one attempt to have the relay
+/// forget the mailbox, when there is anything it could hold — read status
+/// is on, or a delete is pending. No retry: the caller is about to forget
+/// the account. Returns whether the relay was asked and answered.
+pub async fn forget_mailbox<M: MailProvider, S: Store>(
+    provider: &M,
+    store: &S,
+    account_id: &AccountId,
+) -> bool {
+    let pending = delete_pending(store, account_id).unwrap_or(false);
+    if !pending && !account_tracks(store, account_id) {
+        return false;
+    }
+    match provider.delete_open_tokens(account_id).await {
+        Ok(()) => {
+            let _ = cancel_delete(store, account_id);
+            true
+        }
+        Err(e) => {
+            log::info!(
+                "read status: the relay could not be told to forget a mailbox ({})",
+                kind(&e)
+            );
+            false
+        }
+    }
 }
 
 /// The user turned it back on before the delete went out: there is
@@ -475,10 +620,7 @@ pub async fn flush_delete<M: MailProvider, S: Store>(
     store: &S,
     account_id: &AccountId,
 ) -> Result<bool, StoreError> {
-    let pending = store
-        .sync_meta_get(account_id, META_DELETE_PENDING)?
-        .is_some_and(|v| !v.is_empty());
-    if !pending {
+    if !delete_pending(store, account_id)? {
         return Ok(false);
     }
     if account_tracks(store, account_id) {
@@ -1135,7 +1277,7 @@ mod tests {
         assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
         assert!(calls(&provider).is_empty());
 
-        request_delete(&store, &acc()).unwrap();
+        request_delete(&store, &acc(), "").unwrap();
         *provider.opens_failure.lock().unwrap() =
             Some(|| MailError::Network("relay unreachable".into()));
         assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
@@ -1162,11 +1304,11 @@ mod tests {
     #[tokio::test]
     async fn turning_on_again_cancels_a_pending_delete() {
         let (provider, store) = fixture(false);
-        request_delete(&store, &acc()).unwrap();
+        request_delete(&store, &acc(), "").unwrap();
         cancel_delete(&store, &acc()).unwrap();
         assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
 
-        request_delete(&store, &acc()).unwrap();
+        request_delete(&store, &acc(), "").unwrap();
         let mut on = sample_account(ACC);
         on.read_status = true;
         store.upsert_account(&on).unwrap();

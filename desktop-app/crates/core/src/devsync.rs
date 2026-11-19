@@ -764,6 +764,17 @@ fn apply_entries<S: Store>(
             acc.read_status = want;
             store.upsert_account(acc)?;
             applied.settings += 1;
+            // Learned "off" from another device: that device deletes at
+            // the relay. This one does too only if it sent a tracked
+            // message after the decision, which that delete missed.
+            if !want {
+                crate::readstatus::delete_if_sent_after(
+                    store,
+                    account_id,
+                    entry.ts,
+                    crate::domain::now_ms(),
+                )?;
+            }
         } else if let Some(field) = account_field(&entry.key) {
             // Fields always carry a value; a tombstone has nothing to say.
             // Applied statelessly (the map is the truth), so a row reset

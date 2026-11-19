@@ -49,8 +49,8 @@ struct TranslationTests {
         #expect(!Translation.leftInSource(slovak, source: "sk", target: "sk"))
     }
 
-    @Test func theOnDeviceModelsRoughLanguageIsNamed() {
-        let knows: (String) -> Bool = { ["en", "de"].contains($0) }
+    @MainActor @Test func theOnDeviceModelsRoughLanguageIsNamed() {
+        let knows: @Sendable (String) -> Bool = { ["en", "de"].contains($0) }
         #expect(TranslationPanel.caution(language: "German", source: "English", supported: knows,
                                          sourceCode: "en", targetCode: "de") == nil)
         #expect(TranslationPanel.caution(language: "Slovak", source: "English", supported: knows,

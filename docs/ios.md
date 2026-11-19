@@ -76,21 +76,23 @@ floating "splits" pill above the tab bar. Here that maps to:
 ```text
 ┌──────────────────────────────────────────────────────────┐
 │ (≡)                                                  (✎) │  ← sidebar · compose
+│ ┄ 🔍 Search mail ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │  ← hidden; pull the list down
 │ ● Sender                                          10:42  │
 │   Subject                                                │
 │   two lines of snippet…                                  │
 │ ─────────────────────────────────────────────────────────│
 │   …                                                      │
 │        ( Inbox 2 · Invoices · Travel · Newsletters )     │  ← Jev label pill (Settings › Triage)
-│   (  Inbox  ·  Remind me  ·  Need reply  )   (🔍)        │  ← tab bar + search
+│        (  Inbox  ·  Remind me  ·  Need reply  )          │  ← tab bar
 └──────────────────────────────────────────────────────────┘
 ```
 
 - **Tabs = the rail.** Inbox, Remind me (reminders) and Need reply are the
-  tab bar; Search is the system's separate search circle. Inbox carries an
+  tab bar. Search is not in it (it was the system's separate search
+  circle beside the bar): see **Search** below. Inbox carries an
   unread badge, Remind me the number of reminders due today, Need reply its
   count. The app icon badge is unified unread + reminders due today.
-- **The sidebar (≡)** is the desktop sidebar as a sheet: Inbox, then the
+- **The sidebar (≡)** is the desktop sidebar as a sheet: Search, Inbox, then the
   accounts (All / each account) on a card of their own — a disconnected
   one with a Reconnect row under it — then Recent Opens (with read
   status in the build), the bundles, the desktop's folders in
@@ -112,8 +114,20 @@ floating "splits" pill above the tab bar. Here that maps to:
   dot, no avatar.
 - **The title** sits between the two circles: folder, unread count and —
   with more than one account — the account's dot and name. Tapping it
-  switches account (All · each). Search stays in the bottom-right circle,
-  where iOS 26's own Mail keeps it.
+  switches account (All · each).
+- **Search** is a field hidden above each of the three lists, in the
+  navigation bar's drawer, as in Mail before iOS 26: a short pull down
+  shows it, and the same pull carried further syncs (both are the
+  system's — `pullDownSearch`, `.refreshable` — so they do not compete).
+  With the field in use the list gives way to the filter buttons, the
+  recent searches and the results (`SearchPane`); the tab bar keeps the
+  list's tab (`AppModel.listTab`), and Cancel or any tab goes back
+  (`closeSearch`), the words and filters cleared. A result opens on the
+  list's own stack, so back returns to the results. The way in without
+  the gesture is the first row of the sidebar (≡ › Search), and for
+  VoiceOver a "Search" action on the title; Spotlight's "Search in Hey
+  Pigeon" lands in the same place. All of them set `tab = .search`, as
+  on the iPad, where Search is a sidebar row and `/`.
 - **Compose** is the top-right circle; with an AI provider connected a
   sparkle sits next to it and summarizes the current view (folder ·
   label filter · account) in a sheet. When "Ask my inbox" is there too,
@@ -176,8 +190,9 @@ running intents, `SyncableEntity` and notification entity identifiers.
 The app uses the system's Liquid Glass surfaces (iOS 26+) rather than
 drawing its own chrome:
 
-- The tab bar is the floating glass pill with the Search tab as the separate
-  circle (`Tab(role: .search)`); it stays whole while the list scrolls.
+- The tab bar is the floating glass pill, three tabs and nothing beside
+  it (the search circle, `Tab(role: .search)`, went when search moved
+  above the list); it stays whole while the list scrolls.
   The label bar over it is what folds on a scroll down, to the label in
   use (`TriageSplitBar`, `ScrollCollapse`); a tap, a scroll up or the top
   of the list opens it again. The open bar and the pill are one piece
@@ -212,7 +227,7 @@ archive), **Pin** (`s`, the Gmail star), **Remind me** (`h`), **Need reply**
 | `enter` open | tap | |
 | `esc` back | back / edge swipe | |
 | `j`/`k` | scroll | |
-| `/` search | Search tab | |
+| `/` search | pull the list down · sidebar › Search | |
 | `cmd+k` palette | long-press a row | Mark done, Remind me, Pin, Need reply, Mark read/unread, Move to folder, Add label, Jev labels, Delete |
 | `0`/`1`/`2` accounts | sidebar | |
 | `g i` / `g a` | sidebar · label pill | Scheduled and Need reply are tabs |

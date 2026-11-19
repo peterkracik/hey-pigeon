@@ -26,9 +26,11 @@ struct SidebarSheet: View {
 }
 
 /// The sidebar's rows. `onPick` runs after a row was chosen (the sheet
-/// closes itself; a column stays). As a column it also lists Search —
-/// the split layout has no tab bar to hold it — and marks the place
-/// shown among Remind me, Need reply and Search.
+/// closes itself; a column stays). Search is its first row: the split
+/// layout has no other door to it, and on the phone it is the way in
+/// that needs no gesture (the field is otherwise pulled down over a
+/// list). As a column it also marks the place shown among Remind me,
+/// Need reply and Search.
 struct SidebarList: View {
     private let isColumn: Bool
     private let onPick: () -> Void
@@ -53,12 +55,10 @@ struct SidebarList: View {
 
     var body: some View {
         List {
-            if isColumn {
-                Section {
-                    tabRow(.search, count: 0)
-                }
-                .menuCard()
+            Section {
+                tabRow(.search, count: 0)
             }
+            .menuCard()
             Section {
                 folderRow(.inbox)
             }

@@ -634,7 +634,39 @@ struct AppModelTests {
         #expect(!model.isSearching && model.searchResults.isEmpty)
     }
 
-    /// iOS only: the Mac has no Search tab and searches in the list it is on.
+    /// The phone's search opens over a list: the tab bar keeps that list's
+    /// tab, and closing the search goes back to it.
+    @Test func theSearchRemembersTheListItWasOpenedOver() {
+        model.navigate(to: .needReply)
+        #expect(model.listTab == .needReply)
+        model.navigate(to: .search)
+        #expect(model.searchOrigin == .needReply)
+        #expect(model.listTab == .needReply)
+        // Search again from the search (Spotlight, a recent one): the
+        // list under it has not changed.
+        model.openSearch("invoice")
+        #expect(model.tab == .search && model.searchOrigin == .needReply)
+
+        model.closeSearch()
+        #expect(model.tab == .needReply)
+        // Closing with no search up moves nothing.
+        model.closeSearch()
+        #expect(model.tab == .needReply)
+
+        model.clearSearch()
+        #expect(!model.isSearching && model.searchText.isEmpty)
+        model.navigate(to: .inbox)
+    }
+
+    @Test func clearingTheSearchDropsTheFiltersToo() {
+        model.searchFilters.unreadOnly = true
+        model.searchText = "roadmap"
+        model.clearSearch()
+        #expect(model.searchFilters.isEmpty && model.searchText.isEmpty)
+        #expect(!model.isSearching && model.searchResults.isEmpty)
+    }
+
+    /// iOS only: the Mac has no search place and searches in the list it is on.
     @Test(.enabled(if: AppModel.searchHasOwnTab))
     func otherTabsShowTheirWholeListWhileASearchIsKept() {
         model.navigate(to: .search)

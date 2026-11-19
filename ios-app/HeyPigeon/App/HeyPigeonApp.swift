@@ -46,7 +46,7 @@ struct HeyPigeonApp: App {
                     model.openThread(id: MailMessageEntity.threadId(of: id))
                 }
                 // Spotlight's "Search in Hey Pigeon" row (CoreSpotlightContinuation
-                // in project.yml): the typed words continue in the Search tab.
+                // in project.yml): the typed words continue in the search.
                 .onContinueUserActivity(CSQueryContinuationActionType) { activity in
                     guard let query = activity.userInfo?[CSSearchQueryString] as? String else { return }
                     model.openSearch(query)
@@ -71,8 +71,8 @@ struct HeyPigeonApp: App {
     }
 }
 
-/// Root navigation: the four-tab bar (Inbox · Scheduled · Need reply ·
-/// Search — the desktop rail) plus the app-wide sheets and the toast. An
+/// Root navigation: the three-tab bar (Inbox · Remind me · Need reply;
+/// the search is pulled down over a list) plus the app-wide sheets and the toast. An
 /// iPad at regular width shows three columns instead (PadSplitView); the
 /// sheets and the toast are the same over either.
 struct RootView: View {
@@ -106,10 +106,13 @@ struct RootView: View {
         }
     }
 
-    /// The phone's four tabs (an iPad in a narrow window has them too).
+    /// The phone's three tabs (an iPad in a narrow window has them too).
+    /// The search is not one of them: it opens over a list (the field
+    /// pulled down above it, MailListScreen), and the bar keeps that
+    /// list's tab selected meanwhile (`listTab`). A tap on any tab leaves
+    /// the search.
     private var tabs: some View {
-        @Bindable var model = model
-        return TabView(selection: $model.tab) {
+        TabView(selection: Binding(get: { model.listTab }, set: { model.tab = $0 })) {
             Tab(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage, value: MainTab.inbox) {
                 MailListScreen(tab: .inbox)
             }
@@ -123,11 +126,12 @@ struct RootView: View {
                 MailListScreen(tab: .needReply)
             }
             .badge(model.needReplyCount)
-            // Search role: the system renders it as the separate glass circle
-            // next to the tab bar and morphs it into the search field.
-            Tab(value: MainTab.search, role: .search) {
-                SearchScreen()
-            }
+        }
+        // Out of the search, however it was left (Cancel, a tab, a
+        // notification's thread): the field hides again, so its words and
+        // filters go with it.
+        .onChange(of: model.tab) { old, _ in
+            if old == .search { model.clearSearch() }
         }
         // The tab bar stays whole while the list scrolls: Inbox, Remind me
         // and Need reply are one tap away at any depth. What gives the rows

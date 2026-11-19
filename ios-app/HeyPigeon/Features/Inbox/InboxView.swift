@@ -2,7 +2,9 @@
 // glass circles on top (sidebar · AI, compose), the list starts right under
 // them, and the Jev label filter floats above the tab bar as a glass pill.
 // Accounts live in the sidebar. One screen type serves Inbox, Scheduled and
-// Need reply; Search is its own screen (Features/Search).
+// Need reply. Search has no screen of its own on the phone: its field hides
+// above each list, is pulled down, and its results take the list's place
+// (SearchPane, Features/Search).
 
 import AppIntents
 import SwiftUI
@@ -13,6 +15,32 @@ struct MailListScreen: View {
     @State private var path: [ThreadRow] = []
 
     private var isActive: Bool { model.tab == tab }
+
+    /// The search is up over this list: it was opened from here (pulled
+    /// down, the sidebar's row, Spotlight), and the tab bar still shows
+    /// this tab.
+    private var searching: Bool { model.tab == .search && model.searchOrigin == tab }
+
+    /// The model's words, for the field.
+    private var searchText: Binding<String> {
+        Binding(get: { model.searchText }, set: { model.searchText = $0 })
+    }
+
+    /// The field's side of `searching`. The system sets it when the field
+    /// is tapped and when Cancel is; the model sets it for every other
+    /// way in (`AppModel.tab`).
+    private var searchPresented: Binding<Bool> {
+        Binding(
+            get: { searching },
+            set: { on in
+                if on {
+                    if model.tab == tab { model.navigate(to: .search) }
+                } else if searching {
+                    model.closeSearch()
+                }
+            }
+        )
+    }
 
     /// What the top bar shows for the AI: nothing, one circle, or the
     /// sparkle menu holding both.
@@ -43,25 +71,19 @@ struct MailListScreen: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if !model.hasLoadedOnce {
-                    SkeletonList()
-                } else if isActive && model.groupedRows.isEmpty {
-                    EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: model.connectFirstAccount)
-                } else if isActive {
-                    ThreadList(path: $path) { collapsed in
-                        guard collapsed != labelsCollapsed else { return }
-                        withAnimation(Motion.animation(.snappy)) { labelsCollapsed = collapsed }
-                    }
+                if searching {
+                    SearchPane(path: $path)
                 } else {
-                    Color.clear
+                    mailList
+                        // Pull to refresh on the list only. Applied after the bottom
+                        // inset it reached the label bar's scroll view too: a slightly
+                        // vertical swipe on the labels pulled the bar down with a spinner.
+                        // Not on the search either: its results are local.
+                        .refreshable { await model.sync() }
                 }
             }
             // On a wide iPad the rows keep to a readable column.
             .readableColumn()
-            // Pull to refresh on the list only. Applied after the bottom
-            // inset it reached the label bar's scroll view too: a slightly
-            // vertical swipe on the labels pulled the bar down with a spinner.
-            .refreshable { await model.sync() }
             // The wash, not the flat canvas: behind the list, the
             // skeleton and "All clear" alike, in all three tabs.
             .background(Theme.listWash)
@@ -76,7 +98,12 @@ struct MailListScreen: View {
                 }
                 // The context the screen was missing: folder, unread count,
                 // and which account — tap to switch account (desktop 0/1/2).
-                ToolbarItem(placement: .principal) { ListTitle(tab: tab) }
+                // VoiceOver's way to the search from the list itself: the
+                // pull that reveals the field is not a gesture it has.
+                ToolbarItem(placement: .principal) {
+                    ListTitle(tab: tab)
+                        .accessibilityAction(named: "Search") { model.navigate(to: .search) }
+                }
                 // The AI's two doors — the view's summary and "Ask my
                 // inbox" (on-device questions over the Spotlight index) —
                 // behind one sparkle when both are there: with a circle
@@ -106,8 +133,15 @@ struct MailListScreen: View {
                         .accessibilityLabel("Compose")
                 }
             }
+            // The search field, hidden above the list until it is pulled
+            // down: the first part of the pull that, carried on, syncs
+            // (both are the system's, so they do not compete). Shown
+            // without the pull whenever the search is up.
+            .pullDownSearch(text: searchText, isPresented: searchPresented, pinned: searching, prompt: "Search mail")
+            .onSubmit(of: .search) { model.rememberSearch() }
             .safeAreaInset(edge: .bottom) {
-                if tab == .inbox {
+                // The labels narrow the inbox, not the search.
+                if tab == .inbox && !searching {
                     VStack(spacing: 0) {
                         AnalysisProgressBar()
                         if !model.triageLabels.isEmpty {
@@ -132,6 +166,25 @@ struct MailListScreen: View {
                 model.markRead(row)
                 path = [row]
             }
+        }
+    }
+}
+
+extension MailListScreen {
+    /// The list of this tab: skeleton rows until the first load, the
+    /// empty state, the rows — and nothing while another tab is shown.
+    @ViewBuilder private var mailList: some View {
+        if !model.hasLoadedOnce {
+            SkeletonList()
+        } else if isActive && model.groupedRows.isEmpty {
+            EmptyState(view: model.view, searching: false, lastSyncAt: model.lastSyncAt, connect: model.connectFirstAccount)
+        } else if isActive {
+            ThreadList(path: $path) { collapsed in
+                guard collapsed != labelsCollapsed else { return }
+                withAnimation(Motion.animation(.snappy)) { labelsCollapsed = collapsed }
+            }
+        } else {
+            Color.clear
         }
     }
 }

@@ -75,7 +75,8 @@ extension AppModel {
     }
 
     /// Spotlight's "Search in Hey Pigeon" (and Siri handing a search over):
-    /// the Search tab on these words, the filter buttons cleared.
+    /// the search on these words, the filter buttons cleared. On the phone
+    /// it opens over the list that was showing (`searchOrigin`).
     func openSearch(_ text: String) {
         showSidebar = false
         showSettings = false

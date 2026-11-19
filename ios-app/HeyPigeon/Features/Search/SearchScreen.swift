@@ -1,57 +1,51 @@
-// The Search tab. The field (always on screen, under the title) holds
-// only the words; the filters are buttons along the top — From, To, Unread and the
-// account — that the model turns into the core's operators. With nothing
-// typed the screen lists recent searches. Results use the inbox's rows and
-// gestures, with the matching words underlined.
+// Search. On the phone the field hides above each list and is pulled down
+// (MailListScreen, `pullDownSearch`); it holds only the words. The filters
+// are buttons along the top — From, To, Unread and the account — that the
+// model turns into the core's operators. With nothing typed the screen
+// lists recent searches. Results use the inbox's rows and gestures, with
+// the matching words underlined. The iPad's columns (PadSearchList) and
+// the Mac's panel show the same pieces.
 
 import SwiftUI
 
-struct SearchScreen: View {
+/// What the phone's list screen shows while the search is up: the filter
+/// buttons, then the recent searches or the results, and Gmail's own
+/// search under them. The field itself is the list screen's, and a result
+/// is pushed on its stack (`path`).
+struct SearchPane: View {
+    @Binding var path: [ThreadRow]
     @Environment(AppModel.self) private var model
-    @State private var path: [ThreadRow] = []
     @State private var picking: PersonField?
 
     var body: some View {
-        @Bindable var model = model
-        NavigationStack(path: $path) {
-            Group {
-                if model.isSearching && model.groupedRows.isEmpty && model.isSearchPending {
-                    Color.clear
-                } else if model.isSearching && model.groupedRows.isEmpty {
-                    VStack(spacing: 0) {
-                        EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
-                        GmailSearchRow()
-                    }
-                } else if model.isSearching {
-                    VStack(spacing: 0) {
-                        ResultCount(count: model.searchResults.count)
-                        ThreadList(path: $path)
-                        GmailSearchRow()
-                    }
-                } else {
-                    RecentSearches()
+        Group {
+            if model.isSearching && model.groupedRows.isEmpty && model.isSearchPending {
+                Color.clear
+            } else if model.isSearching && model.groupedRows.isEmpty {
+                VStack(spacing: 0) {
+                    EmptyState(view: model.view, searching: true, lastSyncAt: model.lastSyncAt)
+                    GmailSearchRow()
                 }
+            } else if model.isSearching {
+                VStack(spacing: 0) {
+                    ResultCount(count: model.searchResults.count)
+                    ThreadList(path: $path)
+                    GmailSearchRow()
+                }
+            } else {
+                RecentSearches()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.canvas)
-            .safeAreaInset(edge: .top, spacing: 0) { SearchFilterBar(picking: $picking) }
-            .navigationTitle("Search")
-            .inlineNavigationTitle()
-            // Pinned in the navigation bar's drawer. Left to the system the
-            // field went with the hidden navigation bar on the phone and
-            // there was no way to type a free-text search at all.
-            .alwaysShownSearch(text: $model.searchText, prompt: "Search mail")
-            .onSubmit(of: .search) { model.rememberSearch() }
-            .navigationDestination(for: ThreadRow.self) { row in
-                ThreadView(row: row) { path.removeLast() }
-            }
-            .onChange(of: path) { _, p in
-                guard !p.isEmpty else { return }
-                Keyboard.dismiss()
-                model.rememberSearch()
-            }
-            .sheet(item: $picking) { field in PersonPicker(field: field) }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.canvas)
+        .safeAreaInset(edge: .top, spacing: 0) { SearchFilterBar(picking: $picking) }
+        // A result opened: the search is one to remember.
+        .onChange(of: path) { _, p in
+            guard !p.isEmpty else { return }
+            Keyboard.dismiss()
+            model.rememberSearch()
+        }
+        .sheet(item: $picking) { field in PersonPicker(field: field) }
     }
 }
 

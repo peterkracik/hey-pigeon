@@ -1107,7 +1107,9 @@ struct RecentSearch: Hashable, Codable, Identifiable {
     var id: RecentSearch { self }
 }
 
-/// The bottom bar — the desktop rail, one to one: Inbox · Scheduled · Need reply · Search.
+/// The places a list shows — the desktop rail: Inbox · Scheduled · Need
+/// reply · Search. The first three are the phone's tab bar; Search is the
+/// field pulled down over a list there, and a sidebar row on the iPad.
 enum MainTab: Hashable {
     case inbox, scheduled, needReply, search
     var title: String {

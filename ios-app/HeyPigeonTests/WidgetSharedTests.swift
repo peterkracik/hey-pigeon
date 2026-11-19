@@ -93,10 +93,12 @@ struct WidgetSharedTests {
         #expect(model.composeDraft?.subject == "Deposit back?")
     }
 
-    @Test func spotlightSearchContinuesInTheSearchTab() {
+    @Test func spotlightSearchContinuesInTheSearch() {
         model.showSettings = true
         model.openSearch("  invoice from anna ")
         #expect(model.tab == .search)
+        // Over the list that was showing: the phone's tab bar keeps it.
+        #expect(model.listTab == .inbox)
         #expect(model.searchText == "invoice from anna")
         #expect(model.searchFilters.isEmpty)
         #expect(!model.showSettings)

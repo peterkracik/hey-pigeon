@@ -787,22 +787,27 @@ struct PullDownTests {
         pull.update(overscroll: 20)
         pull.update(overscroll: 60)
         pull.update(overscroll: 10)   // the list springing back under the finger
-        #expect(pull.released())
+        let opens = pull.released()
+        #expect(opens)
     }
 
     @Test func aRestingFingerAndARefreshOpenNothing() {
         var pull = PullDown()
         pull.update(overscroll: 12)
-        #expect(!pull.released())
+        let resting = pull.released()
+        #expect(!resting)
         pull.update(overscroll: 150)   // the system's pull to refresh
-        #expect(!pull.released())
+        let refresh = pull.released()
+        #expect(!refresh)
     }
 
     @Test func eachDragStartsFromNothing() {
         var pull = PullDown()
         pull.update(overscroll: 60)
-        #expect(pull.released())
-        #expect(!pull.released())
+        let first = pull.released()
+        let second = pull.released()
+        #expect(first)
+        #expect(!second)
     }
 }
 

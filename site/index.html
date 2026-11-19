@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hey Pigeon — a fast, keyboard-first Gmail client</title>
-<meta name="description" content="Hey Pigeon is a minimalist, keyboard-first Gmail client. A personal project, not a product — local-first, testing purposes only.">
+<title>Hey Pigeon — an inbox that feels like a to-do list</title>
+<meta name="description" content="Hey Pigeon is a minimalist, keyboard-first Gmail client, native on Mac, iPhone and iPad. Local-first, no server for your mail. A personal project, not a product — testing purposes only.">
+<meta name="theme-color" content="#FBFBFB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1B1E" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -12,207 +14,399 @@
 </head>
 <body>
 
-<header class="site wrap">
-  <a class="brand" href="/">
-    <svg width="28" height="28" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style="border-radius:6px;display:block">
-  <defs>
-    <linearGradient id="hp-tile-nav" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
-    <mask id="hp-gap-nav" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
-      <rect width="1024" height="1024" fill="#fff"/>
-      <circle cx="490" cy="370" r="231" fill="#000"/>
-    </mask>
-  </defs>
-  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile-nav)"/>
-  <g transform="translate(36 52) rotate(-14 512 540)" fill="#2A1F2C">
-    <g mask="url(#hp-gap-nav)">
-      <g stroke="#2A1F2C" stroke-width="110" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M435 720 L425 800"/>
-        <path d="M555 720 L575 795"/>
-        <path d="M362 600 L305 650"/>
-        <path d="M610 610 L740 540"/>
-      </g>
-      <rect x="335" y="500" width="310" height="250" rx="125"/>
-    </g>
-    <circle cx="490" cy="370" r="205"/>
-    <rect x="352" y="285" width="290" height="190" rx="95" fill="#FFFFFF"/>
-  </g>
+<!-- The glyphs the mocks and the tiles share. Drawn for this page after the
+     SF Symbols the apps use (tray, clock, arrowshape.turn.up.left, …);
+     Apple's own symbols are not licensed for the web. -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-compose" viewBox="0 0 24 24"><path d="M11 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V13"/><path d="M17.6 3.6a1.9 1.9 0 0 1 2.8 2.8L12.5 14.3l-3.4.6.6-3.4z"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M10 3.5l1.7 4.8 4.8 1.7-4.8 1.7L10 16.5l-1.7-4.8L3.5 10l4.8-1.7zM18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+  <symbol id="i-ask" viewBox="0 0 24 24"><path d="M5.5 4.5h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11l-4.5 3.5v-3.500h-1a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"/><path d="M10 8.700a2.1 2.1 0 1 1 3 1.900c-.6.3-1 .700-1 1.400M12 13.900v.100"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="M15.5 15.500L20 20"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 24 24"><path d="M3.5 13.500l2.7-7.700a1.5 1.5 0 0 1 1.4-1h8.800a1.5 1.5 0 0 1 1.4 1l2.7 7.700v4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 13.500h4.700a3.8 3.8 0 0 0 7.6 0h4.7"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.300V12l3.1 2"/></symbol>
+  <symbol id="i-reply" viewBox="0 0 24 24"><path d="M10.5 5.200L3.5 11.700l7 6.500v-3.900c4.6-.1 7.6 1.2 10 4.7-.5-6-4.1-9.6-10-9.900z"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M8.5 3.500h7l-1 6.2 3.2 3.300v1.500h-4.900L12 21l-.8-6.500H6.300V13l3.2-3.300z"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M19.5 11.500l-7.7 7.700a4.8 4.8 0 0 1-6.8-6.800l8.3-8.300a3.2 3.2 0 0 1 4.5 4.500l-8.2 8.200a1.6 1.6 0 0 1-2.3-2.300l7.3-7.3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.800l4.3 4.200L19 7.3"/></symbol>
+  <symbol id="i-envelope" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M9.5 5v14"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M6 9.500l6 6 6-6"/></symbol>
+  <symbol id="i-plane" viewBox="0 0 24 24"><path d="M12 2.500c.8 0 1.4 1.2 1.4 2.700v4l7.1 4.300v1.800l-7.1-2.200v4.200l2.1 1.600v1.400L12 19.500l-3.5.8v-1.400l2.1-1.600v-4.200l-7.1 2.200v-1.800l7.1-4.300v-4c0-1.5.6-2.7 1.4-2.700z"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13.500h6L10 21l8.5-10.500h-6z"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.500c0-3.3 2.7-5.5 6-5.500s6 2.2 6 5.5"/><circle cx="17" cy="9.2" r="2.5"/><path d="M16.8 14c2.6.2 4.2 2 4.2 4.8"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 24 24"><path d="M12 3.500l8.5 4.5-8.5 4.500L3.5 8z"/><path d="M3.5 12l8.5 4.5 8.5-4.500M3.5 16l8.5 4.5 8.5-4.5"/></symbol>
+  <symbol id="i-widget" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.700c0 4.9-3.7 8-7.5 9.3-3.8-1.3-7.5-4.4-7.5-9.300V6z"/><path d="M8.8 12l2.2 2.2 4.2-4.5"/></symbol>
+  <symbol id="i-mac" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.500V20"/></symbol>
+  <symbol id="i-iphone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.6"/><path d="M10.8 5h2.4"/></symbol>
+  <symbol id="i-ipad" viewBox="0 0 24 24"><rect x="4.5" y="2.5" width="15" height="19" rx="2.4"/><path d="M10.5 18.800h3"/></symbol>
 </svg>
-    <span>Hey Pigeon</span>
-  </a>
-  <nav class="site">
-    <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
-    <a href="privacy.html">Privacy</a>
-    <a href="terms.html">Terms</a>
-  </nav>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="./"><img src="favicon.svg" width="26" height="26" alt=""><span>Hey Pigeon</span></a>
+    <nav class="nav-links" aria-label="Site">
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="privacy.html">Privacy</a>
+      <a class="opt" href="terms.html">Terms</a>
+      <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+      <a class="pill" href="#download">Download</a>
+    </nav>
+  </div>
 </header>
 
-<section class="hero wrap">
-  <div class="app-icon-wrap">
-    <svg width="72" height="72" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" style="border-radius:15px;display:block">
-  <defs>
-    <linearGradient id="hp-tile-hero" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
-    <mask id="hp-gap-hero" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
-      <rect width="1024" height="1024" fill="#fff"/>
-      <circle cx="490" cy="370" r="231" fill="#000"/>
-    </mask>
-  </defs>
-  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile-hero)"/>
-  <g transform="translate(36 52) rotate(-14 512 540)" fill="#2A1F2C">
-    <g mask="url(#hp-gap-hero)">
-      <g stroke="#2A1F2C" stroke-width="110" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M435 720 L425 800"/>
-        <path d="M555 720 L575 795"/>
-        <path d="M362 600 L305 650"/>
-        <path d="M610 610 L740 540"/>
-      </g>
-      <rect x="335" y="500" width="310" height="250" rx="125"/>
-    </g>
-    <circle cx="490" cy="370" r="205"/>
-    <rect x="352" y="285" width="290" height="190" rx="95" fill="#FFFFFF"/>
-  </g>
-</svg>
-  </div>
-  <span class="eyebrow">A personal project, not a product. Testing purposes only.</span>
-  <h1>One bird carrying<br>your mail.</h1>
-  <p class="lede">A minimalist, keyboard-first Gmail client I built for how I personally use email. Not trying to compete with anything, not production-ready — treat it as an experiment.</p>
-  <div class="actions">
-    <a class="btn-gradient" href="https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip">Download for macOS (testing only)</a>
-    <a class="btn-ghost-lg" href="https://github.com/peterkracik/hey-pigeon">View source</a>
-  </div>
-</section>
+<main id="main">
 
-<section class="app-window-section wrap hairline">
-  <div class="app-window app-window-inner">
-    <div class="titlebar">
-      <div class="traffic-lights">
-        <span style="background:#ff736a"></span><span style="background:#febc2e"></span><span style="background:#19c332"></span>
-      </div>
-      <span class="titlebar-title">Hey Pigeon</span>
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap">
+    <img class="hero-icon" src="favicon.svg" width="84" height="84" alt="Hey Pigeon app icon">
+    <p class="eyebrow">A personal project, not a product. Testing purposes only.</p>
+    <h1 id="hero-title">An inbox that feels like a to&#8209;do list.</h1>
+    <p class="lede">A minimalist, keyboard-first Gmail client I built for how I personally use email. Native on Mac, iPhone and iPad. Not trying to compete with anything, not production-ready — treat it as an experiment.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip">Download for Mac</a>
+      <a class="btn btn-quiet" href="https://github.com/peterkracik/hey-pigeon">View source</a>
     </div>
-    <div class="body">
-      <div class="rail">
-        <div class="rail-group">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53565E" stroke-width="1.6" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-          <div class="rail-icon active"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 6l9 6 9-6M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
-          <div class="rail-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A9CA2" stroke-width="1.6"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 9h18"/></svg></div>
-          <div class="rail-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A9CA2" stroke-width="1.6"><path d="M20 15a8 8 0 11-9-13.9A6.5 6.5 0 0020 15z"/></svg></div>
-        </div>
-        <div class="rail-group">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C2C4C8" stroke-width="1.6"><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M17 9h4M3 15h4M17 15h4"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C2C4C8" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    <p class="fine">Testing only. Needs macOS 27 on Apple silicon. The iPhone and iPad app is distributed through TestFlight and has no public link yet.</p>
+
+    <div class="stage">
+      <!-- The Mac window: macos-app/HeyPigeonMac/Features (MainToolbar,
+           InboxPage, MailRow, MacStyle) on the sample inbox. -->
+      <div class="mac-wrap">
+        <div class="mac" role="img" aria-label="Hey Pigeon on the Mac: a toolbar with Inbox, Remind me and Need reply, and single-line mail rows grouped on cards under Today, Last 7 days and Older.">
+          <div class="mac-toolbar" aria-hidden="true">
+            <span class="lights"><i></i><i></i><i></i></span>
+            <div class="mac-tabs glass">
+              <span class="mac-tab on">Inbox <b>2</b></span>
+              <span class="mac-tab">Remind me</span>
+              <span class="mac-tab">Need reply</span>
+            </div>
+            <div class="mac-tools glass">
+              <svg class="ic"><use href="#i-sparkles"/></svg>
+              <svg class="ic"><use href="#i-ask"/></svg>
+              <svg class="ic"><use href="#i-compose"/></svg>
+              <svg class="ic"><use href="#i-search"/></svg>
+            </div>
+          </div>
+          <div class="mac-list" aria-hidden="true">
+            <div class="mac-group">Today</div>
+            <div class="mac-card">
+              <div class="m-row">
+                <i class="m-dot work"></i>
+                <span class="m-from">Priya Nair <b>3</b></span>
+                <span class="m-text"><span class="m-subject">Q4 roadmap review</span><span class="m-snippet">Attaching the deck — can you look at slides 4–7 before Thursday?</span></span>
+                <span class="m-badges"><span class="m-chip suggest"><svg class="ic"><use href="#i-sparkles"/></svg>Need reply</span><svg class="ic"><use href="#i-clip"/></svg></span>
+                <span class="m-time">10:42</span>
+              </div>
+              <div class="m-row">
+                <i class="m-dot personal"></i>
+                <span class="m-from">Tomáš</span>
+                <span class="m-text"><span class="m-subject">Weekend ride?</span><span class="m-snippet">Forecast looks good for Saturday morning. Usual place at 8?</span></span>
+                <span class="m-badges"><span class="m-chip suggest"><svg class="ic"><use href="#i-sparkles"/></svg>Remind · Sat 07:00</span></span>
+                <span class="m-time">08:36</span>
+              </div>
+              <div class="m-row read hover">
+                <i class="m-dot work"></i>
+                <span class="m-from">GitHub</span>
+                <span class="m-text"><span class="m-subject">[hey-pigeon] CI passed on main</span><span class="m-snippet">All 3 jobs succeeded.</span></span>
+                <span class="m-actions"><span><svg class="ic"><use href="#i-check"/></svg></span><span><svg class="ic"><use href="#i-envelope"/></svg></span><span><svg class="ic"><use href="#i-clock"/></svg></span><span><svg class="ic"><use href="#i-reply"/></svg></span><span><svg class="ic"><use href="#i-chevron-right"/></svg></span></span>
+              </div>
+            </div>
+            <div class="mac-group">Last 7 days</div>
+            <div class="mac-card">
+              <div class="m-row read">
+                <i class="m-dot personal"></i>
+                <span class="m-from">Lufthansa</span>
+                <span class="m-text"><span class="m-subject">Your trip to Lisbon: check-in opens</span><span class="m-snippet">Check-in for LH1172 is open. Save time at the airport.</span></span>
+                <span class="m-badges"><span class="m-chip bundle"><svg class="ic fill"><use href="#i-plane"/></svg>Lisbon trip</span><svg class="ic fill pin"><use href="#i-pin"/></svg></span>
+                <span class="m-time">Yesterday</span>
+              </div>
+              <div class="m-row read">
+                <i class="m-dot work"></i>
+                <span class="m-from">Ana, Me (4) <b>4</b></span>
+                <span class="m-text"><span class="m-subject">Contract draft v3</span><span class="m-snippet">I've accepted your changes to §4. One open point on the termination clause.</span></span>
+                <span class="m-badges"><svg class="ic"><use href="#i-clip"/></svg></span>
+                <span class="m-time">Yesterday</span>
+              </div>
+              <div class="m-row read">
+                <i class="m-dot personal"></i>
+                <span class="m-from">Apple</span>
+                <span class="m-text"><span class="m-subject">Your receipt</span><span class="m-snippet">Thanks for your purchase.</span></span>
+                <span class="m-time">Tue</span>
+              </div>
+              <div class="m-row read">
+                <i class="m-dot work"></i>
+                <span class="m-from">Marek Kováč <b>2</b></span>
+                <span class="m-text"><span class="m-subject">Re: onboarding checklist</span><span class="m-snippet">Done — added the two missing steps and pinged IT.</span></span>
+                <span class="m-time">Mon</span>
+              </div>
+            </div>
+            <div class="mac-group">Older</div>
+            <div class="mac-card">
+              <div class="m-row read">
+                <i class="m-dot personal"></i>
+                <span class="m-from">Stripe</span>
+                <span class="m-text"><span class="m-subject">Invoice INV-0042 paid</span><span class="m-snippet">Your invoice for October was paid.</span></span>
+                <span class="m-time">Nov 11</span>
+              </div>
+            </div>
+          </div>
+          <div class="mac-pill glass" aria-hidden="true"><span class="on">Inbox <b>2</b></span><span>Invoices</span><span>Travel</span><span>Newsletters</span></div>
+          <div class="mac-side glass" aria-hidden="true"><svg class="ic"><use href="#i-sidebar"/></svg></div>
         </div>
       </div>
-      <div class="main">
-        <div class="main-header">
-          <span class="title">All inboxes <span class="count">6</span></span>
-          <div class="view-toggle">
-            <div class="pill"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div>
-            <div class="dot"></div>
+
+      <!-- The iPhone: ios-app/HeyPigeon/Features/Inbox (MailListScreen,
+           ThreadRowView, TriageSplitBar) and the tab bar of HeyPigeonApp. -->
+      <div class="phone-wrap">
+        <div class="phone" role="img" aria-label="Hey Pigeon on iPhone: flat three-line mail rows with an unread bar on the left edge, a glass label pill and a floating tab bar with Inbox, Remind me, Need reply and Search.">
+          <div class="screen" aria-hidden="true">
+            <div class="island"></div>
+            <div class="statusbar"><span>9:41</span><i></i></div>
+            <div class="p-top">
+              <span class="p-circle glass"><svg class="ic"><use href="#i-menu"/></svg></span>
+              <span class="p-title"><strong>Inbox</strong><b>2</b><span class="dots"><i></i><i></i></span><em>All</em><svg class="ic"><use href="#i-chevron-down"/></svg></span>
+              <span class="p-duo glass"><svg class="ic"><use href="#i-sparkles"/></svg><svg class="ic"><use href="#i-compose"/></svg></span>
+            </div>
+            <div class="p-group">Today</div>
+            <div class="p-row">
+              <div class="p-line"><span class="p-from"><i class="work">P</i>riya Nair</span><span class="p-count">3</span><span class="p-marks"></span><span class="p-time">10:42</span></div>
+              <div class="p-line"><span class="p-subject">Q4 roadmap review</span><span class="p-chip suggest"><svg class="ic"><use href="#i-sparkles"/></svg>Need reply</span><svg class="ic p-clip"><use href="#i-clip"/></svg></div>
+              <div class="p-snippet">Attaching the deck — can you look at slides 4–7 before Thursday?</div>
+            </div>
+            <div class="p-row">
+              <div class="p-line"><span class="p-from"><i class="personal">T</i>omáš</span><span class="p-marks"></span><span class="p-time">08:36</span></div>
+              <div class="p-line"><span class="p-subject">Weekend ride?</span><span class="p-chip suggest"><svg class="ic"><use href="#i-sparkles"/></svg>Remind · Sat 07:00</span></div>
+              <div class="p-snippet">Forecast looks good for Saturday morning. Usual place at 8?</div>
+            </div>
+            <div class="p-row read">
+              <div class="p-line"><span class="p-from"><i class="work">G</i>itHub</span><span class="p-marks"></span><span class="p-time">06:05</span></div>
+              <div class="p-line"><span class="p-subject">[hey-pigeon] CI passed on main</span></div>
+              <div class="p-snippet">All 3 jobs succeeded.</div>
+              <div class="p-chips"><span class="p-chip">Newsletters</span></div>
+            </div>
+            <div class="p-group">Last 7 days</div>
+            <div class="p-row read">
+              <div class="p-line"><span class="p-from"><i class="personal">L</i>ufthansa</span><span class="p-marks"><svg class="ic fill"><use href="#i-pin"/></svg></span><span class="p-time">Yesterday</span></div>
+              <div class="p-line"><span class="p-subject">Your trip to Lisbon: check-in opens</span></div>
+              <div class="p-snippet">Check-in for LH1172 is open. Save time at the airport.</div>
+              <div class="p-chips"><span class="p-chip bundle"><svg class="ic fill"><use href="#i-plane"/></svg>Lisbon trip</span><span class="p-chip">Travel</span></div>
+            </div>
+            <div class="p-row read">
+              <div class="p-line"><span class="p-from"><i class="work">A</i>na, Me (4)</span><span class="p-count">4</span><span class="p-marks"></span><span class="p-time">Yesterday</span></div>
+              <div class="p-line"><span class="p-subject">Contract draft v3</span><svg class="ic p-clip"><use href="#i-clip"/></svg></div>
+              <div class="p-snippet">I've accepted your changes to §4. One open point on the termination clause.</div>
+            </div>
+            <div class="p-row read">
+              <div class="p-line"><span class="p-from"><i class="personal">A</i>pple</span><span class="p-marks"></span><span class="p-time">Tue</span></div>
+              <div class="p-line"><span class="p-subject">Your receipt</span></div>
+              <div class="p-snippet">Thanks for your purchase.</div>
+              <div class="p-chips"><span class="p-chip">Invoices</span></div>
+            </div>
+            <div class="p-row read">
+              <div class="p-line"><span class="p-from"><i class="work">M</i>arek Kováč</span><span class="p-count">2</span><span class="p-marks"></span><span class="p-time">Mon</span></div>
+              <div class="p-line"><span class="p-subject">Re: onboarding checklist</span></div>
+              <div class="p-snippet">Done — added the two missing steps and pinged IT.</div>
+            </div>
+            <div class="p-group">Older</div>
+            <div class="p-row read">
+              <div class="p-line"><span class="p-from"><i class="personal">S</i>tripe</span><span class="p-marks"></span><span class="p-time">Nov 11</span></div>
+              <div class="p-line"><span class="p-subject">Invoice INV-0042 paid</span></div>
+              <div class="p-snippet">Your invoice for October was paid.</div>
+            </div>
+            <div class="p-bottom">
+              <div class="p-labels glass"><span class="on">Inbox <b>2</b></span><span>Invoices</span><span>Travel</span><span>Newsletters</span></div>
+              <div class="p-tabs">
+                <div class="p-tabbar glass">
+                  <span class="p-tab on"><svg class="ic"><use href="#i-tray"/></svg><span>Inbox</span><sup>2</sup></span>
+                  <span class="p-tab"><svg class="ic"><use href="#i-clock"/></svg><span>Remind me</span></span>
+                  <span class="p-tab"><svg class="ic"><use href="#i-reply"/></svg><span>Need reply</span></span>
+                </div>
+                <span class="p-search glass"><svg class="ic"><use href="#i-search"/></svg></span>
+              </div>
+            </div>
+            <div class="home"></div>
           </div>
         </div>
-
-        <div class="section-label">PINNED</div>
-        <div class="mail-row">
-          <span class="radio"></span>
-          <span class="avatar-wrap"><span class="avatar" style="border:1.5px solid #2A6BAE;color:#2A6BAE">PT</span><span class="unread-dot"></span></span>
-          <span class="name">Product Team</span>
-          <span class="content"><span class="subject">New release notes</span><span class="snippet">Version 2.4 is out with a few small fixes...</span></span>
-          <span class="time">Yesterday</span>
-        </div>
-
-        <div class="section-label">TODAY</div>
-        <div class="mail-row">
-          <span class="radio"></span>
-          <span class="avatar-wrap"><span class="avatar" style="border:1.5px solid #6A4FC4;color:#6A4FC4">JC</span><span class="unread-dot"></span></span>
-          <span class="name">Jamie Chen</span>
-          <span class="content"><span class="subject">Notes from today</span><span class="snippet">Sending over the summary we discussed...</span></span>
-          <span class="time">9:41 AM</span>
-        </div>
-        <div class="mail-row">
-          <span class="radio"></span>
-          <span class="avatar-wrap"><span class="avatar" style="border:1.5px solid #2A6BAE;color:#2A6BAE">LN</span><span class="unread-dot"></span></span>
-          <span class="name">Linear</span>
-          <span class="content"><span class="subject">Task moved to In Review</span><span class="snippet">A teammate updated the status and left a comment...</span></span>
-          <span class="time">8:15 AM</span>
-        </div>
-        <div class="mail-row">
-          <span class="radio"></span>
-          <span class="avatar-wrap"><span class="avatar" style="border:1.5px solid #1F7A5C;color:#1F7A5C">AS</span><span class="unread-dot"></span></span>
-          <span class="name">Asana</span>
-          <span class="content"><span class="subject">Weekly digest</span><span class="snippet">Here is what happened across your projects...</span></span>
-          <span class="time">7:02 AM</span>
-        </div>
-
-        <div class="section-label">LAST 7 DAYS</div>
-        <div class="mail-row">
-          <span class="radio"></span>
-          <span class="avatar-wrap"><span class="avatar" style="border:1.5px solid #B34E2E;color:#B34E2E">RT</span></span>
-          <span class="name">Riley Torres</span>
-          <span class="content"><span class="subject">Re: Coffee next week?</span><span class="snippet">Works for me, does Tuesday morning suit you...</span></span>
-          <span class="time">Mon</span>
-        </div>
-        <div class="mail-row">
-          <span class="radio"></span>
-          <span class="avatar-wrap"><span class="avatar" style="border:1.5px solid #53565E;color:#53565E">GH</span><span class="unread-dot"></span></span>
-          <span class="name">GitHub</span>
-          <span class="content"><span class="subject">A new access token was created</span><span class="snippet">A personal access token was created on your account...</span></span>
-          <span class="time">Mon</span>
-        </div>
       </div>
     </div>
-    <div class="compose-fab">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
+  </div>
+</section>
+
+<section id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">The idea</p>
+      <h2 id="features-title">Marking an email done should feel like checking off a task.</h2>
+      <p class="sub">Flat rows, no avatars, no folder tree in view. The actions live in gestures on the phone and in keys on the Mac, and they are called the same thing on both.</p>
+    </div>
+
+    <div class="grid">
+      <article class="tile big w7 w12m">
+        <h3>Swipe, and it&rsquo;s done.</h3>
+        <p>A long swipe right on iPhone marks an email done: the row slides out and an Undo toast takes its place. No confirmation dialogs. Each direction has two tiers, and you choose what sits on them.</p>
+        <div class="art">
+          <div class="swipe" role="img" aria-label="An inbox row swiped to the right, revealing a pink Mark done panel with a checkmark.">
+            <div class="p-row" aria-hidden="true">
+              <div class="p-line"><span class="p-from">Priya Nair</span><span class="p-count">3</span><span class="p-marks"></span><span class="p-time">10:42</span></div>
+              <div class="p-line"><span class="p-subject">Q4 roadmap review</span><svg class="ic p-clip"><use href="#i-clip"/></svg></div>
+              <div class="p-snippet">Attaching the deck — can you look at slides 4–7 before Thursday?</div>
+            </div>
+            <div class="lane" aria-hidden="true">
+              <div class="panel"><svg class="ic"><use href="#i-check"/></svg>Mark done</div>
+              <div class="p-row">
+                <div class="p-line"><span class="p-from">Tomáš</span><span class="p-marks"></span><span class="p-time">08:36</span></div>
+                <div class="p-line"><span class="p-subject">Weekend ride?</span></div>
+                <div class="p-snippet">Forecast looks good for Saturday morning. Usual place at 8?</div>
+              </div>
+            </div>
+            <div class="p-row read" aria-hidden="true">
+              <div class="p-line"><span class="p-from">GitHub</span><span class="p-marks"></span><span class="p-time">06:05</span></div>
+              <div class="p-line"><span class="p-subject">[hey-pigeon] CI passed on main</span></div>
+              <div class="p-snippet">All 3 jobs succeeded.</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="tile big w5 w12m">
+        <h3>Remind me.</h3>
+        <p>Send an email away until later today, tomorrow or next week, or only if nobody replies. Reminders sync between your devices through a hidden folder in your own Google Drive.</p>
+        <div class="art">
+          <div class="sheet" role="img" aria-label="The Remind me sheet: a switch for Only if nobody replies, then Later today, Tomorrow, This weekend, Next week, In a month and Pick date.">
+            <div class="grabber" aria-hidden="true"></div>
+            <div class="title" aria-hidden="true">Remind me</div>
+            <ul aria-hidden="true"><li><span>Only if nobody replies</span><span class="toggle"></span></li></ul>
+            <ul aria-hidden="true">
+              <li><span>Later today</span><span>18:00</span></li>
+              <li><span>Tomorrow</span><span>Tomorrow 09:00</span></li>
+              <li><span>This weekend</span><span>Sat 09:00</span></li>
+              <li><span>Next week</span><span>Mon 09:00</span></li>
+              <li><span>In a month</span><span>Dec 19, 09:00</span></li>
+              <li><span>Pick date…</span><span>Any time</span></li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="tile w6">
+        <h3>Keyboard-first on the Mac.</h3>
+        <p>Single letters for everything you do to mail, <kbd>&#8984;K</kbd> for everything else, and <kbd>?</kbd> for the whole map.</p>
+        <div class="art">
+          <div class="keys">
+            <span><kbd>E</kbd> Mark done</span>
+            <span><kbd>H</kbd> Remind me</span>
+            <span><kbd>N</kbd> Need reply</span>
+            <span><kbd>S</kbd> Pin</span>
+            <span><kbd>J</kbd><kbd>K</kbd> Next, previous</span>
+            <span><kbd>/</kbd> Search</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="tile w6">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-bolt"/></svg>
+        <h3>Local-first, so nothing waits.</h3>
+        <p>Your mailbox is kept in a database on your device. Opening, searching and marking done happen there at once, and Gmail catches up in the background. Offline, what you do is kept and sent when the network is back.</p>
+      </article>
+
+      <article class="tile">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-people"/></svg>
+        <h3>All your Gmail accounts.</h3>
+        <p>One inbox across accounts, each with its own colour, or one account at a time.</p>
+      </article>
+
+      <article class="tile">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-sparkles"/></svg>
+        <h3>AI, optional and yours.</h3>
+        <p>Summaries, reply drafts, rewrites, &ldquo;Ask my inbox&rdquo;, and triage into your own labels. Apple Intelligence on the device needs no key; Apple&rsquo;s Private Cloud Compute, or OpenAI, Claude or Gemini with your own key, are opt-ins.</p>
+      </article>
+
+      <article class="tile">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-stack"/></svg>
+        <h3>Bundles.</h3>
+        <p>With AI on, mail about one thing (a trip, an order, a project) is gathered into a bundle with a summary, tracking links and key facts.</p>
+      </article>
+
+      <article class="tile w6">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-widget"/></svg>
+        <h3>Part of the system.</h3>
+        <p>Widgets for Unread, Next reminder and Need reply. Siri and Shortcuts. Your mail in Spotlight. A share extension, and a menu bar extra on the Mac. Liquid Glass only where something floats over your mail.</p>
+      </article>
+
+      <article class="tile w6">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-shield"/></svg>
+        <h3>Careful with what mail brings.</h3>
+        <p>Messages render with scripts off. Remote images stay blocked until you load them, and tracking pixels are removed and counted.</p>
+      </article>
     </div>
   </div>
 </section>
 
-<section class="no-backend wrap hairline">
-  <h2>No server for your mail. Ever.</h2>
-  <p>Your mail never goes to a server of ours. Hey Pigeon talks straight to your own Google account: Gmail for mail, a hidden Drive folder for reminder sync, and keeps a local database on your device. If you use an AI feature, the text it needs goes from your device to the AI provider you chose, and nowhere else. Two optional features use a small relay that never receives mail: push notifications on iPhone and iPad, and read status, which is off unless you turn it on and then tells you when mail you sent was opened. The <a href="privacy.html">privacy policy</a> says exactly what each one stores.</p>
-</section>
-
-<section class="features wrap hairline">
-  <div class="features-grid">
-    <div class="feature">
-      <svg class="icon" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="9.5" y1="10" x2="9.5" y2="10.01"/><line x1="13" y1="10" x2="13" y2="10.01"/><line x1="16.5" y1="10" x2="16.5" y2="10.01"/><line x1="6" y1="14" x2="15" y2="14"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg>
-      <h3>Keyboard-first</h3>
-      <p>j/k to navigate, e to archive, / to search, <code>⌘K</code> for everything else.</p>
-    </div>
-    <div class="feature">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M12.5 2.5L4 13.5h6l-1.5 8L20 10.5h-6l-1.5-8z"/></svg>
-      <h3>Local-first</h3>
-      <p>Your mailbox lives in a local database. Open, archive, search: 0ms perceived latency.</p>
-    </div>
-    <div class="feature">
-      <svg class="icon" viewBox="0 0 24 24"><circle cx="8.5" cy="8" r="3"/><path d="M2.5 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="17" cy="8.5" r="2.4"/><path d="M15.5 13.6c2.5.3 4 2.1 4 4.9"/></svg>
-      <h3>Multiple accounts</h3>
-      <p>Unified inbox across accounts, with a per-account filter a keystroke away.</p>
-    </div>
-    <div class="feature">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M12 2.5l8 3.2v6c0 5.2-4 8.4-8 9.8-4-1.4-8-4.6-8-9.8v-6z"/><path d="M8.8 12l2.2 2.2 4.2-4.6"/></svg>
-      <h3>No server for your mail</h3>
-      <p>Your mail never goes to a server of ours. AI features are bring-your-own-key, calling the provider you chose directly from your device.</p>
-    </div>
-    <div class="feature">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></svg>
-      <h3>AI writing assistant</h3>
-      <p>Give the compose box an instruction, like "shorter" or "more formal," and it rewrites the draft in place. BYOK: your OpenAI key, called directly from your device.</p>
-    </div>
-    <div class="feature">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      <h3>AI triage with Jev</h3>
-      <p>Every thread gets a priority and your own labels via <a href="https://jevtypesafeai.com/">Jev</a>, sorted automatically. Local-only — never written back to Gmail.</p>
+<section class="privacy" aria-labelledby="privacy-title">
+  <div class="wrap">
+    <div class="grid">
+      <div class="tile">
+        <h2 id="privacy-title">No server for your mail. Ever.</h2>
+        <p class="body">Your mail never goes to a server of ours. Hey Pigeon talks straight to your own Google account: Gmail for mail, a hidden Drive folder for reminder sync, and keeps a local database on your device. If you use an AI feature, the text it needs goes from your device to the AI provider you chose, and nowhere else. Two optional features use a small relay that never receives mail: push notifications on iPhone and iPad, and read status, which is off unless you turn it on and then tells you when mail you sent was opened. The <a href="privacy.html">privacy policy</a> says exactly what each one stores.</p>
+      </div>
     </div>
   </div>
 </section>
 
-<footer class="site wrap hairline">
-  <span class="note">Hey Pigeon, a personal, open-source project.</span>
-  <nav>
-    <a href="privacy.html">Privacy Policy</a>
-    <a href="terms.html">Terms of Service</a>
-    <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
-  </nav>
+<section id="download" aria-labelledby="download-title">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Get it</p>
+      <h2 id="download-title">For testing, on your own devices.</h2>
+      <p class="sub">Not production-ready: no support, rough edges, and changes without notice.</p>
+    </div>
+    <div class="platforms">
+      <article class="platform">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-mac"/></svg>
+        <h3>Mac</h3>
+        <p>macOS 27 on Apple silicon. Signed and notarized. Unzip, drag it to Applications and open it from there; it then updates itself.</p>
+        <a class="btn btn-primary" href="https://github.com/peterkracik/hey-pigeon/releases/download/mac-latest/HeyPigeon-mac-latest.zip">Download for Mac</a>
+      </article>
+      <article class="platform">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-iphone"/></svg>
+        <h3>iPhone</h3>
+        <p>iOS 27. The same inbox as gestures: two-tier swipes, a floating tab bar, widgets and Siri.</p>
+        <span class="status">TestFlight, no public link yet</span>
+      </article>
+      <article class="platform">
+        <svg class="ic glyph" aria-hidden="true"><use href="#i-ipad"/></svg>
+        <h3>iPad</h3>
+        <p>iPadOS 27. Folders, list and thread side by side, with the keyboard map on a hardware keyboard.</p>
+        <span class="status">TestFlight, no public link yet</span>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="closing" aria-labelledby="closing-title">
+  <div class="wrap">
+    <img class="hero-icon" src="favicon.svg" width="64" height="64" alt="">
+    <h2 id="closing-title">One bird carrying your mail.</h2>
+    <p>The source is on <a class="more" href="https://github.com/peterkracik/hey-pigeon">GitHub</a></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <span>Hey Pigeon, a personal project.</span>
+    <nav aria-label="Footer">
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+      <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+    </nav>
+  </div>
 </footer>
 
 </body>

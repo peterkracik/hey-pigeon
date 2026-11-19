@@ -1299,6 +1299,272 @@ mod tests {
         assert_eq!(calls(&provider).len(), 3);
     }
 
+    /// S3: a device that had not heard of "off" yet and sent a tracked
+    /// message after the decision asks for the delete too when it learns
+    /// — the first device's delete came too early for that token. A
+    /// device whose tokens are all older than the decision still sends
+    /// nothing (that is `setting_off_makes_no_opens_request`).
+    #[tokio::test]
+    async fn a_token_sent_after_off_is_deleted_by_the_device_that_sent_it() {
+        let remote = Arc::new(MemTransport::default());
+        let (provider, a) = fixture(true);
+        devsync::record_read_status(&a, &acc(), true).unwrap();
+        devsync::sync_account(&*remote, &a, &acc()).await.unwrap();
+
+        // B turns it off (and deletes at the relay, not shown here).
+        let b = MemStore::with_device_id("dev-b");
+        b.upsert_account(&sample_account(ACC)).unwrap();
+        devsync::sync_account(&*remote, &b, &acc()).await.unwrap();
+        let mut off = b.list_accounts().unwrap().remove(0);
+        off.read_status = false;
+        b.upsert_account(&off).unwrap();
+        devsync::record_read_status(&b, &acc(), false).unwrap();
+        devsync::sync_account(&*remote, &b, &acc()).await.unwrap();
+
+        // A has not synced yet and sends a tracked message: a new token
+        // at the relay, registered after B's delete.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        outbox::enqueue(&a, &acc(), send(true, Some("<p>Late</p>"))).unwrap();
+        outbox::drain(&provider, &a, 10).await.unwrap();
+        assert_eq!(calls(&provider).len(), 1);
+        assert!(!delete_pending(&a, &acc()).unwrap());
+
+        // A learns "off": it holds a token younger than the decision.
+        devsync::sync_account(&*remote, &a, &acc()).await.unwrap();
+        assert!(!a.list_accounts().unwrap()[0].read_status);
+        assert!(delete_pending(&a, &acc()).unwrap());
+        assert!(flush_delete(&provider, &a, &acc()).await.unwrap());
+        assert_eq!(calls(&provider).last(), Some(&OpensCall::Delete(acc())));
+        // Once: nothing more is asked afterwards.
+        let before = calls(&provider).len();
+        assert!(!flush_delete(&provider, &a, &acc()).await.unwrap());
+        assert_eq!(
+            poll(&provider, &a, &acc(), now_plus(HOUR)).await.unwrap(),
+            0
+        );
+        assert_eq!(calls(&provider).len(), before);
+
+        // The rule on its own: only a token sent after the decision counts.
+        let (_, store) = fixture(false);
+        store
+            .open_token_put(&token("old", NOW - HOUR, None))
+            .unwrap();
+        assert!(!delete_if_sent_after(&store, &acc(), NOW, NOW).unwrap());
+        assert!(!delete_pending(&store, &acc()).unwrap());
+        store.open_token_put(&token("late", NOW + 1, None)).unwrap();
+        assert!(delete_if_sent_after(&store, &acc(), NOW, NOW + 2).unwrap());
+        assert!(delete_pending(&store, &acc()).unwrap());
+    }
+
+    /// B1: an account leaving the device has the relay forget its mailbox
+    /// in one attempt — when read status is on for it or a delete is still
+    /// pending; an account that never used it asks nothing. A relay that
+    /// cannot be reached, or an account that is signed out, is not
+    /// retried here: the caller goes on to remove the account.
+    #[tokio::test]
+    async fn an_account_that_leaves_has_the_relay_forget_it() {
+        // Read status on.
+        let (provider, store) = fixture(true);
+        assert!(forget_mailbox(&provider, &store, &acc()).await);
+        assert_eq!(calls(&provider), vec![OpensCall::Delete(acc())]);
+        // Off, with a delete that never went out.
+        let (provider, store) = fixture(false);
+        request_delete(&store, &acc(), "https://o.example.test").unwrap();
+        assert_eq!(
+            pending_delete_url(&store, &acc()).unwrap().as_deref(),
+            Some("https://o.example.test")
+        );
+        assert!(forget_mailbox(&provider, &store, &acc()).await);
+        assert!(!delete_pending(&store, &acc()).unwrap());
+        assert_eq!(calls(&provider), vec![OpensCall::Delete(acc())]);
+        // Never used: nothing asked.
+        let (provider, store) = fixture(false);
+        assert!(!forget_mailbox(&provider, &store, &acc()).await);
+        assert!(calls(&provider).is_empty());
+        // Signed out, or the relay down: one attempt, no retry, and the
+        // request is still there for whoever can send it later.
+        for fail in [(|| MailError::AuthExpired) as fn() -> MailError, || {
+            MailError::Network("relay unreachable".into())
+        }] {
+            let (provider, store) = fixture(false);
+            request_delete(&store, &acc(), "").unwrap();
+            *provider.opens_failure.lock().unwrap() = Some(fail);
+            assert!(!forget_mailbox(&provider, &store, &acc()).await);
+            assert_eq!(calls(&provider).len(), 1);
+            assert!(delete_pending(&store, &acc()).unwrap());
+            // A signed-out account's pending delete stays pending across
+            // sync rounds, and goes out once it can.
+            assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+            *provider.opens_failure.lock().unwrap() = None;
+            assert!(flush_delete(&provider, &store, &acc()).await.unwrap());
+        }
+        // A recorded address that is not an origin is not kept as one.
+        let (_, store) = fixture(false);
+        request_delete(&store, &acc(), r#"https://x" onerror="alert(1)"#).unwrap();
+        assert!(delete_pending(&store, &acc()).unwrap());
+        assert_eq!(pending_delete_url(&store, &acc()).unwrap(), None);
+    }
+
+    /// Two accounts in one round, one with read status on and one with it
+    /// off: only the first one's tokens are ever named, and only it sends
+    /// tracked mail.
+    #[tokio::test]
+    async fn two_accounts_one_on_one_off() {
+        let (provider, store) = fixture(true);
+        let other: AccountId = "a2".into();
+        store.upsert_account(&sample_account("a2")).unwrap();
+        // Both hold a token (the second from before it was turned off).
+        store
+            .open_token_put(&token("mine", NOW - 60_000, None))
+            .unwrap();
+        let mut theirs = token("theirs", NOW - 60_000, None);
+        theirs.account_id = other.clone();
+        store.open_token_put(&theirs).unwrap();
+        for account in [acc(), other.clone()] {
+            outbox::enqueue(&store, &account, send(true, Some("<p>Hi</p>"))).unwrap();
+        }
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        for account in [acc(), other.clone()] {
+            flush_delete(&provider, &store, &account).await.unwrap();
+            poll(&provider, &store, &account, NOW).await.unwrap();
+            catch_up_threads(&store, &account, NOW).unwrap();
+        }
+        let all = calls(&provider);
+        assert!(
+            all.iter().all(|c| match c {
+                OpensCall::Register(a, _) | OpensCall::Delete(a) => a == ACC,
+                OpensCall::Query(a, tokens) => a == ACC && !tokens.contains(&"theirs".to_string()),
+            }),
+            "{all:?}"
+        );
+        assert!(all.iter().any(|c| matches!(c, OpensCall::Register(..))));
+        assert!(all.iter().any(|c| matches!(c, OpensCall::Query(..))));
+        let applied = provider.applied_mutations();
+        let html_of = |account: &str| {
+            applied
+                .iter()
+                .find(|(a, _)| a == account)
+                .and_then(|(_, m)| match m {
+                    Mutation::Send { body_html, .. } => body_html.clone(),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert!(html_of(ACC).contains("/o/"));
+        assert_eq!(html_of("a2"), "<p>Hi</p>");
+    }
+
+    /// S5: the address the relay names goes into mail, so it is an https
+    /// origin or nothing; a pixel URL is this token's on such an origin
+    /// or it is refused; and the tag escapes what it is given regardless.
+    #[tokio::test]
+    async fn a_relay_cannot_put_markup_into_mail() {
+        assert_eq!(
+            opens_origin(" https://O.HeyPigeon.app/ ").as_deref(),
+            Some("https://o.heypigeon.app")
+        );
+        assert_eq!(
+            opens_origin("https://relay.example:8443").as_deref(),
+            Some("https://relay.example:8443")
+        );
+        for bad in [
+            "",
+            "https://",
+            "http://o.heypigeon.app",
+            r#"https://x" onerror="alert(1)"#,
+            r#"https://x"><script>alert(1)</script>"#,
+            "https://o.heypigeon.app/path",
+            "https://o.heypigeon.app?q",
+            "https://user@o.heypigeon.app",
+            "https://o.heypigeon.app:99999999",
+            "https://o.heypigeon.app:",
+            "https://o.hey pigeon.app",
+            "https://-x.example",
+            "https://x..example",
+            "https://é.example",
+        ] {
+            assert_eq!(opens_origin(bad), None, "{bad}");
+        }
+        let token = "0123456789abcdef0123456789abcdef";
+        assert!(is_pixel_url_for(
+            &format!("https://o.heypigeon.app/o/{token}.gif"),
+            token
+        ));
+        assert!(is_pixel_url_for(
+            &format!("https://relay.example:8443/o/{token}.gif"),
+            token
+        ));
+        for bad in [
+            format!(r#"https://x" onerror="alert(1)/o/{token}.gif"#),
+            format!(r#"https://x"><img src=x onerror=alert(1)>/o/{token}.gif"#),
+            format!("https://o.heypigeon.app/a/o/{token}.gif"),
+            format!(r#"https://o.heypigeon.app/o/{token}.gif?x="y"#),
+            format!("http://o.heypigeon.app/o/{token}.gif"),
+            format!("https://O.heypigeon.app/o/{token}.gif"),
+            format!("https://o.heypigeon.app/o/{}.gif", token.to_uppercase()),
+            format!("https://user@o.heypigeon.app/o/{token}.gif"),
+        ] {
+            assert!(!is_pixel_url_for(&bad, token), "{bad}");
+        }
+        assert!(!is_pixel_url_for(
+            "https://o.heypigeon.app/o/short.gif",
+            "short"
+        ));
+        // Whatever reaches the tag is escaped.
+        assert_eq!(
+            pixel_tag(r#"https://x" onerror="a<b>&c"#),
+            r#"<img src="https://x&quot; onerror=&quot;a&lt;b&gt;&amp;c" width="1" height="1" alt="">"#
+        );
+        // End to end: a relay that answers with markup gets no pixel into
+        // the message at all.
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, Some("<p>Hi</p>"))).unwrap();
+        let queued = queued_token(&store).unwrap();
+        *provider.opens_pixel_override.lock().unwrap() =
+            Some(format!(r#"https://x" onerror="alert(1)/o/{queued}.gif"#));
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        assert_eq!(sent_html(&provider).as_deref(), Some("<p>Hi</p>"));
+        assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+    }
+
+    /// S1: mail sent without a composer — an unsubscribe request, an
+    /// invitation's answer, a saved draft sent by a Shortcut — arrives
+    /// with the choice off. It is not tracked whatever the account's
+    /// setting, asks the relay nothing, and a plain-text one stays plain
+    /// text: no HTML part is made for it.
+    #[tokio::test]
+    async fn mail_sent_without_the_composers_choice_is_not_tracked() {
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(false, None)).unwrap();
+        assert_eq!(queued_token(&store), None);
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        let applied = provider.applied_mutations();
+        let Mutation::Send {
+            body_text,
+            body_html,
+            ..
+        } = &applied[0].1
+        else {
+            panic!("not a send");
+        };
+        assert_eq!(body_html, &None);
+        assert_eq!(body_text, "See you <Thursday> & bring it.\nP.");
+        assert!(calls(&provider).is_empty());
+        // And a queued row an older build wrote (no such fields) is the same.
+        let old: Mutation = serde_json::from_str(
+            r#"{"kind":"send","to":["sam@x.com"],"subject":"s","body_text":"b"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            old,
+            Mutation::Send {
+                track_opens: false,
+                open_token: None,
+                ..
+            }
+        ));
+    }
+
     /// Turned on again before the delete went out — here, or on another
     /// device: there is nothing to forget, and the new tokens stay.
     #[tokio::test]

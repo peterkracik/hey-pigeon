@@ -2418,7 +2418,7 @@ mod tests {
             format!(r#"<p>a</p><img alt="a > b" title='x>y' src="{OWN}" width="1"><p>b</p>"#);
         assert_eq!(own_pixel_token(&sneaky), Some(OWN_TOKEN.to_string()));
         assert_eq!(without_own_pixels(&sneaky), "<p>a</p><p>b</p>");
-        assert_eq!(html(&sneaky), "<p>a</p><p>b</p>");
+        assert_eq!(super::html(&sneaky), "<p>a</p><p>b</p>");
         // An unclosed quote runs to the end: nothing is lost, nothing loops.
         assert_eq!(
             without_own_pixels("<p>a</p><img alt=\"x> <p>b</p>"),

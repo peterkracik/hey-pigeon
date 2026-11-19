@@ -508,6 +508,120 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// The delete is recorded with the address the relay's `opens`
+    /// function has at that moment, so it can still be sent after the app
+    /// has forgotten the address (a build without the relay, a relay that
+    /// stopped naming it) — and only an https origin is ever kept as one.
+    #[tokio::test]
+    async fn a_pending_delete_keeps_the_address_to_send_it_to() {
+        let (engine, dir) = open("delete-url");
+        engine.configure_relay(RELAY.into()).unwrap();
+        let a = "a@x.com".to_string();
+        engine
+            .secrets
+            .set(OPENS_URL, "https://o.example.test")
+            .unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone(), true)
+            .await
+            .unwrap();
+        Arc::clone(&engine)
+            .set_read_status(a.clone(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            readstatus::pending_delete_url(&engine.store, &a)
+                .unwrap()
+                .as_deref(),
+            Some("https://o.example.test")
+        );
+        // The relay goes away: what it said is forgotten, the delete is not.
+        engine.configure_relay(String::new()).unwrap();
+        assert_eq!(engine.opens_url(), None);
+        assert!(readstatus::delete_pending(&engine.store, &a).unwrap());
+        engine.provider.read().await.set_opens_url(None);
+        engine.find_opens_for_delete(&a).await;
+        assert!(engine.provider.read().await.has_opens_url());
+
+        // Without a known address the marker is still set, with none.
+        let b = "b@x.com".to_string();
+        engine.configure_relay(RELAY.into()).unwrap();
+        Arc::clone(&engine)
+            .set_read_status(b.clone(), true)
+            .await
+            .unwrap();
+        Arc::clone(&engine)
+            .set_read_status(b.clone(), false)
+            .await
+            .unwrap();
+        assert!(readstatus::delete_pending(&engine.store, &b).unwrap());
+        assert_eq!(
+            readstatus::pending_delete_url(&engine.store, &b).unwrap(),
+            None
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// B1: an account can always be removed — offline, signed out, with
+    /// read status on, with a delete still pending — and takes its tokens,
+    /// events and markers with it. (That the relay is asked first, once,
+    /// is the core's `forget_mailbox` test; here there is no relay to
+    /// reach, and removal must not wait on that or fail for it.)
+    #[tokio::test]
+    async fn an_account_is_removed_whatever_the_relay_does() {
+        use heypigeon_core::domain::OpenToken;
+        let (engine, dir) = open("leave");
+        engine.configure_relay(RELAY.into()).unwrap();
+        let (a, b) = ("a@x.com".to_string(), "b@x.com".to_string());
+        // a: read status on, a token kept. b: turned off, delete pending.
+        Arc::clone(&engine)
+            .set_read_status(a.clone(), true)
+            .await
+            .unwrap();
+        Arc::clone(&engine)
+            .set_read_status(b.clone(), true)
+            .await
+            .unwrap();
+        Arc::clone(&engine)
+            .set_read_status(b.clone(), false)
+            .await
+            .unwrap();
+        for account in [&a, &b] {
+            engine
+                .store
+                .open_token_put(&OpenToken {
+                    token: format!("{:0>32}", account.len()),
+                    account_id: account.clone(),
+                    message_id: None,
+                    thread_id: None,
+                    sent_at: 1,
+                    expires_at: i64::MAX,
+                    polled_at: None,
+                })
+                .unwrap();
+        }
+        let started = std::time::Instant::now();
+        engine.remove_account(a.clone()).await.unwrap();
+        engine.remove_account(b.clone()).await.unwrap();
+        assert!(started.elapsed() < 2 * LEAVE_BUDGET + std::time::Duration::from_secs(2));
+        assert!(engine.list_accounts().unwrap().is_empty());
+        for account in [&a, &b] {
+            assert!(engine
+                .store
+                .open_tokens_live(account, 0)
+                .unwrap()
+                .is_empty());
+            assert!(!readstatus::delete_pending(&engine.store, account).unwrap());
+        }
+        // An account with read status off and nothing pending is not even
+        // looked at: nothing to ask, nothing to push.
+        let (engine, dir2) = open("leave-off");
+        engine.leave_read_status(&a).await;
+        engine.remove_account(a.clone()).await.unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
     /// R1, R6 at the bridge: a thread handed to a shell says Opened or
     /// Hidden for a tracked message, with every event newest first, and
     /// never calls a hidden fetch an open.
@@ -677,7 +791,7 @@ mod tests {
     async fn discovery_does_nothing_while_read_status_is_off() {
         let (engine, dir) = open("off");
         engine.configure_relay(RELAY.into()).unwrap();
-        engine.discover_opens(&"a@x.com".to_string()).await;
+        engine.discover_opens(&"a@x.com".to_string(), false).await;
         assert_eq!(engine.secrets.get(OPENS_ASKED_AT).unwrap(), None);
         assert_eq!(engine.opens_url(), None);
         let _ = std::fs::remove_dir_all(dir);

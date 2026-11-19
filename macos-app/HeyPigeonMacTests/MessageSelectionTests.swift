@@ -84,33 +84,42 @@ struct MessageSelectionTests {
     }
 
     /// PROBE (temporary, for the intermittent double-click failure): the
-    /// test's steps three times over on each of many fresh windows with a
-    /// row opened in place, timing how long after the last mouse-up the
-    /// double-clicked word is selected. A slow one is printed with when
-    /// the window handed each event on, when the page heard it and which
+    /// suite's own order many times over — the full thread's window, then
+    /// a row opened in place in a new one, each on its own engine and
+    /// model — timing every step. A slow step is printed with when the
+    /// window handed each event on, when the page heard it and which
     /// recognizers above the message were busy. It fails nothing.
     @Test(.timeLimit(.minutes(20))) func probeDoubleClicks() async throws {
-        let row = try #require(try engine.threadRow(id: "t1"))
-        var times: [Int] = []
-        for attempt in 1...50 {
-            let fresh = WindowState()
-            let stage = Stage(InboxPage(state: fresh).environment(model))
-            try await Task.sleep(for: .milliseconds(300))
-            fresh.expand(row, in: model)
-            times += try await probe(on: stage, attempt: attempt)
-            stage.close()
+        var slow = 0, count = 0
+        for attempt in 1...28 {
+            do {
+                let engine = MockEngine(), model = AppModel(engine: engine), fresh = WindowState()
+                let row = try #require(try engine.threadRow(id: "t1"))
+                let stage = Stage(NavigationStack { ThreadPage(row: row, state: fresh) }.environment(model))
+                if try await probe(on: stage, page: "thread", attempt: attempt) { slow += 1 }
+                stage.close()
+            }
+            do {
+                let engine = MockEngine(), model = AppModel(engine: engine), fresh = WindowState()
+                let row = try #require(try engine.threadRow(id: "t1"))
+                let stage = Stage(InboxPage(state: fresh).environment(model))
+                try await Task.sleep(for: .milliseconds(300))
+                fresh.expand(row, in: model)
+                if try await probe(on: stage, page: "inPlace", attempt: attempt) { slow += 1 }
+                stage.close()
+            }
+            count += 2
         }
-        let sorted = times.sorted()
-        ProbeLog.say("summary: \(times.count) double clicks, selected after min \(sorted.first ?? -1) median \(sorted.isEmpty ? -1 : sorted[sorted.count / 2])"
-            + " max \(sorted.last ?? -1) ms; over 250 ms or never: \(times.filter { $0 > 250 || $0 < 0 }.count)")
+        ProbeLog.say("summary: \(slow) of \(count) runs of the steps had a slow step")
     }
 
-    private func probe(on stage: Stage, attempt: Int) async throws -> [Int] {
+    /// The test's steps, as it does them. True when one was slow.
+    private func probe(on stage: Stage, page: String, attempt: Int) async throws -> Bool {
         let found = await stage.messageView()
-        guard let web = found else { ProbeLog.say("#\(attempt) no message came up"); return [] }
+        guard let web = found else { ProbeLog.say("\(page) #\(attempt) no message came up"); return true }
         let textRect = await stage.rect(of: "document.querySelectorAll('p')[1]", in: web)
         let linkRect = await stage.rect(of: "document.querySelector('a')", in: web)
-        guard let text = textRect, let link = linkRect else { ProbeLog.say("#\(attempt) no rects"); return [] }
+        guard let text = textRect, let link = linkRect else { ProbeLog.say("\(page) #\(attempt) no rects"); return true }
         let from = CGPoint(x: text.minX + 4, y: text.minY + min(text.height, 18) / 2)
         _ = await stage.string("window.__probe = []; ['mousedown','mouseup','dblclick'].forEach(function (t) {"
             + " document.addEventListener(t, function (e) { window.__probe.push(t + ':' + e.detail + '@' + Math.round(performance.now() - (window.__probe0 || 0))); }, true); }); ''",
@@ -125,42 +134,58 @@ struct MessageSelectionTests {
             return event
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
-
-        var times: [Int] = []
-        for round in 1...3 {
-            await stage.clear(web)
-            await stage.drag(in: web, from: from, to: CGPoint(x: from.x + 120, y: from.y))
-            let dragged = await stage.selection(web)
-            if round == 1 { try await Task.sleep(for: .milliseconds(700)) }
-            await stage.clear(web)
-            let onLink = CGPoint(x: link.midX, y: link.midY)
-            await stage.drag(in: web, from: onLink, to: CGPoint(x: max(onLink.x - 150, text.minX + 2), y: onLink.y))
-            let fromLink = await stage.selection(web)
-
-            await stage.clear(web)
-            _ = await stage.string("window.__probe = []; window.__probe0 = performance.now(); ''", in: web)
-            log.restart()
-            await stage.doubleClick(in: web, at: from, settle: 0)
-            log.add("posted")
-            let posted = log.elapsed
-            var word = "", selectedAt = -1, busy = ""
-            for _ in 0..<160 {
-                word = await stage.selection(web)
-                if !word.isEmpty { selectedAt = log.elapsed - posted; break }
-                let now = stage.busyRecognizers(above: web)
-                if now != busy { busy = now; log.add("waiting {\(now)}") }
-                try await Task.sleep(for: .milliseconds(25))
-            }
-            times.append(selectedAt)
-            if selectedAt > 250 || selectedAt < 0 || dragged.isEmpty || fromLink.isEmpty {
-                let heard = await stage.string("(window.__probe || []).join(' ')", in: web)
-                ProbeLog.say("SLOW #\(attempt).\(round) drag=\(dragged.isEmpty ? "EMPTY" : "ok") link=\(fromLink.isEmpty ? "EMPTY" : "ok")"
-                    + " word=\"\(word)\" selected \(selectedAt) ms after the last event was posted key=\(stage.window.isKeyWindow) active=\(NSApp.isActive)"
-                    + " inWindow=\(web.window != nil) hit=\(stage.hit(web, at: from)) keyboard=\(stage.responder)"
-                    + " page=[\(heard)] ui=[\(log.lines.joined(separator: "; "))]")
+        // The longest the main thread kept a 10 ms sleep waiting.
+        let beat = Task { @MainActor in
+            var last = ContinuousClock.now
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(10))
+                let gap = Int((ContinuousClock.now - last) / .milliseconds(1))
+                if gap > 100 { log.add("main thread held \(gap) ms") }
+                last = .now
             }
         }
-        return times
+        defer { beat.cancel() }
+
+        await stage.clear(web)
+        _ = await stage.string("window.__probe = []; window.__probe0 = performance.now(); ''", in: web)
+        log.restart()
+        log.add("drag")
+        await stage.drag(in: web, from: from, to: CGPoint(x: from.x + 120, y: from.y))
+        let dragTook = log.elapsed
+        let dragged = await stage.selection(web)
+        try await Task.sleep(for: .milliseconds(700))
+        await stage.clear(web)
+        let onLink = CGPoint(x: link.midX, y: link.midY)
+        log.add("link drag")
+        let linkStart = log.elapsed
+        await stage.drag(in: web, from: onLink, to: CGPoint(x: max(onLink.x - 150, text.minX + 2), y: onLink.y))
+        let linkTook = log.elapsed - linkStart
+        let fromLink = await stage.selection(web)
+
+        await stage.clear(web)
+        log.add("double click")
+        await stage.doubleClick(in: web, at: from, settle: 0)
+        log.add("posted")
+        let posted = log.elapsed
+        var word = "", selectedAt = -1, busy = ""
+        for _ in 0..<160 {
+            word = await stage.selection(web)
+            if !word.isEmpty { selectedAt = log.elapsed - posted; break }
+            let now = stage.busyRecognizers(above: web)
+            if now != busy { busy = now; log.add("waiting {\(now)}") }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        // A drag is 780 ms of pauses when nothing holds it up.
+        let isSlow = selectedAt > 150 || selectedAt < 0 || dragged.isEmpty || fromLink.isEmpty || dragTook > 950 || linkTook > 950
+            || log.lines.contains { $0.contains("held") }
+        if isSlow {
+            let heard = await stage.string("(window.__probe || []).join(' ')", in: web)
+            ProbeLog.say("SLOW \(page) #\(attempt) drag=\(dragged.isEmpty ? "EMPTY" : "ok") in \(dragTook) ms link=\(fromLink.isEmpty ? "EMPTY" : "ok") in \(linkTook) ms"
+                + " word=\"\(word)\" selected \(selectedAt) ms after the last event was posted key=\(stage.window.isKeyWindow) active=\(NSApp.isActive)"
+                + " inWindow=\(web.window != nil) hit=\(stage.hit(web, at: from)) keyboard=\(stage.responder) windows=\(NSApp.windows.count)"
+                + " page=[\(heard)] ui=[\(log.lines.joined(separator: "; "))]")
+        }
+        return isSlow
     }
 }
 

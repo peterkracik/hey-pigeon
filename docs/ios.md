@@ -443,6 +443,14 @@ only when formatting was applied.
   phone, in the iPad's list column (its thread column stays blank until
   there is mail) and in the Mac window.
 - Loading is skeleton rows, never a spinner in the list.
+- Behind the mail lists (Inbox, Remind me, Need reply; the iPad's list
+  column and its "No thread open") the canvas carries a wash
+  (`Theme.listWash`, the Mac window's too): a trace of coral from the top
+  leading corner and of lavender from the bottom trailing one, a few
+  steps of 255, flat with Increase Contrast. The rows are opaque cards
+  (the swipe panel sits behind them), so it shows behind the top bar and
+  the day titles, between rows and across "All clear". A thread, Search,
+  Settings and the sheets stay on the flat canvas.
 - The only animation of note is archive: the row slides out in ~150 ms with
   a haptic. Everything else is the system's.
 - Dark mode from day one, following the system. Colours come from the same

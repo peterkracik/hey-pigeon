@@ -18,6 +18,16 @@ enum MacTheme {
     static let panel = Theme.card
     /// Behind the list: a step below the white group cards.
     static let listBackground = Color(light: Color(hex: 0xF3F3F1), dark: Color(hex: 0x19181B))
+    /// The window's list with the wash (`Wash`, the phone's `Theme.listWash`
+    /// over this window's grey): `listBackground` through the middle, the
+    /// same coral and lavender at its two corners, worked out ahead (5 %
+    /// and 4.2 % on light, 60 % of both on dark). The tints only deepen
+    /// the light grey, so the white cards keep their edge. Behind the
+    /// inbox's list; the sidebar, a thread, Settings and the panels stay
+    /// flat.
+    static let washWarm = Color(light: Color(hex: 0xF4EEEA), dark: Color(hex: 0x201C1E))
+    static let washCool = Color(light: Color(hex: 0xEFEEF1), dark: Color(hex: 0x1C1A20))
+    static let listWash = Wash(base: listBackground, warm: washWarm, cool: washCool)
     /// A day group's card (Pinned, Today, Last 7 days…) holding its rows.
     static let groupCard = Color(light: .white, dark: Color(hex: 0x252428))
     /// The hairlines: under the title row, beside the sidebar, around a panel.

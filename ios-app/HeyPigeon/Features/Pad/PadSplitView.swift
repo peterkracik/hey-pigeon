@@ -125,7 +125,7 @@ private struct PadMailList: View {
             }
         }
         .refreshable { await model.sync() }
-        .background(Theme.canvas)
+        .background(Theme.listWash)
         .navigationTitle(model.tab == .inbox ? model.folder.title : model.tab.title)
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
@@ -253,13 +253,15 @@ private struct PadDetailColumn: View {
                     // No account yet: the list column offers the sign-in,
                     // and "No thread open" beside it was a second empty
                     // state about mail that is not there.
-                    Theme.canvas.ignoresSafeArea()
+                    Rectangle().fill(Theme.listWash).ignoresSafeArea()
                 } else {
                     // No instruction here: beside an empty list there is
                     // nothing to pick, and most iPads have no keyboard.
                     ContentUnavailableView("No thread open", systemImage: "envelope.open")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Theme.canvas)
+                        // The list's wash, as the empty list beside it has;
+                        // an open thread stays on the flat canvas.
+                        .background(Theme.listWash)
                 }
             }
         }

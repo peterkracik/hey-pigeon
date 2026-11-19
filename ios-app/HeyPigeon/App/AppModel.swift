@@ -603,7 +603,11 @@ final class AppModel {
     private var cardParcels: [ParcelItem] {
         let plainInbox = tab == .inbox && view == .inbox && !showsSearchResults && triageFilterId == nil
         guard parcelCardEnabled, plainInbox else { return [] }
+        // A reload after the user's own action carries the parcels over
+        // and reads them again in the background, but it has the bundles
+        // at once: a parcel of a bundle archived just now leaves with it.
         return ParcelCard.visible(parcels, dismissed: dismissedParcels, accountId: selectedAccountId)
+            .filter { bundle(id: $0.bundleId)?.isArchived != true }
     }
 
     /// Nothing to list and no card either: the empty state ("All clear").

@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 
 import { emailHash } from "../src/handlers.js";
 import { GRACE_MS } from "../src/classify.js";
-import { createOpensHandler, MAX_EVENTS, MAX_QUERY, PIXEL, TTL_MS } from "../src/opens-handlers.js";
+import {
+  createOpensHandler,
+  MAX_PER_LABEL,
+  MAX_QUERY,
+  MAX_TOKENS_PER_MAILBOX,
+  nextEvents,
+  PIXEL,
+  REPEAT_MS,
+  TTL_MS,
+} from "../src/opens-handlers.js";
 import { fakeAuth, fakeOpens, fakeRanges, fakeReq, fakeRes, silentLog } from "./helpers.js";
 
 const EMAIL = "owner@example.com";
@@ -29,7 +38,9 @@ const sent = (ageMs = GRACE_MS + 60_000, over = {}) => ({
   ...over,
 });
 
-function setup({ docs = {}, ranges = fakeRanges(false), publicUrl = "", clock = { now: NOW } } = {}) {
+const PUBLIC = "https://o.example.test";
+
+function setup({ docs = {}, ranges = fakeRanges(false), publicUrl = PUBLIC, clock = { now: NOW } } = {}) {
   const opens = fakeOpens(docs);
   const log = silentLog();
   const opened = [];
@@ -79,8 +90,8 @@ test("register needs a valid Google token and stores the token under the mailbox
 
   const res = await call({ path: "/v1/tokens", headers: { ...good, host: "opens-abc.a.run.app" }, body: { token: TOKEN.toUpperCase() } });
   assert.equal(res.statusCode, 200);
-  // No public URL configured: the address the app called is the pixel's.
-  assert.deepEqual(res.body, { pixelUrl: `https://opens-abc.a.run.app/o/${TOKEN}.gif` });
+  // The configured pixel host, whatever host the request came to.
+  assert.deepEqual(res.body, { pixelUrl: `${PUBLIC}/o/${TOKEN}.gif` });
   assert.deepEqual(opens.docs.get(TOKEN), { mailboxHash: HASH, createdAt: NOW, expiresAt: NOW + TTL_MS, events: [] });
   assert.equal(TTL_MS, 30 * 24 * 3600 * 1000);
   // The address is nowhere in what was stored.
@@ -99,6 +110,53 @@ test("register answers with the configured pixel host, is idempotent, and refuse
   const stolen = await call({ path: "/v1/tokens", headers: { authorization: "Bearer other" }, body: { token: TOKEN } });
   assert.equal(stolen.statusCode, 409);
   assert.equal(opens.docs.get(TOKEN).mailboxHash, HASH);
+});
+
+test("without a pixel host nothing is registered and no address is handed out", async () => {
+  const { opens, call } = setup({ publicUrl: "" });
+  const res = await call({ path: "/v1/tokens", headers: { ...good, host: "opens-abc.a.run.app" }, body: { token: TOKEN } });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.pixelUrl, undefined);
+  assert.ok(!JSON.stringify(res.body).includes("run.app"));
+  assert.equal(opens.calls.length, 0);
+  // Still 401 first for a stranger: the state of the relay is not theirs to learn.
+  assert.equal((await call({ path: "/v1/tokens", body: { token: TOKEN } })).statusCode, 401);
+});
+
+test("a token never changes hands, not even after it expired", async () => {
+  // Another mailbox's document, past its 30 days and waiting for the TTL sweep.
+  const { opens, call, pixel } = setup({ docs: { [TOKEN]: sent(TTL_MS + 1, { mailboxHash: OTHER_HASH }) } });
+  const res = await call({ path: "/v1/tokens", headers: good, body: { token: TOKEN } });
+  assert.equal(res.statusCode, 409);
+  assert.equal(opens.docs.get(TOKEN).mailboxHash, OTHER_HASH);
+  // And it stays dead: a fetch records nothing for anyone.
+  await pixel();
+  assert.deepEqual(opens.docs.get(TOKEN).events, []);
+  // The owner's own expired token can be registered afresh.
+  const own = setup({ docs: { [TOKEN]: sent(TTL_MS + 1, { events: [{ label: "opened", at: 1 }] }) } });
+  assert.equal((await own.call({ path: "/v1/tokens", headers: good, body: { token: TOKEN } })).statusCode, 200);
+  assert.deepEqual(own.opens.docs.get(TOKEN), { mailboxHash: HASH, createdAt: NOW, expiresAt: NOW + TTL_MS, events: [] });
+});
+
+test("a mailbox holds at most MAX_TOKENS_PER_MAILBOX tokens", async () => {
+  const { opens, log, call } = setup();
+  // The store is asked with the limit; the fake counts like Firestore does.
+  for (let i = 0; i < 3; i += 1) opens.docs.set(`${i}`.padStart(32, "a"), sent());
+  const real = opens.register;
+  opens.register = (token, hash, nowMs, ttlMs, max) => {
+    assert.equal(max, MAX_TOKENS_PER_MAILBOX);
+    return real(token, hash, nowMs, ttlMs, 3);
+  };
+  const res = await call({ path: "/v1/tokens", headers: good, body: { token: TOKEN } });
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.body.pixelUrl, undefined);
+  assert.equal(opens.docs.has(TOKEN), false);
+  assert.match(log.lines.join("\n"), /at its token limit/);
+  // Another mailbox is not affected, and a retry of a token already held is not refused.
+  assert.equal((await call({ path: "/v1/tokens", headers: { authorization: "Bearer other" }, body: { token: TOKEN2 } })).statusCode, 200);
+  assert.equal((await call({ path: "/v1/tokens", headers: good, body: { token: "0".padStart(32, "a") } })).statusCode, 200);
+  // A heavy real sender never gets there: Gmail's 500 recipients a day, for 30 days.
+  assert.ok(MAX_TOKENS_PER_MAILBOX >= 500 * 30);
 });
 
 test("register refuses anything that is not 32 hex digits", async () => {
@@ -140,7 +198,7 @@ test("a known token opened by a mail client: the GIF, one event, one notificatio
   const { opens, opened, pixel } = setup({ docs: { [TOKEN]: sent() } });
   assertIsThePixel(await pixel());
   assert.deepEqual(opens.docs.get(TOKEN).events, [{ label: "opened", at: NOW }]);
-  assert.deepEqual(opens.writes(), [["append", TOKEN, { label: "opened", at: NOW }, MAX_EVENTS, NOW]]);
+  assert.deepEqual(opens.writes(), [["record", TOKEN, [{ label: "opened", at: NOW }], NOW]]);
   // The seam for the silent push: the mailbox hash and nothing more.
   assert.deepEqual(opened, [HASH]);
 });
@@ -181,20 +239,64 @@ test("the grace window, scanners and HEAD record nothing — and still get the G
   assert.equal(head.opens.calls.length, 0);
 });
 
-test("a token holds at most MAX_EVENTS events", async () => {
+test("a repeat within a minute adds nothing and costs no write", async () => {
   const { opens, opened, pixel, clock } = setup({ docs: { [TOKEN]: sent() } });
-  for (let i = 0; i < MAX_EVENTS + 5; i += 1) {
+  for (let i = 0; i < 20; i += 1) {
     clock.now += 1000;
     assertIsThePixel(await pixel());
   }
-  assert.equal(opens.docs.get(TOKEN).events.length, MAX_EVENTS);
-  assert.equal(opened.length, MAX_EVENTS);
-  assert.equal(MAX_EVENTS, 50);
+  assert.equal(opens.docs.get(TOKEN).events.length, 1);
+  assert.equal(opens.writes().length, 1);
+  assert.equal(opened.length, 1);
+  // A minute after the last stored one, it counts again.
+  clock.now = NOW + 1000 + REPEAT_MS;
+  await pixel();
+  assert.equal(opens.docs.get(TOKEN).events.length, 2);
+});
+
+test("one label cannot fill a token: a flood of hidden fetches leaves room for a real open", async () => {
+  const { opens, pixel, clock } = setup({ docs: { [TOKEN]: sent() } });
+  const hidden = { ...reader, "user-agent": "Mozilla/5.0" };
+  for (let i = 0; i < MAX_PER_LABEL * 3; i += 1) {
+    clock.now += REPEAT_MS;
+    await pixel(TOKEN, hidden);
+  }
+  let events = opens.docs.get(TOKEN).events;
+  assert.equal(events.length, MAX_PER_LABEL);
+  assert.ok(events.every((e) => e.label === "hidden"));
+  // The first is still the first, and the last is the newest.
+  assert.equal(events[0].at, NOW + REPEAT_MS);
+  assert.equal(events[events.length - 1].at, clock.now);
+
+  clock.now += 5;
+  await pixel();
+  events = opens.docs.get(TOKEN).events;
+  assert.deepEqual(events[events.length - 1], { label: "opened", at: clock.now });
+  assert.equal(events.length, MAX_PER_LABEL + 1);
+});
+
+test("the event rule on its own", () => {
+  assert.deepEqual(nextEvents([], "opened", 100), [{ label: "opened", at: 100 }]);
+  const one = [{ label: "opened", at: 100 }];
+  assert.equal(nextEvents(one, "opened", 100 + REPEAT_MS - 1), null);
+  assert.equal(nextEvents(one, "opened", 50), null, "a clock that went back");
+  assert.equal(nextEvents(one, "hidden", 101).length, 2, "another label is its own count");
+  const full = Array.from({ length: MAX_PER_LABEL }, (_, i) => ({ label: "opened", at: i * REPEAT_MS }));
+  const mixed = [{ label: "hidden", at: 1 }, ...full, { label: "hidden", at: 2 }];
+  const later = MAX_PER_LABEL * REPEAT_MS * 2;
+  const next = nextEvents(mixed, "opened", later);
+  assert.equal(next.length, mixed.length);
+  assert.equal(next.filter((e) => e.label === "opened").length, MAX_PER_LABEL);
+  assert.deepEqual(next[MAX_PER_LABEL], { label: "opened", at: later });
+  assert.deepEqual(next[1], full[0]);
+  assert.deepEqual([next[0], next[next.length - 1]], [mixed[0], mixed[mixed.length - 1]]);
+  assert.equal(mixed[MAX_PER_LABEL].at, (MAX_PER_LABEL - 1) * REPEAT_MS, "the input is not changed");
+  assert.equal(MAX_PER_LABEL * 2, 50);
 });
 
 test("a store that fails still answers the GIF, and the log names no token or address", async () => {
   const { opens, log, pixel } = setup({ docs: { [TOKEN]: sent() } });
-  opens.append = async () => {
+  opens.record = async () => {
     throw Object.assign(new Error(`write failed for ${TOKEN} from ${IP}`), { code: 14 });
   };
   assertIsThePixel(await pixel());
@@ -267,7 +369,25 @@ test("delete removes the caller's mailbox and only that, and is 204 twice in a r
 
   // A pixel already sent now names an unknown token: the GIF, nothing kept.
   assertIsThePixel(await pixel());
-  assert.deepEqual(opens.writes().filter((c) => c[0] === "append"), []);
+  assert.deepEqual(opens.writes().filter((c) => c[0] === "record"), []);
+});
+
+test("a failing store answers 503 with nothing in it, and logs a code", async () => {
+  const boom = async () => {
+    throw Object.assign(new Error(`deadline exceeded for ${TOKEN} of ${EMAIL}`), { code: 4 });
+  };
+  for (const [name, method, request] of [
+    ["register", "register", { path: "/v1/tokens", headers: good, body: { token: TOKEN } }],
+    ["query", "getMany", { path: "/v1/opens", headers: good, body: { tokens: [TOKEN] } }],
+    ["delete", "removeMailbox", { method: "DELETE", path: "/v1/tokens", headers: good }],
+  ]) {
+    const { opens, log, call } = setup();
+    opens[method] = boom;
+    const res = await call(request);
+    assert.equal(res.statusCode, 503, name);
+    assert.deepEqual(res.body, { error: "unavailable" });
+    assert.deepEqual(log.lines, [`warn opens: ${name} failed (4)`]);
+  }
 });
 
 test("anything else is 404", async () => {

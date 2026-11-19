@@ -18,6 +18,15 @@ export const APPLE_EGRESS_URL = "https://mask-api.icloud.com/egress-ip-ranges.cs
 const LOAD_TIMEOUT_MS = 4000;
 const RETRY_MS = 5 * 60 * 1000;
 
+/**
+ * No line of Apple's list is anywhere near this wide (its widest are a few
+ * thousand addresses). A range of a /8 or more — `0.0.0.0/0` above all —
+ * means the file is not the list, and a list that covers everything would
+ * label every reader "hidden". Such a file is refused as a whole.
+ */
+const MIN_PREFIX_V4 = 8;
+const MIN_PREFIX_V6 = 16;
+
 /** "1.2.3.4" → 32-bit number, or null. */
 export function parseV4(text) {
   const parts = text.split(".");
@@ -69,33 +78,41 @@ function normalise(ip) {
 
 /**
  * The CSV as published: `CIDR,country,region,city,…` per line. Lines that
- * are not a CIDR are skipped. Returns sorted, merged ranges per family.
+ * are not a CIDR (an address, `/`, then only digits, within the family's
+ * bounds) are skipped. Returns sorted, merged ranges per family, and
+ * `implausible: true` when a line was wider than any real entry.
  */
 export function parseRanges(csv) {
   const v4 = [];
   const v6 = [];
+  let implausible = false;
   for (const line of csv.split("\n")) {
     const cidr = line.slice(0, line.indexOf(",") >= 0 ? line.indexOf(",") : line.length).trim();
     const slash = cidr.indexOf("/");
     if (slash < 0) continue;
-    const bits = Number(cidr.slice(slash + 1));
+    // Digits and nothing else: `Number("")` is 0 and `Number("1e1")` is 10,
+    // and either would turn a damaged line into a range.
+    const prefix = cidr.slice(slash + 1);
+    if (!/^\d{1,3}$/.test(prefix)) continue;
+    const bits = Number(prefix);
     const addr = cidr.slice(0, slash);
-    if (!Number.isInteger(bits) || bits < 0) continue;
     if (addr.includes(":")) {
       const n = parseV6(addr);
       if (n === null || bits > 128) continue;
+      if (bits < MIN_PREFIX_V6) implausible = true;
       const size = 1n << BigInt(128 - bits);
       const start = (n / size) * size;
       v6.push([start, start + size - 1n]);
     } else {
       const n = parseV4(addr);
       if (n === null || bits > 32) continue;
+      if (bits < MIN_PREFIX_V4) implausible = true;
       const size = 2 ** (32 - bits);
       const start = Math.floor(n / size) * size;
       v4.push([start, start + size - 1]);
     }
   }
-  return { v4: merge(v4, 1), v6: merge(v6, 1n) };
+  return { v4: merge(v4, 1), v6: merge(v6, 1n), implausible };
 }
 
 function merge(ranges, one) {
@@ -156,6 +173,7 @@ export function createAppleRanges({
       if (!res.ok) throw new Error(`status ${res.status}`);
       const parsed = parseRanges(await res.text());
       if (parsed.v4.length + parsed.v6.length === 0) throw new Error("no ranges in the answer");
+      if (parsed.implausible) throw new Error("a range too wide to be Apple's");
       ranges = parsed;
       log.info(`opens: apple ranges loaded (${parsed.v4.length} v4, ${parsed.v6.length} v6)`);
     } catch (e) {

@@ -1,10 +1,11 @@
 // The `opens` function: read status for sent mail (docs/specs/read-status.md
 // R20–R22). One HTTP function, four routes, free of I/O. `deps`:
-//   opens:   { get, register, append, getMany, removeMailbox }  (src/opens.js)
+//   opens:   { get, register, record, getMany, removeMailbox }  (src/opens.js)
 //   auth:    { verify(bearer) → email | null }                   (src/auth.js)
 //   ranges:  { contains(ip) → true | false | null }              (src/ranges.js)
-//   publicUrl: where the pixel is served from, without a trailing slash;
-//            "" to answer with the host the request came to
+//   publicUrl: where the pixel is served from (the custom domain), without
+//            a trailing slash; "" while there is none — registration is
+//            then refused, so no pixel ever names another host
 //   now:     () → epoch ms
 //   onOpen:  (mailboxHash) → void — called after an event was stored. The
 //            seam for the silent push of R24; nothing is wired to it yet.
@@ -14,9 +15,20 @@
 // token, sha256(mailbox address), and for each counted fetch a label and a
 // time. It reads the fetching client's address and user agent to choose
 // the label and passes them to nothing else: not the store, not `onOpen`,
-// not the log. A pixel request writes no log line at all unless the store
-// fails, and then only the error's code. The mailbox address is never
-// stored. Tokens are not logged (a token is a capability to be counted).
+// not the log. The mailbox address is never stored.
+//
+// What this code logs: a mailbox hash prefix on register and delete, the
+// state of Apple's list, and a failed store call's error code. Never a
+// token, an address, a user agent, a URL or a request body. A pixel
+// request that goes well logs nothing.
+//
+// What this code cannot answer for is what runs before it: the framework
+// (Express and its body parser) rejects a request it cannot parse — a
+// path with a broken %-escape, a body that is not JSON — without calling
+// this handler, and prints the error, which quotes the path or a piece of
+// the body. On an `opens` instance that printing is reduced to the
+// error's class name (src/quiet.js, installed by index.js), so the
+// sentence above holds for the whole process, not only for this file.
 //
 // The pixel is public and anyone can ask for any token, so the unknown
 // token is the cheap path: one document lookup, then the GIF. No write,
@@ -27,8 +39,41 @@ import { emailHash } from "./handlers.js";
 
 /** Tokens live this long; Firestore's TTL deletes the document after it. */
 export const TTL_MS = 30 * 24 * 60 * 60 * 1000;
-/** Events kept per token; later fetches change nothing. */
-export const MAX_EVENTS = 50;
+/**
+ * Events kept per token and label. With two labels a token holds at most
+ * 50; one label can never use the other's room.
+ */
+export const MAX_PER_LABEL = 25;
+/** A fetch with the same label this soon after the last one adds nothing. */
+export const REPEAT_MS = 60 * 1000;
+/**
+ * Live tokens one mailbox may hold. Gmail lets a consumer account send to
+ * 500 recipients a day: 30 days of that, every message tracked, is 15,000.
+ */
+export const MAX_TOKENS_PER_MAILBOX = 20_000;
+
+/**
+ * The events of a token after one more counted fetch, or null when it adds
+ * nothing. Pure.
+ *
+ * - The same label within `REPEAT_MS` of its last event: nothing. A mail
+ *   client that asks three times while it renders, or someone reloading in
+ *   a loop, is one open — and costs at most one write a minute.
+ * - Otherwise appended, until the label holds `MAX_PER_LABEL`; from then on
+ *   the newest replaces that label's last entry. So the first 24 and the
+ *   latest of each label are always there: a recipient who fills "hidden"
+ *   cannot push out a real "opened", and "last opened" stays true however
+ *   often a message is read.
+ */
+export function nextEvents(events, label, at) {
+  const same = events.filter((e) => e.label === label);
+  const last = same[same.length - 1];
+  if (last && at - last.at < REPEAT_MS) return null;
+  if (same.length < MAX_PER_LABEL) return [...events, { label, at }];
+  const out = events.slice();
+  out[out.lastIndexOf(last)] = { label, at };
+  return out;
+}
 /** Tokens one query may ask about. */
 export const MAX_QUERY = 100;
 
@@ -77,8 +122,10 @@ export function createOpensHandler({ opens, auth, ranges, publicUrl = "", now = 
             fromApple: await ranges.contains(clientAddress(req)),
             ageMs: at - doc.createdAt,
           });
-          if (label && doc.events.length < MAX_EVENTS) {
-            const stored = await opens.append(token, { label, at }, MAX_EVENTS, at);
+          // Checked on the copy just read, so a repeat costs no write;
+          // decided again inside the store's transaction.
+          if (label && nextEvents(doc.events, label, at)) {
+            const stored = await opens.record(token, (events) => nextEvents(events, label, at), at);
             if (stored && onOpen) await onOpen(doc.mailboxHash);
           }
         }
@@ -113,6 +160,24 @@ export function createOpensHandler({ opens, auth, ranges, publicUrl = "", now = 
     return emailHash(email);
   }
 
+  /**
+   * The three routes the app calls, with a failing store answered as the
+   * pixel route answers it: a line with the error's code, and here a 503
+   * that says nothing more. Left to the framework, the rejection would be
+   * logged with its stack, its message sent to the caller, and the
+   * instance shut down.
+   */
+  function guarded(name, route) {
+    return async (req, res) => {
+      try {
+        await route(req, res);
+      } catch (e) {
+        log.warn(`opens: ${name} failed (${e?.code ?? e?.name ?? "error"})`);
+        if (!res.headersSent) res.status(503).json({ error: "unavailable" });
+      }
+    };
+  }
+
   /** POST /v1/tokens { token } — the app is about to send a tracked message. */
   async function register(req, res) {
     const hash = await mailbox(req, res);
@@ -122,14 +187,25 @@ export function createOpensHandler({ opens, auth, ranges, publicUrl = "", now = 
       res.status(400).json({ error: "token must be 32 hex digits" });
       return;
     }
-    const outcome = await opens.register(token, hash, now(), TTL_MS);
+    // Without a pixel host there is no address to put in a message, and
+    // the one this request came to (a run.app URL) must never be it.
+    // Refused before anything is stored.
+    if (!publicUrl) {
+      res.status(503).json({ error: "read status is not set up on this relay" });
+      return;
+    }
+    const outcome = await opens.register(token, hash, now(), TTL_MS, MAX_TOKENS_PER_MAILBOX);
     if (outcome === "taken") {
       res.status(409).json({ error: "token is in use" });
       return;
     }
-    const base = publicUrl || `https://${req.get("host") ?? ""}`;
+    if (outcome === "full") {
+      log.warn(`opens ${hash.slice(0, 8)} at its token limit`);
+      res.status(429).json({ error: `this mailbox already tracks ${MAX_TOKENS_PER_MAILBOX} messages` });
+      return;
+    }
     log.info(`opens ${hash.slice(0, 8)} registered`);
-    res.status(200).json({ pixelUrl: `${base}/o/${token}.gif` });
+    res.status(200).json({ pixelUrl: `${publicUrl}/o/${token}.gif` });
   }
 
   /** DELETE /v1/tokens — read status was turned off for this mailbox. Idempotent. */
@@ -175,9 +251,9 @@ export function createOpensHandler({ opens, auth, ranges, publicUrl = "", now = 
       await pixel(req, res, PIXEL_RE.exec(path)?.[1] ?? null);
       return;
     }
-    if (path === "/v1/tokens" && req.method === "POST") return register(req, res);
-    if (path === "/v1/tokens" && req.method === "DELETE") return removeAll(req, res);
-    if (path === "/v1/opens" && req.method === "POST") return query(req, res);
+    if (path === "/v1/tokens" && req.method === "POST") return guarded("register", register)(req, res);
+    if (path === "/v1/tokens" && req.method === "DELETE") return guarded("delete", removeAll)(req, res);
+    if (path === "/v1/opens" && req.method === "POST") return guarded("query", query)(req, res);
     res.status(404).end();
   };
 }

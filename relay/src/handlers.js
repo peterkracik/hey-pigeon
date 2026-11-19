@@ -12,6 +12,11 @@
 // learns `email → device tokens` and, per event, `email + historyId`.
 // Log lines carry a hash prefix and an APNs status, never an address or
 // a payload.
+//
+// That is the push half: these two functions. Read status is the third
+// (src/opens-handlers.js, with its own contract there): for a mailbox that
+// uses it, the relay also holds a random token per tracked message and
+// when it was opened. No app uses it yet, and neither half ever sees mail.
 
 import { createHash } from "node:crypto";
 
@@ -118,8 +123,21 @@ export function createHandlers({ tokens, apns, auth, topic, opensUrl = "", log =
     }
     const hash = emailHash(email);
 
+    // A failing store is answered here, with its code: left to the
+    // framework it would be logged with its stack, its message sent to the
+    // caller, and the instance shut down.
+    const unavailable = (e) => {
+      log.warn(`register ${hash.slice(0, 8)}: store failed (${e?.code ?? e?.name ?? "error"})`);
+      res.status(503).json({ error: "unavailable" });
+    };
+
     if (req.method === "DELETE") {
-      await tokens.remove(hash, deviceToken);
+      try {
+        await tokens.remove(hash, deviceToken);
+      } catch (e) {
+        unavailable(e);
+        return;
+      }
       res.status(204).end();
       return;
     }
@@ -132,7 +150,12 @@ export function createHandlers({ tokens, apns, auth, topic, opensUrl = "", log =
       res.status(400).json({ error: "environment must be sandbox or production" });
       return;
     }
-    await tokens.upsert(hash, { token: deviceToken, env: body.environment, platform: "ios" });
+    try {
+      await tokens.upsert(hash, { token: deviceToken, env: body.environment, platform: "ios" });
+    } catch (e) {
+      unavailable(e);
+      return;
+    }
     res.status(200).json(relayInfo());
   }
 

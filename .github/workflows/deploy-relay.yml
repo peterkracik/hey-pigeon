@@ -6,8 +6,13 @@ name: deploy-relay
 # code (the zip hash is part of the source object name).
 # By hand (Actions → deploy-relay → Run workflow): a plan or an apply of
 # main, through the same job, environment and protection rules as a push.
-# A manual run from any other branch or tag is refused before it reaches
-# Google Cloud.
+# The steps below stop a manual run started on another branch or tag, but
+# that is a convenience against a slip, not a control: a dispatched run
+# uses the workflow file of the ref it runs on, and a branch can remove
+# them. What actually keeps an apply to main is the `infra` environment's
+# own rules in the repository settings (deployment branches: main only;
+# required reviewers) — without those, anyone who can push a branch and
+# dispatch a workflow can apply from it.
 #
 # Auth is Workload Identity Federation (terraform/bootstrap/wif.tf): the
 # workflow's OIDC token is exchanged for the relay-deployer service account,
@@ -59,8 +64,8 @@ jobs:
       run:
         working-directory: relay
     steps:
-      # First, and in the job everything else waits for: nothing of a
-      # manual run from another ref gets as far as the `infra` environment.
+      # A manual run started on the wrong ref stops here (see the header:
+      # the `infra` environment's rules are what enforces it).
       - name: A manual run is for main only
         if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
         working-directory: .

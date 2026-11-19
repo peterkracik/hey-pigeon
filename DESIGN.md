@@ -120,7 +120,10 @@ Three tiers — the first two need no server, the third is the one optional one:
    metadata, never mail content. Optional, self-hostable, only for iOS users.
    **Built** (issue #16): two Cloud Run functions in the OAuth client's own
    Google Cloud project, everything created by Terraform — `relay/README.md`
-   and `terraform/README.md`. The core owns the watch lease (`core::push`,
+   and `terraform/README.md`. A third function, `opens`, is the relay's
+   half of read status (`docs/specs/read-status.md`): for accounts with
+   read status on it holds a random token per sent message and when it
+   was opened, never mail. Deployed; no app calls it yet. The core owns the watch lease (`core::push`,
    renewed daily from the sync round); the iOS shell owns the toggle. Note
    for tier 2: `users.watch` itself needs no Pub/Sub scope — only consuming
    the topic from the desktop would.

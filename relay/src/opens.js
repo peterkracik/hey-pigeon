@@ -7,7 +7,7 @@
 // registration. TTL deletion can lag by a day, so readers check the field
 // themselves and treat an expired document as absent.
 
-import { FieldValue, Timestamp } from "@google-cloud/firestore";
+import { Timestamp } from "@google-cloud/firestore";
 
 const COLLECTION = "opens";
 
@@ -33,14 +33,24 @@ export function createOpenStore(db) {
     },
 
     /**
-     * Create the document. "created", "exists" (same mailbox: a retried
-     * registration) or "taken" (another mailbox's token).
+     * Create the document. "created", "exists" (same mailbox, still live: a
+     * retried registration), "taken" (the token is another mailbox's) or
+     * "full" (the mailbox already holds `maxPerMailbox` documents).
+     *
+     * "taken" also when the other mailbox's document has expired and is
+     * only waiting for the TTL sweep: a token must never change hands, or
+     * the new owner would be told of fetches of the old owner's mail.
      */
-    async register(token, mailboxHash, nowMs, ttlMs) {
+    async register(token, mailboxHash, nowMs, ttlMs, maxPerMailbox) {
       const ref = col.doc(token);
+      // Counted outside the transaction: a cap that two racing sends can
+      // overshoot by one is still a cap.
+      const held = await col.where("mailboxHash", "==", mailboxHash).count().get();
       return db.runTransaction(async (tx) => {
-        const current = live(await tx.get(ref), nowMs);
-        if (current) return current.mailboxHash === mailboxHash ? "exists" : "taken";
+        const snap = await tx.get(ref);
+        if (snap.exists && snap.data()?.mailboxHash !== mailboxHash) return "taken";
+        if (live(snap, nowMs)) return "exists";
+        if (held.data().count >= maxPerMailbox) return "full";
         tx.set(ref, {
           mailboxHash,
           createdAt: nowMs,
@@ -51,13 +61,19 @@ export function createOpenStore(db) {
       });
     },
 
-    /** Append one event unless the document already holds `cap`. True when written. */
-    async append(token, event, cap, nowMs) {
+    /**
+     * Record one event, by the rule of `nextEvents` (src/opens-handlers.js),
+     * which is given the stored events and returns the new list, or null
+     * for "nothing to store". True when something was written.
+     */
+    async record(token, nextEvents, nowMs) {
       const ref = col.doc(token);
       return db.runTransaction(async (tx) => {
         const current = live(await tx.get(ref), nowMs);
-        if (!current || current.events.length >= cap) return false;
-        tx.update(ref, { events: FieldValue.arrayUnion(event) });
+        if (!current) return false;
+        const events = nextEvents(current.events);
+        if (!events) return false;
+        tx.update(ref, { events });
         return true;
       });
     },

@@ -138,3 +138,22 @@ test("GET needs the same Google token as a registration", async () => {
   await h.registerToken(fakeReq({ method: "GET", headers: good }), res);
   assert.deepEqual(res.body, { topic: TOPIC, opensUrl: null });
 });
+
+test("a failing store is a 503 with a code in the log, not a crash", async () => {
+  for (const [method, request] of [
+    ["upsert", { headers: good, body: { deviceToken: DEVICE, platform: "ios", environment: "sandbox" } }],
+    ["remove", { method: "DELETE", headers: good, body: { deviceToken: DEVICE } }],
+  ]) {
+    const tokens = fakeTokens();
+    tokens[method] = async () => {
+      throw Object.assign(new Error(`unavailable for ${EMAIL}`), { code: 14 });
+    };
+    const log = silentLog();
+    const h = createHandlers({ tokens, apns: fakeApns(), auth: fakeAuth({ good: EMAIL }), topic: TOPIC, log });
+    const res = fakeRes();
+    await h.registerToken(fakeReq(request), res);
+    assert.equal(res.statusCode, 503);
+    assert.deepEqual(res.body, { error: "unavailable" });
+    assert.deepEqual(log.lines, [`warn register ${HASH.slice(0, 8)}: store failed (14)`]);
+  }
+});

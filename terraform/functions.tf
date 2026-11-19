@@ -226,18 +226,32 @@ resource "google_cloudfunctions2_function" "opens" {
     service_account_email = local.relay_fn_sa
     ingress_settings      = "ALLOW_ALL"
     # Twice the other two: an instance holds Apple's egress ranges in memory
-    # (relay/src/ranges.js), some hundreds of thousands of them. Unmeasured —
-    # the spec's acceptance criteria ask for the number from the deployed
-    # function; lower this to 256M if it allows.
-    available_memory   = "512M"
-    timeout_seconds    = 30
+    # (relay/src/ranges.js), some hundreds of thousands of them. A synthetic
+    # 300,000-line list parsed at about 237 MB of resident memory locally,
+    # so 256M is not enough; the real number is still to be read off the
+    # deployed function.
+    available_memory = "512M"
+    # A whole CPU and many requests per instance. Left unset, a function
+    # of this size gets a fraction of a CPU and takes one request at a
+    # time: five instances were five requests, and five slow ones from a
+    # stranger would have held up every real open and the app's own
+    # routes. Every route here waits on I/O (a Firestore read, Google's
+    # tokeninfo), which one Node process does eighty of at once without
+    # effort; more than one request per instance needs a full CPU.
+    available_cpu                    = "1"
+    max_instance_request_concurrency = 80
+    # Nothing here takes seconds; a request that does is cut off.
+    timeout_seconds    = 15
     min_instance_count = 0
-    # A ceiling on what a flood of pixel requests can cost.
-    max_instance_count = 5
+    # 3 × 80 = 240 requests at once, and the ceiling on what a flood can
+    # cost: three CPUs busy, never more. At personal volume the function
+    # runs for seconds a day, far inside the free tier.
+    max_instance_count = 3
     environment_variables = {
       GOOGLE_CLIENT_IDS = join(",", var.google_client_ids)
-      # Empty until the domain is mapped: the function then answers with the
-      # host it was called on, which is its run.app URL.
+      # The pixel's address, and the only one registration ever hands out.
+      # Empty until the domain is mapped: registration is then refused
+      # (503), so no message is sent pointing at a run.app address.
       OPENS_PUBLIC_URL = var.opens_domain != "" ? "https://${var.opens_domain}" : ""
     }
   }

@@ -49,7 +49,7 @@ app, about to send ──► POST /v1/tokens {token}      (Google access token)
 recipient's mail app ─► GET /o/<token>.gif          (public, no auth)
                           ├─ always: a 1×1 GIF, 200, no-store, no redirect, no cookie
                           ├─ unknown / expired / malformed token: nothing else — one lookup, no write, no log
-                          └─ known token: classify the fetch in memory → append { label, at } (at most 50)
+                          └─ known token: classify the fetch in memory → record { label, at } (at most 25 per label)
 
 app, on sync ─────────► POST /v1/opens {tokens}     (Google access token) → { token: [{label, at}] }, own mailbox only
 app, switch turned off ► DELETE /v1/tokens          (Google access token) → every document of that mailbox, 204
@@ -83,6 +83,42 @@ to a fetch that names a real mail client or browser, which the proxy never
 does. What is lost while the list is down: a browser behind iCloud Private
 Relay counts as `opened` where it would have been `hidden`.
 
+**What is kept of repeated fetches.** The same label within a minute of its
+last event adds nothing (a mail client asking three times while it renders
+is one open, and a loop costs one write a minute at most). Each label keeps
+at most 25 events: the first 24 and, from then on, always the latest. One
+label cannot use the other's room, so a recipient who fills `hidden` cannot
+push out a later real `opened`.
+
+**Limits.** A mailbox may hold 20,000 live tokens (Gmail's 500 recipients a
+day for 30 days, every message tracked, is 15,000); the next registration
+answers 429. A token never changes hands: registering one that exists under
+another mailbox answers 409, expired or not. Until the pixel has its own
+domain (`OPENS_PUBLIC_URL`), registration answers 503 and stores nothing —
+no message is ever sent pointing at a run.app address. A failing store
+answers 503 `{ "error": "unavailable" }` on the app's routes and logs the
+error's code; the pixel route still answers the GIF.
+
+**The framework's own logging, and how to see it is gone.** Express and its
+body parser reject a request they cannot parse without calling the handler,
+and print the error: `URIError: Failed to decode param 'o/%E0%A4%A.gif'`
+for a path with a broken escape, `SyntaxError: … "{\"token\":\"…" is not
+valid JSON` for a body. On an instance serving `opens`, `index.js` replaces
+`console.error` and `console.warn` so that only the class name is printed
+(`test/quiet.test.js`). To reproduce, with no cloud access:
+
+```sh
+npx functions-framework --target=opens --signature-type=http --port=8793 2>err.log &
+curl -s -o /dev/null 'http://127.0.0.1:8793/o/%E0%A4%A.gif'
+curl -s -o /dev/null -X POST -H 'content-type: application/json' -d '{"token":"0123' http://127.0.0.1:8793/v1/tokens
+cat err.log   # opens: output withheld (URIError) / (SyntaxError) — no path, no body
+```
+
+Not covered: something that writes to `process.stderr` directly instead of
+through `console` (Node's own process warnings do; they carry nothing of a
+request), and the two answers above still go to the caller as Express's
+HTML 400, which names the error to the one who sent it.
+
 **Not built yet:** telling the phone about an open. The handler has the seam
 (`onOpen(mailboxHash)`), `index.js` wires nothing to it, and the function
 holds no APNs configuration.
@@ -102,12 +138,12 @@ Read status (`opens`):
 
 | | |
 | --- | --- |
-| Stored | Per tracked message: `opens/{token} → { mailboxHash: sha256(email), createdAt, expiresAt, events: [{ label: opened \| hidden, at }] }`, at most 50 events. Not the address, not the message, its subject, its recipients or its Gmail id |
+| Stored | Per tracked message: `opens/{token} → { mailboxHash: sha256(email), createdAt, expiresAt, events: [{ label: opened \| hidden, at }] }`, at most 25 events per label. A mailbox holds at most 20,000 live tokens. Not the address, not the message, its subject, its recipients or its Gmail id |
 | Kept for | 30 days from registration (Firestore TTL on `expiresAt`, which can lag by about a day; the function itself treats an expired document as absent), or until the mailbox's owner calls delete |
 | Seen per pixel request, not kept | The fetching client's IP address and user agent, for the length of the request, to choose the label. Passed to nothing: not Firestore, not a log line |
 | Seen per app request | The Google access token (verified at Google, not stored) and the tokens named |
 | Sent to Apple | One download of the public egress list per instance. Nothing about any request |
-| Logged by the function | `opens <hash prefix> registered`, `… deleted <n>`, the state of the Apple list, and a store error's code. Never a token, an address, a user agent or a URL. A pixel request that goes well writes no line |
+| Logged by the function | Its own lines: `opens <hash prefix> registered`, `… deleted <n>`, `… at its token limit`, the state of the Apple list, and a failed store call's error code. Never a token, an address, a user agent, a URL or a request body; a pixel request that goes well writes no line. Anything a library prints on the instance is reduced to the error's class name — `opens: output withheld (URIError)` — because the framework rejects an unparseable request before the handler runs and would otherwise print its path or a piece of its body (`src/quiet.js`; reproduction below) |
 | Logged by Cloud Run | Its request log (IP, user agent, URL per request) is written by the platform and dropped before it is stored: a project log exclusion that Terraform creates before the function (`terraform/logging.tf`) keeps it out of the project's log storage. A log sink someone adds to the project by hand would still receive it — there is none in this repository |
 
 Anyone can ask for any pixel URL; an unknown token costs one document read
@@ -160,7 +196,8 @@ Environment (set by Terraform): `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`
 `OPENS_URL` (on `register-token`: what it reports as `opensUrl`; the pixel's
 custom domain, empty until it is mapped). The `opens`
 function gets `GOOGLE_CLIENT_IDS` and `OPENS_PUBLIC_URL` (the pixel's custom
-domain; empty means "the host this request came to", its run.app URL).
+domain, and the only address registration ever hands out; while it is empty
+`POST /v1/tokens` answers 503 and stores nothing).
 
 APNs behaviour: `apns-push-type: background`, `apns-priority: 5`,
 `apns-collapse-id` derived from the email hash (a burst collapses into one
@@ -209,5 +246,9 @@ manual prerequisites: [../terraform/README.md](../terraform/README.md).
 - `GOOGLE_CLIENT_IDS` holds the iOS OAuth client only, so a token from the
   Mac app's client is refused by `register-token` and `opens` alike. It has
   to be added before the Mac can use read status.
-- The memory of `opens` (512M) is a guess for holding Apple's ranges; it has
-  not been measured on the deployed function.
+- The memory of `opens` (512M) has not been measured on the deployed
+  function. A synthetic 300,000-line list parsed at about 237 MB locally,
+  so 256M would not do.
+- A fetch through Apple's proxy and one from a mail client within the same
+  minute are both recorded; two with the same label within a minute are
+  one.

@@ -58,14 +58,20 @@ allows that) and cannot read any log.
   trigger, internal ingress only), `register-token` (public HTTPS,
   authenticated by the caller's Google access token) and `opens` (public
   HTTPS: the read-status pixel, open to anyone, and three routes
-  authenticated like `register-token`; 512M, at most 5 instances).
+  authenticated like `register-token`; 512M, one CPU, 80 requests per
+  instance, at most 3 instances).
 - **Domain mapping** `o.heypigeon.app` → `opens`, only when `opens_domain`
   is set (below). Off by default.
 
 Cost at personal volume: $0 — every service above has a free tier that a
 few hundred pushes and pixel requests a day do not approach; a Cloud Run
 domain mapping is free; there is no load balancer and no minimum instance.
-The pixel is public, so its ceiling is what bounds a flood: 5 instances.
+The pixel is public, so its ceiling is what bounds a flood: 3 instances
+of one CPU, 240 requests at once. That ceiling is not free — three CPUs
+busy around the clock for a month would be on the order of a couple of
+hundred dollars — so it is a bound on abuse, not a promise of $0 under
+attack. A budget alert on the project is the owner's to set; Terraform
+does not create one.
 
 ## Manual prerequisites
 
@@ -144,9 +150,14 @@ no key file anywhere.
 
 By hand: Actions → deploy-relay → Run workflow, on `main`, with `plan`
 (default) or `apply`. It is the same job in the same `infra` environment,
-so the environment's reviewers and branch rule apply to it as to a push. A
-run started from another branch or tag stops at its first step, before the
-environment and before Google Cloud.
+so the environment's reviewers and branch rule apply to it as to a push.
+The workflow stops a run started from another branch or tag at its first
+step, but only as a guard against a slip: a dispatched run uses the
+workflow file of its own ref, so a branch could remove that step. What
+holds is the `infra` environment itself — **set "Deployment branches" to
+`main` only** (and required reviewers, if wanted) under Settings →
+Environments → infra. Without that rule, anyone who can push a branch and
+run a workflow can apply from it.
 
 The `terraform` job runs in the GitHub **environment `infra`**
 (Settings → Environments → New environment). Put these on that environment —

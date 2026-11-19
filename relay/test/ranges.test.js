@@ -59,6 +59,34 @@ test("ranges are parsed, merged and searched", () => {
   }
 });
 
+test("a damaged prefix is not a range, and a range too wide to be Apple's marks the file", () => {
+  // `Number("")` is 0 and `Number("1e1")` is 10: neither may become a range.
+  for (const line of ["1.2.3.4/,US", "1.2.3.4/1e1,US", "1.2.3.4/ 24,US", "1.2.3.4/-1,US", "1.2.3.4/33,US", "1.2.3.4/0x18,US", "2a02::/129,CH", "2a02::/,CH", "1.2.3.4/24x,US"]) {
+    const parsed = parseRanges(line);
+    assert.equal(parsed.v4.length + parsed.v6.length, 0, line);
+    assert.equal(parsed.implausible, false, line);
+    assert.equal(inRanges(parsed, "8.8.8.8"), false, line);
+  }
+  assert.equal(parseRanges(CSV).implausible, false);
+  for (const wide of ["0.0.0.0/0,,,,", "10.0.0.0/7,,,,", "::/0,,,,", "2000::/3,,,,"]) {
+    assert.equal(parseRanges(`${CSV}\n${wide}`).implausible, true, wide);
+  }
+  assert.equal(parseRanges("17.0.0.0/8,US").implausible, false);
+});
+
+test("a file with a range that covers everything is a failed load, and is not announced as loaded", async () => {
+  for (const poisoned of [`${CSV}\n0.0.0.0/0,,,,`, `${CSV}\n::/0,,,,`, "1.2.3.4/,US"]) {
+    const log = silentLog();
+    const ranges = createAppleRanges({ fetchImpl: async () => ({ ok: true, text: async () => poisoned }), log });
+    // null, not true: the classifier falls back to the user agent.
+    assert.equal(await ranges.contains("8.8.8.8"), null);
+    assert.equal(await ranges.contains("104.28.0.9"), null);
+    assert.equal(log.lines.length, 1);
+    assert.match(log.lines[0], /^warn opens: apple ranges unavailable/);
+    assert.ok(!log.lines.join("\n").includes("loaded"));
+  }
+});
+
 test("the list is fetched once and then answers from memory", async () => {
   let fetched = 0;
   const ranges = createAppleRanges({

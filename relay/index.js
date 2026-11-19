@@ -18,6 +18,7 @@ import { loadSecret } from "./src/secret.js";
 import { createOpensHandler } from "./src/opens-handlers.js";
 import { createOpenStore } from "./src/opens.js";
 import { createAppleRanges } from "./src/ranges.js";
+import { installQuietConsole } from "./src/quiet.js";
 
 function env(name, fallback) {
   const v = process.env[name];
@@ -28,13 +29,22 @@ function env(name, fallback) {
   return v;
 }
 
+// One instance serves one function. On the one that serves `opens`,
+// nothing but this code's own lines may reach the log — the framework
+// would otherwise print the path or body of a request it rejects before
+// the handler runs (src/quiet.js). The other two functions keep their
+// ordinary error output: only the app calls them.
+const servesOpens =
+  process.env.FUNCTION_TARGET === "opens" || process.env.K_SERVICE === "opens" || process.argv.includes("--target=opens");
+const log = servesOpens ? installQuietConsole(console) : console;
+
 const db = new Firestore();
 const auth = createAuth({
   clientIds: env("GOOGLE_CLIENT_IDS", "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
-  log: console,
+  log,
 });
 
 const handlers = createHandlers({
@@ -51,7 +61,7 @@ const handlers = createHandlers({
   auth,
   topic: env("PUBSUB_TOPIC", ""),
   opensUrl: env("OPENS_URL", "").replace(/\/+$/, ""),
-  log: console,
+  log,
 });
 
 functions.cloudEvent("onMailChange", handlers.onMailChange);
@@ -64,8 +74,8 @@ functions.http(
   createOpensHandler({
     opens: createOpenStore(db),
     auth,
-    ranges: createAppleRanges({ log: console }),
+    ranges: createAppleRanges({ log }),
     publicUrl: env("OPENS_PUBLIC_URL", "").replace(/\/+$/, ""),
-    log: console,
+    log,
   }),
 );

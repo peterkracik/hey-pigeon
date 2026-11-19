@@ -103,18 +103,22 @@ export function fakeOpens(initial = {}) {
       calls.push(["get", token, nowMs]);
       return live(token, nowMs);
     },
-    async register(token, mailboxHash, nowMs, ttlMs) {
-      calls.push(["register", token, mailboxHash, nowMs, ttlMs]);
-      const current = live(token, nowMs);
-      if (current) return current.mailboxHash === mailboxHash ? "exists" : "taken";
+    async register(token, mailboxHash, nowMs, ttlMs, maxPerMailbox) {
+      calls.push(["register", token, mailboxHash, nowMs, ttlMs, maxPerMailbox]);
+      const any = docs.get(token);
+      if (any && any.mailboxHash !== mailboxHash) return "taken";
+      if (live(token, nowMs)) return "exists";
+      const held = [...docs.values()].filter((d) => d.mailboxHash === mailboxHash).length;
+      if (held >= maxPerMailbox) return "full";
       docs.set(token, { mailboxHash, createdAt: nowMs, expiresAt: nowMs + ttlMs, events: [] });
       return "created";
     },
-    async append(token, event, cap, nowMs) {
-      calls.push(["append", token, event, cap, nowMs]);
+    async record(token, nextEvents, nowMs) {
       const current = live(token, nowMs);
-      if (!current || current.events.length >= cap) return false;
-      current.events.push(event);
+      const events = current ? nextEvents(current.events) : null;
+      calls.push(["record", token, events, nowMs]);
+      if (!events) return false;
+      current.events = events;
       return true;
     },
     async getMany(tokens, nowMs) {

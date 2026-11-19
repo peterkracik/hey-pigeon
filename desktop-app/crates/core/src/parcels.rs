@@ -149,14 +149,24 @@ fn plausible(day: i64, at: i64) -> bool {
 /// the body as received. None when there is no such markup or it states
 /// nothing usable. `at` is left 0: the caller knows the message.
 pub fn from_markup(html: &str) -> Option<Delivery> {
+    // Most mail has no such markup: look before copying the body.
+    if !contains_ignore_ascii_case(html, "schema.org") {
+        return None;
+    }
     // ASCII lower-casing keeps every byte where it was, so an index found
     // in `lower` is the same place in `html`.
     let lower = html.to_ascii_lowercase();
-    if !lower.contains("schema.org") {
-        return None;
-    }
     let found = json_ld(html, &lower).or_else(|| microdata(html, &lower))?;
     (!found.is_empty()).then_some(found)
+}
+
+/// Whether `needle` (ASCII) is in `hay` in any letter case, without a
+/// lower-cased copy of `hay`.
+fn contains_ignore_ascii_case(hay: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    hay.as_bytes()
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
 /// The text of each `<script type="application/ld+json">`, bounded.
@@ -300,7 +310,7 @@ fn order_items(o: &Map<String, Value>) -> Vec<String> {
             };
             let named = names(entry.get(inner));
             if named.is_empty() {
-                out.extend(names(Some(&Value::Object(entry.clone()))));
+                out.extend(text_of(entry, "name").and_then(clean_title));
             } else {
                 out.extend(named);
             }
@@ -355,21 +365,77 @@ fn clean_title(raw: &str) -> Option<String> {
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&");
-    let visible: String = decoded
-        .chars()
-        .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .filter(|c| {
-            !c.is_control()
-                && !matches!(c,
-                    '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
-        })
-        .collect();
+    let mut visible = String::with_capacity(decoded.len());
+    let mut marks = 0;
+    for c in decoded.chars() {
+        let c = if c.is_whitespace() { ' ' } else { c };
+        if c.is_control() || is_invisible(c) {
+            continue;
+        }
+        // A letter carries a few marks ("ệ" is two); a pile of them
+        // draws over the rows above and below.
+        if is_combining(c) {
+            marks += 1;
+            if marks > MAX_MARKS {
+                continue;
+            }
+        } else {
+            marks = 0;
+        }
+        visible.push(c);
+    }
     let one_line = visible.split_whitespace().collect::<Vec<_>>().join(" ");
     let lower = one_line.to_ascii_lowercase();
     if one_line.is_empty() || lower.starts_with("http://") || lower.starts_with("https://") {
         return None;
     }
     Some(one_line.chars().take(MAX_TITLE).collect())
+}
+
+/// Combining marks kept after one letter.
+const MAX_MARKS: usize = 3;
+
+/// Characters that draw nothing or change the direction of what follows:
+/// zero-width and bidi controls (U+061C, U+200B–200F, U+202A–202E,
+/// U+2060–2069, U+FEFF), the soft hyphen, the fillers that look like a
+/// space but are letters (U+115F, U+1160, U+3164, U+FFA0), the Mongolian
+/// vowel separator, the grapheme joiner, and the tag characters.
+fn is_invisible(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0000}'..='\u{E007F}')
+}
+
+/// The marks that stack on the letter before them: the combining
+/// diacritics blocks, and the Hebrew, Arabic and Thai ones. Not every
+/// mark Unicode has — the ones a title can be piled high with.
+fn is_combining(c: char) -> bool {
+    matches!(c,
+        '\u{0300}'..='\u{036F}'
+            | '\u{0483}'..='\u{0489}'
+            | '\u{0591}'..='\u{05BD}'
+            | '\u{0610}'..='\u{061A}'
+            | '\u{064B}'..='\u{065F}'
+            | '\u{06D6}'..='\u{06DC}'
+            | '\u{0E31}'
+            | '\u{0E34}'..='\u{0E3A}'
+            | '\u{0E47}'..='\u{0E4E}'
+            | '\u{1AB0}'..='\u{1AFF}'
+            | '\u{1DC0}'..='\u{1DFF}'
+            | '\u{20D0}'..='\u{20FF}'
+            | '\u{FE20}'..='\u{FE2F}')
 }
 
 /// schema.org's `OrderStatus` values, and the plain words some shops
@@ -410,7 +476,12 @@ fn microdata(html: &str, lower: &str) -> Option<Delivery> {
         });
     let status = prop(html, lower, "orderstatus", 0, lower.len()).and_then(|v| status_of(&v));
     let title = find_prop(lower, "itemshipped", 0, lower.len()).and_then(|at| {
-        let until = (at + ITEM_NAME_REACH).min(lower.len());
+        // Back to the start of a character: that many bytes on may be
+        // the middle of a letter ("ž"), and a slice there is no slice.
+        let mut until = (at + ITEM_NAME_REACH).min(lower.len());
+        while !lower.is_char_boundary(until) {
+            until -= 1;
+        }
         prop(html, lower, "name", at + 1, until).and_then(|v| clean_title(&v))
     });
     Some(Delivery {
@@ -966,8 +1037,9 @@ impl Known {
 /// One parcel on the inbox's card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parcel {
-    /// The same on every device: `number:<tracking or order number>`, or
-    /// `thread:<the newest email's thread id>`. What a dismissal names.
+    /// The same on every device: `number:<16 hex digits of the tracking
+    /// or order number's SHA-256>` (`number_id`), or `thread:<the newest
+    /// email's thread id>`. What a dismissal names.
     pub id: String,
     pub bundle_id: String,
     /// The newest email about it, the account it is in, and that email's
@@ -1022,22 +1094,66 @@ fn is_redirect(host: &str) -> bool {
 }
 
 /// The host a web address really leads to, lower-cased, without a port.
-/// None for an address that names a user before the host
-/// (`https://dhl.com@evil.example/`): nothing honest is written that
-/// way, and the card names the host it opens.
+/// None unless that can be read off the address the way every browser
+/// and URL parser reads it:
+///
+/// - an address that names a user before the host
+///   (`https://dhl.com@evil.example/`): nothing honest is written that
+///   way;
+/// - a backslash, a control character or anything outside ASCII before
+///   the path (`https://dhl.com\@evil.example/`): one parser takes `\`
+///   for a `/` and stops at `dhl.com`, another escapes it and goes on to
+///   `evil.example` — and the card names the host it opens;
+/// - a port that is not a number;
+/// - an IP address: a parcel's page has a name, and the card would show
+///   digits that say nothing about who is behind them.
 pub fn host_of(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
-    let authority = rest.split(['/', '?', '#', '\\']).next()?;
-    if authority.contains('@') {
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if authority
+        .chars()
+        .any(|c| c == '@' || c == '\\' || !c.is_ascii() || c.is_ascii_control() || c == ' ')
+    {
         return None;
     }
-    let host = authority.split(':').next()?.to_ascii_lowercase();
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    if port.is_some_and(|p| !p.chars().all(|c| c.is_ascii_digit())) {
+        return None;
+    }
+    let host = host.to_ascii_lowercase();
     let plain = host
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
-    (plain && host.contains('.') && !host.starts_with('.') && !host.ends_with('.')).then_some(host)
+    // Every form of an IPv4 address ends in a number (`192.168.1.1`,
+    // `0x7f.1`); no name does.
+    let numeric = host
+        .rsplit('.')
+        .next()
+        .is_some_and(|last| last.chars().all(|c| c.is_ascii_digit()) || last.starts_with("0x"));
+    (plain
+        && !numeric
+        && host.contains('.')
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains(".."))
+    .then_some(host)
+}
+
+/// A parcel's id from its tracking or order number: `number:` and the
+/// first 16 hex digits of the number's SHA-256. The same on every
+/// device, so a dismissal made on one holds on the others — and not the
+/// number itself, because dismissals are a synced pref and a tracking
+/// number is enough to follow or redirect a parcel.
+fn number_id(number: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(number.as_bytes());
+    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    format!("number:{hex}")
 }
 
 /// One tracking link and the thread it is in (an index into the bundle's
@@ -1068,12 +1184,8 @@ pub fn overview<S: Store>(
         if bundle.status != BundleStatus::Active {
             continue;
         }
-        let threads: Vec<Thread> = store
-            .list_bundle_threads(&bundle.id)?
-            .into_iter()
-            .take(SCAN_THREADS)
-            .filter(|t| t.last_msg_at >= now - WINDOW_MS)
-            .collect();
+        let threads: Vec<Thread> =
+            store.list_recent_bundle_threads(&bundle.id, now - WINDOW_MS, SCAN_THREADS as u32)?;
         if threads.is_empty() {
             continue;
         }
@@ -1128,7 +1240,7 @@ pub fn overview<S: Store>(
                 numbers
                     .iter()
                     .find(|n| address.contains(n.as_str()))
-                    .map(|n| format!("number:{n}"))
+                    .map(|n| number_id(n))
             })
             .collect();
         // An email's links without a number are the same parcel as its
@@ -1331,6 +1443,32 @@ mod tests {
         );
     }
 
+    /// The name is looked for a fixed number of bytes after `itemShipped`;
+    /// in mail that is not ASCII that many bytes on can be the middle of
+    /// a letter, and the title was lost.
+    #[test]
+    fn microdata_title_survives_a_reach_that_ends_inside_a_letter() {
+        for pad in 0..3 {
+            let html = format!(
+                r#"<div itemscope itemtype="http://schema.org/ParcelDelivery">{}
+                   <div itemprop="itemShipped"><span itemprop="name">Vlněné ponožky</span></div>{}</div>"#,
+                "x".repeat(pad),
+                "ž".repeat(ITEM_NAME_REACH)
+            );
+            assert_eq!(
+                from_markup(&html).and_then(|d| d.title).as_deref(),
+                Some("Vlněné ponožky"),
+                "pad {pad}"
+            );
+        }
+        // The early look for schema.org is in any letter case.
+        assert!(contains_ignore_ascii_case(
+            "x SCHEMA.Org/Order",
+            "schema.org"
+        ));
+        assert!(!contains_ignore_ascii_case("schema.or", "schema.org"));
+    }
+
     #[test]
     fn hostile_markup_is_bounded() {
         // Deep nesting is an error, not a stack.
@@ -1374,6 +1512,16 @@ mod tests {
         );
         assert_eq!(titled("https://evil.example/login"), None);
         assert_eq!(titled(" \u{200F} "), None);
+        // Nor the other things that draw nothing or draw over the row:
+        // the Arabic letter mark, a soft hyphen, a filler that passes for
+        // a space, tag characters, and a pile of combining marks.
+        assert_eq!(
+            titled("Ca\u{00AD}se\u{061C}\u{3164}\u{E0041}\u{E007F} X3").as_deref(),
+            Some("Case X3")
+        );
+        assert_eq!(titled("\u{3164}\u{E0020}"), None);
+        let piled = titled(&format!("Z{}algo e\u{0301}", "\u{0301}\u{0489}".repeat(40))).unwrap();
+        assert_eq!(piled, "Z\u{0301}\u{0489}\u{0301}algo e\u{0301}");
         assert_eq!(titled(&"é".repeat(500)).unwrap().chars().count(), MAX_TITLE);
         // Dates that are no dates.
         for bad in [
@@ -1639,7 +1787,15 @@ mod tests {
         assert_eq!(found.len(), 2);
         // Out for delivery counts as today: first.
         let first = &found[0];
-        assert_eq!(first.id, "number:00340434161094000000");
+        // The id names the number without holding it: it goes into a
+        // synced pref when the parcel is dismissed.
+        assert_eq!(first.id, number_id("00340434161094000000"));
+        assert_eq!(first.id.len(), "number:".len() + 16);
+        assert!(!first.id.contains("0034043416"));
+        assert_eq!(
+            first.id, "number:bfa83b19dfd2e747",
+            "the same on every device"
+        );
         assert_eq!(first.thread_id, "today");
         assert_eq!(first.host, "www.dhl.com");
         assert_eq!(first.status, Some(ParcelStatus::OutForDelivery));
@@ -1685,6 +1841,61 @@ mod tests {
         assert_eq!(host_of("https://dhl.com@evil.example/"), None);
         assert_eq!(host_of("ftp://dhl.com/"), None);
         assert_eq!(host_of("https://localhost/"), None);
+    }
+
+    /// A backslash before the path: one URL parser stops the host there,
+    /// another escapes it and goes on to what follows the `@`. No host is
+    /// read off such an address, so no parcel is made of it.
+    #[test]
+    fn an_address_parsers_disagree_on_is_no_parcel() {
+        let s = MemStore::default();
+        let shopping = shop(&s, BundleKind::Shopping);
+        let spoofs = [
+            r"https://dhl.com\@evil.example/track",
+            r"https://dhl.com:443\@evil.example/track",
+            r"https://dhl.com\.evil.example/track",
+            "https://dhl.com&#92;@evil.example/track",
+            "https://dhl.com%5C@evil.example/track",
+            "https://dhl.com\u{0001}.evil.example/track",
+            "https://dhl.com\u{3002}evil.example/track",
+            "https://dhl.com:8o/track",
+            "https://dhl..com/track",
+        ];
+        for (i, url) in spoofs.iter().enumerate() {
+            assert_eq!(host_of(url), None, "{url}");
+            mail(
+                &s,
+                &shopping,
+                &format!("spoof{i}"),
+                "Track it",
+                NOW - H,
+                &format!(r#"<a href="{url}">Track your parcel</a>"#),
+            );
+        }
+        assert!(parcels(&s, NOW).is_empty());
+        // An IP address is no parcel's page either, in any spelling.
+        for url in [
+            "https://192.168.1.1/track",
+            "http://203.0.113.7:8080/track",
+            "https://0x7f.0.0.1/track",
+            "https://2130706433.1/track",
+        ] {
+            assert_eq!(host_of(url), None, "{url}");
+        }
+        mail(
+            &s,
+            &shopping,
+            "ip",
+            "Track it",
+            NOW - H,
+            r#"<a href="https://203.0.113.7/track">Track your parcel</a>"#,
+        );
+        assert!(parcels(&s, NOW).is_empty());
+        // What is left alone: a name with digits, a port, a query.
+        assert_eq!(
+            host_of("https://track.123post.example:8443/p?id=1#x").as_deref(),
+            Some("track.123post.example")
+        );
     }
 
     #[test]

@@ -631,11 +631,15 @@ const MIGRATIONS: &[&str] = &[
     // cannot be read later). Derived, never synced, gone with the thread.
     //
     // Mail that is already here was scanned and fetched before either
-    // was read. Once: the last 45 days are scanned again (local string
-    // work, on the next sync rounds), and bundled threads of those days
-    // have their bodies fetched again on their next open or prefetch,
-    // as v32 and v33 did for the attachment flag — so a parcel on its
-    // way today gets its status and day.
+    // was read. Once, for the bundled threads of the last 45 days — the
+    // only mail a parcel comes from: they are scanned again (local
+    // string work, on the next sync rounds) and their bodies are fetched
+    // again on their next open or prefetch, as v32 and v33 did for the
+    // attachment flag — so a parcel on its way today gets its status and
+    // day. Mail in no bundle is left alone: scanning it again would send
+    // it through the link pass again, which can join a thread to a
+    // bundle or reopen an archived one, and an upgrade must not change
+    // what syncs between devices.
     "
     CREATE TABLE thread_deliveries (
         thread_id        TEXT NOT NULL,
@@ -651,7 +655,8 @@ const MIGRATIONS: &[&str] = &[
         DELETE FROM thread_deliveries WHERE thread_id = old.id;
     END;
     UPDATE threads SET anchors_msg_count = NULL
-     WHERE last_msg_at > (CAST(strftime('%s', 'now') AS INTEGER) - 45 * 86400) * 1000;
+     WHERE bundle_id IS NOT NULL
+       AND last_msg_at > (CAST(strftime('%s', 'now') AS INTEGER) - 45 * 86400) * 1000;
     UPDATE messages SET body_fetched = 0
      WHERE thread_id IN (
         SELECT id FROM threads
@@ -2362,6 +2367,29 @@ impl Store for SqliteStore {
                   ORDER BY last_msg_at DESC"
             ))?;
             let rows = stmt.query_map(params![bundle_id], row_to_thread)?;
+            rows.collect()
+        })
+    }
+
+    fn list_recent_bundle_threads(
+        &self,
+        bundle_id: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let junk = format!(
+            "({} OR {})",
+            has_label_sql("labels", "TRASH"),
+            has_label_sql("labels", "SPAM")
+        );
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {THREAD_COLS} FROM threads
+                  WHERE bundle_id = ?1 AND last_msg_at >= ?2 AND NOT {junk}
+                  ORDER BY last_msg_at DESC
+                  LIMIT ?3"
+            ))?;
+            let rows = stmt.query_map(params![bundle_id, since_ms, limit], row_to_thread)?;
             rows.collect()
         })
     }
@@ -7693,5 +7721,123 @@ mod tests {
         assert_eq!(kept[0].1.status, Some(ParcelStatus::Shipped));
         s.delete_thread(&t1).unwrap();
         assert!(s.thread_deliveries(&t1).unwrap().is_empty());
+    }
+
+    /// What the parcel overview asks for on every list reload: a bundle's
+    /// newest few threads of the last weeks, not all of them.
+    #[test]
+    fn recent_bundle_threads_are_the_newest_within_the_window() {
+        let s = store();
+        s.upsert_account(&sample_account("a1")).unwrap();
+        for (id, labels, at) in [
+            ("old", &["INBOX"][..], 1000),
+            ("mid", &["INBOX"][..], 2000),
+            ("new", &[][..], 3000),
+            ("newest", &["INBOX"][..], 4000),
+            ("binned", &["TRASH"][..], 5000),
+            ("elsewhere", &["INBOX"][..], 6000),
+        ] {
+            seed_labelled(&s, id, labels, true, false, at);
+        }
+        s.with(|c| {
+            c.execute_batch(
+                "UPDATE threads SET bundle_id = 'b1' WHERE id != 'elsewhere';
+                 UPDATE threads SET bundle_id = 'b2' WHERE id = 'elsewhere';",
+            )
+        })
+        .unwrap();
+        let ids = |since: i64, limit: u32| -> Vec<String> {
+            s.list_recent_bundle_threads("b1", since, limit)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect()
+        };
+        assert_eq!(ids(0, 10), ["newest", "new", "mid", "old"]);
+        assert_eq!(ids(0, 2), ["newest", "new"]);
+        assert_eq!(ids(2000, 10), ["newest", "new", "mid"]);
+        assert_eq!(ids(4001, 10), Vec::<String>::new());
+        // The same rows, in the same order, as the full list's head.
+        let all: Vec<String> = s
+            .list_bundle_threads("b1")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids(0, 10), all);
+    }
+
+    /// The upgrade reads bundled mail of the last 45 days again, for the
+    /// parcels already on their way — and nothing else: mail in no bundle
+    /// scanned again would go through the link pass again, which can join
+    /// it to a bundle or reopen an archived one because of an upgrade.
+    #[test]
+    fn v35_upgrade_rereads_only_recent_bundled_mail() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v35-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v34.db");
+        let _ = std::fs::remove_file(&path);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let day = 86_400_000;
+        {
+            let conn = Connection::open(&path).unwrap();
+            let s = SqliteStore::init_to(conn, 34).unwrap();
+            old_account(&s, "a1");
+            for (id, bundle, at) in [
+                ("bundled", Some("b1"), now - day),
+                ("loose", None, now - day),
+                ("bundled-old", Some("b1"), now - 60 * day),
+            ] {
+                seed_labelled(&s, id, &["INBOX"], true, false, at);
+                s.with(|c| {
+                    c.execute(
+                        "UPDATE threads SET bundle_id = ?2, anchors_msg_count = 1 WHERE id = ?1",
+                        params![id, bundle],
+                    )?;
+                    c.execute(
+                        "INSERT INTO messages
+                           (id, thread_id, account_id, from_addr, to_addrs, date, snippet,
+                            body_text, label_ids, is_read, body_fetched)
+                         VALUES (?1, ?2, 'a1', 'shop@example.com', '[]', ?3, '', 'hi', '[]', 1, 1)",
+                        params![format!("m-{id}"), id, at],
+                    )
+                })
+                .unwrap();
+            }
+        }
+        let s = SqliteStore::open(&path).unwrap(); // runs v35
+        let state = |id: &str| -> (Option<i64>, bool) {
+            s.with(|c| {
+                c.query_row(
+                    "SELECT t.anchors_msg_count, m.body_fetched FROM threads t
+                       JOIN messages m ON m.thread_id = t.id WHERE t.id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap()
+        };
+        assert_eq!(state("bundled"), (None, false), "scanned and fetched again");
+        assert_eq!(
+            state("loose"),
+            (Some(1), true),
+            "mail in no bundle is left alone"
+        );
+        assert_eq!(
+            state("bundled-old"),
+            (Some(1), true),
+            "older than the window"
+        );
+        let again: Vec<String> = s
+            .list_threads_needing_anchors(10)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(again, ["bundled"]);
+        let _ = std::fs::remove_file(&path);
     }
 }

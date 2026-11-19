@@ -546,19 +546,31 @@ pub fn tracking_links(text: &str, numbers: &[String]) -> Vec<String> {
         if !(url.starts_with("https://") || url.starts_with("http://")) {
             continue;
         }
-        // The link text right after an HTML anchor ("Track your parcel").
+        // The link text right after an HTML anchor ("Track your parcel"):
+        // only where the address stood in quotes, and only as far as
+        // `LABEL_REACH`. Looking for the next `>` to the end of the text
+        // for every address made a plain-text mail of many links cost
+        // the square of its length.
         let after = &lower[(at + end).min(lower.len())..];
-        let label = after
-            .split_once('>')
-            .map(|(_, t)| t.split('<').next().unwrap_or(""))
-            .unwrap_or("");
+        let label = if after.starts_with('"') {
+            let mut reach = after.len().min(LABEL_REACH);
+            while !after.is_char_boundary(reach) {
+                reach -= 1;
+            }
+            after[..reach]
+                .split_once('>')
+                .map(|(_, t)| t.split('<').next().unwrap_or(""))
+                .unwrap_or("")
+        } else {
+            ""
+        };
         // Pictures and tracking pixels are not links to follow.
         if is_asset_url(&url) {
             continue;
         }
         let upper = url.to_uppercase();
         let tracks = url.to_lowercase().contains("track")
-            || (after.starts_with('"') && label.contains("track"))
+            || label.contains("track")
             || numbers.iter().any(|n| upper.contains(n.as_str()));
         if tracks && !out.contains(&url) {
             out.push(url);
@@ -569,6 +581,11 @@ pub fn tracking_links(text: &str, numbers: &[String]) -> Vec<String> {
     }
     out
 }
+
+/// How far after an address its anchor's tag may end and its link text
+/// stand, in bytes: the rest of the tag's attributes (an inline style,
+/// usually) and the words of the link.
+const LABEL_REACH: usize = 512;
 
 /// An image, a style sheet or a script, by its path or its host (a CDN
 /// serving mail assets: `m.media-amazon.com`, `img.`, `static.`).
@@ -980,6 +997,38 @@ mod tests {
         assert_eq!(
             tracking_links(html, &[]),
             vec!["https://kargo.example/track/İ1".to_string()]
+        );
+    }
+
+    /// The link text is looked for only after a quoted address and only
+    /// a bounded way on. A plain-text mail of many links and no `>` used
+    /// to be searched to its end once per link.
+    #[test]
+    fn tracking_links_of_a_long_plain_text_return() {
+        let mut text = "https://shop.example/a ".repeat(80_000);
+        text.push_str("https://carrier.example/track/1Z999 ž");
+        assert_eq!(
+            tracking_links(&text, &[]),
+            vec!["https://carrier.example/track/1Z999".to_string()]
+        );
+        // Quoted, with no end of tag in reach: no label, and no slice
+        // inside a letter where the reach ends.
+        for pad in 0..3 {
+            let html = format!(
+                "<a href=\"https://shop.example/p\"{}{}>Track parcel</a>",
+                " ".repeat(pad),
+                "ž".repeat(LABEL_REACH)
+            );
+            assert!(tracking_links(&html, &[]).is_empty(), "pad {pad}");
+        }
+        // A tag with a style of ordinary length still gives its label.
+        let styled = format!(
+            "<a href=\"https://shop.example/p\" style=\"{}\">Track parcel</a>",
+            "color:#111;".repeat(20)
+        );
+        assert_eq!(
+            tracking_links(&styled, &[]),
+            vec!["https://shop.example/p".to_string()]
         );
     }
 

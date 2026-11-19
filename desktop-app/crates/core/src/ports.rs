@@ -729,6 +729,25 @@ pub trait Store {
         Ok(Vec::new())
     }
 
+    /// The newest `limit` of `list_bundle_threads` whose last message is
+    /// at or after `since_ms`: what the parcel overview reads on every
+    /// list reload, where loading a 3,000-thread bundle to keep fifteen
+    /// is the whole cost. The default filters the full list; a store
+    /// with an index should ask for only these.
+    fn list_recent_bundle_threads(
+        &self,
+        bundle_id: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        Ok(self
+            .list_bundle_threads(bundle_id)?
+            .into_iter()
+            .filter(|t| t.last_msg_at >= since_ms)
+            .take(limit as usize)
+            .collect())
+    }
+
     /// Inbox threads of `account_id` whose list sender (`last_from_addr`)
     /// is one of `senders` (lowercase addresses), reminders and "needs
     /// reply" ones included: the candidates for the block rule

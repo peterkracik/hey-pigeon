@@ -191,12 +191,15 @@ impl From<domain::ParcelStatus> for ParcelStatus {
 /// them — nothing is guessed.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Parcel {
-    /// The same on every device: `number:<tracking or order number>`, or
+    /// The same on every device: `number:<16 hex digits of the tracking
+    /// or order number's SHA-256>` (never the number: dismissals sync), or
     /// `thread:<thread id>`. What a dismissal names.
     pub id: String,
     pub bundle_id: String,
     /// The newest email about it; `url` is that email's tracking link
-    /// (http or https, a link that is visible in the email).
+    /// (http or https, a link from the email's body, never the markup's
+    /// `trackingUrl`; its host has a name and no user, backslash or
+    /// non-ASCII character before the path: `core::parcels::host_of`).
     pub thread_id: String,
     /// The account that email is in.
     pub account_id: String,

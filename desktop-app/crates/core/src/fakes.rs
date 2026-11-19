@@ -667,6 +667,26 @@ impl Store for MemStore {
         Ok(v)
     }
 
+    fn list_recent_bundle_threads(
+        &self,
+        bundle_id: &str,
+        since_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let g = self.inner.lock().unwrap();
+        let mut v: Vec<Thread> = g
+            .threads
+            .values()
+            .filter(|t| t.bundle_id.as_deref() == Some(bundle_id))
+            .filter(|t| t.last_msg_at >= since_ms)
+            .filter(|t| !t.labels.iter().any(|l| l == "TRASH" || l == "SPAM"))
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
     fn list_threads_needing_anchors(&self, limit: u32) -> Result<Vec<Thread>, StoreError> {
         let g = self.inner.lock().unwrap();
         let mut v: Vec<Thread> = g

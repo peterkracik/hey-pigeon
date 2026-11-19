@@ -105,7 +105,7 @@ jobs:
       TF_VAR_apns_team_id: ${{ vars.APNS_TEAM_ID || secrets.APNS_TEAM_ID }}
       TF_VAR_google_client_ids: '["${{ vars.HEYPIGEON_IOS_OAUTH_CLIENT_ID || secrets.HEYPIGEON_IOS_OAUTH_CLIENT_ID }}"]'
       # Empty unless set on the environment: no custom domain, no mapping.
-      TF_VAR_opens_domain: ${{ vars.OPENS_DOMAIN }}
+      TF_VAR_opens_domain: ${{ vars.OPENS_DOMAIN || secrets.OPENS_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
 

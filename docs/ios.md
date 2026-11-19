@@ -92,9 +92,11 @@ floating "splits" pill above the tab bar. Here that maps to:
   count. The app icon badge is unified unread + reminders due today.
 - **The sidebar (≡)** is the desktop sidebar as a sheet: Inbox, then the
   accounts (All / each account) on a card of their own — a disconnected
-  one with a Reconnect row under it — then the desktop's folders in
+  one with a Reconnect row under it — then Recent Opens (with read
+  status in the build), the bundles, the desktop's folders in
   its order — Pinned (Gmail's Starred) · Sent · Drafts · Archive · Remind me · Need reply ·
-  All emails · Spam · Trash — the Gmail labels, Add account and Settings.
+  All emails · Spam · Trash — the Gmail labels and Settings. An account
+  is added in Settings › Accounts.
   Picking a folder shows it in the Inbox tab.
 - **The label pill** above the tab bar is the desktop's label tabs under the
   folder title: the folder (no filter), then the **Jev triage labels** from

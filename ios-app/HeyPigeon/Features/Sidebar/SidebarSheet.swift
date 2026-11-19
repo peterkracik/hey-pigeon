@@ -73,8 +73,9 @@ struct SidebarList: View {
                     accountRow(a.id, title: a.displayName, subtitle: a.email, color: a.color, disconnected: disconnected)
                     // The way back in, right under the account that lost
                     // its sign-in: the line used to send the user to
-                    // Settings to find the same button. The sheet stays up
-                    // for the consent sheet, as for Add Google account.
+                    // Settings to find the same button. The consent sheet
+                    // needs a window to present over, and closing this sheet
+                    // first tore it down: stay up until it finishes.
                     if disconnected {
                         Button {
                             Task {
@@ -89,6 +90,16 @@ struct SidebarList: View {
                 }
             }
             .menuCard()
+            // Read status's list (docs/specs/read-status.md R7), between
+            // the inboxes and the bundles: it is looked at daily, and sat
+            // under every folder and label. Not in a build that cannot
+            // track: the row would lead nowhere.
+            if model.readStatusAvailable {
+                Section {
+                    Button { onPick(); model.showRecentOpens() } label: { Label(RecentOpens.title, systemImage: RecentOpens.symbol) }
+                }
+                .menuCard()
+            }
             bundlesSection
             // The desktop sidebar's folders, in its order (Archive is "done"
             // in this app's vocabulary; Scheduled and Need reply are tabs).
@@ -132,20 +143,9 @@ struct SidebarList: View {
                 }
                 .menuCard()
             }
+            // Adding an account is in Settings › Accounts; a row for it here
+            // was a second door to something done once.
             Section {
-                // The consent sheet needs a window to present over; closing
-                // this sheet first tore it down. Stay up until it finishes.
-                Button {
-                    Task {
-                        await model.addAccount()
-                        onPick()
-                    }
-                } label: { Label("Add Google account", systemImage: "plus.circle") }
-                // Read status's list (docs/specs/read-status.md R7). Not in
-                // a build that cannot track: the row would lead nowhere.
-                if model.readStatusAvailable {
-                    Button { onPick(); model.showRecentOpens() } label: { Label(RecentOpens.title, systemImage: RecentOpens.symbol) }
-                }
                 Button { onPick(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
             .menuCard()
@@ -204,7 +204,7 @@ struct SidebarList: View {
         }
     }
 
-    /// The Bundles card, right under the inboxes: the most recent ones,
+    /// The Bundles card, under the inboxes and Recent Opens: the most recent ones,
     /// "N more" for the rest (hidden ones included, to show them again),
     /// then the whole list. A bundle opens its own sheet; this one closes.
     private var bundlesSection: some View {

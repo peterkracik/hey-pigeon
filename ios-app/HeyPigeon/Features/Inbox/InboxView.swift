@@ -720,8 +720,8 @@ struct SkeletonList: View {
 
 extension AppModel {
     /// With no account there is no mail to be clear of: an empty list
-    /// offers the sign-in instead (`EmptyState`'s `connect`, the
-    /// sidebar's "Add Google account"). Nil once an account is connected.
+    /// offers the sign-in instead (`EmptyState`'s `connect`; later
+    /// accounts are added in Settings). Nil once an account is connected.
     /// One closure for the phone's list, the iPad's list column and the
     /// Mac's window, which each had — or lacked — their own.
     var connectFirstAccount: (() -> Void)? {

@@ -182,11 +182,15 @@ struct PriorityIndicator: View {
         } else {
             let level = priority == .high ? 3 : priority == .medium ? 2 : 1
             let lit = priority == .high ? Theme.tagForeground(.coral) : Theme.tagForeground(.amber)
+            // A faint step of the text colour, in both appearances: the
+            // fixed light grey it was outshone the lit bars on dark.
+            let unlit = Theme.textTertiary.opacity(0.4)
             VStack(spacing: 2) {
                 ForEach(1...3, id: \.self) { bar in
-                    RoundedRectangle(cornerRadius: 1).fill(bar > 3 - level ? lit : Theme.navy200).frame(width: 11, height: 2)
+                    RoundedRectangle(cornerRadius: 1).fill(bar > 3 - level ? lit : unlit).frame(width: 11, height: 2)
                 }
             }
+            .help("Priority \(priority.rawValue)")
             .accessibilityLabel("Priority \(priority.rawValue)")
         }
     }

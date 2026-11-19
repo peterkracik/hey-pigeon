@@ -32,7 +32,8 @@ enum MacTheme {
 
 /// The window's measures.
 enum MacLayout {
-    /// The readable column the list and the thread share.
+    /// The column of the list's single-line rows (and the Bundles page).
+    /// A thread is read in `readingWidth`.
     static let maxWidth: CGFloat = 1120
     /// The sidebar's width.
     static let sidebarWidth: CGFloat = 232
@@ -44,8 +45,9 @@ enum MacLayout {
     static let paneListWidth: CGFloat = 420
     static let paneSenderWidth: CGFloat = 120
     static let paneMinWidth: CGFloat = 1000
-    /// A page that is read, not scanned (a bundle's Info): prose and
-    /// short facts in a column as wide as Settings' form.
+    /// A page that is read, not scanned (an open thread, a bundle's
+    /// Info): prose and short facts in a column as wide as Settings' form
+    /// and the iPad's thread (`ReadableLayout.maxWidth`).
     static let readingWidth: CGFloat = 760
 }
 

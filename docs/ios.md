@@ -245,11 +245,30 @@ and a *Remove reminder* row when one is set. Times respect the user's locale and
 Pushed onto the stack. The top bar holds the back circle, the other people's
 names and the AI + More circles; the subject sits in the content with one
 line of the list's chips (priority, Jev labels and a "+" to edit them, the
-reminder and need-reply badges as coloured pills) and the message count. Messages are the inbox's rows — sender · time, one
+reminder and need-reply badges as coloured pills) and, at the line's end,
+the count in words ("6 messages", quiet: a bare number read as one more
+badge). Messages are the inbox's rows — sender · time, one
 snippet line, the unread bar on the left edge, 1 pt gaps: latest expanded on
-the card surface, older ones collapsed on the canvas, tap to expand. Past four
-messages the middle folds into one "N earlier messages" row; a run of unread
+the card surface, older ones collapsed on the canvas, tap to expand. A
+closed message that was read has its sender in the secondary colour; the
+open one and the unread ones keep the primary. Past four
+messages the middle folds into one "N earlier messages" line — small, in the
+tertiary colour, a chevron before it; a run of unread
 messages before the last two stays visible.
+
+An open message's header is two lines. The first is the sender and the time,
+as short as the day allows (`Formatters.messageTime`): "05:57" today,
+"Yesterday, 05:57", "Thu, 09:12" within the week, then "Nov 12, 09:12", the
+year only when it is another; the whole date is the tooltip and what
+VoiceOver reads. The second is "to …" — by name where the thread knows the
+address (`ThreadDetail.knownNames`) — and ends with the message's •••, so
+the times of open and closed messages share one right edge.
+
+The three devices share all of this and differ in the container only
+(`ThreadChrome`): flat and edge to edge on the phone (no cards), a 760 pt
+column on a regular-width iPad (`readableColumn`), and on the Mac the same
+column with the messages as one rounded card
+([macos-app/CLAUDE.md](../macos-app/CLAUDE.md)).
 
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
@@ -261,7 +280,7 @@ messages before the last two stays visible.
   long-press preview.
   The trailing quoted history (`div.gmail_quote`, Outlook's reference
   container, a trailing `<blockquote>`, or `>` lines in plain text) folds
-  behind a ••• button, same rules as desktop.
+  behind a small, quiet ••• pill, same rules as desktop.
 - **Attachments** are chips under the message: tap fetches the bytes
   (`messages.attachments.get`, cached as a file) and opens Quick Look. Never
   auto-open. On images and PDFs, **Explain attachment** has the on-device
@@ -285,7 +304,9 @@ messages before the last two stays visible.
   the thread; a reply goes to the message's Reply-To when its sender set
   one, and the account's "Send mail as" addresses count as the user's own;
   the rules are in `docs/specs/reply-recipients.md`), and the AI draft is its own circle beside it. There are no action
-  links under the bodies: an open message's ••• or a long press on any
+  links under the bodies on the phone and the iPad (the Mac ends the last
+  message with Reply · Reply all · Forward and keeps the triage alone on
+  its floating card): an open message's ••• or a long press on any
   message's header line replies to or forwards that one (the body is left
   to the long press that starts a text selection).
 - Thread-level swipe between adjacent threads is deliberately **not** in v1

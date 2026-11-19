@@ -1,9 +1,13 @@
 // The open thread ("Open full thread ›", Return), in the list's place,
-// under the window's toolbar (which names it and holds its Back
-// (MainToolbar), with the shared ThreadView's sparkle and actions menu):
-// the phone's thread screen (Features/Thread/ThreadView — messages,
-// attachments, and the Reply pill and triage buttons on one card at the
-// bottom). The thread's "close" (after done, delete, mark
+// under the window's toolbar (which holds its Back (MainToolbar), with
+// the shared ThreadView's sparkle and actions menu; the thread names
+// itself, with its subject): the phone's thread screen
+// (Features/Thread/ThreadView) in a reading column of its own
+// (`MacLayout.readingWidth`, kept by the shared view's `threadColumn`, so
+// a thread window and an email on the Bundles page have it too) on the
+// list's background — the messages as one white card that ends with
+// Reply · Reply all · Forward, the triage buttons on a small card at the
+// bottom. The thread's "close" (after done, delete, mark
 // unread, move) hands the window to the next thread, or back to the list
 // when there is none. ThreadWindow is the same thread in a window of its
 // own (⌘↩).
@@ -23,9 +27,10 @@ struct ThreadPage: View {
             // sidebar; the window's toolbar has its own over the content.
             .navigationBarBackButtonHidden(true)
             .scrollIndicators(.never)
-            .frame(maxWidth: MacLayout.maxWidth)
+            // The column is the thread view's own (`threadColumn`): in
+            // the middle of the window, or of the reading pane.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MacTheme.content)
+            .background(MacTheme.listBackground)
             // Focusable so the key map works after a click in the thread, with
             // no ring drawn around the page.
             .focusable()
@@ -55,7 +60,9 @@ struct ThreadWindow: View {
         if let threadId, let row = model.row(forThreadId: threadId) {
             NavigationStack {
                 ThreadView(row: row) { dismissWindow(id: MacWindows.thread, value: threadId) }
-                    .background(Theme.canvas)
+                    .scrollIndicators(.never)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(MacTheme.listBackground)
             }
             .frame(minWidth: 540, minHeight: 480)
             .overlay(alignment: .bottom) { ToastStack() }

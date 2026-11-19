@@ -213,6 +213,18 @@ struct ThreadModelTests {
         #expect(t.count < ThreadDetail.transcriptBudget + 100)
     }
 
+    @Test func theToLineNamesThePeopleTheThreadKnows() {
+        // By address in any case; "me" and a stranger's address as they are.
+        let names = ThreadDetail.knownNames([
+            makeMessage("a", from: "Ana", address: "Ana@Acme.test"),
+            makeMessage("b", from: "Ben", address: "ben@acme.test"),
+            makeMessage("c", from: "Ana Maria", address: "ana@acme.test"),
+        ])
+        #expect(ThreadDetail.recipientLine(["me", "ana@acme.test", "BEN@acme.test", "eve@else.test"], names: names)
+                == "me, Ana, Ben, eve@else.test")
+        #expect(ThreadDetail.recipientLine([], names: names).isEmpty)
+    }
+
     @Test func longThreadsFoldTheirMiddle() {
         func messages(_ n: Int, unread: Set<Int> = []) -> [MessageItem] {
             (0..<n).map { makeMessage("\($0)", read: !unread.contains($0)) }
@@ -351,6 +363,42 @@ struct FormatterTests {
         #expect(Formatters.reminder(tomorrow, now: now).hasPrefix("Tomorrow "))
         #expect(!Formatters.reminder(now.addingTimeInterval(600), now: now).contains("Tomorrow"))
         #expect(Formatters.reminder(cal.date(byAdding: .day, value: 30, to: now)!, now: now).contains(","))
+    }
+
+    /// A clock time on a day of the calendar, for a pinned `now`.
+    private func at(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> Date {
+        cal.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
+    }
+
+    @Test func anOpenMessagesTimeIsAsShortAsItsDayAllows() {
+        // Thursday 19 November 2026, noon. The strings follow the locale
+        // (12 or 24 hours, the order of day and month), so each is
+        // compared with the pieces the row's own formatter gives.
+        let now = at(2026, 11, 19, 12, 0)
+        let early = Formatters.messageTime(at(2026, 11, 19, 5, 57), now: now)
+        let morning = Formatters.messageTime(at(2026, 11, 19, 9, 12), now: now)
+        // Today: the time alone, as in the list.
+        #expect(early == Formatters.rowTime(at(2026, 11, 19, 5, 57), now: now))
+        #expect(early != morning)
+        #expect(Formatters.messageTime(at(2026, 11, 18, 5, 57), now: now) == "Yesterday, \(early)")
+        // Within the week: the weekday.
+        let monday = at(2026, 11, 16, 9, 12)
+        #expect(Formatters.messageTime(monday, now: now) == "\(Formatters.rowTime(monday, now: now)), \(morning)")
+        // Older, this year: the day and the month, no year.
+        let october = at(2026, 10, 12, 9, 12)
+        let thisYear = Formatters.messageTime(october, now: now)
+        #expect(thisYear == "\(Formatters.rowTime(october, now: now)), \(morning)")
+        #expect(!thisYear.contains("2026"))
+        // Another year: said.
+        let lastYear = Formatters.messageTime(at(2025, 11, 12, 9, 12), now: now)
+        #expect(lastYear.contains("2025"))
+        #expect(lastYear.hasSuffix(", \(morning)"))
+        // The year turns: a week-old message of December is not this year's.
+        #expect(Formatters.messageTime(at(2026, 12, 20, 9, 12), now: at(2027, 1, 5, 12, 0)).contains("2026"))
+        // A date ahead of `now` (a sender's fast clock) is no weekday:
+        // it reads as it will a month on.
+        let ahead = at(2026, 11, 21, 9, 12)
+        #expect(Formatters.messageTime(ahead, now: now) == Formatters.messageTime(ahead, now: at(2026, 12, 19, 12, 0)))
     }
 
     @Test func dayAndDueBuckets() {

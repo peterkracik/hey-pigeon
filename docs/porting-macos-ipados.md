@@ -94,7 +94,7 @@ What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
 - `MainWindow` — the split view, the composer's sheet; the toast, the row sheets and the disconnected alert are the shared `Shared/RootChrome.swift`.
 - `SidebarColumn` — accounts, folders (Scheduled and Need reply among them), labels, Add account · Settings.
 - `InboxPage` — the list (single-line `MailRow`s that open in place, the search in `SearchSpotlight` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
-- `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back and the people, then the shared sparkle and actions menu), its bars on one card at the bottom; `ThreadWindow` for a thread in its own window.
+- `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back, then the shared sparkle and actions menu; no title), in a 760 pt reading column with its messages on one card, the reply pills at the last message's foot and the triage buttons on a small card at the bottom; `ThreadWindow` for a thread in its own window.
 - `WindowState` — the selection, auto-advance, `KeyboardMap` (the desktop's keys and `g`-chords) and every action.
 - `CommandPalette` (⌘K, with the `l` / `v` stages and the ⌘B bundles stage), `ShortcutsSheet` (`?`), `MenuBarExtraView`.
 

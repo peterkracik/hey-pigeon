@@ -163,6 +163,21 @@ resource "google_cloudfunctions2_function" "register_token" {
   }
 
   depends_on = [time_sleep.iam_propagation]
+
+  # OPENS_URL is unknown until the opens function exists, and on that first
+  # apply the plan prints this function's other variables as removed. Should
+  # an apply ever really drop them, fail it here instead of leaving
+  # registration quietly broken; applying again (the URL is known by then)
+  # puts them back.
+  lifecycle {
+    postcondition {
+      condition = alltrue([
+        for name in ["GOOGLE_CLIENT_IDS", "PUBSUB_TOPIC", "APNS_SECRET_NAME"] :
+        try(self.service_config[0].environment_variables[name], "") != ""
+      ])
+      error_message = "register-token lost its environment variables in this apply. Run the deploy-relay workflow again with apply."
+    }
+  }
 }
 
 resource "google_cloud_run_v2_service_iam_member" "register_token_public" {

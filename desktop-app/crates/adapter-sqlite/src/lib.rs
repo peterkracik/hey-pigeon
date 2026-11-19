@@ -1557,6 +1557,8 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         list_unsubscribe_one_click: r.get(15)?,
         body_fetched: r.get(16)?,
         reply_to_addrs: serde_json::from_str(&reply_to_addrs).unwrap_or_default(),
+        // Not a column: only the provider's full fetch knows it.
+        open_token: None,
     })
 }
 

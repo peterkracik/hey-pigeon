@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — step 1 (local statuses) implemented, not merged; steps 2–7 not started
+Status: Approved — step 1 (local statuses) merged, #142; step 2 (own-pixel rule, token reader) implemented, not merged; steps 3–7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -216,7 +216,7 @@ switch, per mailbox, off until I turn it on.
 
 | Layer | What goes here |
 | --- | --- |
-| Core (`desktop-app/crates/core`, adapters) | New `core::readstatus`: the status of a sent message as a pure function over the thread's messages and the stored events (R1–R5), bounce and reply detection (R3, R4), token creation, the flush rule (R16), pixel insertion and the HTML part made from plain text (R17), the poll (R23), the catch-up (R19), the off switch (R12, R13). `domain`: `Mutation::Send` gains `track_opens: bool` and `open_token: Option<String>` (both `serde(default)`, so rows queued by older builds still parse); `Account.read_status: bool`; `ReadStatus`, `OpenEvent`, `RecentOpen`. `ports`: three `MailProvider` methods with default "not supported" impls — register, query, delete — and the `Store` methods for the two tables; `fakes` gains both. `outbox::drain` calls the flush rule for a `Send`. `sanitize`: the own-pixel rule (R18) and `own_pixel_token(raw_html)`. `devsync`: `ACCOUNT_FIELD_READ_STATUS`. `adapter-gmail`: new `opens.rs` beside `push.rs` (the three relay calls with the account's access token; the token never crosses the FFI), token extraction in `full_fetch` before `sanitize::html`, pixel appended in `build_mime`'s input. `adapter-sqlite`: migration v32 (below). |
+| Core (`desktop-app/crates/core`, adapters) | New `core::readstatus`: the status of a sent message as a pure function over the thread's messages and the stored events (R1–R5), bounce and reply detection (R3, R4), token creation, the flush rule (R16), pixel insertion and the HTML part made from plain text (R17), the poll (R23), the catch-up (R19), the off switch (R12, R13). `domain`: `Mutation::Send` gains `track_opens: bool` and `open_token: Option<String>` (both `serde(default)`, so rows queued by older builds still parse); `Account.read_status: bool`; `ReadStatus`, `OpenEvent`, `RecentOpen`. `ports`: three `MailProvider` methods with default "not supported" impls — register, query, delete — and the `Store` methods for the two tables; `fakes` gains both. `outbox::drain` calls the flush rule for a `Send`. `sanitize`: the own-pixel rule (R18), `own_pixel_token(raw_html)`, and the one definition of the pixel's URL shape (`OWN_PIXEL_PATH_PREFIX`, `OWN_PIXEL_SUFFIX`, `OWN_PIXEL_TOKEN_DIGITS`, `own_pixel_token_of_url`), which the sender of step 5 builds its URL from. `Message.open_token`: what the full fetch read, carried on the fetch's result; no store keeps it before migration v32 (step 4). `devsync`: `ACCOUNT_FIELD_READ_STATUS`. `adapter-gmail`: new `opens.rs` beside `push.rs` (the three relay calls with the account's access token; the token never crosses the FFI), token extraction in `full_fetch` before `sanitize::html`, pixel appended in `build_mime`'s input. `adapter-sqlite`: migration v32 (below). |
 | Bridge (`crates/ffi`, `RustEngine`, `MockEngine`) | `Engine.set_read_status(account_id, enabled)`; `Engine.read_status_availability()` (relay configured or not); `Engine.recent_opens(account_id?, limit)`; `MailMessage` gains `read_status` (state, newest time, events) → `MessageItem.readStatus`; `Mutation.Send.track_opens`; `Account.read_status`. Discovery of the opens URL and the poll run inside `sync_account`, next to `renew_watch`. `MockEngine`: the same operations, with one sent thread in each state so previews and tests show all five. |
 | Shared shell (`ios-app/HeyPigeon`) | `AppModel.setReadStatus(_:for:)`, `AppModel.recentOpens`, `SendDraft.trackOpens` and its default (R15) as a static function; the status line in `MessageHeaderLine`; `Features/ReadStatus/RecentOpensView.swift` (the list, shared by all three); the "Read status" row and footer in `SettingsView`'s account editor; the composer's switch in `ComposeView`; the wording of R1 and R5 in one place (`ReadStatusText`, static, testable). |
 | iPhone / iPad only | The "Recent Opens" row in `SidebarSheet` (iPhone) and the iPad sidebar (`Features/Pad`). `AppDelegate` needs no change: a push without `email` already syncs every account (`NewMailNotifier.handle`). |
@@ -342,8 +342,9 @@ Core (`cargo test`, against `MemStore` / `FakeProvider`):
 - [ ] R12, R13 — `turning_off_deletes_once_and_retries_until_sent`, `off_learned_from_sync_stops_without_delete`
 - [ ] R16 — `flush_tracks_only_when_choice_and_setting_and_relay`, `setting_off_before_flush_sends_untracked`, `failed_registration_sends_without_pixel`, `retry_reuses_token`
 - [ ] R17 — `pixel_is_last_in_html`, `plain_only_message_gets_html_part`, `draft_never_carries_pixel`
-- [ ] R18 — `own_pixel_is_removed_without_marker`, `own_pixel_in_quoted_reply_is_removed`, `sanitize_stays_idempotent_with_own_pixel` (`sanitize.rs`)
-- [ ] R19 — `token_is_read_from_raw_sent_html` (`adapter-gmail`), `catch_up_is_bounded`
+- [x] R18 — `own_pixel_is_removed_without_marker`, `own_pixel_in_quoted_reply_is_removed`, `sanitize_stays_idempotent_with_own_pixel`, and that nothing changed for anyone else's pixel: `a_foreign_pixel_still_gets_the_marker` (`sanitize.rs`)
+- [x] R19, the reader — `own_pixel_token_is_read_from_raw_html` (`sanitize.rs`), `token_is_read_from_raw_sent_html` (`adapter-gmail`)
+- [ ] R19, the catch-up (step 5) — `catch_up_is_bounded`
 - [ ] R23 — `poll_skips_off_accounts_and_expired_tokens`, `repeated_poll_inserts_nothing`
 - [ ] Migration — `v32_upgrade_adds_read_status_off_and_empty_tables`, `removing_account_removes_tokens_and_events` (`adapter-sqlite`)
 - [ ] R9 — `read_status_setting_syncs_as_account_field` (`devsync`)
@@ -356,7 +357,7 @@ Relay (`node --test`, no network):
 
 Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 
-- [ ] R1, local half — `eachStateHasItsWords`, `theMockFollowsTheCoresRule`, `aMockThreadShowsWhatBecameOfSentMail` (`ModelTests`, `ReadStatusTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
+- [x] R1, local half — `eachStateHasItsWords`, `theMockFollowsTheCoresRule`, `aMockThreadShowsWhatBecameOfSentMail` (`ModelTests`, `ReadStatusTests`) — green in `ios-ci` and `macos-ci` on #142
 - [ ] R1, R5, R6 — with opens (step 5): `ReadStatusText` wording for Opened and Hidden, one and several recipients (`ModelTests`)
 - [ ] R15 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens` (`AppModelTests`)
 - [ ] R7 — `recentOpensAreNewestFirstAndRespectTheAccountFilter`
@@ -479,13 +480,14 @@ Still open — needs the owner or a measurement:
 
 ## Verification
 
-Step 1, 2026-11-19 — **Verified with notes** (Rust only).
+Step 1, 2026-11-19 — **Verified with notes**. Merged as #142.
 
-- Rust: `cargo fmt --all -- --check`, the `cargo test` line of
-  `rust-ci` and its Swift bindgen step pass locally.
-- Swift (`Models`, `RustEngine`, `MockEngine`, `MessageHeaderLine`,
-  `ModelTests`) was written on Linux and has never been compiled:
-  `ios-ci` and `macos-ci` have not run. Nothing seen on a device.
+- `rust-ci`, `ios-ci` and `macos-ci` were green on the merged head; the
+  Swift compiled and `ReadStatusTests` passed. (One Mac test from #141,
+  `aMessageOpenedInPlaceInTheListCanBeSelected`, failed once and passed
+  on a re-run of the same commit; cause not established, looked at
+  separately.)
+- Note: the status line has not been seen on a device.
 - Step 1 shows the status on an open message of the thread only (not on
   a folded one, not in the composer's history), and has no event list
   (R6): there are no events before step 5.
@@ -493,4 +495,17 @@ Step 1, 2026-11-19 — **Verified with notes** (Rust only).
   a bounce as a reply, so a bounce ends a "remind me if no reply"
   follow-up while read status says "Not delivered".
 
-Steps 2–7: not started.
+Step 2, 2026-11-19 — **Verified with notes**. Not merged.
+
+- Rust only; no Swift, bridge, schema, relay, setting or copy changed.
+  `cargo fmt --all -- --check` and the `cargo test` line of `rust-ci`
+  pass locally. `ios-ci` and `macos-ci` rebuild both apps on any crate
+  change and have not run on it.
+- Inert: nothing writes a pixel, and `Message.open_token` is read by
+  nothing yet.
+- The pixel is known by its path shape on any host (R18), not by
+  `o.heypigeon.app` alone: the relay is self-hostable.
+- Not covered: a pixel reached other than through an `<img>` (a CSS
+  background) — the app never writes one that way.
+
+Steps 3–7: not started.

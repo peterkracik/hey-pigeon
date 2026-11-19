@@ -153,7 +153,13 @@ struct MessageBodyView: View {
         else if selection?.part == part { next = nil }
         else { return }
         guard next != selection else { return }
-        withAnimation(.snappy(duration: 0.2)) { selection = next }
+        // The circle comes in with a motion and leaves at once: fading out
+        // it still took the next click on the text under it.
+        if next == nil {
+            selection = nil
+        } else {
+            withAnimation(.snappy(duration: 0.2)) { selection = next }
+        }
     }
 
     /// Fetch the pictures the HTML refers to by `cid:` (cached after the
@@ -1042,7 +1048,9 @@ private struct HTMLView {
         /// is down: a pause in a drag used to post, the view was drawn
         /// again and the translate circle came up under the pointer in the
         /// middle of the selection being made. The report waits for the
-        /// button to come up.
+        /// button to come up. A selection that is gone is posted without the
+        /// wait: the circle sits beside the text and takes clicks there for
+        /// as long as it shows.
         static let selectionScript = #"""
         (function () {
           var w = window.webkit, h = w && w.messageHandlers && w.messageHandlers.pigeonSelection;
@@ -1050,7 +1058,12 @@ private struct HTMLView {
           var timer = null, last = "", down = false;
           function schedule() {
             if (timer) { clearTimeout(timer); timer = null; }
-            if (!down) timer = setTimeout(report, 120);
+            if (down) return;
+            // A selection settles before it is posted; one that is gone is
+            // posted at once, so the circle does not outlive it.
+            var sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0 || sel.isCollapsed) report();
+            else timer = setTimeout(report, 120);
           }
           function released() { if (down) { down = false; schedule(); } }
           document.addEventListener("mousedown", function (e) { if (e.button === 0) { down = true; schedule(); } }, true);

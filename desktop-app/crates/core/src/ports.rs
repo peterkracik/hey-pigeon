@@ -281,12 +281,17 @@ pub trait MailProvider {
     }
 
     /// Delete every token of this account's mailbox at the relay. Asking
-    /// twice is harmless.
+    /// twice is harmless. `at` is the address of the relay's `opens`
+    /// function the request was recorded with, when it had one: the delete
+    /// goes there, for this call alone — the tokens were registered with
+    /// that relay, whatever the provider has been told since. None: the
+    /// address the provider has now.
     fn delete_open_tokens(
         &self,
         account_id: &AccountId,
+        at: Option<&str>,
     ) -> impl std::future::Future<Output = Result<(), MailError>> + Send {
-        let _ = account_id;
+        let _ = (account_id, at);
         async { Err(MailError::Provider("read status not supported".into())) }
     }
 }
@@ -1086,6 +1091,20 @@ pub trait Store {
     ) -> Result<std::collections::HashMap<MessageId, Vec<OpenEvent>>, StoreError> {
         let _ = thread_id;
         Ok(std::collections::HashMap::new())
+    }
+
+    /// "Recent Opens": the user's sent messages with at least one open at
+    /// or after `since`, newest open first, at most `limit`; for one
+    /// account, or all. Only opens count — a fetch by a device that hides
+    /// opens is not one — and only messages this store still holds.
+    fn recent_opens(
+        &self,
+        account_id: Option<&AccountId>,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<RecentOpen>, StoreError> {
+        let _ = (account_id, since, limit);
+        Ok(Vec::new())
     }
 
     /// Threads holding mail the user sent since `since` whose body this

@@ -50,6 +50,10 @@ struct KeyboardMapTests {
         #expect(KeyboardMap.resolve(.character("a"), chordArmed: true) == .run(.go(.archive)))
         #expect(KeyboardMap.resolve(.character("s"), chordArmed: true) == .run(.go(.scheduled)))
         #expect(KeyboardMap.resolve(.character("u"), chordArmed: true) == .run(.account(nil)))
+        // G then O is Recent Opens — and O alone is nothing.
+        #expect(KeyboardMap.resolve(.character("o"), chordArmed: true) == .run(.recentOpens))
+        #expect(KeyboardMap.resolve(.character("o")) == .ignore)
+        #expect(ShortcutsSheet.groups.flatMap(\.1).contains { $0.0 == "G then O" && $0.1 == RecentOpens.title })
         // Not a chord key: read on its own, as the desktop does (g, e = mark done).
         #expect(KeyboardMap.resolve(.character("e"), chordArmed: true) == .run(.markDone))
         // Without the chord, i is the thread summary.
@@ -435,6 +439,20 @@ struct PaletteFilterTests {
         #expect(PaletteFilter.filter(items, query: "", recents: ["inbox", "done"]).map(\.id) == ["inbox", "done", "reply", "unread"])
         #expect(PaletteRecents.pushed("b", onto: ["a", "b", "c"]) == ["b", "a", "c"])
         #expect(PaletteRecents.pushed("z", onto: (0..<8).map(String.init)).count == PaletteRecents.limit)
+    }
+}
+
+@MainActor
+struct RecentOpensEntryTests {
+    /// G then O (and the sidebar row and the palette, which run the same
+    /// command) opens the shared Recent Opens sheet; nothing else moves.
+    @Test func theCommandOpensTheSharedSheet() {
+        let model = AppModel(engine: MockEngine())
+        let state = WindowState()
+        #expect(model.recentOpensSheet == nil)
+        state.run(.recentOpens, in: model)
+        #expect(model.recentOpensSheet != nil)
+        #expect(model.view == .inbox)
     }
 }
 

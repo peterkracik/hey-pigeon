@@ -494,6 +494,34 @@ pub struct OpenToken {
     pub polled_at: Option<i64>,
 }
 
+/// One row of "Recent Opens" (docs/specs/read-status.md R7): a message
+/// the user sent that was opened, as the local store knows it. Nothing of
+/// the relay's bookkeeping is in it — no token, no address of a pixel.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RecentOpen {
+    pub message_id: MessageId,
+    pub thread_id: ThreadId,
+    pub account_id: AccountId,
+    pub subject: String,
+    /// Who the message went to (To, then Cc), as the headers have them.
+    pub recipients: Vec<String>,
+    /// The newest open, epoch ms.
+    pub opened_at: i64,
+    /// How many opens are recorded for it.
+    pub opens: u32,
+}
+
+// Log hygiene: no subjects or addresses in Debug output.
+impl std::fmt::Debug for RecentOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecentOpen")
+            .field("recipients", &self.recipients.len())
+            .field("opened_at", &self.opened_at)
+            .field("opens", &self.opens)
+            .finish_non_exhaustive()
+    }
+}
+
 // Log hygiene: a token is what the relay counts by, and stays out of logs.
 impl std::fmt::Debug for OpenToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

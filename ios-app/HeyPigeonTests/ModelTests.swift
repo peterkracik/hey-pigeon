@@ -129,6 +129,50 @@ struct ReadStatusTests {
         #expect(!transcript.contains("heypigeon.app") && !transcript.contains("0123456789abcdef") && !transcript.contains(".gif"))
     }
 
+    /// R7: a row names the one recipient there was and nobody when there
+    /// were several; the sections are the list's own day headings.
+    @Test func recentOpensNameOneRecipientAndNobodyOfSeveral() {
+        let now = noon
+        func item(_ id: String, to: [String], ago: TimeInterval, subject: String = "Lunch") -> RecentOpenItem {
+            RecentOpenItem(messageId: id, threadId: "t-\(id)", accountId: "me@work.test", subject: subject,
+                           recipients: to, openedAt: now.addingTimeInterval(-ago))
+        }
+        let one = item("a", to: ["Peter"], ago: 600)
+        let several = item("b", to: ["Peter", "ana@acme.test", "Ben"], ago: 86_400 * 2, subject: "")
+        let none = item("c", to: [], ago: 86_400 * 20)
+        #expect(RecentOpens.who(one) == "Peter")
+        #expect(RecentOpens.who(several) == "One of 3 recipients")
+        #expect(!RecentOpens.who(several).contains("Peter"))
+        #expect(RecentOpens.who(none) == "A recipient")
+        #expect(RecentOpens.subject(several) == "(no subject)")
+        #expect(RecentOpens.spoken(one, now: now) == "Peter opened Lunch, \(Formatters.messageTime(one.openedAt, now: now))")
+        let sections = RecentOpens.sections([one, several, none], now: now)
+        #expect(sections.map(\.title) == ["Today", "Last 7 days", "Older"])
+        #expect(sections.map { $0.items.map(\.id) } == [["a"], ["b"], ["c"]])
+        #expect(RecentOpens.sections([], now: now).isEmpty)
+        // Two rows of one day share a heading, in the order given.
+        let again = item("d", to: ["Ana"], ago: 1_200)
+        #expect(RecentOpens.sections([one, again], now: now).map { $0.items.map(\.id) } == [["a", "d"]])
+        #expect(RecentOpens.title == "Recent Opens")
+    }
+
+    /// The sheet's words when it has no rows, and under them when it has:
+    /// honest about a build that cannot track and about read status being
+    /// off, and never calling a hidden delivery an open.
+    @Test func recentOpensSayWhyTheyAreEmpty() {
+        #expect(RecentOpens.emptyState(available: false, anyAccountOn: false).title == "Read status is not available in this build")
+        #expect(RecentOpens.emptyState(available: false, anyAccountOn: true).title == "Read status is not available in this build")
+        let off = RecentOpens.emptyState(available: true, anyAccountOn: false)
+        #expect(off.title == "Read status is off")
+        #expect(off.detail.contains("Settings › Accounts"))
+        let empty = RecentOpens.emptyState(available: true, anyAccountOn: true)
+        #expect(empty.title == "No opens yet")
+        #expect(empty.detail.contains("Apple Mail hides opens"))
+        #expect(RecentOpens.footer(anyAccountOn: true).contains("a device that hides opens is not listed"))
+        #expect(!RecentOpens.footer(anyAccountOn: true).contains("Read status is off"))
+        #expect(RecentOpens.footer(anyAccountOn: false).hasSuffix("Read status is off, so nothing new is added."))
+    }
+
     @Test func theMockFollowsTheCoresRule() {
         let t0 = noon
         let thread = MockEngine.withReadStatus([

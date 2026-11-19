@@ -81,6 +81,22 @@ impl Engine {
         Ok(())
     }
 
+    /// "Recent Opens" (R7): the user's sent messages opened in the last 30
+    /// days, newest open first, 100 at most; `account_id` narrows it to
+    /// one account. A read of the local store: no request is made, and an
+    /// account with read status off simply has nothing newer to show.
+    pub fn recent_opens(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<Vec<RecentOpenRow>, EngineError> {
+        Ok(
+            readstatus::recent_opens(&self.store, account_id.as_ref(), now_ms())?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        )
+    }
+
     /// Whether read status can be turned on here: the build has a relay
     /// (R10). False means the setting is shown disabled, "Not available in
     /// this build".
@@ -244,15 +260,18 @@ impl Engine {
         }
     }
 
-    /// Make sure the provider knows where to send a delete: the address
-    /// it has, else the one the request was recorded with, else — while
-    /// a relay is configured — the relay is asked.
+    /// Make sure a delete has somewhere to go: the address the provider
+    /// has, else the one the request was recorded with, else — while a
+    /// relay is configured — the relay is asked.
     async fn find_opens_for_delete(&self, account_id: &AccountId) {
         if self.provider.read().await.has_opens_url() {
             return;
         }
-        if let Ok(Some(url)) = readstatus::pending_delete_url(&self.store, account_id) {
-            self.provider.read().await.set_opens_url(Some(url));
+        // Recorded with its own address: the delete carries it, for that
+        // call alone (`MailProvider::delete_open_tokens`). It is not made
+        // the provider's — after a change of relay, another account would
+        // register its next message with the old one.
+        if let Ok(Some(_)) = readstatus::pending_delete_url(&self.store, account_id) {
             return;
         }
         // A relay that answers and has no `opens` holds nothing to
@@ -561,9 +580,12 @@ mod tests {
         engine.configure_relay(String::new()).unwrap();
         assert_eq!(engine.opens_url(), None);
         assert!(readstatus::delete_pending(&engine.store, &a).unwrap());
+        // The stored address is the delete's alone: it never becomes the
+        // provider's, which registrations and queries use (N3).
         engine.provider.read().await.set_opens_url(None);
         engine.find_opens_for_delete(&a).await;
-        assert!(engine.provider.read().await.has_opens_url());
+        assert!(!engine.provider.read().await.has_opens_url());
+        assert!(readstatus::delete_pending(&engine.store, &a).unwrap());
 
         // Without a known address the marker is still set, with none.
         let b = "b@x.com".to_string();
@@ -734,6 +756,47 @@ mod tests {
                 },
             ]
         );
+        // The same store answers Recent Opens: the opened message, once,
+        // at its newest open; the hidden-only one is not an open.
+        let recent = engine.recent_opens(None).unwrap();
+        assert_eq!(recent.len(), 0, "events from 1970 are outside the window");
+        let now = now_ms();
+        engine
+            .store
+            .open_events_add(
+                "aa",
+                &[OpenEvent {
+                    label: OpenLabel::Opened,
+                    at: now - 1_000,
+                }],
+                now,
+            )
+            .unwrap();
+        engine
+            .store
+            .open_events_add(
+                "bb",
+                &[OpenEvent {
+                    label: OpenLabel::Hidden,
+                    at: now - 500,
+                }],
+                now,
+            )
+            .unwrap();
+        let recent = engine.recent_opens(None).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(
+            (
+                recent[0].message_id.as_str(),
+                recent[0].thread_id.as_str(),
+                recent[0].opened_at
+            ),
+            ("s1", "t1", now - 1_000)
+        );
+        assert!(engine
+            .recent_opens(Some("b@x.com".into()))
+            .unwrap()
+            .is_empty());
         let s2 = status("s2");
         assert_eq!((s2.state, s2.at), (MessageReadState::Hidden, Some(4_000)));
         assert_eq!(

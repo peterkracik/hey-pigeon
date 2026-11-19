@@ -270,6 +270,31 @@ final class MockEngine: MailEngine {
         }
     }
 
+    /// Recent Opens, as the store answers it (adapter-sqlite
+    /// `recent_opens`): what `recordOpen` put there, newest open first,
+    /// one row a message, one account's or all; 100 at most. The sample
+    /// inbox starts with none — read status is off for both accounts.
+    func recentOpens(accountId: String?) throws -> [RecentOpenItem] {
+        Array(opens.values
+            .filter { accountId == nil || $0.accountId == accountId }
+            .sorted { ($0.openedAt, $0.messageId) > ($1.openedAt, $1.messageId) }
+            .prefix(100))
+    }
+
+    private var opens: [String: RecentOpenItem] = [:]
+
+    /// The relay reported an open of a sent message (the tests' and the
+    /// previews' way in; the real engine learns it from its poll). A
+    /// second open of the same message moves it up and counts.
+    func recordOpen(messageId: String, threadId: String, accountId: String, subject: String,
+                    recipients: [String], at date: Date) {
+        let before = opens[messageId]
+        opens[messageId] = RecentOpenItem(messageId: messageId, threadId: threadId, accountId: accountId,
+                                          subject: subject, recipients: recipients,
+                                          openedAt: max(date, before?.openedAt ?? date), opens: (before?.opens ?? 0) + 1)
+        onThreadsUpdated?()
+    }
+
     /// Bodies only once `thread(id:)` fetched them, like the store.
     func threadLocal(id: String) throws -> ThreadDetail? {
         guard let row = rows[id] else { return nil }
@@ -402,6 +427,8 @@ final class MockEngine: MailEngine {
     func removeAccount(id: String) async throws {
         accountList.removeAll { $0.id == id }
         rows = rows.filter { $0.value.accountId != id }
+        // Its opens go with it, as its tokens and events do in the store.
+        opens = opens.filter { $0.value.accountId != id }
         onThreadsUpdated?()
     }
 

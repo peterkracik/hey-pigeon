@@ -2306,8 +2306,12 @@ impl MailProvider for GmailProvider {
         self.opens_query(account_id, tokens).await
     }
 
-    async fn delete_open_tokens(&self, account_id: &AccountId) -> Result<(), MailError> {
-        self.opens_delete(account_id).await
+    async fn delete_open_tokens(
+        &self,
+        account_id: &AccountId,
+        at: Option<&str>,
+    ) -> Result<(), MailError> {
+        self.opens_delete(account_id, at).await
     }
 }
 

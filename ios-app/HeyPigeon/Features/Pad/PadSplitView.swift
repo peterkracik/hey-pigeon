@@ -276,7 +276,7 @@ extension PadState {
     func press(_ command: PadCommand, in model: AppModel) {
         let sheetUp = model.composeDraft != nil || model.showSettings || model.showSidebar || model.showBundles
             || model.pendingRemind != nil || model.pendingBundlePick != nil || model.askSheet != nil
-            || model.summarySheet != nil
+            || model.summarySheet != nil || model.recentOpensSheet != nil
         guard !sheetUp else { return }
         run(command, in: model)
     }

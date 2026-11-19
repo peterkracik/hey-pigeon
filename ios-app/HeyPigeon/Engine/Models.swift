@@ -194,6 +194,96 @@ struct ReadStatus: Hashable, Sendable {
     var events: [ReadEvent] = []
 }
 
+/// One row of Recent Opens: a message the user sent that was opened, as
+/// this device's store knows it. Carries nothing of the relay's own
+/// bookkeeping.
+struct RecentOpenItem: Identifiable, Hashable, Sendable {
+    let messageId: String
+    let threadId: String
+    let accountId: String
+    let subject: String
+    /// Who the message went to (To, then Cc), each by name where the
+    /// header gave one, else by address.
+    let recipients: [String]
+    /// The newest open.
+    let openedAt: Date
+    /// How many opens are recorded for it.
+    var opens = 1
+    var id: String { messageId }
+}
+
+/// Recent Opens: its words and the shaping of its rows, in one place for
+/// the phone, the iPad and the Mac.
+enum RecentOpens {
+    static let title = "Recent Opens"
+    static let symbol = "eye"
+
+    /// The rows under one day heading.
+    struct Group: Identifiable, Hashable {
+        let title: String
+        var items: [RecentOpenItem]
+        var id: String { title }
+    }
+
+    /// Who opened it: the one recipient there was. With several, nobody
+    /// is named — one pixel serves them all, so nobody is known.
+    static func who(_ item: RecentOpenItem) -> String {
+        switch item.recipients.count {
+        case 0: "A recipient"
+        case 1: item.recipients[0]
+        default: "One of \(item.recipients.count) recipients"
+        }
+    }
+
+    static func subject(_ item: RecentOpenItem) -> String {
+        item.subject.isEmpty ? "(no subject)" : item.subject
+    }
+
+    /// The row for VoiceOver, as a sentence.
+    static func spoken(_ item: RecentOpenItem, now: Date = Date()) -> String {
+        "\(who(item)) opened \(subject(item)), \(Formatters.messageTime(item.openedAt, now: now))"
+    }
+
+    /// The rows under the list's own day headings — Today, Last 7 days,
+    /// Older — in the order given (newest open first), empty headings
+    /// left out.
+    static func sections(_ items: [RecentOpenItem], now: Date = Date()) -> [Group] {
+        let heading = Formatters.dayGrouper(now: now)
+        var out: [Group] = []
+        for item in items {
+            let title = heading(item.openedAt)
+            if let index = out.firstIndex(where: { $0.title == title }) {
+                out[index].items.append(item)
+            } else {
+                out.append(Group(title: title, items: [item]))
+            }
+        }
+        return out
+    }
+
+    /// What the sheet says when it has no rows: the build cannot do it,
+    /// no account has it on, or nothing has been opened.
+    static func emptyState(available: Bool, anyAccountOn: Bool) -> (title: String, detail: String) {
+        if !available {
+            return ("Read status is not available in this build",
+                    "This build has no relay, so it cannot tell when mail you send is opened.")
+        }
+        if !anyAccountOn {
+            return ("Read status is off",
+                    "Turn it on for an account in Settings › Accounts to see when mail you send from it is opened.")
+        }
+        return ("No opens yet",
+                "Mail you send with read status on is listed here when a recipient's mail app shows that it was opened. Apple Mail hides opens.")
+    }
+
+    /// Under the rows: what the list is, and that it has stopped growing
+    /// when read status is off everywhere.
+    static func footer(anyAccountOn: Bool) -> String {
+        let base = "Opens of the last 30 days, as this \(Device.name) recorded them. Mail delivered to a device that hides opens is not listed."
+        return anyAccountOn ? base : base + " Read status is off, so nothing new is added."
+    }
+}
+
 /// The read-status setting of an account (Settings › Accounts) and the
 /// composer's switch: their words.
 enum ReadStatusSetting {
@@ -206,7 +296,7 @@ enum ReadStatusSetting {
     /// Under the switch otherwise. Each sentence is checked against what
     /// the app and the relay do (docs/specs/read-status.md, "Privacy
     /// copy"); change the behaviour and this changes with it.
-    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when, or that it reached a device that hides opens — never who or where, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Turning this off stops it on this device at once and asks the relay to delete what it holds for this account, now if the app is online and otherwise when it next syncs; your other devices follow when they next sync. Removing the account asks for the same, which also clears read status for mail already sent from your other devices. If the account is removed or signed out before the relay could be reached, what it holds is left to expire within 30 days."
+    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when, or that it reached a device that hides opens — never who or where, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Turning this off stops it on this device at once and asks the relay to delete what it holds for this account, now if the app is online and otherwise when it next syncs; your other devices follow when they next sync. Removing the account asks the relay for the same deletion, which also clears read status for mail already sent from your other devices. What a device has already recorded about opened mail stays on that device until the account is removed from it. If the account is removed or signed out before the relay could be reached, what it holds is left to expire within 30 days."
     /// The composer's switch, for the pointer and VoiceOver.
     static let composerOn = "Read status is on for this message"
     static let composerOff = "Read status is off for this message"
@@ -1195,6 +1285,9 @@ protocol StoreReader: Sendable {
     func threads(in view: MailView, accountId: String?, before: Date?, limit: Int) throws -> [ThreadRow]
     func threadRow(id: String) throws -> ThreadRow?
     func threadLocal(id: String) throws -> ThreadDetail?
+    /// Recent Opens: the user's sent messages opened in the last 30 days,
+    /// newest open first, 100 at most; one account's, or all. Local.
+    func recentOpens(accountId: String?) throws -> [RecentOpenItem]
 }
 
 extension MailEngine {
@@ -1256,6 +1349,9 @@ struct MainActorStoreReader: StoreReader, @unchecked Sendable {
     }
     func threadRow(id: String) throws -> ThreadRow? { try MainActor.assumeIsolated { try engine.threadRow(id: id) } }
     func threadLocal(id: String) throws -> ThreadDetail? { try MainActor.assumeIsolated { try engine.threadLocal(id: id) } }
+    func recentOpens(accountId: String?) throws -> [RecentOpenItem] {
+        try MainActor.assumeIsolated { try engine.recentOpens(accountId: accountId) }
+    }
 }
 
 /// The engine the app talks to. Reads are synchronous and local; anything
@@ -1348,6 +1444,8 @@ protocol MailEngine: AnyObject {
     func setManualTriageLabels(threadId: String, ids: [String]) throws
 
     func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws
+    /// Recent Opens, read from the local store (`StoreReader.recentOpens`).
+    func recentOpens(accountId: String?) throws -> [RecentOpenItem]
     /// The relay this build was made with ("" for none), told to the
     /// engine at launch. Read status needs one; push registers with it.
     func configureRelay(url: String) throws

@@ -439,6 +439,15 @@ impl GmailProvider {
                 // Sanitized here, once, on the way into the store:
                 // `body_fetched` on a message means its HTML is safe
                 // to hand to a view as it is.
+                //
+                // The token of the app's own read-status pixel is read
+                // first, from the HTML as it was sent: the sanitizer
+                // takes the pixel out. Only on mail the user sent — a
+                // quoted pixel in someone's reply is the token of
+                // another message.
+                if m.label_ids.iter().any(|l| l == "SENT") {
+                    m.open_token = m.body_html.as_deref().and_then(sanitize::own_pixel_token);
+                }
                 m.body_html = m.body_html.as_deref().map(sanitize::html);
                 m.body_fetched = true;
                 m
@@ -1512,6 +1521,9 @@ fn to_message(account_id: &AccountId, thread_id: &str, w: &WireMessage) -> Messa
         // Which tier this came from is the caller's knowledge (`fetch_full`
         // sets it): the metadata tier has no body to tell it apart by.
         body_fetched: false,
+        // Read from the full message's HTML before it is sanitized
+        // (`full_fetch`); the list tier has no body to read it from.
+        open_token: None,
     }
 }
 
@@ -3545,6 +3557,56 @@ mod tests {
         let listed = to_message(&"acc".to_string(), "t1", &wire);
         assert!(!listed.body_fetched);
         assert_eq!(listed.body_html.as_deref(), Some(RAW_HTML));
+    }
+
+    /// docs/specs/read-status.md R19: a sent message's token is read from
+    /// its own HTML as Gmail holds it, before the sanitizer removes the
+    /// pixel — and from nobody else's mail, where the same pixel is only
+    /// a quote of the user's.
+    #[test]
+    fn token_is_read_from_raw_sent_html() {
+        const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+        let html = format!(
+            "<div>See you Thursday.</div>\
+             <img src=\"https://o.heypigeon.app/o/{TOKEN}.gif\" width=\"1\" height=\"1\" alt=\"\">"
+        );
+        let message = |id: &str, label: &str| -> WireMessage {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "labelIds": [label], "internalDate": "1",
+                "payload": {"mimeType": "multipart/alternative", "headers": [
+                    {"name": "From", "value": "me@x.com"},
+                    {"name": "To", "value": "a@x.com"},
+                    {"name": "Subject", "value": "Hi"}
+                ], "parts": [
+                    {"mimeType": "text/plain", "headers": [],
+                     "body": {"data": part_data("See you Thursday.")}},
+                    {"mimeType": "text/html", "headers": [], "body": {"data": part_data(&html)}}
+                ]}
+            }))
+            .unwrap()
+        };
+        let wires = [message("sent", "SENT"), message("quoted", "INBOX")];
+        let full = provider().full_fetch(&"acc".to_string(), &"t1".to_string(), &wires, true);
+        assert_eq!(full.messages[0].open_token.as_deref(), Some(TOKEN));
+        assert_eq!(full.messages[1].open_token, None);
+        // Neither stored body has the pixel, and neither counts a tracker.
+        for m in &full.messages {
+            assert_eq!(m.body_html.as_deref(), Some("<div>See you Thursday.</div>"));
+        }
+        // The list tier never reads a token.
+        assert_eq!(
+            to_message(&"acc".to_string(), "t1", &wires[0]).open_token,
+            None
+        );
+        // A message without a pixel has none.
+        let plain: WireMessage = serde_json::from_value(html_message()).unwrap();
+        let full = provider().full_fetch(
+            &"acc".to_string(),
+            &"t1".to_string(),
+            std::slice::from_ref(&plain),
+            true,
+        );
+        assert_eq!(full.messages[0].open_token, None);
     }
 
     #[test]

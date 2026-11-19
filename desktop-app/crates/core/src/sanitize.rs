@@ -46,6 +46,12 @@
 //!   place, which the shells count ("3 trackers blocked"). A heuristic:
 //!   what it misses is still a remote picture, and those load only when
 //!   the shell's image policy lets them.
+//! - **The app's own read-status pixel is taken out without a marker**
+//!   ([`own_pixel_token_of_url`], docs/specs/read-status.md R18): the
+//!   picture a message the user sent carries so the relay can say it was
+//!   opened. It comes back in the user's Sent mail and in every reply
+//!   that quotes it; loading it would report the user's own reading as
+//!   the recipient's, and it is no tracker to tell the user about.
 //! - **Names beginning `hp-` belong to the app** ([`OWN_PREFIX`]): the
 //!   marker's class, and what the shells add to a body they show. A
 //!   `class` or `id` in mail that begins so loses it, so a sender cannot
@@ -457,10 +463,18 @@ fn block_tracking_pixels(markup: &str) -> Cow<'_, str> {
         if !markup[tag + 4..].starts_with([' ', '>']) {
             continue;
         }
-        if is_tracking_pixel(&markup[tag + 4..end - 1]) {
+        let attributes = &markup[tag + 4..end - 1];
+        // The app's own pixel goes whatever it looks like by now (a
+        // quoting mail client may have resized it or given it a class),
+        // and leaves nothing behind: it is not a tracker aimed at the
+        // user. Everything else is judged as before.
+        let own = is_own_pixel(attributes);
+        if own || is_tracking_pixel(attributes) {
             let out = out.get_or_insert_with(|| String::with_capacity(markup.len()));
             out.push_str(&markup[copied..tag]);
-            out.push_str(TRACKER_MARKER);
+            if !own {
+                out.push_str(TRACKER_MARKER);
+            }
             copied = end;
         }
     }
@@ -471,6 +485,112 @@ fn block_tracking_pixels(markup: &str) -> Cow<'_, str> {
         }
         None => Cow::Borrowed(markup),
     }
+}
+
+/// How the path of the app's own read-status pixel begins and ends:
+/// `https://<pixel host>/o/<32 hex digits>.gif` (docs/specs/read-status.md
+/// R17). The one definition of the shape: what writes the pixel into
+/// outgoing mail builds the URL from these, and this module knows it
+/// again by them.
+pub const OWN_PIXEL_PATH_PREFIX: &str = "/o/";
+pub const OWN_PIXEL_SUFFIX: &str = ".gif";
+/// A token is 128 random bits, written as 32 hex digits.
+pub const OWN_PIXEL_TOKEN_DIGITS: usize = 32;
+
+/// The token in `url`, when `url` has the shape of the app's own pixel:
+/// `http` or `https`, any host, the path exactly `/o/<32 hex>.gif`, with
+/// or without a query or fragment after it. Lowercase, as the app writes
+/// it. The host is not looked at — a relay can live anywhere (it is
+/// self-hostable), and a foreign picture that copies the shape gains
+/// nothing by it: it is removed all the same.
+pub fn own_pixel_token_of_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    let scheme_end = url.find("://")?;
+    if !matches!(
+        url[..scheme_end].to_ascii_lowercase().as_str(),
+        "http" | "https"
+    ) {
+        return None;
+    }
+    let after_scheme = &url[scheme_end + 3..];
+    let path_start = after_scheme.find('/')?;
+    if path_start == 0 {
+        return None; // no host
+    }
+    let path = &after_scheme[path_start..];
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    let token = path
+        .strip_prefix(OWN_PIXEL_PATH_PREFIX)?
+        .strip_suffix(OWN_PIXEL_SUFFIX)?;
+    (token.len() == OWN_PIXEL_TOKEN_DIGITS && token.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| token.to_ascii_lowercase())
+}
+
+/// The token of the app's own pixel in a message's HTML **as received**
+/// (before [`html`], which removes the pixel): how a device learns the
+/// token of a message the user sent, from the message itself
+/// (docs/specs/read-status.md R19). The last one when there are several —
+/// the pixel is the last thing in the HTML part, and anything earlier is
+/// in quoted text. None when the message carries none.
+///
+/// Reads `<img>` tags only, as loosely as mail is written: any letter
+/// case, the `src` quoted either way or not at all.
+pub fn own_pixel_token(raw_html: &str) -> Option<String> {
+    let lower = raw_html.to_ascii_lowercase();
+    let mut found = None;
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find("<img") {
+        let tag = from + pos + 4;
+        let end = lower[tag..].find('>').map_or(lower.len(), |i| tag + i);
+        from = end;
+        // `to_ascii_lowercase` keeps every byte offset, so the tag can be
+        // read from the original (a token is returned lowercase anyway).
+        if let Some(token) = raw_src(&raw_html[tag..end]).and_then(own_pixel_token_of_url) {
+            found = Some(token);
+        }
+    }
+    found
+}
+
+/// The value of the `src` attribute in the inside of a raw `<img …>` tag.
+fn raw_src(attributes: &str) -> Option<&str> {
+    let lower = attributes.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find("src") {
+        let at = from + pos;
+        from = at + 3;
+        // An attribute of its own, not the end of `data-src`.
+        if at > 0 && !attributes.as_bytes()[at - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let Some(value) = attributes[at + 3..].trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim_start();
+        return Some(match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => value[1..].split(quote).next().unwrap_or_default(),
+            _ => value
+                .split(|c: char| c.is_ascii_whitespace())
+                .next()
+                .unwrap_or_default(),
+        });
+    }
+    None
+}
+
+/// Whether a sanitized `<img …>` tag (its inside) is the app's own pixel.
+fn is_own_pixel(attributes: &str) -> bool {
+    let mut rest = attributes;
+    while let Some((name, after)) = rest.trim_start().split_once("=\"") {
+        let Some((value, after)) = after.split_once('"') else {
+            break;
+        };
+        if name.trim() == "src" {
+            return own_pixel_token_of_url(value).is_some();
+        }
+        rest = after;
+    }
+    false
 }
 
 /// `attributes` is the inside of a sanitized `<img …>` tag.
@@ -2098,6 +2218,166 @@ mod tests {
             html("<pre class=\"x\">\n\n\na</pre><p>\nb</p>"),
             "<pre class=\"x\">\n\n\na</pre><p>\nb</p>"
         );
+    }
+
+    const OWN: &str = "https://o.heypigeon.app/o/0123456789abcdef0123456789abcdef.gif";
+    const OWN_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+    /// The same pixel with everything that is not case-sensitive in
+    /// capitals: the scheme, the host, the hex digits. (The path is.)
+    const OWN_SHOUTED: &str = "HTTPS://O.HEYPIGEON.APP/o/0123456789ABCDEF0123456789ABCDEF.gif";
+
+    /// docs/specs/read-status.md R18: the pixel of the user's own sent
+    /// mail never reaches a view, and is not counted as a tracker.
+    #[test]
+    fn own_pixel_is_removed_without_marker() {
+        let pixels = [
+            format!(r#"<img src="{OWN}" width="1" height="1" alt="">"#),
+            // Whatever a mail client made of the tag on the way: sized
+            // up, named, unsized — a picture that could be seen and would
+            // otherwise load with "Load remote images".
+            format!(r#"<img src="{OWN}">"#),
+            format!(r#"<img src="{OWN}" width="20" height="20" class="pixel" id="p">"#),
+            format!(r#"<IMG SRC="{}" WIDTH=1 HEIGHT=1>"#, OWN_SHOUTED),
+            // Another relay's host (it is self-hostable), plain http, and
+            // a query a proxy added.
+            format!(
+                r#"<img src="https://relay.example.org/o/{OWN_TOKEN}.gif" width="1" height="1">"#
+            ),
+            format!(
+                r#"<img src="http://o.heypigeon.app/o/{OWN_TOKEN}.gif?x=1&amp;y=2" width="1" height="1">"#
+            ),
+        ];
+        for pixel in &pixels {
+            let out = html(&format!("<p>before</p>{pixel}<p>after</p>"));
+            assert_eq!(out, "<p>before</p><p>after</p>", "{pixel}");
+            assert!(!out.contains("hp-tracker") && !out.contains("heypigeon.app"));
+        }
+    }
+
+    /// R18, the other half: nothing changes for anyone else's pixel. A
+    /// foreign 1 × 1 picture is still replaced by the marker the shells
+    /// count, next to an own pixel too, and a URL that only resembles the
+    /// app's is a foreign one.
+    #[test]
+    fn a_foreign_pixel_still_gets_the_marker() {
+        let foreign = r#"<img src="https://track.example/open?u=42" width="1" height="1" alt="">"#;
+        assert_eq!(
+            unsealed(&html(&format!("<p>a</p>{foreign}"))),
+            format!("<p>a</p>{TRACKER_MARKER}")
+        );
+        let own = format!(r#"<img src="{OWN}" width="1" height="1" alt="">"#);
+        let both = html(&format!("<p>a</p>{foreign}<p>b</p>{own}{foreign}"));
+        assert_eq!(
+            unsealed(&both),
+            format!("<p>a</p>{TRACKER_MARKER}<p>b</p>{TRACKER_MARKER}")
+        );
+        let lookalikes = [
+            // Too short, too long, not hex, another folder, another type,
+            // something after the name, on the app's own host or not.
+            "https://o.heypigeon.app/o/0123456789abcdef.gif".to_string(),
+            format!("https://o.heypigeon.app/o/{OWN_TOKEN}0.gif"),
+            "https://o.heypigeon.app/o/0123456789abcdef0123456789abcdeg.gif".to_string(),
+            format!("https://o.heypigeon.app/x/o/{OWN_TOKEN}.gif"),
+            format!("https://o.heypigeon.app/o/{OWN_TOKEN}.png"),
+            format!("https://o.heypigeon.app/o/{OWN_TOKEN}.gif/more"),
+            format!("https://track.example/open?to=/o/{OWN_TOKEN}.gif"),
+        ];
+        for url in &lookalikes {
+            assert_eq!(own_pixel_token_of_url(url), None, "{url}");
+            let out = html(&format!(
+                r#"<p>a</p><img src="{url}" width="1" height="1">"#
+            ));
+            assert_eq!(unsealed(&out), format!("<p>a</p>{TRACKER_MARKER}"), "{url}");
+            // And at a size that can be seen, it is a picture like any other.
+            let seen = html(&format!(r#"<img src="{url}" width="200" height="100">"#));
+            assert!(
+                seen.contains("<img") && !seen.contains("hp-tracker"),
+                "{url}"
+            );
+        }
+    }
+
+    /// R18: a reply that quotes the user's tracked message brings the
+    /// pixel back, inside the quote. It goes there too, and the reply's
+    /// own trackers are still counted.
+    #[test]
+    fn own_pixel_in_quoted_reply_is_removed() {
+        let reply = format!(
+            concat!(
+                "<div>Thanks, got it.</div>",
+                "<div class=\"gmail_quote\"><blockquote style=\"margin:0 0 0 .8ex\">",
+                "<div>See you Thursday.</div><img src=\"{own}\" width=\"1\" height=\"1\" alt=\"\">",
+                "</blockquote></div>",
+                "<img src=\"https://track.example/reply\" width=\"1\" height=\"1\">"
+            ),
+            own = OWN
+        );
+        let out = html(&reply);
+        assert_eq!(
+            unsealed(&out),
+            format!(
+                concat!(
+                    "<div>Thanks, got it.</div>",
+                    "<div class=\"gmail_quote\"><blockquote style=\"margin:0 0 0 .8ex\">",
+                    "<div>See you Thursday.</div>",
+                    "</blockquote></div>{marker}"
+                ),
+                marker = TRACKER_MARKER
+            )
+        );
+        assert_eq!(out.matches("hp-tracker").count(), 1);
+    }
+
+    /// R18 leaves `html(html(x)) == html(x)` standing: with the own pixel
+    /// alone (nothing to seal) and beside a foreign one (sealed).
+    #[test]
+    fn sanitize_stays_idempotent_with_own_pixel() {
+        let own = format!(r#"<img src="{OWN}" width="1" height="1" alt="">"#);
+        for input in [
+            format!("<p>hi</p>{own}"),
+            format!(r#"<p>hi</p>{own}<img src="https://track.example/o" width="1" height="1">"#),
+        ] {
+            let once = html(&input);
+            assert_eq!(html(&once), once, "{input}");
+            assert!(!once.contains("heypigeon.app"));
+        }
+    }
+
+    /// R19's reader: the token is read from the message as received, the
+    /// last pixel when a quote carries an older one, and from nothing
+    /// that is not an `<img>` of that shape.
+    #[test]
+    fn own_pixel_token_is_read_from_raw_html() {
+        let token = Some(OWN_TOKEN.to_string());
+        for raw in [
+            format!(r#"<div dir="ltr">Hello</div><img src="{OWN}" width="1" height="1" alt="">"#),
+            format!("<html><body><p>Hello</p><IMG WIDTH=1 SRC='{OWN}'></body></html>"),
+            format!("<p>Hello</p><img data-src=\"https://x.example/a.png\" src={OWN} >"),
+            format!(
+                "<p>Hello</p><img\n  alt=\"\"\n  src = \"{}\"\n>",
+                OWN_SHOUTED
+            ),
+        ] {
+            assert_eq!(own_pixel_token(&raw), token, "{raw}");
+            // What the sanitizer then stores no longer has it.
+            assert_eq!(own_pixel_token(&html(&raw)), None, "{raw}");
+        }
+        let newer = "ffffffffffffffffffffffffffffffff";
+        let quoting = format!(
+            r#"<p>Again</p><blockquote><img src="{OWN}"></blockquote><img src="https://o.heypigeon.app/o/{newer}.gif">"#
+        );
+        assert_eq!(own_pixel_token(&quoting), Some(newer.to_string()));
+        for raw in [
+            String::new(),
+            "<p>No pictures</p>".to_string(),
+            format!(r#"<a href="{OWN}">a link is not a pixel</a>"#),
+            format!(r#"<img data-src="{OWN}" src="cid:logo">"#),
+            format!("<p>{OWN}</p><img src=\"https://cdn.example/logo.png\">"),
+            "<img src=".to_string(),
+            "<img".to_string(),
+        ] {
+            assert_eq!(own_pixel_token(&raw), None, "{raw}");
+        }
     }
 
     #[test]

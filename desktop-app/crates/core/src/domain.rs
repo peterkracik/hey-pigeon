@@ -426,6 +426,14 @@ pub struct Message {
     /// stored `body_html` is sanitized (see there).
     #[serde(default)]
     pub body_fetched: bool,
+    /// The token of the app's read-status pixel in this message, when the
+    /// user sent it with one (docs/specs/read-status.md R19): read from
+    /// the HTML as received (`sanitize::own_pixel_token`) by the
+    /// provider's full fetch, since the stored body no longer has the
+    /// pixel. Set on the fetch's result only — no store keeps it yet, and
+    /// a message read back from one has None.
+    #[serde(default)]
+    pub open_token: Option<String>,
 }
 
 // Log hygiene: no bodies or addresses in Debug output (DESIGN.md Security).

@@ -822,7 +822,7 @@ the levers are the index and the user's iOS settings:
   results relied on the entity's `OpenIntent` alone.
 - **"Search in Hey Pigeon"** in Spotlight (`CoreSpotlightContinuation` in
   the Info.plist; `CSQueryContinuationActionType` → `AppModel.openSearch`)
-  continues the typed words in the Search tab, filters cleared.
+  continues the typed words in the search, filters cleared.
 - The rest is the user's: Settings › Siri & Search's footer says to keep
   *Let Siri see your inbox* on, keep *Show in Search* / *Learn from this
   App* on for Hey Pigeon (the new button opens the app's iOS Settings page)

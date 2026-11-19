@@ -46,7 +46,7 @@ struct HeyPigeonApp: App {
                     model.openThread(id: MailMessageEntity.threadId(of: id))
                 }
                 // Spotlight's "Search in Hey Pigeon" row (CoreSpotlightContinuation
-                // in project.yml): the typed words continue in the Search tab.
+                // in project.yml): the typed words continue in the search.
                 .onContinueUserActivity(CSQueryContinuationActionType) { activity in
                     guard let query = activity.userInfo?[CSSearchQueryString] as? String else { return }
                     model.openSearch(query)
@@ -71,8 +71,9 @@ struct HeyPigeonApp: App {
     }
 }
 
-/// Root navigation: the four-tab bar (Inbox · Scheduled · Need reply ·
-/// Search — the desktop rail) plus the app-wide sheets and the toast. An
+/// Root navigation: the three-tab bar (Inbox · Remind me · Need reply,
+/// with Compose in the circle beside it; the search is pulled down over
+/// a list) plus the app-wide sheets and the toast. An
 /// iPad at regular width shows three columns instead (PadSplitView); the
 /// sheets and the toast are the same over either.
 struct RootView: View {
@@ -106,34 +107,71 @@ struct RootView: View {
         }
     }
 
-    /// The phone's four tabs (an iPad in a narrow window has them too).
+    /// The phone's three tabs (an iPad in a narrow window has them too),
+    /// and Compose in the circle beside them.
+    /// The search is not one of them: it opens over a list (the field
+    /// pulled down above it, MailListScreen), and the bar keeps that
+    /// list's tab selected meanwhile (`listTab`). A tap on any tab leaves
+    /// the search.
     private var tabs: some View {
-        @Bindable var model = model
-        return TabView(selection: $model.tab) {
-            Tab(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage, value: MainTab.inbox) {
+        TabView(selection: Binding(
+            get: { BarSlot.list(model.listTab) },
+            set: { slot in
+                switch slot {
+                case .list(let tab): model.tab = tab
+                // Never selected: the binding goes on answering with the
+                // list, so the bar stays where it was under the composer.
+                case .compose: model.composeDraft = SendDraft()
+                }
+            }
+        )) {
+            Tab(MainTab.inbox.title, systemImage: MainTab.inbox.systemImage, value: BarSlot.list(.inbox)) {
                 MailListScreen(tab: .inbox)
             }
             .badge(model.counts["inbox"] ?? 0)
-            Tab(MainTab.scheduled.title, systemImage: MainTab.scheduled.systemImage, value: MainTab.scheduled) {
+            Tab(MainTab.scheduled.title, systemImage: MainTab.scheduled.systemImage, value: BarSlot.list(.scheduled)) {
                 MailListScreen(tab: .scheduled)
             }
             // Reminders whose time has passed, not every scheduled thread.
             .badge(model.dueCount)
-            Tab(MainTab.needReply.title, systemImage: MainTab.needReply.systemImage, value: MainTab.needReply) {
+            Tab(MainTab.needReply.title, systemImage: MainTab.needReply.systemImage, value: BarSlot.list(.needReply)) {
                 MailListScreen(tab: .needReply)
             }
             .badge(model.needReplyCount)
-            // Search role: the system renders it as the separate glass circle
-            // next to the tab bar and morphs it into the search field.
-            Tab(value: MainTab.search, role: .search) {
-                SearchScreen()
+            // Compose, under the thumb. The separate glass circle beside
+            // the tab bar is the system's, and it draws one only for the
+            // search role: so this is that tab with a pencil, and choosing
+            // it opens the composer instead of a page (the binding above).
+            Tab("Compose", systemImage: "square.and.pencil", value: BarSlot.compose, role: .search) {
+                Color.clear
             }
+        }
+        // ⌘N, which the top bar's Compose button used to carry: on a
+        // button that draws nothing, as the columns' keys are (PadKeys).
+        .background {
+            Button("Compose") { model.composeDraft = SendDraft() }
+                .keyboardShortcut("n", modifiers: .command)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+        // Out of the search, however it was left (Cancel, a tab, a
+        // notification's thread): the field hides again, so its words and
+        // filters go with it.
+        .onChange(of: model.tab) { old, _ in
+            if old == .search { model.clearSearch() }
         }
         // The tab bar stays whole while the list scrolls: Inbox, Remind me
         // and Need reply are one tap away at any depth. What gives the rows
         // their room is the label bar over it, which folds to the label in
         // use (TriageSplitBar, ScrollCollapse).
     }
+}
+
+/// What the phone's bottom bar holds: a list's tab, or Compose — a button
+/// in a tab's place, never the selection.
+private enum BarSlot: Hashable {
+    case list(MainTab)
+    case compose
 }
 
 extension RootView {

@@ -180,16 +180,26 @@ final class AppModel {
 
     /// nil = unified across accounts (desktop's `0`).
     var selectedAccountId: String? { didSet { reloadUnlessHeld() } }
-    /// Bottom bar selection.
+    /// The place shown: one of the tab bar's three lists, or the search
+    /// (the phone opens it over the list it was pulled down in; the iPad's
+    /// columns have it as a sidebar row).
     var tab: MainTab = .inbox {
         didSet {
             Keyboard.dismiss()
+            if tab == .search, oldValue != .search { searchOrigin = oldValue }
             // Into or out of the Search tab the list changes its source
             // (results or rows) without either having moved.
             if tab != oldValue { regroup() }
             reloadUnlessHeld()
         }
     }
+    /// The list the search was opened over: the phone's tab bar keeps it
+    /// selected while the search is up, and closing the search goes back
+    /// to it. Whatever opened the search — the pulled-down field, the
+    /// sidebar's row, Spotlight's continuation — `tab`'s didSet records it.
+    private(set) var searchOrigin: MainTab = .inbox
+    /// The tab bar's selection: the search has no tab of its own there.
+    var listTab: MainTab { tab == .search ? searchOrigin : tab }
     /// Folder/label the Inbox tab shows; the other tabs have fixed views.
     var folder: MailView = .inbox {
         didSet {
@@ -290,10 +300,11 @@ final class AppModel {
     static let typingPause: Duration = .milliseconds(150)
     var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty || !searchFilters.isEmpty }
     /// Whether the list shows the search results instead of the view. On
-    /// iOS search is its own tab: the query stays there for when the user
-    /// comes back, and Inbox, Scheduled and Need reply show their whole
-    /// list (they used to show the search results). The Mac searches in
-    /// the list it is on, so there any search replaces the list.
+    /// iOS search is its own place (`tab == .search`: the phone's
+    /// pulled-down field, the iPad's sidebar row), and Inbox, Scheduled
+    /// and Need reply show their whole list (they used to show the search
+    /// results). The Mac searches in the list it is on, so there any
+    /// search replaces the list.
     var showsSearchResults: Bool {
         isSearching && (tab == .search || !Self.searchHasOwnTab)
     }
@@ -1243,6 +1254,22 @@ final class AppModel {
     func runRecentSearch(_ entry: RecentSearch) {
         searchFilters = entry.filters
         searchText = entry.text
+    }
+
+    /// Cancel in the phone's search field: back to the list the search
+    /// was opened over. Nothing when no search is up.
+    func closeSearch() {
+        guard tab == .search else { return }
+        navigate(to: searchOrigin)
+    }
+
+    /// The words and the filters, emptied. The phone does it on the way
+    /// out of the search: its field hides above the list again, and a
+    /// filter left on would narrow the next search without being seen.
+    /// (The iPad's search is a place of its own and keeps its query.)
+    func clearSearch() {
+        if !searchFilters.isEmpty { searchFilters = SearchFilters() }
+        if !searchText.isEmpty { searchText = "" }
     }
 
     func forgetSearch(_ entry: RecentSearch) {

@@ -7,9 +7,9 @@
 // also the highlighted row (PadState), auto-advance when it leaves the
 // list, and the hardware keyboard's letters (PadKeys).
 //
-// Search is a row of the sidebar here: the phone keeps it in the tab bar,
-// and a split layout has none. Remind me and Need reply were sidebar rows
-// already.
+// Search is a place of its own here, opened from the sidebar's row or
+// `/`: the phone pulls its field down over a list instead. Remind me and
+// Need reply were sidebar rows already.
 //
 // Keys: `PadKeys` are key equivalents on buttons that draw nothing
 // (`PadKeyButtons`), so they work wherever the focus is; a text field
@@ -178,7 +178,7 @@ private struct PadThreadList: View {
     }
 }
 
-/// The phone's SearchScreen without its stack: the field in the bar, the
+/// The phone's SearchPane with the field always in the bar: the
 /// filters, the recent searches or the results, and Gmail's own search.
 private struct PadSearchList: View {
     let state: PadState

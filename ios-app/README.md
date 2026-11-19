@@ -76,7 +76,10 @@ anything under `ios-app/` (docs excepted) or in the Rust crates the
 xcframework is built from. Changes elsewhere do not start it. The marketing
 version is `MARKETING_VERSION` in `project.yml`; the build number is the run
 number, so each push is a new TestFlight build of that version. Bump
-`MARKETING_VERSION` when you want a new version. An `ios-v*` tag publishes
+`MARKETING_VERSION` when you want a new version. Each build's **What to
+Test** in TestFlight lists the commits that touched the app since the
+previous published build (`scripts/testflight-notes.py` sets it once Apple
+has processed the build; the same list is in the run's summary). An `ios-v*` tag publishes
 too and takes the version from the tag name:
 
 ```sh

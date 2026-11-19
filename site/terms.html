@@ -4,47 +4,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Terms of Service — Hey Pigeon</title>
+<meta name="theme-color" content="#FBFBFB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1B1E" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header class="site wrap">
-  <a class="brand" href="/">
-    <svg width="28" height="28" viewBox="0 0 1024 1024" style="border-radius:6px;display:block">
-  <defs>
-    <linearGradient id="hp-tile-nav" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F1F1F4"/></linearGradient>
-    <mask id="hp-gap-nav" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
-      <rect width="1024" height="1024" fill="#fff"/>
-      <circle cx="490" cy="370" r="231" fill="#000"/>
-    </mask>
-  </defs>
-  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#hp-tile-nav)"/>
-  <g transform="translate(36 52) rotate(-14 512 540)" fill="#2A1F2C">
-    <g mask="url(#hp-gap-nav)">
-      <g stroke="#2A1F2C" stroke-width="110" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M435 720 L425 800"/>
-        <path d="M555 720 L575 795"/>
-        <path d="M362 600 L305 650"/>
-        <path d="M610 610 L740 540"/>
-      </g>
-      <rect x="335" y="500" width="310" height="250" rx="125"/>
-    </g>
-    <circle cx="490" cy="370" r="205"/>
-    <rect x="352" y="285" width="290" height="190" rx="95" fill="#FFFFFF"/>
-  </g>
-</svg>
-    <span>Hey Pigeon</span>
-  </a>
-  <nav class="site">
-    <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
-    <a href="privacy.html">Privacy</a>
-    <a href="terms.html">Terms</a>
-  </nav>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="./"><img src="favicon.svg" width="26" height="26" alt=""><span>Hey Pigeon</span></a>
+    <nav class="nav-links" aria-label="Site">
+      <a class="opt" href="./#features">Features</a>
+      <a class="opt" href="privacy.html">Privacy</a>
+      <a class="opt" href="terms.html" aria-current="page">Terms</a>
+      <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+      <a class="pill" href="./#download">Download</a>
+    </nav>
+  </div>
 </header>
 
-<main class="legal">
+<main class="legal" id="main">
   <div class="wrap">
     <h1>Terms of Service</h1>
     <p class="updated">Last updated: 2026-09-17</p>
@@ -78,13 +61,15 @@
   </div>
 </main>
 
-<footer class="site wrap hairline">
-  <span class="note">Hey Pigeon, a personal, open-source project.</span>
-  <nav>
-    <a href="privacy.html">Privacy Policy</a>
-    <a href="terms.html">Terms of Service</a>
-    <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
-  </nav>
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <span>Hey Pigeon, a personal, open-source project.</span>
+    <nav aria-label="Footer">
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+      <a href="https://github.com/peterkracik/hey-pigeon">GitHub</a>
+    </nav>
+  </div>
 </footer>
 </body>
 </html>

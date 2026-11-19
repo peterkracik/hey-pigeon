@@ -106,5 +106,5 @@ original Tauri desktop client in `desktop-app/` is no longer built; its
 
 ## License
 
-Not currently licensed for reuse/redistribution — source is visible for
-transparency, not (yet) an open contribution invitation.
+[MIT](./LICENSE). A personal project: the code is free to use, change and
+redistribute, with no warranty and no promise of support.

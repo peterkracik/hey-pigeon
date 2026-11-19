@@ -7,7 +7,8 @@
 // drag that starts on a link and a double click must each leave a
 // selection, and the web view must still hold the keyboard afterwards
 // (without it the selection is grey and ⌘C copies nothing).
-// Every wait has a timeout.
+// Every wait has a timeout: a selection is asked for until it is there
+// (`Stage.selection(_:after:)`), not read once after a fixed pause.
 
 import AppKit
 import Foundation
@@ -54,11 +55,12 @@ struct MessageSelectionTests {
         let link = try #require(linkRect)
         let from = CGPoint(x: text.minX + 4, y: text.minY + min(text.height, 18) / 2)
         #expect(stage.reaches(web, at: from), "a click on the text lands on \(stage.hit(web, at: from))")
+        await stage.listen(web)
 
         // A drag over plain text.
         await stage.clear(web)
         await stage.drag(in: web, from: from, to: CGPoint(x: from.x + 120, y: from.y))
-        let dragged = await stage.selection(web)
+        let dragged = await stage.selection(web, after: "a drag over text")
         #expect(!dragged.isEmpty, "a drag over text selected nothing")
         try await Task.sleep(for: .milliseconds(700))
         let kept = await stage.selection(web)
@@ -69,13 +71,13 @@ struct MessageSelectionTests {
         await stage.clear(web)
         let onLink = CGPoint(x: link.midX, y: link.midY)
         await stage.drag(in: web, from: onLink, to: CGPoint(x: max(onLink.x - 150, text.minX + 2), y: onLink.y))
-        let fromLink = await stage.selection(web)
+        let fromLink = await stage.selection(web, after: "a drag from a link")
         #expect(!fromLink.isEmpty, "a drag from a link selected nothing")
 
         // A double click on a word.
         await stage.clear(web)
         await stage.doubleClick(in: web, at: from)
-        let word = await stage.selection(web)
+        let word = await stage.selection(web, after: "a double click")
         #expect(!word.isEmpty, "a double click selected nothing")
         try await Task.sleep(for: .milliseconds(700))
         let wordKept = await stage.selection(web)
@@ -140,8 +142,46 @@ private final class Stage {
         await string("String(window.getSelection())", in: web).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The selection a step made, asked for until there is one. The page
+    /// selects in the turn it hears the press: over some 570 double clicks
+    /// on the CI machines the word was there within 5 ms of the last event.
+    /// Once it came about half a second late (the page's process was held
+    /// up; the checks after it passed), and a single read 400 ms after the
+    /// last event called that "selected nothing". A selection that never
+    /// comes still fails, after `timeout`; one that comes later than that
+    /// old pause is said in the log, with when the page heard each event,
+    /// so the next late one can be told from a slow machine.
+    func selection(_ web: WKWebView, after step: String, timeout: Duration = .seconds(5)) async -> String {
+        let start = ContinuousClock.now
+        var text = await selection(web)
+        while text.isEmpty, ContinuousClock.now - start < timeout {
+            await pause(25)
+            text = await selection(web)
+        }
+        let waited = Int((ContinuousClock.now - start) / .milliseconds(1))
+        if waited > 400 {
+            let heard = await string("(window.__heard || []).join(' ')", in: web)
+            // "warning: …/macos-app/…" is a line macos-ci's log filter keeps.
+            let line = "warning: \(#filePath): \(step) \(text.isEmpty ? "had selected nothing" : "selected only") \(waited) ms"
+                + " after its last event; the page heard, in ms from the first: \(heard)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
+        // What the fixed pause also gave: the page's own report of the
+        // selection (120 ms after it settles) is out before the next step.
+        await pause(300)
+        return text
+    }
+
+    /// Has the page note each press, release and double click it hears,
+    /// with its time; `clear` starts the list again for the next step.
+    func listen(_ web: WKWebView) async {
+        _ = await string("window.__heard = []; ['mousedown', 'mouseup', 'dblclick'].forEach(function (t) {"
+            + " document.addEventListener(t, function (e) { var h = window.__heard; if (!h.length) window.__heard0 = performance.now();"
+            + " h.push(t + ':' + e.detail + '@' + Math.round(performance.now() - window.__heard0)); }, true); }); ''", in: web)
+    }
+
     func clear(_ web: WKWebView) async {
-        _ = await string("window.getSelection().removeAllRanges(); ''", in: web)
+        _ = await string("window.getSelection().removeAllRanges(); if (window.__heard) window.__heard = []; ''", in: web)
         try? await Task.sleep(for: .milliseconds(200))
     }
 
@@ -177,7 +217,6 @@ private final class Stage {
             await pause(40)
         }
         post(.leftMouseUp, in: web, at: to)
-        await pause(400)
     }
 
     func doubleClick(in web: WKWebView, at point: CGPoint) async {
@@ -188,7 +227,6 @@ private final class Stage {
         post(.leftMouseDown, in: web, at: point, clicks: 2)
         await pause(30)
         post(.leftMouseUp, in: web, at: point, clicks: 2)
-        await pause(400)
     }
 
     private func pause(_ milliseconds: Int) async {

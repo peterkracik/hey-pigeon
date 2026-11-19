@@ -222,7 +222,7 @@ switch, per mailbox, off until I turn it on.
 | iPhone / iPad only | The "Recent Opens" row in `SidebarSheet` (iPhone) and the iPad sidebar (`Features/Pad`). `AppDelegate` needs no change: a push without `email` already syncs every account (`NewMailNotifier.handle`). |
 | Mac only (`macos-app/HeyPigeonMac`) | Entry points only: "Recent Opens" in `SidebarColumn`, a palette entry, `g o` in `KeyboardMap.resolve` / `characters` / `ShortcutsSheet.groups`, all through `WindowState.run`. The Mac build gets the relay URL (`HEYPIGEON_RELAY_URL` in `publish-macos` and `macos-ci`) without the push entitlement. |
 | Relay (`relay/`) | `index.js`: `functions.http("opens", …)`. New `src/opens-handlers.js`: the four routes, pure, with the `onOpen` seam for R24. New `src/opens.js` (Firestore `opens` collection), `src/classify.js` (pure: address + user agent + age → label), `src/ranges.js` (Apple's egress list, fetched once per instance, never bundled; unavailable → the classifier works from the user agent, where Apple's proxy is still `hidden`). `registerToken` gains `GET` and `opensUrl` ("Discovery of the opens URL", below). |
-| Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, 512M, at most 5 instances), `OPENS_URL` in `register-token`'s environment (which also orders the three so they do not race for the staging bucket), the domain mapping for `o.heypigeon.app` behind `opens_domain` (off by default). `logging.tf`: the `google_logging_project_exclusion` for the `opens` service's request logs, which the function and its invoker `depends_on`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`, `opens_run_url`, `opens_domain_records`. `bootstrap/iam.tf`: the custom role `relayLogExclusions` for the deployer — the one part applied by hand. `deploy-relay.yml`: `workflow_dispatch` (plan or apply, `main` only). |
+| Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, 512M, at most 5 instances), `OPENS_URL` in `register-token`'s environment (the custom domain, empty until mapped; an explicit `depends_on` orders the three functions so they do not race for the staging bucket), the domain mapping for `o.heypigeon.app` behind `opens_domain` (off by default). `logging.tf`: the `google_logging_project_exclusion` for the `opens` service's request logs, which the function and its invoker `depends_on`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`, `opens_run_url`, `opens_domain_records`. `bootstrap/iam.tf`: the custom role `relayLogExclusions` for the deployer — the one part applied by hand. `deploy-relay.yml`: `workflow_dispatch` (plan or apply, `main` only). |
 
 **SQLite, migration v32** (the next free number; v31 is the newest today):
 
@@ -433,7 +433,9 @@ Whole feature:
 - The domain mapping is created by the same Action once `OPENS_DOMAIN` is
   set, after the deployer service account is made a verified owner of
   `heypigeon.app` in Search Console and the CNAME exists. Until then the
-  pixel is served from the function's run.app URL.
+  function answers at its run.app URL but `register-token` reports no
+  `opensUrl`, so the apps have no read status and no pixel carries a
+  run.app address.
 - Apple's egress ranges are fetched by the function at cold start, not
   bundled. If they cannot be loaded, the fetch is labelled by user agent:
   Apple's proxy stays `hidden`, and only a fetch that names a mail client

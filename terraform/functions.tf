@@ -156,26 +156,29 @@ resource "google_cloudfunctions2_function" "register_token" {
       GOOGLE_CLIENT_IDS = join(",", var.google_client_ids)
       PUBSUB_TOPIC      = google_pubsub_topic.gmail_push.id # projects/<p>/topics/gmail-push
       # Where read status lives, reported to the app beside the topic so it
-      # still needs one setting. The reference also orders the functions:
-      # opens, then this one, then on-mail-change (see there for why).
-      OPENS_URL = local.opens_url
+      # still needs one setting: the pixel's own domain once it is mapped,
+      # empty (the app is told there is none) until then. Deliberately not
+      # the opens function's run.app URL: that is unknown until the function
+      # exists, and one unknown value makes the provider plan this whole map
+      # away (the postcondition below is what caught it).
+      OPENS_URL = var.opens_domain != "" ? "https://${var.opens_domain}" : ""
     })
   }
 
-  depends_on = [time_sleep.iam_propagation]
+  # opens first, then this one, then on-mail-change: see on-mail-change for
+  # why the functions are created one after the other.
+  depends_on = [time_sleep.iam_propagation, google_cloudfunctions2_function.opens]
 
-  # OPENS_URL is unknown until the opens function exists, and on that first
-  # apply the plan prints this function's other variables as removed. Should
-  # an apply ever really drop them, fail it here instead of leaving
-  # registration quietly broken; applying again (the URL is known by then)
-  # puts them back.
+  # A value in the map above that is unknown at plan time makes the provider
+  # plan every other variable away. Fail the plan or the apply here rather
+  # than leave registration quietly broken.
   lifecycle {
     postcondition {
       condition = alltrue([
         for name in ["GOOGLE_CLIENT_IDS", "PUBSUB_TOPIC", "APNS_SECRET_NAME"] :
         try(self.service_config[0].environment_variables[name], "") != ""
       ])
-      error_message = "register-token lost its environment variables in this apply. Run the deploy-relay workflow again with apply."
+      error_message = "register-token would lose its environment variables: a value in the map is unknown at plan time."
     }
   }
 }
@@ -194,10 +197,9 @@ resource "google_cloud_run_v2_service_iam_member" "register_token_public" {
 # relay that strangers' mail clients call.
 
 locals {
-  # The address the pixel is served from and the app is told about: the
-  # custom domain once it is mapped (var.opens_domain), the function's own
-  # run.app URL until then. Both keep working after the switch — a pixel in
-  # mail already sent names whichever it was sent with.
+  # Where the opens function answers: the custom domain once it is mapped
+  # (var.opens_domain), its own run.app URL until then. An output only —
+  # the app is told about the custom domain alone (OPENS_URL above).
   opens_url = var.opens_domain != "" ? "https://${var.opens_domain}" : google_cloudfunctions2_function.opens.service_config[0].uri
 }
 

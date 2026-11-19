@@ -4,7 +4,7 @@ output "register_token_url" {
 }
 
 output "opens_url" {
-  description = "Where read status lives: the pixel (/o/<token>.gif) and the app's register / query / delete routes."
+  description = "Where the opens function answers: the custom domain once mapped, else its run.app URL. The app is only told about the custom domain."
   value       = local.opens_url
 }
 

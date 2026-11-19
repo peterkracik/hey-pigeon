@@ -157,7 +157,8 @@ GOOGLE_CLIENT_IDS=x PUBSUB_TOPIC=projects/p/topics/gmail-push npm run start:regi
 Environment (set by Terraform): `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`
 (= `app.heypigeon.ios`), `APNS_SECRET_NAME` (`projects/<p>/secrets/apns-key`),
 `GOOGLE_CLIENT_IDS` (iOS OAuth client ids, comma-separated), `PUBSUB_TOPIC`,
-`OPENS_URL` (on `register-token`: what it reports as `opensUrl`). The `opens`
+`OPENS_URL` (on `register-token`: what it reports as `opensUrl`; the pixel's
+custom domain, empty until it is mapped). The `opens`
 function gets `GOOGLE_CLIENT_IDS` and `OPENS_PUBLIC_URL` (the pixel's custom
 domain; empty means "the host this request came to", its run.app URL).
 

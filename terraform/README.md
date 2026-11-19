@@ -163,13 +163,14 @@ deployment branches limited to `main` — gate every apply.
 | `GCP_DEPLOYER_SA` | bootstrap output `deployer_sa_email` |
 | `APNS_KEY_ID`, `APNS_TEAM_ID` | from Apple |
 | `HEYPIGEON_IOS_OAUTH_CLIENT_ID` | the iOS OAuth client id |
-| `OPENS_DOMAIN` (optional) | `o.heypigeon.app`, once the two steps under "The pixel's own domain" are done; unset = the run.app URL |
+| `OPENS_DOMAIN` (optional) | `o.heypigeon.app`, once the two steps under "The pixel's own domain" are done; unset = the apps are told there is no read status |
 
 ## The pixel's own domain (`o.heypigeon.app`)
 
-Without `OPENS_DOMAIN` the `opens` function is used at its run.app URL
-(`terraform output opens_url`), and that is what `register-token` reports
-to the app. To put it on `o.heypigeon.app` — by the Action, with two things
+Without `OPENS_DOMAIN` the `opens` function is deployed and answers at its
+run.app URL (`terraform output opens_run_url`), but `register-token`
+reports no `opensUrl`, so no app uses it and no pixel is ever sent with a
+run.app address. To put it on `o.heypigeon.app` — by the Action, with two things
 done by hand once, in this order:
 
 1. **Verified owner.** Google lets only a verified owner of a domain map
@@ -185,10 +186,9 @@ Then set `OPENS_DOMAIN=o.heypigeon.app` on the `infra` environment and run
 the workflow with `apply`. Google issues the certificate after the record
 resolves, usually within the hour; until then the domain does not answer
 and the run.app URL still does. From that apply on, `register-token`
-reports `https://o.heypigeon.app`, so set it before any app build sends
-pixels, or accept that mail sent in the first hour points at a host that
-is not up yet. Mail sent earlier keeps working: the run.app URL never goes
-away. If step 1 is missing the apply fails on the mapping alone; unset the
+reports `https://o.heypigeon.app`, so read status in the apps can start
+within the hour it takes the certificate; mail sent in that hour points at
+a host that is not up yet. If step 1 is missing the apply fails on the mapping alone; unset the
 variable to get back to a green apply.
 
 Everything else about the deploy (region, runtime, topic name) is in the

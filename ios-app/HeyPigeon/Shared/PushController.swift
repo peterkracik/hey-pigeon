@@ -20,12 +20,14 @@ final class PushController {
     var enabled: Bool {
         didSet { defaults.set(enabled, forKey: Keys.enabled) }
     }
-    /// The relay to register with: fixed at build time (HEYPIGEON_RELAY_URL →
+    /// The relay this build talks to: fixed at build time (HEYPIGEON_RELAY_URL →
     /// Info.plist), never shown or edited in the UI. Empty in a build made
-    /// without one, which disables the toggle.
+    /// without one. Push registers with it; read status needs it too
+    /// (AppModel hands it to the engine), which is why a Mac build carries
+    /// one although it has no push.
     let relayURL: String
-    /// True when the build carries a relay. Push then starts on — same
-    /// footing as the baked OAuth client.
+    /// True when the build carries a relay. On a platform with push, push
+    /// then starts on — same footing as the baked OAuth client.
     var isBaked: Bool { !relayURL.isEmpty }
     /// Last APNs token the system gave us (hex). Re-registered whenever
     /// accounts change; iOS may rotate it at any launch.
@@ -62,16 +64,21 @@ final class PushController {
         relayURL = bakedRaw.hasPrefix("https://") ? bakedRaw : ""
         // Default: on when the build knows its relay and the user has never
         // decided otherwise; off when there is nothing to register with.
+        // "Has a relay" is not "can push": the Mac has the first for read
+        // status and never the second.
+        let canPush = !relayURL.isEmpty && RemoteNotifications.isSupported
         if let decided = defaults.object(forKey: Keys.enabled) as? Bool {
-            enabled = decided && !relayURL.isEmpty
+            enabled = decided && canPush
         } else {
-            enabled = !relayURL.isEmpty
+            enabled = canPush
         }
         deviceToken = defaults.string(forKey: Keys.deviceToken)
         refreshStatus()
     }
 
-    var canEnable: Bool { isBaked }
+    /// Whether "New mail (push)" can be offered: a relay, and a platform
+    /// that can be pushed to. Not the same as `isBaked`.
+    var canEnable: Bool { isBaked && RemoteNotifications.isSupported }
 
     func refreshStatus() {
         status = try? engine.pushStatus()

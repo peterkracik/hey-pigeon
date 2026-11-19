@@ -231,6 +231,57 @@ struct AppModelTests {
         #expect(ComposeView.linkAddress(from: "   ") == nil)
     }
 
+    /// docs/specs/read-status.md R8, R10, R25: read status is off for
+    /// every account, cannot be turned on in a build without a relay, and
+    /// with one is one mailbox's switch.
+    @Test func readStatusIsOffByDefaultAndDisabledWithoutARelay() throws {
+        // Whatever relay the test host's build carries, start without.
+        try engine.configureRelay(url: "")
+        #expect(model.accounts.count == 2)
+        #expect(model.accounts.allSatisfy { !$0.readStatus })
+        #expect(!model.readStatusAvailable)
+        let first = model.accounts[0]
+        model.setReadStatus(true, for: first)
+        #expect(model.accounts.allSatisfy { !$0.readStatus })
+        // Off is never refused.
+        model.setReadStatus(false, for: first)
+        #expect(model.accounts.allSatisfy { !$0.readStatus })
+
+        #expect(throws: (any Error).self) { try engine.configureRelay(url: "http://plain.example") }
+        try engine.configureRelay(url: "https://relay.example")
+        #expect(model.readStatusAvailable)
+        model.setReadStatus(true, for: first)
+        #expect(model.accounts[0].readStatus)
+        #expect(!model.accounts[1].readStatus)
+        // Another setting of the account does not take it back.
+        model.updateAccount(model.accounts[0], signature: "— P")
+        #expect(model.accounts[0].readStatus)
+        model.setReadStatus(false, for: model.accounts[0])
+        #expect(!model.accounts[0].readStatus)
+    }
+
+    /// The row stays out of Settings until a build sends a tracked
+    /// message: a switch that does nothing is worse than none.
+    @Test func theReadStatusRowIsNotShownYet() {
+        #expect(!ReadStatusSetting.isShown)
+        #expect(ReadStatusSetting.title == "Read status")
+        #expect(ReadStatusSetting.unavailable == "Not available in this build")
+    }
+
+    /// Having a relay is not being able to push: the Mac build carries the
+    /// relay for read status and has no push entitlement, so "New mail
+    /// (push)" is never offered there.
+    @Test func pushIsOfferedOnlyWhereTheAppCanBePushedTo() {
+        #if os(macOS)
+        #expect(!RemoteNotifications.isSupported)
+        #expect(!model.push.canEnable)
+        #expect(!model.push.enabled)
+        #else
+        #expect(RemoteNotifications.isSupported)
+        #expect(model.push.canEnable == model.push.isBaked)
+        #endif
+    }
+
     /// The sign-in is offered by an empty list only while no account is
     /// connected (the sample inbox has two).
     @Test func theSignInIsOfferedOnlyWithNoAccount() {

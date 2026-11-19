@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — step 1 (local statuses) merged, #142; step 2 (own-pixel rule, token reader) merged, #144; step 3 (relay and infrastructure) implemented, not merged, not deployed; steps 4–7 not started
+Status: Approved — steps 1–3 merged (#142, #144, #147) and step 3 deployed; step 4 (store and setting) implemented, not merged; steps 5–7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -226,15 +226,15 @@ switch, per mailbox, off until I turn it on.
 
 | Layer | What goes here |
 | --- | --- |
-| Core (`desktop-app/crates/core`, adapters) | New `core::readstatus`: the status of a sent message as a pure function over the thread's messages and the stored events (R1–R5), bounce and reply detection (R3, R4), token creation, the flush rule (R16), pixel insertion and the HTML part made from plain text (R17), the poll (R23), the catch-up (R19), the off switch (R12, R13). `domain`: `Mutation::Send` gains `track_opens: bool` and `open_token: Option<String>` (both `serde(default)`, so rows queued by older builds still parse); `Account.read_status: bool`; `ReadStatus`, `OpenEvent`, `RecentOpen`. `ports`: three `MailProvider` methods with default "not supported" impls — register, query, delete — and the `Store` methods for the two tables; `fakes` gains both. `outbox::drain` calls the flush rule for a `Send`. `sanitize`: the own-pixel rule (R18), `own_pixel_token(raw_html)`, and the one definition of the pixel's URL shape (`OWN_PIXEL_PATH_PREFIX`, `OWN_PIXEL_SUFFIX`, `OWN_PIXEL_TOKEN_DIGITS`, `own_pixel_token_of_url`), which the sender of step 5 builds its URL from. `Message.open_token`: what the full fetch read, carried on the fetch's result; no store keeps it before migration v32 (step 4). `devsync`: `ACCOUNT_FIELD_READ_STATUS`. `adapter-gmail`: new `opens.rs` beside `push.rs` (the three relay calls with the account's access token; the token never crosses the FFI), token extraction in `full_fetch` before `sanitize::html`, pixel appended in `build_mime`'s input. `adapter-sqlite`: migration v32 (below). |
-| Bridge (`crates/ffi`, `RustEngine`, `MockEngine`) | `Engine.set_read_status(account_id, enabled)`; `Engine.read_status_availability()` (relay configured or not); `Engine.recent_opens(account_id?, limit)`; `MailMessage` gains `read_status` (state, newest time, events) → `MessageItem.readStatus`; `Mutation.Send.track_opens`; `Account.read_status`. Discovery of the opens URL and the poll run inside `sync_account`, next to `renew_watch`. `MockEngine`: the same operations, with one sent thread in each state so previews and tests show all five. |
+| Core (`desktop-app/crates/core`, adapters) | New `core::readstatus`: the status of a sent message as a pure function over the thread's messages and the stored events (R1–R5), bounce and reply detection (R3, R4), token creation, the flush rule (R16), pixel insertion and the HTML part made from plain text (R17), the poll (R23), the catch-up (R19), the off switch (R12, R13). `domain`: `Mutation::Send` gains `track_opens: bool` and `open_token: Option<String>` (both `serde(default)`, so rows queued by older builds still parse); `Account.read_status: bool`; `ReadStatus`, `OpenEvent`, `RecentOpen`. `ports`: three `MailProvider` methods with default "not supported" impls — register, query, delete — and the `Store` methods for the two tables; `fakes` gains both. `outbox::drain` calls the flush rule for a `Send`. `sanitize`: the own-pixel rule (R18), `own_pixel_token(raw_html)`, and the one definition of the pixel's URL shape (`OWN_PIXEL_PATH_PREFIX`, `OWN_PIXEL_SUFFIX`, `OWN_PIXEL_TOKEN_DIGITS`, `own_pixel_token_of_url`), which the sender of step 5 builds its URL from. `Message.open_token`: what the full fetch read, carried on the fetch's result; no store keeps it before the code that writes `open_tokens` (step 5; the table itself is migration v34, step 4). `devsync`: `ACCOUNT_FIELD_READ_STATUS`. `adapter-gmail`: new `opens.rs` beside `push.rs` (the three relay calls with the account's access token; the token never crosses the FFI), token extraction in `full_fetch` before `sanitize::html`, pixel appended in `build_mime`'s input. `adapter-sqlite`: migration v34 (below). |
+| Bridge (`crates/ffi`, `RustEngine`, `MockEngine`) | `Engine.set_read_status(account_id, enabled)`; `Engine.configure_relay(relay_url)` (the shell hands over the baked URL at launch; kept under `relay.url`, apart from push's keys); `Engine.read_status_available()` (relay configured or not); `Engine.recent_opens(account_id?, limit)`; `MailMessage` gains `read_status` (state, newest time, events) → `MessageItem.readStatus`; `Mutation.Send.track_opens`; `Account.read_status`. Discovery of the opens URL and the poll run inside `sync_account`, next to `renew_watch`. `MockEngine`: the same operations, with one sent thread in each state so previews and tests show all five. |
 | Shared shell (`ios-app/HeyPigeon`) | `AppModel.setReadStatus(_:for:)`, `AppModel.recentOpens`, `SendDraft.trackOpens` and its default (R15) as a static function; the status line in `MessageHeaderLine`; `Features/ReadStatus/RecentOpensView.swift` (the list, shared by all three); the "Read status" row and footer in `SettingsView`'s account editor; the composer's switch in `ComposeView`; the wording of R1 and R5 in one place (`ReadStatusText`, static, testable). |
 | iPhone / iPad only | The "Recent Opens" row in `SidebarSheet` (iPhone) and the iPad sidebar (`Features/Pad`). `AppDelegate` needs no change: a push without `email` already syncs every account (`NewMailNotifier.handle`). |
 | Mac only (`macos-app/HeyPigeonMac`) | Entry points only: "Recent Opens" in `SidebarColumn`, a palette entry, `g o` in `KeyboardMap.resolve` / `characters` / `ShortcutsSheet.groups`, all through `WindowState.run`. The Mac build gets the relay URL (`HEYPIGEON_RELAY_URL` in `publish-macos` and `macos-ci`) without the push entitlement. |
 | Relay (`relay/`) | `index.js`: `functions.http("opens", …)`. New `src/opens-handlers.js`: the four routes, pure, with the `onOpen` seam for R24. New `src/opens.js` (Firestore `opens` collection), `src/classify.js` (pure: address + user agent + age → label), `src/ranges.js` (Apple's egress list, fetched once per instance, never bundled; unavailable → the classifier works from the user agent, where Apple's proxy is still `hidden`). `registerToken` gains `GET` and `opensUrl` ("Discovery of the opens URL", below). |
 | Infrastructure (`terraform/`) | `functions.tf`: `google_cloudfunctions2_function.opens` (entry point `opens`, `ALLOW_ALL`, `allUsers` invoker, same source object, 512M, one CPU, 80 requests per instance, at most 3 instances), `OPENS_URL` in `register-token`'s environment (the custom domain, empty until mapped; an explicit `depends_on` orders the three functions so they do not race for the staging bucket), the domain mapping for `o.heypigeon.app` behind `opens_domain` (off by default). `logging.tf`: the `google_logging_project_exclusion` for the `opens` service's request logs, which the function and its invoker `depends_on`. `firestore.tf`: `google_firestore_field` with a TTL on `opens.expiresAt`. `outputs.tf`: `opens_url`, `opens_run_url`, `opens_domain_records`. `bootstrap/iam.tf`: the custom role `relayLogExclusions` for the deployer — the one part applied by hand. `deploy-relay.yml`: `workflow_dispatch` (plan or apply, `main` only). |
 
-**SQLite, migration v32** (the next free number; v31 is the newest today):
+**SQLite, migration v34** (v32 and v33 were taken by other work before step 4):
 
 ```sql
 ALTER TABLE accounts ADD COLUMN read_status INTEGER NOT NULL DEFAULT 0;
@@ -356,8 +356,9 @@ Core (`cargo test`, against `MemStore` / `FakeProvider`):
 - [x] R19, the reader — `own_pixel_token_is_read_from_raw_html` (`sanitize.rs`), `token_is_read_from_raw_sent_html` (`adapter-gmail`)
 - [ ] R19, the catch-up (step 5) — `catch_up_is_bounded`
 - [ ] R23 — `poll_skips_off_accounts_and_expired_tokens`, `repeated_poll_inserts_nothing`
-- [ ] Migration — `v32_upgrade_adds_read_status_off_and_empty_tables`, `removing_account_removes_tokens_and_events` (`adapter-sqlite`)
-- [ ] R9 — `read_status_setting_syncs_as_account_field` (`devsync`)
+- [x] Migration — `v34_upgrade_adds_read_status_off_and_empty_tables`, `removing_account_removes_tokens_and_events` (`adapter-sqlite`)
+- [x] R9, R13 (the setting follows; no delete yet) — `read_status_setting_syncs_as_account_field` (`devsync`)
+- [x] R8, R10, R25 at the bridge — `read_status_is_off_by_default_and_needs_a_relay`, `the_switch_is_per_account_and_recorded_for_other_devices`, `a_changed_relay_forgets_the_old_ones_answer`; R11 for discovery — `the_relay_is_asked_only_for_an_account_with_read_status_on`, `discovery_does_nothing_while_read_status_is_off` (`ffi::readstatus`); the relay's answer — `relay_info_reads_the_opens_url_or_its_absence` (`adapter-gmail`)
 
 Relay (`node --test`, no network):
 
@@ -373,7 +374,7 @@ Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 - [ ] R1, R5, R6 — with opens (step 5): `ReadStatusText` wording for Opened and Hidden, one and several recipients (`ModelTests`)
 - [ ] R15 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens` (`AppModelTests`)
 - [ ] R7 — `recentOpensAreNewestFirstAndRespectTheAccountFilter`
-- [ ] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`
+- [ ] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`, `theReadStatusRowIsNotShownYet`, `pushIsOfferedOnlyWhereTheAppCanBePushedTo` (`AppModelTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
 
 Mac (`macos-app/HeyPigeonMacTests`):
 
@@ -403,9 +404,12 @@ Whole feature:
    log exclusion the function depends on, the domain mapping behind a
    variable). By hand, once, before the merge: a bootstrap apply that
    lets the deployer manage log exclusions. Nothing calls it yet.
-4. **Store and setting.** Migration v32, `Account.read_status`, the
-   devsync field, `set_read_status`, the Settings row (disabled or off
-   everywhere), the Mac build's relay URL. Still sends no pixel.
+4. **Store and setting.** Migration v34, `Account.read_status`, the
+   devsync field, `set_read_status`, the Settings row — built, and kept
+   out of Settings (`ReadStatusSetting.isShown`) until step 5, because a
+   switch that does nothing is worse than none — the Mac build's relay
+   URL, the Mac's OAuth client accepted by the relay. Still sends no
+   pixel and makes no call to `opens`.
 5. **Send, poll, off switch.** The flush rule, pixel, registration, the
    poll in `sync_account`, catch-up, delete on off; the composer switch;
    Opened / Hidden in the header. All privacy copy lands in this PR.
@@ -536,7 +540,7 @@ Step 2, 2026-11-19 — **Verified with notes**. Merged as #144.
 - Not covered: a pixel reached other than through an `<img>` (a CSS
   background) — the app never writes one that way.
 
-Step 3, 2026-11-19 — **Verified with notes**. Not merged, not deployed.
+Step 3, 2026-11-19 — **Verified with notes**. Merged as #147 and deployed.
 Reworked after the security review of #147.
 
 - `npm ci && npm test` in `relay/`: 64 tests pass. `terraform fmt -check
@@ -569,4 +573,47 @@ Reworked after the security review of #147.
   `relay/README.md` and `terraform/README.md` describe what is deployed
   after the merge.
 
-Steps 4–7: not started.
+Step 3 on the deployed project, 2026-11-19:
+
+- `terraform apply` on merge: 5 added, 2 changed, 1 destroyed. The custom
+  role, the TTL policy and the CPU and concurrency settings were accepted.
+- From outside: the pixel with an unknown token answers 200 `image/gif`,
+  42 bytes; `register-token` `GET` without a token 401; the `opens` query
+  without a token 401.
+- #149: `deploy-relay` reads `OPENS_DOMAIN` as a variable or a secret. Its
+  apply created the `o.heypigeon.app` mapping, and `register-token` now
+  reports `opensUrl = https://o.heypigeon.app`.
+- Still unchecked there: that the request-log exclusion really keeps the
+  `opens` request log out of storage; Cloud Trace spans; the shape of
+  `X-Forwarded-For`; that the instance recognises itself as `opens` (the
+  quiet console); measured memory; and the domain's certificate, which
+  was still pending when last looked at.
+
+Step 4, 2026-11-19 — **Verified with notes**. Not merged.
+
+- Rust: `cargo fmt --all -- --check`, the `cargo test` line of `rust-ci`
+  and its Swift bindgen step pass locally. `terraform fmt -check
+  -recursive` and `validate` pass for both stacks.
+- Swift (`Models`, `RustEngine`, `MockEngine`, `AppModel`,
+  `PushController`, `Platform`, `SettingsView`, `AppModelTests`) was
+  written on Linux and has never been compiled: `ios-ci` and `macos-ci`
+  are its first build.
+- The Settings row exists and is not shown (`ReadStatusSetting.isShown`
+  is false) on any platform; no privacy copy changed. Step 5 shows it,
+  with its footer, when a build can send.
+- R12 for now: turning the setting off writes and syncs it and sends
+  nothing to the relay. No build has ever registered a token, so there
+  is nothing of the mailbox there to delete; the delete, its retry and
+  the `opens.delete_pending` marker come with the code that registers
+  (step 5).
+- The only relay request this step can make is the write-free `GET` on
+  `register-token`, once a day, for an account with read status on — and
+  with the row hidden no account can be turned on from the app.
+- Not verifiable here: that `HEYPIGEON_RELAY_URL` exists on the `macos`
+  environment and `HEYPIGEON_MAC_OAUTH_CLIENT_ID` on `infra` (without
+  them the Mac build has no relay and the relay does not learn the Mac's
+  client — both are the state before this step); the discovery call
+  against the real relay; the Mac build with a relay URL showing no push
+  switch.
+
+Steps 5–7: not started.

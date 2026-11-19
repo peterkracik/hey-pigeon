@@ -18,6 +18,9 @@ pub struct Account {
     pub color: String,
     pub avatar_url: Option<String>,
     pub signature: String,
+    /// Read status is on for this mailbox (docs/specs/read-status.md R8).
+    /// Off unless the user turned it on; `Engine::set_read_status`.
+    pub read_status: bool,
 }
 
 impl From<domain::Account> for Account {
@@ -29,6 +32,7 @@ impl From<domain::Account> for Account {
             color: a.color,
             avatar_url: a.avatar_url,
             signature: a.signature,
+            read_status: a.read_status,
         }
     }
 }

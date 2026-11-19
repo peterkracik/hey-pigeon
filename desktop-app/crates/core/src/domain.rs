@@ -23,6 +23,12 @@ pub struct Account {
     /// Appended to composed mail from this account.
     #[serde(default)]
     pub signature: String,
+    /// Read status for this mailbox (docs/specs/read-status.md R8): the
+    /// user's switch for "tell me when mail I send from this account is
+    /// opened". Off until they turn it on; synced to their other devices
+    /// (`devsync::ACCOUNT_FIELD_READ_STATUS`).
+    #[serde(default)]
+    pub read_status: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

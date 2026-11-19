@@ -17,6 +17,9 @@ struct MailAccount: Identifiable, Hashable, Sendable {
     let color: AccountColor
     let avatarURL: URL?
     let signature: String
+    /// Read status is on for this mailbox (docs/specs/read-status.md R8):
+    /// off unless the user turned it on, and theirs on every device.
+    var readStatus = false
 }
 
 /// Jev triage urgency, spam→high.
@@ -173,6 +176,21 @@ struct ReadStatus: Hashable, Sendable {
     let state: ReadState
     /// When the reply or the bounce arrived; nil for `.sent`.
     var at: Date?
+}
+
+/// The read-status setting of an account (Settings › Accounts): its words,
+/// and whether the row is shown at all.
+enum ReadStatusSetting {
+    /// Off until the app can do what the switch says: no build sends a
+    /// tracked message yet, and a switch that does nothing is worse than
+    /// none. The step that sends turns this on, with the footer.
+    static let isShown = false
+    static let title = "Read status"
+    /// Under the switch when the build has no relay (R10).
+    static let unavailable = "Not available in this build"
+    /// Under the switch otherwise. Every sentence is true only of a build
+    /// that sends the picture — which is when `isShown` becomes true.
+    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when — never who, where, or on what device, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Off: nothing is added and the relay is not contacted for this account."
 }
 
 /// The words and the symbol of a read status: one place, so the phone,
@@ -1267,6 +1285,14 @@ protocol MailEngine: AnyObject {
     func setManualTriageLabels(threadId: String, ids: [String]) throws
 
     func updateAccount(id: String, displayName: String?, color: AccountColor?, signature: String?) throws
+    /// The relay this build was made with ("" for none), told to the
+    /// engine at launch. Read status needs one; push registers with it.
+    func configureRelay(url: String) throws
+    /// Whether read status can be turned on here: the build has a relay.
+    func readStatusAvailable() -> Bool
+    /// One mailbox's read-status switch. Stored on the account and synced
+    /// to the user's other devices; throws when turned on without a relay.
+    func setReadStatus(accountId: String, enabled: Bool) throws
     /// Async: with push on, the engine first forgets the device at the relay and stops the Gmail watch.
     func removeAccount(id: String) async throws
     /// App-wide preferences synced between the user's devices (`pref:<name>`

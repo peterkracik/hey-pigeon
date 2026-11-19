@@ -298,6 +298,18 @@ enum Downloads {
 /// comes back through the app delegate.
 @MainActor
 enum RemoteNotifications {
+    /// Whether this app can be woken by a push at all. The Mac build has
+    /// no push entitlement (it would need a provisioning profile, and the
+    /// app is signed with Developer ID alone): it syncs on a timer, and a
+    /// push switch there could never be turned on.
+    static var isSupported: Bool {
+        #if os(macOS)
+        false
+        #else
+        true
+        #endif
+    }
+
     static func register() {
         #if canImport(UIKit)
         UIApplication.shared.registerForRemoteNotifications()

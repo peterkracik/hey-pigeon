@@ -20,7 +20,43 @@ pub(crate) struct WireRegistration {
     pub topic: String,
 }
 
+/// What the relay says of itself (`GET {relay}/`, relay/README.md): the
+/// topic to watch and where its read-status half answers.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RelayInfo {
+    #[serde(default)]
+    pub topic: String,
+    /// The `opens` function's address (the pixel's own domain); None when
+    /// this relay has no read status, or not yet.
+    #[serde(default, rename = "opensUrl")]
+    pub opens_url: Option<String>,
+}
+
 impl GmailProvider {
+    /// Ask the relay where its halves are. Writes nothing there: no device
+    /// token is sent, so a Mac (which has none) and a phone with push off
+    /// can ask. Authenticated like a registration, with this account's
+    /// access token.
+    pub async fn relay_info(
+        &self,
+        account_id: &AccountId,
+        relay_url: &str,
+    ) -> Result<RelayInfo, MailError> {
+        let token = self.access_token(account_id).await?;
+        let resp = self
+            .http
+            .get(relay_endpoint(relay_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| MailError::Network(e.to_string()))?;
+        Self::check(resp)
+            .await?
+            .json()
+            .await
+            .map_err(|e| MailError::Provider(format!("relay: {e}")))
+    }
+
     /// Register (or refresh) a device token with the relay for this account.
     /// `environment` is `"sandbox"` for Xcode builds, `"production"` for
     /// TestFlight / App Store — APNs tokens are only valid on the side
@@ -90,6 +126,26 @@ mod tests {
         let json = serde_json::json!({ "topic": "projects/heypigeon/topics/gmail-push" });
         let reg: WireRegistration = serde_json::from_value(json).unwrap();
         assert_eq!(reg.topic, "projects/heypigeon/topics/gmail-push");
+    }
+
+    /// The relay's answer to `GET`: with read status, without it (`null`),
+    /// and from a relay older than read status (no such field).
+    #[test]
+    fn relay_info_reads_the_opens_url_or_its_absence() {
+        let topic = "projects/heypigeon/topics/gmail-push";
+        let with: RelayInfo = serde_json::from_value(
+            serde_json::json!({ "topic": topic, "opensUrl": "https://o.heypigeon.app" }),
+        )
+        .unwrap();
+        assert_eq!(with.topic, topic);
+        assert_eq!(with.opens_url.as_deref(), Some("https://o.heypigeon.app"));
+        for json in [
+            serde_json::json!({ "topic": topic, "opensUrl": null }),
+            serde_json::json!({ "topic": topic }),
+        ] {
+            let without: RelayInfo = serde_json::from_value(json).unwrap();
+            assert_eq!(without.opens_url, None);
+        }
     }
 
     #[test]

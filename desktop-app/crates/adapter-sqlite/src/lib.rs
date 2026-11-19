@@ -592,6 +592,36 @@ const MIGRATIONS: &[&str] = &[
     // read again on the thread's next open, as in v32.
     "UPDATE messages SET body_fetched = 0
       WHERE thread_id IN (SELECT id FROM threads WHERE has_attachment = 1);",
+    // v34 — read status (docs/specs/read-status.md). The per-account
+    // switch, off for every account there is and every one to come, and
+    // the two tables behind "Opened": the token of each tracked message
+    // the user sent (`message_id` is filled once the sent message itself
+    // has been seen) and what the relay reported for it. `expires_at` is
+    // when the relay forgets the token: nothing is asked about it after.
+    // A repeated poll inserts nothing (the events' primary key). Both
+    // tables go with their account (`delete_account`); no code writes
+    // them yet.
+    "
+    ALTER TABLE accounts ADD COLUMN read_status INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE open_tokens (
+        token       TEXT PRIMARY KEY,
+        account_id  TEXT NOT NULL,
+        message_id  TEXT,
+        thread_id   TEXT,
+        sent_at     INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        polled_at   INTEGER
+    ) WITHOUT ROWID;
+    CREATE INDEX open_tokens_account ON open_tokens(account_id, expires_at);
+    CREATE INDEX open_tokens_message ON open_tokens(message_id);
+    CREATE TABLE open_events (
+        token  TEXT NOT NULL,
+        at     INTEGER NOT NULL,
+        label  TEXT NOT NULL,
+        PRIMARY KEY (token, at, label)
+    ) WITHOUT ROWID;
+    CREATE INDEX open_events_recent ON open_events(label, at DESC);
+    ",
 ];
 
 /// Schema version whose upgrade re-derives every thread's list sender.
@@ -1402,6 +1432,16 @@ impl SqliteStore {
                 "DELETE FROM sync_meta WHERE account_id = ?1",
                 params![account_id],
             )?;
+            // Read status: the events first, they hang off the tokens.
+            tx.execute(
+                "DELETE FROM open_events WHERE token IN
+                   (SELECT token FROM open_tokens WHERE account_id = ?1)",
+                params![account_id],
+            )?;
+            tx.execute(
+                "DELETE FROM open_tokens WHERE account_id = ?1",
+                params![account_id],
+            )?;
             tx.execute(
                 "DELETE FROM messages WHERE account_id = ?1",
                 params![account_id],
@@ -1748,13 +1788,13 @@ impl Store for SqliteStore {
     fn upsert_account(&self, a: &Account) -> Result<(), StoreError> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO accounts (id, email, display_name, color, history_id, avatar_url, signature)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO accounts (id, email, display_name, color, history_id, avatar_url, signature, read_status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
                    email = excluded.email, display_name = excluded.display_name,
                    color = excluded.color, avatar_url = excluded.avatar_url,
-                   signature = excluded.signature",
-                params![a.id, a.email, a.display_name, a.color, a.history_id, a.avatar_url, a.signature],
+                   signature = excluded.signature, read_status = excluded.read_status",
+                params![a.id, a.email, a.display_name, a.color, a.history_id, a.avatar_url, a.signature, a.read_status],
             )
             .map(|_| ())
         })
@@ -1763,7 +1803,7 @@ impl Store for SqliteStore {
     fn list_accounts(&self) -> Result<Vec<Account>, StoreError> {
         self.read(|c| {
             let mut stmt =
-                c.prepare_cached("SELECT id, email, display_name, color, history_id, avatar_url, signature FROM accounts ORDER BY id")?;
+                c.prepare_cached("SELECT id, email, display_name, color, history_id, avatar_url, signature, read_status FROM accounts ORDER BY id")?;
             let rows = stmt.query_map([], |r| {
                 Ok(Account {
                     id: r.get(0)?,
@@ -1773,6 +1813,7 @@ impl Store for SqliteStore {
                     history_id: r.get(4)?,
                     avatar_url: r.get(5)?,
                     signature: r.get(6)?,
+                    read_status: r.get(7)?,
                 })
             })?;
             rows.collect()
@@ -3172,6 +3213,22 @@ mod tests {
         let s = SqliteStore::open_in_memory().unwrap();
         s.upsert_account(&sample_account("a1")).unwrap();
         s
+    }
+
+    /// An account row as a build before v34 wrote it, for the tests that
+    /// stop at an older schema: `upsert_account` names `read_status`,
+    /// which those do not have yet.
+    fn old_account(s: &SqliteStore, id: &str) {
+        let a = sample_account(id);
+        s.with(|c| {
+            c.execute(
+                "INSERT INTO accounts (id, email, display_name, color, history_id, avatar_url, signature)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![a.id, a.email, a.display_name, a.color, a.history_id, a.avatar_url, a.signature],
+            )
+            .map(|_| ())
+        })
+        .unwrap();
     }
 
     fn entry(key: &str, value: Option<i64>, ts: i64, device: &str) -> SyncEntry {
@@ -4693,6 +4750,96 @@ mod tests {
         assert!(store.outbox_list(10).unwrap().is_empty());
     }
 
+    /// docs/specs/read-status.md, migration v34: a database from before
+    /// read status comes up with the switch off for every account it has
+    /// (R8), its accounts otherwise as they were, and the two tables there
+    /// and empty.
+    #[test]
+    fn v34_upgrade_adds_read_status_off_and_empty_tables() {
+        let dir = std::env::temp_dir().join(format!("heypigeon-test-v34-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("v33.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let _ = SqliteStore::init_to(conn, 33).unwrap();
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "INSERT INTO accounts (id, email, display_name, color, history_id, signature)
+                 VALUES ('a1', 'a1@example.com', 'A1', 'sky', 'hist-1', '-- A'),
+                        ('a2', 'a2@example.com', 'A2', 'mint', NULL, '');",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let version: i64 = s
+            .with(|c| c.pragma_query_value(None, "user_version", |r| r.get(0)))
+            .unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let accounts = s.list_accounts().unwrap();
+        assert_eq!(accounts.len(), 2);
+        assert!(accounts.iter().all(|a| !a.read_status));
+        assert_eq!(accounts[0].signature, "-- A");
+        assert_eq!(accounts[0].history_id.as_deref(), Some("hist-1"));
+        for table in ["open_tokens", "open_events"] {
+            let rows: i64 = s
+                .with(|c| c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)))
+                .unwrap();
+            assert_eq!(rows, 0, "{table}");
+        }
+        // The switch is kept, per account, and an account written again
+        // (a sync round's upsert) keeps what it was given.
+        let mut a1 = accounts[0].clone();
+        a1.read_status = true;
+        s.upsert_account(&a1).unwrap();
+        let again = s.list_accounts().unwrap();
+        assert!(again[0].read_status);
+        assert!(!again[1].read_status);
+        // A new account starts off.
+        let mut a3 = accounts[1].clone();
+        a3.id = "a3".into();
+        a3.email = "a3@example.com".into();
+        s.upsert_account(&a3).unwrap();
+        assert!(!s.list_accounts().unwrap()[2].read_status);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R26: removing an account takes its tokens and their events with
+    /// it, and leaves another account's alone.
+    #[test]
+    fn removing_account_removes_tokens_and_events() {
+        let s = store();
+        for id in ["a1", "a2"] {
+            s.upsert_account(&heypigeon_core::fakes::sample_account(id))
+                .unwrap();
+        }
+        s.with(|c| {
+            c.execute_batch(
+                "INSERT INTO open_tokens (token, account_id, message_id, thread_id, sent_at, expires_at)
+                 VALUES ('t-a1', 'a1', 'm1', 'th1', 1, 100), ('t-a2', 'a2', NULL, NULL, 2, 200);
+                 INSERT INTO open_events (token, at, label)
+                 VALUES ('t-a1', 10, 'opened'), ('t-a1', 11, 'hidden'), ('t-a2', 12, 'opened');
+                 -- A repeated poll inserts nothing.
+                 INSERT OR IGNORE INTO open_events (token, at, label) VALUES ('t-a1', 10, 'opened');",
+            )
+        })
+        .unwrap();
+        s.delete_account("a1").unwrap();
+        let left = |sql: &str| -> Vec<String> {
+            s.with(|c| {
+                let mut stmt = c.prepare(sql)?;
+                let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+                rows.collect()
+            })
+            .unwrap()
+        };
+        assert_eq!(left("SELECT token FROM open_tokens"), ["t-a2"]);
+        assert_eq!(left("SELECT token FROM open_events"), ["t-a2"]);
+        assert_eq!(s.list_accounts().unwrap().len(), 1);
+    }
+
     // ---------------------------------------------------------------- search
 
     fn seed_thread(
@@ -5099,7 +5246,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         {
             let s = SqliteStore::open(&path).unwrap();
-            s.upsert_account(&sample_account("a1")).unwrap();
+            old_account(&s, "a1");
         }
         {
             let s = SqliteStore::open(&path).unwrap(); // reopen: migrations skip
@@ -5881,7 +6028,7 @@ mod tests {
         {
             let conn = Connection::open(&path).unwrap();
             let s = SqliteStore::init_to(conn, 25).unwrap();
-            s.upsert_account(&sample_account("a1")).unwrap();
+            old_account(&s, "a1");
             // Written as a v25 build did: `upsert_message` names columns
             // (v27's `reply_to_addrs`) this schema does not have yet.
             for (id, fetched) in [("m-raw", true), ("m-old", false)] {
@@ -5920,7 +6067,7 @@ mod tests {
         {
             let conn = Connection::open(&path).unwrap();
             let s = SqliteStore::init_to(conn, 26).unwrap();
-            s.upsert_account(&sample_account("a1")).unwrap();
+            old_account(&s, "a1");
             s.with(|c| {
                 c.execute(
                     "INSERT INTO messages
@@ -6029,7 +6176,7 @@ mod tests {
         {
             let conn = Connection::open(&path).unwrap();
             let s = SqliteStore::init_to(conn, 27).unwrap();
-            s.upsert_account(&sample_account("a1")).unwrap();
+            old_account(&s, "a1");
             s.with(|c| {
                 c.execute(
                     "INSERT INTO outbox (account_id, mutation, attempts, created_at)
@@ -6436,7 +6583,7 @@ mod tests {
         }
         let conn = Connection::open(&path).unwrap();
         let s = SqliteStore::init_to(conn, version).unwrap();
-        s.upsert_account(&sample_account("a1")).unwrap();
+        old_account(&s, "a1");
         for n in 0..30 {
             let id = format!("t{n:02}");
             let from = if n == 7 {
@@ -6693,7 +6840,7 @@ mod tests {
     /// the 27th, as it shipped, and this branch's follow it.
     #[test]
     fn the_steps_after_v26_are_mains_then_this_branchs() {
-        assert_eq!(MIGRATIONS.len(), 33);
+        assert_eq!(MIGRATIONS.len(), 34);
         for (version, names) in [
             (27, "reply_to_addrs"),
             (28, "last_error"),
@@ -6702,6 +6849,7 @@ mod tests {
             (31, "rule_marks"),
             (32, "has_attachment = 0"),
             (33, "has_attachment = 1"),
+            (34, "open_tokens"),
         ] {
             assert!(MIGRATIONS[version - 1].contains(names), "v{version}");
             assert!(!MIGRATIONS[version - 2].contains(names), "v{version}");
@@ -6729,8 +6877,8 @@ mod tests {
             (version, listed)
         };
         let fresh = schema(0);
-        assert_eq!(fresh.0, 33);
-        for from in [26, 27, 28, 29, 30, 31, 32] {
+        assert_eq!(fresh.0, 34);
+        for from in [26, 27, 28, 29, 30, 31, 32, 33] {
             assert_eq!(schema(from), fresh, "from v{from}");
         }
     }
@@ -6790,7 +6938,7 @@ mod tests {
         {
             let conn = Connection::open(&path).unwrap();
             let s = SqliteStore::init_to(conn, 26).unwrap();
-            s.upsert_account(&sample_account("a1")).unwrap();
+            old_account(&s, "a1");
             let built = Instant::now();
             s.with(|c| {
                 let tx = c.unchecked_transaction()?;

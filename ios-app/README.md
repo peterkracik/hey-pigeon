@@ -155,7 +155,11 @@ name on the `ios` GitHub environment for CI builds) bakes the relay into the
 build, like the OAuth client. The URL is never shown in the UI: Settings →
 Notifications has the on/off toggle (on by default) with one status line
 under it — registration state and until when the mailbox is watched. A build
-without a relay shows no Notifications section on the phone.
+without a relay shows no Notifications section on the phone. "Has a relay"
+(`PushController.isBaked`) and "can be pushed to" (`canEnable`) are two
+things: the Mac build carries the relay for read status and is never
+offered push. `AppModel` hands the URL to the engine at launch
+(`Engine.configureRelay`), which keeps it apart from push's own settings.
 Xcode builds register `sandbox` tokens, TestFlight / App Store builds
 `production` ones; the relay routes per token.
 

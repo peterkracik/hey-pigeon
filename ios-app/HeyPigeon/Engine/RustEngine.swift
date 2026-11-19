@@ -272,6 +272,20 @@ final class RustEngine: MailEngine {
         try engine.updateAccount(accountId: id, displayName: displayName, color: color?.rawValue, signature: signature)
     }
 
+    // MARK: Read status (the setting; nothing is sent yet)
+
+    func configureRelay(url: String) throws {
+        try engine.configureRelay(relayUrl: url)
+    }
+
+    func readStatusAvailable() -> Bool {
+        engine.readStatusAvailable()
+    }
+
+    func setReadStatus(accountId: String, enabled: Bool) throws {
+        try engine.setReadStatus(accountId: accountId, enabled: enabled)
+    }
+
     // MARK: Prefs — JSON text over the FFI (Engine::get_prefs / set_pref)
 
     func prefs() throws -> [String: Any] {
@@ -572,7 +586,8 @@ private extension MailAccount {
         self.init(
             id: a.id, email: a.email, displayName: a.displayName,
             color: AccountColor(rawValue: a.color) ?? .sky,
-            avatarURL: a.avatarUrl.flatMap(URL.init(string:)), signature: a.signature
+            avatarURL: a.avatarUrl.flatMap(URL.init(string:)), signature: a.signature,
+            readStatus: a.readStatus
         )
     }
 }

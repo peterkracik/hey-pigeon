@@ -219,6 +219,7 @@ mod tests {
                 history_id: None,
                 avatar_url: None,
                 signature: String::new(),
+                read_status: false,
             })
             .unwrap();
         (e, dir)

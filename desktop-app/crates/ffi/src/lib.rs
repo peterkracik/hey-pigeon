@@ -24,6 +24,7 @@ mod engine;
 mod keyed;
 mod mailbox;
 mod push;
+mod readstatus;
 mod secrets;
 mod settings;
 mod suggest;

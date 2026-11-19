@@ -352,7 +352,32 @@ final class MockEngine: MailEngine {
         guard let i = accountList.firstIndex(where: { $0.id == id }) else { return }
         let a = accountList[i]
         accountList[i] = MailAccount(id: a.id, email: a.email, displayName: displayName ?? a.displayName,
-                                     color: color ?? a.color, avatarURL: a.avatarURL, signature: signature ?? a.signature)
+                                     color: color ?? a.color, avatarURL: a.avatarURL, signature: signature ?? a.signature,
+                                     readStatus: a.readStatus)
+        onThreadsUpdated?()
+    }
+
+    // MARK: Read status (the setting, as ffi/src/readstatus.rs keeps it)
+
+    private var relayURL = ""
+
+    func configureRelay(url: String) throws {
+        let url = url.trimmingCharacters(in: .whitespaces)
+        guard url.isEmpty || url.hasPrefix("https://") else { throw MockError.invalid("relay URL must start with https://") }
+        relayURL = url
+    }
+
+    func readStatusAvailable() -> Bool { !relayURL.isEmpty }
+
+    /// Off for every account until turned on; on needs a relay, off never
+    /// fails for the lack of one; an unknown account is an error.
+    func setReadStatus(accountId: String, enabled: Bool) throws {
+        if enabled && relayURL.isEmpty { throw MockError.invalid("read status is not available in this build") }
+        guard let i = accountList.firstIndex(where: { $0.id == accountId }) else {
+            throw MockError.invalid("unknown account \(accountId)")
+        }
+        guard accountList[i].readStatus != enabled else { return }
+        accountList[i].readStatus = enabled
         onThreadsUpdated?()
     }
 

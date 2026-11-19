@@ -58,12 +58,21 @@ struct MessageHeaderLine<Trailing: View>: View {
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
                 // What became of the user's own sent message
-                // (docs/specs/read-status.md): sent, bounced or answered.
+                // (docs/specs/read-status.md): sent, bounced, delivered to
+                // a device that hides opens, opened or answered — and
+                // under it what the relay reported, when that says more.
                 if inThread, let status = message.readStatus {
-                    Label(ReadStatusText.line(status), systemImage: ReadStatusText.symbol(status.state))
+                    let recipients = message.to + message.cc
+                    Label(ReadStatusText.line(status, recipients: recipients, names: names),
+                          systemImage: ReadStatusText.symbol(status.state))
                         .font(Theme.caption)
                         .foregroundStyle(status.state == .notDelivered ? Theme.dangerText : Theme.textTertiary)
                         .lineLimit(1)
+                    // By position: two fetches in the same minute read alike.
+                    let details = ReadStatusText.details(status, recipients: recipients)
+                    ForEach(details.indices, id: \.self) { index in
+                        Text(details[index]).font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    }
                 }
             } else {
                 Text(message.snippet).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(1)

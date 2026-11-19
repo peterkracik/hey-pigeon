@@ -7,10 +7,11 @@ halves, three small functions in all:
   foreground, on pull and from background refresh. With it, the phone learns
   about new mail within seconds and keeps an accurate badge.
 - **Read status** (`opens`): the server half of "was my message opened"
-  ([../docs/specs/read-status.md](../docs/specs/read-status.md)). **Deployed,
-  and not used by any app yet**: no build of Hey Pigeon registers a token or
-  puts a pixel in a message, so today the function only ever answers
-  strangers' requests for tokens it does not know.
+  ([../docs/specs/read-status.md](../docs/specs/read-status.md)). Used only
+  for a mailbox whose owner turned read status on in the app (Settings →
+  Accounts; off by default, per account): the app then registers a token
+  for each message it sends from that account and puts the pixel in it.
+  For every other mailbox the apps never call it.
 
 Everything runs in the same Google Cloud project as the OAuth client and is
 created by Terraform ([../terraform/README.md](../terraform/README.md)).
@@ -228,8 +229,12 @@ manual prerequisites: [../terraform/README.md](../terraform/README.md).
 
 - In the app: Settings → Notifications → "New mail (push)" off. The phone
   DELETEs its token and the engine calls `users.stop` for every account.
-- Read status has no switch in any app yet. Server side, a mailbox's records
-  go with `DELETE /v1/tokens` (its owner's Google token) or after 30 days.
+- Read status, in the app: Settings → Accounts → the account → "Read
+  status" off. The device stops adding pixels and asking about opens at
+  once and sends `DELETE /v1/tokens`, again on its next syncs until the
+  relay has answered; a device that only learns "off" through the user's
+  settings sync sends nothing. Pixels already sent then name unknown
+  tokens. Left alone, a mailbox's records go after 30 days.
 - Server side: `terraform destroy` in `terraform/` (the Firestore database is
   protected and left in place; delete it by hand if you want it gone), then in
   `terraform/bootstrap/`. Any lease still running expires within 7 days.

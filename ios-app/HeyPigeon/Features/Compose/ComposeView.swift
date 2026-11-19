@@ -147,6 +147,13 @@ struct ComposeView: View {
     private var showsFromRow: Bool {
         model.accounts.count > 1 || model.accounts.contains { !aliases(of: $0).isEmpty }
     }
+    /// Whether the composer shows "Read status": the From account has it
+    /// on (and the build has a relay). Read from the account chosen now,
+    /// so changing From shows or hides it.
+    private var readStatusOffered: Bool {
+        model.readStatusAvailable && (fromAccount?.readStatus ?? false)
+    }
+
     private var canSend: Bool { !(allTo.isEmpty && allCc.isEmpty && allBcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
@@ -362,6 +369,19 @@ struct ComposeView: View {
                     .pillButton()
                     .accessibilityLabel("Discard")
                 Spacer()
+                // Read status for this one message (docs/specs/read-status.md
+                // R15): there only when the account it is sent from has
+                // read status on, and on until switched off.
+                if readStatusOffered {
+                    Button { draft.trackOpens.toggle() } label: {
+                        Image(systemName: draft.trackOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
+                    }
+                    .pillButton()
+                    .foregroundStyle(draft.trackOpens ? Theme.accent : Theme.textPrimary)
+                    .help(draft.trackOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
+                    .accessibilityLabel(ReadStatusSetting.title)
+                    .accessibilityValue(draft.trackOpens ? "On" : "Off")
+                }
                 if model.aiConfigured {
                     Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
                         .pillButton()

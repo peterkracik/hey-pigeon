@@ -676,10 +676,13 @@ private extension ReadStatus {
     init(_ s: MessageReadStatus) {
         let state: ReadState = switch s.state {
         case .sent: .sent
+        case .hidden: .hidden
+        case .opened: .opened
         case .notDelivered: .notDelivered
         case .replied: .replied
         }
-        self.init(state: state, at: s.at.map { Date(epochMs: $0) })
+        self.init(state: state, at: s.at.map { Date(epochMs: $0) },
+                  events: s.events.map { ReadEvent(opened: $0.opened, at: Date(epochMs: $0.at)) })
     }
 }
 
@@ -714,7 +717,7 @@ private extension MailAction {
             .send(to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
                   bodyHtml: d.bodyHTML,
                   attachments: d.attachments.map { OutAttachment(filename: $0.filename, mimeType: $0.mimeType, dataB64: $0.dataBase64) },
-                  replyToThread: d.replyToThreadId, fromAddr: d.fromAddress)
+                  replyToThread: d.replyToThreadId, fromAddr: d.fromAddress, trackOpens: d.trackOpens)
         case .saveDraft(let d):
             .saveDraft(key: d.draftKey, to: d.to, cc: d.cc, bcc: d.bcc, subject: d.subject, bodyText: d.bodyText,
                        bodyHtml: d.bodyHTML,

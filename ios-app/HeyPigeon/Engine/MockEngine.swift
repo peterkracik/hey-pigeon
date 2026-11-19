@@ -236,10 +236,13 @@ final class MockEngine: MailEngine {
     /// The core's read status (core/src/readstatus.rs), for the mock's
     /// messages: each of the user's sent messages is Replied when someone
     /// else wrote after it, Not delivered when only a bounce
-    /// (`mailer-daemon@` / `postmaster@`) did, and Sent otherwise, with
-    /// the time of the first such message. A draft and other people's
-    /// mail have none.
-    nonisolated static func withReadStatus(_ messages: [MessageItem]) -> [MessageItem] {
+    /// (`mailer-daemon@` / `postmaster@`) did — each with the time of the
+    /// first such message — then Opened or, failing that, "hidden" by
+    /// what the relay reported (`events`, by message id; the newest of
+    /// its kind gives the time), and Sent otherwise. A draft and other
+    /// people's mail have none.
+    nonisolated static func withReadStatus(_ messages: [MessageItem],
+                                           events: [String: [ReadEvent]] = [:]) -> [MessageItem] {
         func isBounce(_ m: MessageItem) -> Bool {
             let local = m.fromAddress.split(separator: "@").first.map { $0.lowercased() } ?? ""
             return !m.isMine && !m.isDraft && (local == "mailer-daemon" || local == "postmaster")
@@ -251,10 +254,15 @@ final class MockEngine: MailEngine {
                 return out
             }
             let after = messages.filter { $0.id != sent.id && $0.date > sent.date && !$0.isMine && !$0.isDraft }
+            let reported = (events[sent.id] ?? []).sorted { $0.at > $1.at }
             if let reply = after.filter({ !isBounce($0) }).map(\.date).min() {
-                out.readStatus = ReadStatus(state: .replied, at: reply)
+                out.readStatus = ReadStatus(state: .replied, at: reply, events: reported)
             } else if let bounce = after.filter(isBounce).map(\.date).min() {
-                out.readStatus = ReadStatus(state: .notDelivered, at: bounce)
+                out.readStatus = ReadStatus(state: .notDelivered, at: bounce, events: reported)
+            } else if let opened = reported.first(where: \.opened) {
+                out.readStatus = ReadStatus(state: .opened, at: opened.at, events: reported)
+            } else if let hidden = reported.first {
+                out.readStatus = ReadStatus(state: .hidden, at: hidden.at, events: reported)
             } else {
                 out.readStatus = ReadStatus(state: .sent)
             }
@@ -315,7 +323,12 @@ final class MockEngine: MailEngine {
         // leaves like a deleted one, and nothing comes back out.
         case .untrash: break
         case .markSpam(let id, let spam): if spam { rows.removeValue(forKey: id) }
-        case .send, .saveDraft, .deleteDraft: try? await Task.sleep(for: .milliseconds(300))
+        case .send(let draft):
+            // Kept for the tests: what was handed over to be sent, with
+            // its read-status choice as the model decided it.
+            sent.append(draft)
+            try? await Task.sleep(for: .milliseconds(300))
+        case .saveDraft, .deleteDraft: try? await Task.sleep(for: .milliseconds(300))
         }
         onThreadsUpdated?()
     }
@@ -360,6 +373,8 @@ final class MockEngine: MailEngine {
     // MARK: Read status (the setting, as ffi/src/readstatus.rs keeps it)
 
     private var relayURL = ""
+    /// Every message `perform(.send)` was given, oldest first.
+    private(set) var sent: [SendDraft] = []
 
     func configureRelay(url: String) throws {
         let url = url.trimmingCharacters(in: .whitespaces)

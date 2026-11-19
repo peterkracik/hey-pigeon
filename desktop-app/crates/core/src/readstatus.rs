@@ -641,6 +641,804 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------ the relay's half
+
+    use crate::devsync;
+    use crate::fakes::{
+        sample_account, FakeProvider, MemStore, MemTransport, OpensCall, FAKE_PIXEL_HOST,
+    };
+    use crate::outbox;
+    use std::sync::Arc;
+
+    const ACC: &str = "a1";
+    const NOW: i64 = 1_800_000_000_000;
+    const HOUR: i64 = 3_600_000;
+
+    fn acc() -> AccountId {
+        ACC.to_string()
+    }
+
+    /// A store with one account, read status on or off, and a relay.
+    fn fixture(read_status: bool) -> (FakeProvider, MemStore) {
+        let store = MemStore::with_device_id("dev-a");
+        let mut account = sample_account(ACC);
+        account.read_status = read_status;
+        store.upsert_account(&account).unwrap();
+        (FakeProvider::with_sample_data(ACC, 0, 10), store)
+    }
+
+    fn send(track: bool, html: Option<&str>) -> Mutation {
+        Mutation::Send {
+            to: vec!["ana@acme.test".into()],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Thursday".into(),
+            body_text: "See you <Thursday> & bring it.\nP.".into(),
+            body_html: html.map(Into::into),
+            attachments: vec![],
+            reply_to_thread: None,
+            from_addr: None,
+            in_reply_to: None,
+            references: None,
+            track_opens: track,
+            open_token: None,
+        }
+    }
+
+    /// The token the outbox row carries.
+    fn queued_token(store: &MemStore) -> Option<String> {
+        match &store.outbox_list(10).unwrap()[0].mutation {
+            Mutation::Send { open_token, .. } => open_token.clone(),
+            _ => None,
+        }
+    }
+
+    /// The HTML part of the one message the provider was given.
+    fn sent_html(provider: &FakeProvider) -> Option<String> {
+        let applied = provider.applied_mutations();
+        assert_eq!(applied.len(), 1, "one message sent");
+        match &applied[0].1 {
+            Mutation::Send { body_html, .. } => body_html.clone(),
+            other => panic!("not a send: {other:?}"),
+        }
+    }
+
+    fn calls(provider: &FakeProvider) -> Vec<OpensCall> {
+        provider.opens_calls.lock().unwrap().clone()
+    }
+
+    /// R1 in full: a reply, then a bounce, then an open, then "hidden",
+    /// then plain Sent — whatever else is there.
+    #[test]
+    fn status_precedence_reply_beats_bounce_beats_open_beats_hidden() {
+        assert!(ReadState::Replied > ReadState::NotDelivered);
+        assert!(ReadState::NotDelivered > ReadState::Opened);
+        assert!(ReadState::Opened > ReadState::Hidden);
+        assert!(ReadState::Hidden > ReadState::Sent);
+        let opened = |at| OpenEvent {
+            label: OpenLabel::Opened,
+            at,
+        };
+        let hidden = |at| OpenEvent {
+            label: OpenLabel::Hidden,
+            at,
+        };
+        let alone = [sent("s", 10)];
+        let state = |thread: &[Message], events: &[OpenEvent]| {
+            status_with(&thread[0], thread, events).unwrap()
+        };
+        assert_eq!(state(&alone, &[]).state, ReadState::Sent);
+        // Hidden is its own state and never passes for opened.
+        assert_eq!(
+            state(&alone, &[hidden(20), hidden(30)]),
+            ReadStatus {
+                state: ReadState::Hidden,
+                at: Some(30)
+            }
+        );
+        // An open outranks it, whichever came last; its time is the newest open.
+        for events in [
+            vec![hidden(20), opened(40), opened(25)],
+            vec![opened(25), opened(40), hidden(90)],
+        ] {
+            assert_eq!(
+                state(&alone, &events),
+                ReadStatus {
+                    state: ReadState::Opened,
+                    at: Some(40)
+                }
+            );
+        }
+        // Not delivered outranks opened (one recipient bounced, another read).
+        let bounced = [
+            sent("s", 10),
+            msg("b", "mailer-daemon@googlemail.com", 12, &["INBOX"]),
+        ];
+        assert_eq!(
+            state(&bounced, &[opened(40)]).state,
+            ReadState::NotDelivered
+        );
+        // A reply outranks everything.
+        let replied = [
+            sent("s", 10),
+            msg("b", "mailer-daemon@googlemail.com", 12, &["INBOX"]),
+            msg("r", "Ana <ana@acme.test>", 50, &["INBOX"]),
+        ];
+        assert_eq!(
+            state(&replied, &[opened(40), hidden(20)]),
+            ReadStatus {
+                state: ReadState::Replied,
+                at: Some(50)
+            }
+        );
+        // Events say nothing of a message that is not the user's sent mail.
+        let theirs = msg("in", "Ana <ana@acme.test>", 5, &["INBOX"]);
+        assert_eq!(status_with(&theirs, &[theirs.clone()], &[opened(9)]), None);
+        // By message, over a thread.
+        let thread = [sent("s1", 10), sent("s2", 20)];
+        let events = HashMap::from([("s2".to_string(), vec![opened(30)])]);
+        let all = statuses_with(&thread, &events);
+        assert_eq!(all[0].unwrap().state, ReadState::Sent);
+        assert_eq!(all[1].unwrap().state, ReadState::Opened);
+    }
+
+    /// R16: the token is made when the message is queued, once, and only
+    /// for a message the user sent with read status on.
+    #[test]
+    fn a_tracked_send_gets_its_token_when_it_is_queued() {
+        let (_, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, None)).unwrap();
+        let token = queued_token(&store).expect("a token on the row");
+        assert_eq!(token.len(), 32);
+        assert!(token
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        // Kept as it is when the row passes through again.
+        let again = with_token(store.outbox_list(10).unwrap()[0].mutation.clone());
+        assert!(matches!(again, Mutation::Send { open_token: Some(t), .. } if t == token));
+        // Two messages, two tokens.
+        assert_ne!(new_token(), new_token());
+
+        let (_, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(false, None)).unwrap();
+        assert_eq!(queued_token(&store), None);
+        // A token on an untracked send is dropped, not sent along.
+        let stray = with_token(Mutation::Send {
+            to: vec![],
+            cc: vec![],
+            bcc: vec![],
+            subject: String::new(),
+            body_text: String::new(),
+            body_html: None,
+            attachments: vec![],
+            reply_to_thread: None,
+            from_addr: None,
+            in_reply_to: None,
+            references: None,
+            track_opens: false,
+            open_token: Some("0".repeat(32)),
+        });
+        assert!(matches!(
+            stray,
+            Mutation::Send {
+                open_token: None,
+                ..
+            }
+        ));
+        // The token is not in what a log line would print.
+        let row = format!("{:?}", store.outbox_list(10).unwrap());
+        let (_, tracked) = fixture(true);
+        outbox::enqueue(&tracked, &acc(), send(true, None)).unwrap();
+        let token = queued_token(&tracked).unwrap();
+        assert!(!format!("{:?}", tracked.outbox_list(10).unwrap()).contains(&token));
+        assert!(!row.contains("open_token"));
+    }
+
+    /// R16, R17: the user's choice, the account's setting and the relay's
+    /// answer all hold — the message goes out with its pixel, the relay
+    /// was asked once, and the token is kept.
+    #[tokio::test]
+    async fn flush_tracks_only_when_choice_and_setting_and_relay() {
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, Some("<p>See you Thursday.</p>"))).unwrap();
+        let token = queued_token(&store).unwrap();
+        assert_eq!(outbox::drain(&provider, &store, 10).await.unwrap(), (1, 0));
+        let pixel =
+            format!(r#"<img src="{FAKE_PIXEL_HOST}/o/{token}.gif" width="1" height="1" alt="">"#);
+        assert_eq!(
+            sent_html(&provider).as_deref(),
+            Some(format!("<p>See you Thursday.</p>{pixel}").as_str())
+        );
+        assert_eq!(
+            calls(&provider),
+            vec![OpensCall::Register(acc(), token.clone())]
+        );
+        let kept = store.open_tokens_live(&acc(), now_plus(0)).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].token, token);
+        assert_eq!(kept[0].expires_at - kept[0].sent_at, TOKEN_TTL_MS);
+        assert_eq!(kept[0].message_id, None);
+
+        // The user's choice was off: nothing is asked, nothing is added.
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(false, Some("<p>Hi</p>"))).unwrap();
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        assert_eq!(sent_html(&provider).as_deref(), Some("<p>Hi</p>"));
+        assert!(calls(&provider).is_empty());
+        assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+    }
+
+    fn now_plus(ms: i64) -> i64 {
+        crate::domain::now_ms() + ms
+    }
+
+    /// R16: what counts is the setting when the message leaves, not when
+    /// Send was pressed. Turned off in between — here, or on another
+    /// device — it goes out untracked and the relay hears nothing.
+    #[tokio::test]
+    async fn setting_off_before_flush_sends_untracked() {
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, Some("<p>Hi</p>"))).unwrap();
+        assert!(queued_token(&store).is_some());
+        let mut account = sample_account(ACC);
+        account.read_status = false;
+        store.upsert_account(&account).unwrap();
+        assert_eq!(outbox::drain(&provider, &store, 10).await.unwrap(), (1, 0));
+        assert_eq!(sent_html(&provider).as_deref(), Some("<p>Hi</p>"));
+        assert!(calls(&provider).is_empty());
+        assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+    }
+
+    /// R16: whatever goes wrong with the relay — down, refusing, at its
+    /// limit, without a pixel host, or answering with something that is
+    /// not this message's pixel — the mail goes out on time, without one.
+    #[tokio::test]
+    async fn failed_registration_sends_without_pixel() {
+        let failures: [fn() -> MailError; 4] = [
+            || MailError::Network("relay unreachable".into()),
+            || MailError::Provider("503 read status is not set up on this relay".into()),
+            || MailError::RateLimited {
+                retry_after_secs: None,
+            },
+            || MailError::AuthExpired,
+        ];
+        for fail in failures {
+            let (provider, store) = fixture(true);
+            *provider.opens_failure.lock().unwrap() = Some(fail);
+            outbox::enqueue(&store, &acc(), send(true, Some("<p>Hi</p>"))).unwrap();
+            assert_eq!(outbox::drain(&provider, &store, 10).await.unwrap(), (1, 0));
+            assert_eq!(sent_html(&provider).as_deref(), Some("<p>Hi</p>"));
+            assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+            assert!(
+                store.outbox_list(10).unwrap().is_empty(),
+                "sent, not parked"
+            );
+        }
+        let token_of_another = "f".repeat(32);
+        for wrong in [
+            format!("https://o.example.test/o/{token_of_another}.gif"),
+            "https://o.example.test/pixel.gif".to_string(),
+            String::new(),
+            "http://o.example.test/o/TOKEN.gif".to_string(),
+        ] {
+            let (provider, store) = fixture(true);
+            outbox::enqueue(&store, &acc(), send(true, None)).unwrap();
+            let wrong = wrong.replace("TOKEN", &queued_token(&store).unwrap());
+            *provider.opens_pixel_override.lock().unwrap() = Some(wrong.clone());
+            outbox::drain(&provider, &store, 10).await.unwrap();
+            // A plain-text message stays plain text when it is not tracked.
+            assert_eq!(sent_html(&provider), None, "{wrong}");
+            assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+        }
+    }
+
+    /// R16: a send that has to be tried again carries the token it had.
+    #[tokio::test]
+    async fn retry_reuses_token() {
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, Some("<p>Hi</p>"))).unwrap();
+        let token = queued_token(&store).unwrap();
+        provider.fail_applies(true);
+        assert_eq!(outbox::drain(&provider, &store, 10).await.unwrap(), (0, 1));
+        // Not sent: nothing kept yet, and the row is as it was — no pixel in it.
+        assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+        assert_eq!(queued_token(&store).as_deref(), Some(token.as_str()));
+        let row = serde_json::to_string(&store.outbox_list(10).unwrap()[0].mutation).unwrap();
+        assert!(!row.contains("/o/") && !row.contains(".gif"));
+        provider.fail_applies(false);
+        assert_eq!(outbox::drain(&provider, &store, 10).await.unwrap(), (1, 0));
+        assert_eq!(
+            calls(&provider),
+            vec![
+                OpensCall::Register(acc(), token.clone()),
+                OpensCall::Register(acc(), token.clone())
+            ]
+        );
+        let html = sent_html(&provider).unwrap();
+        assert_eq!(html.matches("<img").count(), 1);
+        assert_eq!(sanitize::own_pixel_token(&html), Some(token));
+    }
+
+    /// R17: the pixel is the last thing in the HTML part, inside the body
+    /// when the part is a whole document, and a message is never given two.
+    #[test]
+    fn pixel_is_last_in_html() {
+        let url = "https://o.example.test/o/0123456789abcdef0123456789abcdef.gif";
+        let tag = format!(r#"<img src="{url}" width="1" height="1" alt="">"#);
+        assert_eq!(
+            html_with_pixel("x", Some("<p>Hi</p>"), url),
+            format!("<p>Hi</p>{tag}")
+        );
+        assert_eq!(
+            html_with_pixel("x", Some("<html><body><p>Hi</p></BODY></html>"), url),
+            format!("<html><body><p>Hi</p>{tag}</BODY></html>")
+        );
+        // Whatever the part was assembled from — a quote of the user's own
+        // tracked message, a pixel from an earlier try — one pixel leaves.
+        let older = r#"<img src="https://o.example.test/o/ffffffffffffffffffffffffffffffff.gif" width="1" height="1" alt="">"#;
+        let quoting = format!("<p>Again</p><blockquote>See you.{older}</blockquote>{tag}");
+        let out = html_with_pixel("x", Some(&quoting), url);
+        assert_eq!(
+            out,
+            format!("<p>Again</p><blockquote>See you.</blockquote>{tag}")
+        );
+        assert_eq!(out.matches("/o/").count(), 1);
+    }
+
+    /// R17: a tracked message with no HTML part gets one made from its
+    /// text; the text part goes out as it was written.
+    #[tokio::test]
+    async fn plain_only_message_gets_html_part() {
+        assert_eq!(
+            text_as_html("a <b> & c\r\nnext\n\nlast"),
+            "<div>a &lt;b&gt; &amp; c<br>\nnext<br>\n<br>\nlast</div>"
+        );
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, None)).unwrap();
+        let token = queued_token(&store).unwrap();
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        let applied = provider.applied_mutations();
+        let Mutation::Send {
+            body_text,
+            body_html,
+            ..
+        } = &applied[0].1
+        else {
+            panic!("not a send");
+        };
+        assert_eq!(body_text, "See you <Thursday> & bring it.\nP.");
+        assert_eq!(
+            body_html.as_deref().unwrap(),
+            format!(
+                "<div>See you &lt;Thursday&gt; &amp; bring it.<br>\nP.</div><img src=\"{FAKE_PIXEL_HOST}/o/{token}.gif\" width=\"1\" height=\"1\" alt=\"\">"
+            )
+        );
+    }
+
+    /// A draft saved to Gmail never contains a pixel, and saving one asks
+    /// the relay nothing: only a sent message is tracked.
+    #[tokio::test]
+    async fn draft_never_carries_pixel() {
+        let (provider, store) = fixture(true);
+        let draft = Mutation::SaveDraft {
+            key: "k1".into(),
+            to: vec!["ana@acme.test".into()],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Thursday".into(),
+            body_text: "See you".into(),
+            body_html: Some("<p>See you</p>".into()),
+            attachments: vec![],
+            reply_to_thread: None,
+            from_addr: None,
+            in_reply_to: None,
+            references: None,
+        };
+        outbox::enqueue(&store, &acc(), draft.clone()).unwrap();
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        assert_eq!(provider.applied_mutations()[0].1, draft);
+        assert!(calls(&provider).is_empty());
+        assert!(store.open_tokens_live(&acc(), 0).unwrap().is_empty());
+    }
+
+    /// A reply or forward never sends on a pixel it quotes — the user's
+    /// own from the message being answered — tracked or not; a tracked
+    /// one leaves with exactly its own.
+    #[tokio::test]
+    async fn a_quoted_pixel_is_never_sent_on() {
+        let quoted = "<p>Thanks</p><blockquote>See you.<img src=\"https://o.heypigeon.app/o/ffffffffffffffffffffffffffffffff.gif\" width=\"1\" height=\"1\" alt=\"\"></blockquote>";
+        // Untracked (the setting is off): the quote's pixel is taken out
+        // and the relay is not asked.
+        let (provider, store) = fixture(false);
+        outbox::enqueue(&store, &acc(), send(false, Some(quoted))).unwrap();
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        assert_eq!(
+            sent_html(&provider).as_deref(),
+            Some("<p>Thanks</p><blockquote>See you.</blockquote>")
+        );
+        assert!(calls(&provider).is_empty());
+        // Tracked: its own pixel, and only that one.
+        let (provider, store) = fixture(true);
+        outbox::enqueue(&store, &acc(), send(true, Some(quoted))).unwrap();
+        let token = queued_token(&store).unwrap();
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        let html = sent_html(&provider).unwrap();
+        assert_eq!(html.matches("<img").count(), 1);
+        assert!(!html.contains("ffffffff"));
+        assert_eq!(sanitize::own_pixel_token(&html), Some(token));
+    }
+
+    /// The requirement behind R11, as one test: for an account with read
+    /// status off, nothing contacts the relay — not a send the user asked
+    /// to track, not a sync round's poll or catch-up, and not after the
+    /// setting was turned off on another device and learned through sync.
+    #[tokio::test]
+    async fn setting_off_makes_no_opens_request() {
+        // Off from the start.
+        let (provider, store) = fixture(false);
+        outbox::enqueue(&store, &acc(), send(true, Some("<p>Hi</p>"))).unwrap();
+        outbox::drain(&provider, &store, 10).await.unwrap();
+        assert_eq!(poll(&provider, &store, &acc(), NOW).await.unwrap(), 0);
+        assert!(catch_up_threads(&store, &acc(), NOW).unwrap().is_empty());
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        assert!(calls(&provider).is_empty(), "{:?}", calls(&provider));
+        assert_eq!(sent_html(&provider).as_deref(), Some("<p>Hi</p>"));
+
+        // On, with a tracked message out and a token to ask about …
+        let remote = Arc::new(MemTransport::default());
+        let (provider, a) = fixture(true);
+        devsync::record_read_status(&a, &acc(), true).unwrap();
+        devsync::sync_account(&*remote, &a, &acc()).await.unwrap();
+        outbox::enqueue(&a, &acc(), send(true, Some("<p>One</p>"))).unwrap();
+        outbox::drain(&provider, &a, 10).await.unwrap();
+        assert_eq!(calls(&provider).len(), 1);
+        provider.opens_calls.lock().unwrap().clear();
+
+        // … then turned off on device B, which A learns through sync.
+        let b = MemStore::with_device_id("dev-b");
+        b.upsert_account(&sample_account(ACC)).unwrap();
+        devsync::sync_account(&*remote, &b, &acc()).await.unwrap();
+        assert!(b.list_accounts().unwrap()[0].read_status);
+        let mut off = b.list_accounts().unwrap().remove(0);
+        off.read_status = false;
+        b.upsert_account(&off).unwrap();
+        devsync::record_read_status(&b, &acc(), false).unwrap();
+        devsync::sync_account(&*remote, &b, &acc()).await.unwrap();
+        devsync::sync_account(&*remote, &a, &acc()).await.unwrap();
+        assert!(!a.list_accounts().unwrap()[0].read_status);
+
+        // A: a message queued before it learned, a sync round's worth of
+        // read status, a later round — and not one request, the delete
+        // included (R13: the device that flipped the switch owns it).
+        outbox::enqueue(&a, &acc(), send(true, Some("<p>Two</p>"))).unwrap();
+        outbox::drain(&provider, &a, 10).await.unwrap();
+        for at in [now_plus(0), now_plus(2 * HOUR), now_plus(48 * HOUR)] {
+            assert!(!flush_delete(&provider, &a, &acc()).await.unwrap());
+            assert_eq!(poll(&provider, &a, &acc(), at).await.unwrap(), 0);
+            assert!(catch_up_threads(&a, &acc(), at).unwrap().is_empty());
+        }
+        assert!(calls(&provider).is_empty(), "{:?}", calls(&provider));
+        let applied = provider.applied_mutations();
+        assert!(
+            matches!(&applied[1].1, Mutation::Send { body_html: Some(h), .. } if h == "<p>Two</p>")
+        );
+        // What it had stored stays (R11); it only stops changing.
+        assert_eq!(a.open_tokens_live(&acc(), now_plus(0)).unwrap().len(), 1);
+    }
+
+    /// R12: turning it off on this device asks the relay to forget the
+    /// mailbox — once it can be reached, and once.
+    #[tokio::test]
+    async fn turning_off_deletes_once_and_retries_until_sent() {
+        let (provider, store) = fixture(false);
+        // Nothing pending: nothing asked.
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        assert!(calls(&provider).is_empty());
+
+        request_delete(&store, &acc()).unwrap();
+        *provider.opens_failure.lock().unwrap() =
+            Some(|| MailError::Network("relay unreachable".into()));
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        *provider.opens_failure.lock().unwrap() = None;
+        assert!(flush_delete(&provider, &store, &acc()).await.unwrap());
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        assert_eq!(
+            calls(&provider),
+            vec![
+                OpensCall::Delete(acc()),
+                OpensCall::Delete(acc()),
+                OpensCall::Delete(acc())
+            ],
+            "two that failed, one that went through, none after"
+        );
+        // While off, the delete is the only thing ever asked.
+        assert_eq!(poll(&provider, &store, &acc(), NOW).await.unwrap(), 0);
+        assert_eq!(calls(&provider).len(), 3);
+    }
+
+    /// Turned on again before the delete went out — here, or on another
+    /// device: there is nothing to forget, and the new tokens stay.
+    #[tokio::test]
+    async fn turning_on_again_cancels_a_pending_delete() {
+        let (provider, store) = fixture(false);
+        request_delete(&store, &acc()).unwrap();
+        cancel_delete(&store, &acc()).unwrap();
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+
+        request_delete(&store, &acc()).unwrap();
+        let mut on = sample_account(ACC);
+        on.read_status = true;
+        store.upsert_account(&on).unwrap();
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        // And it stays cancelled when the setting goes off through sync later.
+        let mut off = on.clone();
+        off.read_status = false;
+        store.upsert_account(&off).unwrap();
+        assert!(!flush_delete(&provider, &store, &acc()).await.unwrap());
+        assert!(calls(&provider).is_empty());
+    }
+
+    fn token(t: &str, sent_at: i64, polled_at: Option<i64>) -> OpenToken {
+        OpenToken {
+            token: t.into(),
+            account_id: acc(),
+            message_id: Some(format!("m-{t}")),
+            thread_id: Some("th".into()),
+            sent_at,
+            expires_at: sent_at + TOKEN_TTL_MS,
+            polled_at,
+        }
+    }
+
+    /// R23: the relay is asked about live, due tokens of an account with
+    /// read status on, and what it says is kept once.
+    #[tokio::test]
+    async fn poll_skips_off_accounts_and_expired_tokens() {
+        let (provider, store) = fixture(true);
+        // Nothing to ask about: no request at all.
+        assert_eq!(poll(&provider, &store, &acc(), NOW).await.unwrap(), 0);
+        assert!(calls(&provider).is_empty());
+
+        store
+            .open_token_put(&token("fresh", NOW - 10 * 60_000, None))
+            .unwrap();
+        store
+            .open_token_put(&token("gone", NOW - TOKEN_TTL_MS - 1, None))
+            .unwrap();
+        // Another account's token is never named in this account's query.
+        let mut other = token("theirs", NOW - 60_000, None);
+        other.account_id = "a2".into();
+        store.open_token_put(&other).unwrap();
+        let opened = OpenEvent {
+            label: OpenLabel::Opened,
+            at: NOW - 60_000,
+        };
+        let hidden = OpenEvent {
+            label: OpenLabel::Hidden,
+            at: NOW - 120_000,
+        };
+        provider
+            .opens_events
+            .lock()
+            .unwrap()
+            .insert("fresh".into(), vec![hidden, opened]);
+        assert_eq!(poll(&provider, &store, &acc(), NOW).await.unwrap(), 2);
+        assert_eq!(
+            calls(&provider),
+            vec![OpensCall::Query(acc(), vec!["fresh".into()])]
+        );
+        assert_eq!(
+            store.open_events_for_thread(&"th".to_string()).unwrap()["m-fresh"],
+            vec![hidden, opened]
+        );
+        // The same answer again: nothing new.
+        assert_eq!(poll(&provider, &store, &acc(), NOW + 1).await.unwrap(), 0);
+        assert_eq!(
+            store.open_events_for_thread(&"th".to_string()).unwrap()["m-fresh"].len(),
+            2
+        );
+
+        // A relay that fails changes nothing and is asked again next time.
+        *provider.opens_failure.lock().unwrap() = Some(|| MailError::Network("down".into()));
+        assert_eq!(poll(&provider, &store, &acc(), NOW + 2).await.unwrap(), 0);
+        *provider.opens_failure.lock().unwrap() = None;
+        let before = calls(&provider).len();
+        poll(&provider, &store, &acc(), NOW + 3).await.unwrap();
+        assert_eq!(calls(&provider).len(), before + 1);
+    }
+
+    /// A token is asked about often while it is new and seldom when old,
+    /// and never more than a batch at a time.
+    #[tokio::test]
+    async fn poll_asks_by_age_and_in_batches() {
+        const MIN: i64 = 60_000;
+        assert_eq!(poll_interval_ms(0), 0);
+        assert_eq!(poll_interval_ms(HOUR - 1), 0);
+        assert_eq!(poll_interval_ms(HOUR), 5 * MIN);
+        assert_eq!(poll_interval_ms(24 * HOUR), 30 * MIN);
+        assert_eq!(poll_interval_ms(7 * 24 * HOUR), 3 * HOUR);
+        assert!(poll_due(&token("t", NOW - 10 * MIN, None), NOW));
+        assert!(poll_due(&token("t", NOW - 10 * MIN, Some(NOW - 1)), NOW));
+        assert!(!poll_due(
+            &token("t", NOW - 2 * HOUR, Some(NOW - 4 * MIN)),
+            NOW
+        ));
+        assert!(poll_due(
+            &token("t", NOW - 2 * HOUR, Some(NOW - 5 * MIN)),
+            NOW
+        ));
+        assert!(!poll_due(
+            &token("t", NOW - 20 * 24 * HOUR, Some(NOW - 2 * HOUR)),
+            NOW
+        ));
+        assert!(poll_due(
+            &token("t", NOW - 20 * 24 * HOUR, Some(NOW - 3 * HOUR)),
+            NOW
+        ));
+        assert!(poll_due(&token("t", NOW - 2 * HOUR, Some(NOW + HOUR)), NOW));
+
+        let (provider, store) = fixture(true);
+        // A week-old message asked about a minute ago is left alone …
+        store
+            .open_token_put(&token("old", NOW - 8 * 24 * HOUR, Some(NOW - MIN)))
+            .unwrap();
+        assert_eq!(poll(&provider, &store, &acc(), NOW).await.unwrap(), 0);
+        assert!(calls(&provider).is_empty());
+        // … and more tokens than a query takes get their turn over rounds.
+        for i in 0..(POLL_BATCH + 20) {
+            store
+                .open_token_put(&token(&format!("t{i:03}"), NOW - 10 * MIN, None))
+                .unwrap();
+        }
+        poll(&provider, &store, &acc(), NOW).await.unwrap();
+        let OpensCall::Query(_, first) = calls(&provider)[0].clone() else {
+            panic!("not a query");
+        };
+        assert_eq!(first.len(), POLL_BATCH);
+        // Next round: the ones not asked about yet go first.
+        poll(&provider, &store, &acc(), NOW + MIN).await.unwrap();
+        let OpensCall::Query(_, second) = calls(&provider)[1].clone() else {
+            panic!("not a query");
+        };
+        assert_eq!(second.len(), POLL_BATCH);
+        assert!(second[..20].iter().all(|t| !first.contains(t)));
+        assert!(second[20..].iter().all(|t| first.contains(t)));
+    }
+
+    /// R19: the token of a message sent from another device is read from
+    /// the message, kept beside it, and found again by its thread; the
+    /// sending device's own token gains its message the same way.
+    #[tokio::test]
+    async fn tokens_are_kept_from_fetched_sent_mail() {
+        let (_, store) = fixture(true);
+        let mut from_other_device = sent("m1", NOW - HOUR);
+        from_other_device.account_id = acc();
+        from_other_device.open_token = Some("aa".repeat(16));
+        let mut quoted_in_a_reply = msg("m2", "Ana <ana@acme.test>", NOW, &["INBOX"]);
+        quoted_in_a_reply.open_token = Some("bb".repeat(16));
+        let untracked = sent("m3", NOW);
+        assert_eq!(
+            remember_tokens(
+                &store,
+                &[from_other_device.clone(), quoted_in_a_reply, untracked]
+            )
+            .unwrap(),
+            1
+        );
+        let kept = store.open_tokens_live(&acc(), NOW).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].message_id.as_deref(), Some("m1"));
+        assert_eq!(kept[0].thread_id.as_deref(), Some("t"));
+        assert_eq!(kept[0].expires_at, NOW - HOUR + TOKEN_TTL_MS);
+
+        // The sending device: the token is kept at send time without a
+        // message, and gains it when the sent message is fetched.
+        let (_, store) = fixture(true);
+        remember_sent(&store, &acc(), &"aa".repeat(16), None, NOW - HOUR - 5).unwrap();
+        remember_tokens(&store, &[from_other_device]).unwrap();
+        let kept = store.open_tokens_live(&acc(), NOW).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].message_id.as_deref(), Some("m1"));
+        assert_eq!(kept[0].sent_at, NOW - HOUR - 5);
+    }
+
+    /// R19: the catch-up is a few threads a round, of the last 30 days,
+    /// and only for an account with read status on.
+    #[test]
+    fn catch_up_is_bounded() {
+        let (_, store) = fixture(true);
+        for i in 0..10 {
+            let mut m = sent(&format!("m{i}"), NOW - i * HOUR);
+            m.account_id = acc();
+            m.thread_id = format!("t{i}");
+            store.upsert_message(&m).unwrap();
+        }
+        let mut old = sent("old", NOW - TOKEN_TTL_MS - HOUR);
+        old.account_id = acc();
+        old.thread_id = "t-old".into();
+        store.upsert_message(&old).unwrap();
+        let mut read = sent("read", NOW);
+        read.account_id = acc();
+        read.thread_id = "t-read".into();
+        read.body_fetched = true;
+        store.upsert_message(&read).unwrap();
+        assert_eq!(
+            catch_up_threads(&store, &acc(), NOW).unwrap(),
+            ["t0", "t1", "t2"]
+        );
+        assert_eq!(CATCH_UP_BATCH, 3);
+
+        let mut off = sample_account(ACC);
+        off.read_status = false;
+        store.upsert_account(&off).unwrap();
+        assert!(catch_up_threads(&store, &acc(), NOW).unwrap().is_empty());
+    }
+
+    /// A provider with no relay (the default) tracks nothing and holds
+    /// nothing back.
+    #[tokio::test]
+    async fn a_provider_without_read_status_sends_untracked() {
+        struct NoRelay(FakeProvider);
+        impl crate::ports::MailProvider for NoRelay {
+            fn profile(
+                &self,
+                a: &AccountId,
+            ) -> impl std::future::Future<Output = Result<crate::domain::Profile, MailError>> + Send
+            {
+                self.0.profile(a)
+            }
+            fn list_recent(
+                &self,
+                a: &AccountId,
+                d: u32,
+                p: Option<String>,
+            ) -> impl std::future::Future<Output = Result<crate::ports::ThreadPage, MailError>> + Send
+            {
+                self.0.list_recent(a, d, p)
+            }
+            fn list_before(
+                &self,
+                a: &AccountId,
+                b: i64,
+                p: Option<String>,
+            ) -> impl std::future::Future<Output = Result<crate::ports::ThreadPage, MailError>> + Send
+            {
+                self.0.list_before(a, b, p)
+            }
+            fn list_history(
+                &self,
+                a: &AccountId,
+                s: &str,
+                p: Option<String>,
+            ) -> impl std::future::Future<Output = Result<crate::ports::HistoryPage, MailError>> + Send
+            {
+                self.0.list_history(a, s, p)
+            }
+            fn fetch_bodies(
+                &self,
+                a: &AccountId,
+                t: &ThreadId,
+            ) -> impl std::future::Future<Output = Result<(bool, Vec<Message>), MailError>> + Send
+            {
+                self.0.fetch_bodies(a, t)
+            }
+            fn apply(
+                &self,
+                a: &AccountId,
+                m: &Mutation,
+            ) -> impl std::future::Future<Output = Result<(), MailError>> + Send {
+                self.0.apply(a, m)
+            }
+        }
+        let (fake, store) = fixture(true);
+        let provider = NoRelay(fake);
+        outbox::enqueue(&store, &acc(), send(true, Some("<p>Hi</p>"))).unwrap();
+        assert_eq!(outbox::drain(&provider, &store, 10).await.unwrap(), (1, 0));
+        assert_eq!(sent_html(&provider.0).as_deref(), Some("<p>Hi</p>"));
+        assert!(calls(&provider.0).is_empty());
+    }
+
     /// Each sent message has its own status: a reply answers what came
     /// before it, not the message the user wrote afterwards.
     #[test]

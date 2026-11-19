@@ -1,11 +1,13 @@
 //! Read status, engine side (docs/specs/read-status.md): the per-account
 //! switch, and what this device knows of the relay.
 //!
-//! This is the part that can exist before anything is sent: the setting
-//! (stored on the account, synced as `account:read_status`), the relay
-//! URL the build was made with, and the address of the relay's `opens`
-//! function, which the relay itself reports. Nothing here adds a pixel to
-//! a message or calls `opens` — no register, no query, no delete.
+//! The setting (stored on the account, synced as `account:read_status`),
+//! the relay URL the build was made with, the address of the relay's
+//! `opens` function, which the relay itself reports, and the part of a
+//! sync round that is read status's: a pending "forget this mailbox", the
+//! poll, and the catch-up. The rules are the core's
+//! (`heypigeon_core::readstatus`); this file hands it the provider and
+//! the store, and decides nothing about a message.
 //!
 //! The relay URL is kept under its own key, apart from push's: turning
 //! "New mail (push)" off clears those (`push.rs`), and the Mac, which has
@@ -13,9 +15,9 @@
 
 use std::sync::Arc;
 
-use heypigeon_core::devsync;
 use heypigeon_core::domain::{now_ms, AccountId};
 use heypigeon_core::ports::{MailError, Store};
+use heypigeon_core::{devsync, readstatus};
 
 use crate::engine::Engine;
 use crate::types::*;
@@ -23,7 +25,7 @@ use crate::types::*;
 /// The relay this build talks to (`configure_relay`).
 const RELAY_URL: &str = "relay.url";
 /// Where the relay's `opens` function answers, as the relay last said.
-const OPENS_URL: &str = "opens.url";
+pub(crate) const OPENS_URL: &str = "opens.url";
 /// When the relay was last asked (epoch ms).
 const OPENS_ASKED_AT: &str = "opens.asked_at_ms";
 
@@ -67,6 +69,11 @@ impl Engine {
         }
         let _ = self.secrets.delete(OPENS_URL);
         let _ = self.secrets.delete(OPENS_ASKED_AT);
+        // The provider forgets it too. Busy (a sync holds it): the next
+        // discovery sets it right.
+        if let Ok(provider) = self.provider.try_read() {
+            provider.set_opens_url(None);
+        }
         Ok(())
     }
 
@@ -81,9 +88,13 @@ impl Engine {
     /// and recorded for the user's other devices. Turning it on needs a
     /// relay; turning it off never fails for the lack of one.
     ///
-    /// Nothing is sent to the relay by either: no build registers a token
-    /// yet, so there is nothing of this mailbox there to delete (R12's
-    /// delete comes with the code that registers).
+    /// On: the relay is asked where its read-status half is, so the next
+    /// message can be tracked. Off **here** (R12): from this moment no
+    /// pixel is added and nothing is polled for the account, and the relay
+    /// is asked to delete the mailbox's tokens — now if it can be reached,
+    /// on the following sync rounds until it has answered. A device that
+    /// learns "off" from another one never comes through here, and sends
+    /// no delete (R13).
     pub fn set_read_status(
         self: &Arc<Self>,
         account_id: String,
@@ -106,8 +117,25 @@ impl Engine {
         account.read_status = enabled;
         self.store.upsert_account(&account)?;
         devsync::record_read_status(&self.store, &account_id, enabled)?;
+        if enabled {
+            readstatus::cancel_delete(&self.store, &account_id)?;
+        } else {
+            readstatus::request_delete(&self.store, &account_id)?;
+        }
         self.notify_threads_updated();
-        self.push_devsync_later(account_id);
+        self.push_devsync_later(account_id.clone());
+        // Outside a runtime (a plain sync call from Swift) there is
+        // nothing to spawn on; the next sync round does the same.
+        let engine = Arc::clone(self);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if enabled {
+                    engine.discover_opens(&account_id).await;
+                } else {
+                    engine.flush_opens_delete(&account_id).await;
+                }
+            });
+        }
         Ok(())
     }
 }
@@ -115,7 +143,6 @@ impl Engine {
 // Internals — not exported.
 impl Engine {
     /// Where the relay's `opens` function answers, when the relay has said.
-    #[allow(dead_code)] // read by the sender and the poll, which come next
     pub(crate) fn opens_url(&self) -> Option<String> {
         self.secrets
             .get(OPENS_URL)
@@ -164,10 +191,69 @@ impl Engine {
                 {
                     log::warn!("read status: relay answer not kept: {e}");
                 }
+                self.provider.read().await.set_opens_url(self.opens_url());
             }
-            Err(MailError::AuthExpired) => self.mark_disconnected(account_id),
-            Err(e) => log::info!("read status: relay did not say where opens is: {e}"),
+            // A relay that refuses the token says nothing about the
+            // account's Gmail grant: the sync itself finds that out.
+            Err(MailError::AuthExpired) => {
+                log::info!("read status: the relay refused to say where opens is")
+            }
+            Err(_) => log::info!("read status: the relay did not say where opens is"),
         }
+    }
+
+    /// Send a pending "forget this mailbox" (R12), if there is one.
+    pub(crate) async fn flush_opens_delete(&self, account_id: &AccountId) {
+        let provider = self.provider.read().await;
+        if let Err(e) = readstatus::flush_delete(&*provider, &self.store, account_id).await {
+            log::warn!("read status: pending delete not read: {e}");
+        }
+    }
+
+    /// Read status's part of a sync round, for one account. Returns
+    /// whether anything a view shows changed. With read status off (and
+    /// no delete pending) it reads two rows and makes no request.
+    pub(crate) async fn read_status_round(&self, account_id: &AccountId) -> bool {
+        self.flush_opens_delete(account_id).await;
+        let now = now_ms();
+        let added = {
+            let provider = self.provider.read().await;
+            readstatus::poll(&*provider, &self.store, account_id, now).await
+        };
+        let mut changed = match added {
+            Ok(n) => n > 0,
+            Err(e) => {
+                log::warn!("read status: poll not kept: {e}");
+                false
+            }
+        };
+        // The tokens of mail sent from the user's other devices: a few
+        // threads of their own recent sent mail a round, each tried once
+        // per launch (a thread Gmail no longer has must not be asked for
+        // again every 30 seconds).
+        let threads =
+            readstatus::catch_up_threads(&self.store, account_id, now).unwrap_or_default();
+        for thread_id in threads {
+            if !self
+                .catch_up_tried
+                .lock()
+                .unwrap()
+                .insert(thread_id.clone())
+            {
+                continue;
+            }
+            let Ok(Some(thread)) = self.store.get_thread(&thread_id) else {
+                continue;
+            };
+            let Ok(meta) = self.store.list_message_meta(&thread_id) else {
+                continue;
+            };
+            match self.fetch_bodies_into_store(&thread, &meta).await {
+                Ok(_) => changed = true,
+                Err(_) => log::info!("read status: a sent thread could not be read for its token"),
+            }
+        }
+        changed
     }
 }
 
@@ -273,6 +359,149 @@ mod tests {
             engine.set_read_status("nobody@x.com".into(), false),
             Err(EngineError::Invalid(_))
         ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// R12, R13: turning it off on this device leaves a "forget this
+    /// mailbox" for the relay, kept until it has been sent; turning it on
+    /// again takes it back. (That a device which only learns "off" through
+    /// sync leaves none is the core's test.)
+    #[test]
+    fn turning_off_here_asks_the_relay_to_forget_the_mailbox() {
+        let (engine, dir) = open("off-switch");
+        engine.configure_relay(RELAY.into()).unwrap();
+        let a = "a@x.com".to_string();
+        let pending = || {
+            engine
+                .store
+                .sync_meta_get(&a, readstatus::META_DELETE_PENDING)
+                .unwrap()
+                .is_some_and(|v| !v.is_empty())
+        };
+        assert!(!pending());
+        engine.set_read_status(a.clone(), true).unwrap();
+        assert!(!pending());
+        engine.set_read_status(a.clone(), false).unwrap();
+        assert!(pending());
+        // Off again changes nothing; on takes the request back.
+        engine.set_read_status(a.clone(), false).unwrap();
+        assert!(pending());
+        engine.set_read_status(a.clone(), true).unwrap();
+        assert!(!pending());
+        // Only this mailbox's.
+        engine.set_read_status(a.clone(), false).unwrap();
+        assert!(engine
+            .store
+            .sync_meta_get(&"b@x.com".to_string(), readstatus::META_DELETE_PENDING)
+            .unwrap()
+            .is_none_or(|v| v.is_empty()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// R1, R6 at the bridge: a thread handed to a shell says Opened or
+    /// Hidden for a tracked message, with every event newest first, and
+    /// never calls a hidden fetch an open.
+    #[test]
+    fn a_thread_carries_opens_and_hidden_fetches() {
+        use heypigeon_core::domain::{OpenEvent, OpenLabel, OpenToken};
+        let (engine, dir) = open("events");
+        let a = "a@x.com".to_string();
+        engine
+            .store
+            .upsert_thread(&domain::Thread {
+                id: "t1".into(),
+                account_id: a.clone(),
+                msg_count: 3,
+                ..Default::default()
+            })
+            .unwrap();
+        for (id, token) in [("s1", Some("aa")), ("s2", Some("bb")), ("s3", None)] {
+            engine
+                .store
+                .upsert_message(&domain::Message {
+                    id: id.into(),
+                    thread_id: "t1".into(),
+                    account_id: a.clone(),
+                    from_addr: a.clone(),
+                    date: 1_000,
+                    label_ids: vec!["SENT".into()],
+                    ..Default::default()
+                })
+                .unwrap();
+            if let Some(token) = token {
+                engine
+                    .store
+                    .open_token_put(&OpenToken {
+                        token: token.into(),
+                        account_id: a.clone(),
+                        message_id: Some(id.into()),
+                        thread_id: Some("t1".into()),
+                        sent_at: 1_000,
+                        expires_at: i64::MAX,
+                        polled_at: None,
+                    })
+                    .unwrap();
+            }
+        }
+        let opened = |at| OpenEvent {
+            label: OpenLabel::Opened,
+            at,
+        };
+        let hidden = |at| OpenEvent {
+            label: OpenLabel::Hidden,
+            at,
+        };
+        engine
+            .store
+            .open_events_add("aa", &[hidden(2_000), opened(3_000), opened(5_000)], 9)
+            .unwrap();
+        engine
+            .store
+            .open_events_add("bb", &[hidden(4_000)], 9)
+            .unwrap();
+        let t = engine.get_thread_local("t1".into()).unwrap().unwrap();
+        let status = |id: &str| {
+            t.messages
+                .iter()
+                .find(|m| m.id == id)
+                .unwrap()
+                .read_status
+                .clone()
+                .unwrap()
+        };
+        let s1 = status("s1");
+        assert_eq!((s1.state, s1.at), (MessageReadState::Opened, Some(5_000)));
+        assert_eq!(
+            s1.events,
+            vec![
+                MessageOpenEvent {
+                    opened: true,
+                    at: 5_000
+                },
+                MessageOpenEvent {
+                    opened: true,
+                    at: 3_000
+                },
+                MessageOpenEvent {
+                    opened: false,
+                    at: 2_000
+                },
+            ]
+        );
+        let s2 = status("s2");
+        assert_eq!((s2.state, s2.at), (MessageReadState::Hidden, Some(4_000)));
+        assert_eq!(
+            s2.events,
+            vec![MessageOpenEvent {
+                opened: false,
+                at: 4_000
+            }]
+        );
+        let s3 = status("s3");
+        assert_eq!(
+            (s3.state, s3.at, s3.events.len()),
+            (MessageReadState::Sent, None, 0)
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

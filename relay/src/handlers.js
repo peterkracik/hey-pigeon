@@ -16,7 +16,8 @@
 // That is the push half: these two functions. Read status is the third
 // (src/opens-handlers.js, with its own contract there): for a mailbox that
 // uses it, the relay also holds a random token per tracked message and
-// when it was opened. No app uses it yet, and neither half ever sees mail.
+// when it was opened. The apps call it only for an account whose owner
+// turned read status on. Neither half ever sees mail.
 
 import { createHash } from "node:crypto";
 

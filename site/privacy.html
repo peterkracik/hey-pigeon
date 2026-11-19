@@ -47,10 +47,11 @@
 <main class="legal">
   <div class="wrap">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 2026-09-17</p>
+    <p class="updated">Last updated: 2026-11-19</p>
 
-    <p>Hey Pigeon is a client-only application: it runs entirely on your device and has
-    no backend server. Nobody but you — not even the developer — can see your email,
+    <p>Hey Pigeon runs on your device and talks directly to your Google account. It has
+    two optional features that use a small relay server, described below; neither ever
+    receives your email. Nobody but you — not even the developer — can see your email,
     contacts, or account data through Hey Pigeon.</p>
 
     <h2>What data Hey Pigeon accesses</h2>
@@ -67,9 +68,27 @@
 
     <h2>Where your data lives</h2>
     <p>All Gmail data Hey Pigeon reads is stored in a local database on your device only.
-    It is never transmitted to any server operated by the developer, because no such
-    server exists. OAuth tokens are stored in your operating system's secure keychain,
+    It is never transmitted to any server operated by the developer. The relay
+    described below never receives mail. OAuth tokens are stored in your operating system's secure keychain,
     never in plain text.</p>
+
+    <h2>The relay (optional)</h2>
+    <p>Push notifications on iPhone and iPad go through a relay that sees your email
+    address and a change counter and stores a one-way hash of the address with your
+    device's push token. To register, the app sends the relay your Google access token,
+    which the relay checks with Google and does not store.</p>
+    <p>Read status is off unless you turn it on for an account. When it is on, each
+    message you send from that account contains an invisible image, and the relay stores
+    a random identifier for that message, a one-way hash of your address, and the time of
+    each open (or that the message reached a device that hides opens), for 30 days. It
+    sees the IP address and mail app of whoever loads the image while answering the
+    request and does not store or log them. The app sends the relay your Google access
+    token, checked with Google and not stored, to register a message and to ask what was
+    opened. Turning read status off has the app delete those records at the relay, as
+    soon as that device is online. While it is off for an
+    account, nothing is added to mail sent from it and the relay is not contacted about
+    it. Tracking opens can require the recipient's consent under EU and UK law; you are
+    responsible for that when you turn it on.</p>
 
     <h2>AI features (optional)</h2>
     <p>If you enable an AI feature (e.g. summarize, draft), Hey Pigeon sends only the
@@ -85,15 +104,17 @@
     including the Limited Use requirements.</p>
 
     <h2>No selling, no ads, no analytics</h2>
-    <p>Hey Pigeon does not sell or share your data, does not show ads, and does not
-    run any tracking or analytics.</p>
+    <p>Hey Pigeon does not sell or share your data, does not show ads, does not run any
+    analytics and does not track you. Read status, if you turn it on, tells you when
+    mail you sent was opened (see above).</p>
 
     <h2>Revoking access &amp; deleting data</h2>
     <p>You can disconnect an account at any time in Hey Pigeon's settings, or revoke
     access directly at
     <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
-    Since all data is local, uninstalling the app or deleting its local data folder
-    removes everything Hey Pigeon has stored.</p>
+    Since your mail is stored only on your device, uninstalling the app or deleting its
+    local data folder removes it. The app deletes its relay records when you turn off push
+    or read status, and read-status records expire on their own after 30 days.</p>
 
     <h2>Contact</h2>
     <p>Questions about this policy: <a href="mailto:support@heypigeon.app">support@heypigeon.app</a>.</p>

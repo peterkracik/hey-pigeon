@@ -348,8 +348,8 @@ private struct AccountRow: View {
                     .onDisappear { saveSignature() }
                 Text("Appended to new messages from this account").font(.caption).foregroundStyle(Theme.textTertiary)
             }
-            // docs/specs/read-status.md R8, R10: this mailbox's switch.
-            // Not shown until a build sends what it says (ReadStatusSetting).
+            // docs/specs/read-status.md R8, R10: this mailbox's switch,
+            // off until turned on, the same on every platform.
             if ReadStatusSetting.isShown {
                 let available = model.readStatusAvailable
                 VStack(alignment: .leading, spacing: 4) {
@@ -1207,9 +1207,9 @@ private struct NotificationsSection: View {
 
     static let footer: String = {
         #if os(macOS)
-        "The Mac checks for mail every 30 seconds while the app is open (every two minutes in Low Power Mode, and not while it has no network) and composes the banner itself; nothing goes through a relay. A banner's buttons mark the thread done, set a reminder an hour on, or open a reply. Reminders are local notifications either way."
+        "The Mac checks for mail every 30 seconds while the app is open (every two minutes in Low Power Mode, and not while it has no network) and composes the banner itself; new mail never goes through a relay. A banner's buttons mark the thread done, set a reminder an hour on, or open a reply. Reminders are local notifications either way."
         #else
-        "Goes through a small relay that only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way."
+        "Goes through a small relay that for new mail only ever sees your address and a change counter, never mail; the notification text is composed on this phone. Turn it off and the app syncs on open and in the background instead. Reminders stay local either way."
         #endif
     }()
 

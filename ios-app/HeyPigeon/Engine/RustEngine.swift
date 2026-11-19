@@ -742,3 +742,15 @@ enum MailHTML {
         sanitizeHtml(html: html)
     }
 }
+
+/// What to show the user for an error. UniFFI describes the core's errors
+/// by reflection ("HeyPigeonCore.EngineError.Mail(message: …)"); this is
+/// the sentence inside. Any other error reads as it always did.
+func errorText(_ error: any Error) -> String {
+    guard let error = error as? EngineError else { return error.localizedDescription }
+    switch error {
+    case let .Store(message), let .Mail(message), let .AuthExpired(message), let .Oauth(message),
+         let .Invalid(message), let .Ai(message), let .ProviderChanged(message):
+        return message
+    }
+}

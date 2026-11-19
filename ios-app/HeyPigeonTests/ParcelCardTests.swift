@@ -193,6 +193,24 @@ struct ParcelModelTests {
         #expect(!other.parcelCardEnabled)
     }
 
+    /// From an empty inbox to another empty folder no row moves: the card
+    /// must still go (it once followed only the rows).
+    @Test func theCardLeavesWithTheFolderEvenWhenNoRowMoves() async throws {
+        let empty = MockEngine()
+        for row in try empty.threads(in: .inbox, accountId: nil, before: nil, limit: 100) where row.id != "t4" {
+            try await empty.perform(.trash(threadId: row.id), accountId: row.accountId)
+        }
+        try await empty.perform(.archive(threadId: "t4"), accountId: "me@personal.test")
+        empty.parcelStore = [parcel("thread:t4")]
+        let model = AppModel(engine: empty)
+        model.reload()
+        #expect(model.rows.isEmpty && model.inboxParcels.count == 1 && !model.listIsEmpty)
+        model.navigate(to: .inbox, folder: .spam)
+        #expect(model.rows.isEmpty && model.inboxParcels.isEmpty && model.listIsEmpty)
+        model.navigate(to: .inbox, folder: .inbox)
+        #expect(model.inboxParcels.count == 1)
+    }
+
     @Test func viewDetailsOpensTheBundleOnItsInfoPage() throws {
         let shown = try #require(model.inboxParcels.first)
         model.openParcelDetails(shown)

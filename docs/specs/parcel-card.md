@@ -1,6 +1,6 @@
 # Parcel card
 
-Status: Implemented — not yet verified on a device (see Verification)
+Status: Implemented — Rust verified locally; Swift awaits `ios-ci` / `macos-ci` and a look on a device (see Verification). PR: not opened yet
 Related: `docs/bundles.md` (bundles, tracking links, folded rows),
 `docs/ios.md` (the inbox list), `macos-app/CLAUDE.md` (the window's list)
 
@@ -230,5 +230,29 @@ Assumed, matching how the app already behaves — say if any is wrong:
 
 ## Verification
 
-See the end of the file once verified; the architect's last report is
-kept here.
+Architect, 2026-11-19, on the branch before its PR.
+
+```
+Spec: docs/specs/parcel-card.md   Verdict: Verified with notes
+
+Rules           R1–R8 ✓ crates/core/src/parcels.rs (overview, from_markup, from_text; the tests
+                named above, run) · R3.1 ✓ adapter-gmail full_fetch (before sanitize::html) ·
+                R9, R14–R18 ✓ AppModel (cardParcels, regroup, dismissParcels, group underParcels)
+                · R10–R13, R19 ✓ Features/Bundles/ParcelCard.swift — Swift read, not compiled
+Parity          iPhone ✓ · iPad ✓ (the same ThreadList; no key) · Mac ✓ (the same view and
+                model methods; differences as listed: no fold, outside the cursor, palette)
+Layering        ✓ what a parcel is and says: core · one Engine call, MockEngine twin ·
+                rules in ParcelCard / AppModel statics · no store read in a view · no bare #if
+Tests / CI      rust ✓ (cargo fmt --check, the rust-ci cargo test, Swift bindgen: ran locally) ·
+                ios-ci not run · macos-ci not run
+Not checked     Nothing Swift was compiled or seen on a device: layout, the glass pill in a
+                list row, the menu's section title, VoiceOver order, Dynamic Type, dark mode.
+                How often real mail carries the markup. The 45-day re-read (v35) on a real
+                mailbox.
+Drift / fixes   Fixed in passing: tracking_links sliced the body at positions found in a
+                to_lowercase() copy (wrong slice or a panic after "İ"). Left, for the owner:
+                the Info page groups shipments with its own Swift copy of the rule
+                (BundleTracking.shipments), which does not fold an email's number-less link
+                into its numbered one as the card's core rule does — it can show one row
+                more than the card; and the redirect-host list now exists in both.
+```

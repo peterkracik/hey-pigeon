@@ -593,6 +593,16 @@ final class AppModel {
     /// the screen takes it when it appears (`BundleScreen`).
     var bundlesStartInfoId: String?
 
+    /// What the card should show for the list as it is now (R9): the
+    /// account's parcels that are not dismissed, over the plain inbox —
+    /// no search, no label filter, the condition folding has — and
+    /// nothing anywhere else or with the card off.
+    private var cardParcels: [ParcelItem] {
+        let plainInbox = tab == .inbox && view == .inbox && !showsSearchResults && triageFilterId == nil
+        guard parcelCardEnabled, plainInbox else { return [] }
+        return ParcelCard.visible(parcels, dismissed: dismissedParcels, accountId: selectedAccountId)
+    }
+
     /// Nothing to list and no card either: the empty state ("All clear").
     var listIsEmpty: Bool { groupedRows.isEmpty && inboxParcels.isEmpty }
 
@@ -1056,7 +1066,10 @@ final class AppModel {
         }
         let more = snapshot.request.view.isPaged && snapshot.rows.count >= snapshot.request.limit
         if more != hasMore { hasMore = more }
-        if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved { regroup() }
+        // The card follows the folder and the account as well as the rows:
+        // from an empty inbox to another empty folder no row moves, and
+        // the card stood over Spam.
+        if snapshot.rows != rows { rows = snapshot.rows } else if bundlesMoved || cardParcels != inboxParcels { regroup() }
         if snapshot.counts != counts { counts = snapshot.counts }
         if snapshot.unifiedCounts != unifiedCounts { unifiedCounts = snapshot.unifiedCounts }
         if snapshot.countsByAccount != countsByAccount { countsByAccount = snapshot.countsByAccount }
@@ -1279,9 +1292,7 @@ final class AppModel {
         // the plain inbox, the condition folding has. A bundle with a
         // parcel in it gets no folded row; its quiet mail is under the
         // parcel (R17).
-        let plainInbox = tab == .inbox && view == .inbox && !showsSearchResults && triageFilterId == nil
-        let shown = parcelCardEnabled && plainInbox
-            ? ParcelCard.visible(parcels, dismissed: dismissedParcels, accountId: selectedAccountId) : []
+        let shown = cardParcels
         if shown != inboxParcels { inboxParcels = shown }
         let inCard = Set(shown.map(\.bundleId))
         let under = inCard.isEmpty ? [] : Self.fold(rows, bundles: bundles.filter { inCard.contains($0.id) }).folds

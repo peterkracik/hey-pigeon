@@ -87,8 +87,8 @@ no entitlement that needs one: the App Group is the team-prefixed
 `<TEAMID>.group.app.heypigeon` (the form macOS honors without a profile;
 `AppGroup.identifier` reads it from the Info.plist) and there is no push
 entitlement — the Mac syncs itself, push is the phone's. (`HEYPIGEON_RELAY_URL`
-may still be baked into the build: read status needs a relay. It never
-makes a push switch appear.)
+may still be baked into the build: read status — Settings → Accounts, off
+by default — needs a relay. It never makes a push switch appear.)
 Its data lives in the container's Application Support; OAuth tokens and keys
 in the Keychain.
 

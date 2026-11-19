@@ -61,6 +61,10 @@ enum ScheduledSendStore {
         var bodyHTML: String?
         var attachments: [Attachment]
         var replyToThreadId: String?
+        /// Read status, as decided when the message was scheduled. Absent
+        /// in a file an older build wrote: such a message was scheduled
+        /// before there was a switch to see, and goes untracked.
+        var trackOpens: Bool?
     }
 
     private struct Attachment: Codable {
@@ -93,6 +97,7 @@ enum ScheduledSendStore {
                 DraftAttachment(filename: $0.filename, mimeType: $0.mimeType, size: $0.size, dataBase64: $0.dataBase64)
             }
             d.replyToThreadId = item.replyToThreadId
+            d.trackOpens = item.trackOpens ?? false
             d.fromAccountId = item.accountId
             d.draftKey = item.id
             d.draftSaved = true
@@ -108,7 +113,7 @@ enum ScheduledSendStore {
                  attachments: s.draft.attachments.map {
                      Attachment(filename: $0.filename, mimeType: $0.mimeType, size: $0.size, dataBase64: $0.dataBase64)
                  },
-                 replyToThreadId: s.draft.replyToThreadId)
+                 replyToThreadId: s.draft.replyToThreadId, trackOpens: s.draft.trackOpens)
         }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(items) else { return }

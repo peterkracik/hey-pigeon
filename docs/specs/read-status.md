@@ -1,6 +1,6 @@
 # Read status
 
-Status: Approved — steps 1–3 merged (#142, #144, #147) and step 3 deployed; step 4 (store and setting) implemented, not merged; steps 5–7 not started
+Status: Approved — steps 1–4 merged (#142, #144, #147, #150), the relay deployed and `o.heypigeon.app` live; step 5 (send, poll, off switch) implemented, not merged; steps 6–7 not started
 Related: `relay/README.md`, `terraform/README.md`, `DESIGN.md`
 ("Push notifications", "Rendering untrusted mail", "Cross-device sync",
 "Optimistic mutations"), `docs/specs/reply-recipients.md`
@@ -57,14 +57,16 @@ switch, per mailbox, off until I turn it on.
 - R4. A reply is a message in the same thread, newer than the sent
   message, not `SENT`, not `DRAFT` and not a bounce (R3).
 - R5. "Opened by <name>" is used when the message had exactly one
-  recipient (To + Cc + Bcc); the name is the one the thread shows for that
-  address. With several recipients the line is "Opened <when>" and its
+  recipient (To + Cc; a Bcc is not kept for stored mail and cannot be
+  counted); the name is the one the thread shows for that address. With several recipients the line is "Opened <when>" and its
   detail says "by one of N recipients". `<when>` is the newest open, in
   the app's relative date format (`Formatters`).
 - R6. The message view shows the status on the user's own messages, in the
-  message's header. Opening it lists the events the app knows, newest
-  first: each open with its time, and "Delivered to a device that hides
-  opens" for a hidden one. Nothing else about the reader is shown, because
+  message's header. Under it, on an open message, are the events the app
+  knows, newest first, when they say more than the status line does (more
+  than one event, or a status that is a reply or a bounce): each open with
+  its time, and "Delivered to a device that hides opens" for a hidden
+  one; five at most, then "and N earlier". Nothing else about the reader is shown, because
   nothing else is known (R18).
 - R7. "Recent Opens" is a list of the user's messages with at least one
   open, newest open first: recipients, subject, "Opened <when>". It is a
@@ -91,23 +93,35 @@ switch, per mailbox, off until I turn it on.
   request of any kind to the opens endpoint. Statuses already stored stay
   visible; they stop changing.
 - R12. Turning the setting off on a device does three things, in this
-  order: the setting is written (and synced); polling for that account
-  stops; the relay is asked to delete every live token of that mailbox
-  (R16, Delete). Pixels already sent then name unknown tokens and record
-  nothing. If the delete cannot be sent (offline), it is retried on the
-  following sync rounds until it succeeds, and it is the only request the
-  account makes to the opens endpoint while off.
+  order: the setting is written; polling and pixels stop for that account
+  on that device; the relay is asked to delete every live token of that
+  mailbox (R20, Delete) — at once, on the engine's own runtime, without
+  waiting for a sync, and then on every sync round (whether or not Gmail
+  answered that round) until the relay has answered. The setting is
+  pushed to the user's other devices in the same breath. The request is
+  kept with the address `opens` had when it was made, so it can still be
+  sent if the app forgets the address meanwhile. Pixels already sent then
+  name unknown tokens and record nothing. While off, this delete is the
+  only request the account makes to the opens endpoint.
 - R13. A device that learns through sync that the setting was turned off
-  elsewhere stops adding pixels and stops polling at once, and sends no
-  delete of its own: the device that flipped the switch owns it. The
-  delete is idempotent, so a second one (two devices switched off in the
-  same minute, a retry after a lost answer) is harmless.
+  elsewhere stops adding pixels and stops polling at once. It sends no
+  delete of its own — unless it holds a token it sent *after* that
+  decision (it had not heard yet; the other device's delete came too
+  early for that token), in which case it asks for the delete too. The
+  delete is idempotent, so a second one is harmless. Until a device has
+  synced, "off" is not yet true on it: it may still send a tracked
+  message.
 - R14. Turning the setting on again starts fresh: new messages are
   tracked; messages sent before stay at the status they had.
 - R15. The composer has a per-message switch, "Read status", shown only
   when the sending account's setting is on (and a relay exists); it starts
   on. Changing the From account re-evaluates it. Off sends that one
-  message with no pixel and no token.
+  message with no pixel and no token. Mail that is sent without a
+  composer showing that switch — an unsubscribe request, an invitation's
+  answer, a saved Gmail draft sent by Siri or a Shortcut — is never
+  tracked, whatever the account's setting, and gains no HTML part: the
+  user never saw a switch for it. Siri's "send it" on the *open* composer
+  sends what the composer holds, its switch included.
 
 ### Sending
 
@@ -197,7 +211,11 @@ switch, per mailbox, off until I turn it on.
 - R23. The app asks for opens (Query) only for accounts whose setting is
   on, only for tokens younger than 30 days, in the normal sync round —
   which is the Mac's 30-second timer, and on the phone the open,
-  pull, background refresh and the silent push. A failed query changes
+  pull, background refresh and the silent push. Not every token every
+  round: a token is asked about again at once in its first hour, then
+  every 5 minutes for a day, every 30 minutes for a week, and every 3
+  hours after that, at most 100 a round, longest unasked first. A round
+  with no token due makes no request. A failed query changes
   nothing and is not reported to the user; the next round asks again.
 - R24. The silent push for an open carries no address and no token:
   `{ aps: { content-available: 1 }, opens: 1 }`. The device runs its
@@ -209,9 +227,18 @@ switch, per mailbox, off until I turn it on.
 
 - R25. Two accounts: each has its own setting, tokens and events; a
   message is tracked by the setting of the account it is sent from.
-- R26. Removing an account from a device deletes its local tokens and
-  events and sends nothing to the relay (other devices may still use the
-  mailbox; the documents expire on their own).
+- R26. Removing an account from a device first asks the relay, once and
+  for a few seconds at most, to delete the mailbox's tokens — when read
+  status is on for the account or a delete is still waiting — and pushes
+  the account's setting to the user's other devices; then its local
+  tokens and events go. Removal never fails or waits long for this. The
+  delete is the mailbox's: another device that still has the account with
+  read status on loses its relay records too (its statuses stop changing
+  for mail already sent; new mail is tracked as before). If the relay
+  could not be reached, or the account was signed out, the records are
+  left to expire within 30 days. Adding the account again restores the
+  setting from the user's settings sync: an "off" that could not be
+  pushed before removal (offline) can come back as "on".
 - R27. Known limitation, stated in the setting's footer: opening the
   message in Gmail on the web, in the Sent folder, loads the pixel through
   Gmail's image proxy and counts as an open. The same holds for any other
@@ -296,9 +323,20 @@ Leaves the device — only for an account with the setting on:
 The copy is conditional on the setting: the "no server" sentences must
 hold for a user who never turns it on, and must not claim more than that.
 
+As shipped in step 5 the wording differs from the first draft of this
+table in three places, each to be literally true: the Settings footer
+says "or that it reached a device that hides opens" and no longer "or on
+what device" (the relay's `hidden` label is a fact about the device), and
+ends with what turning it off does, the one delete included; the privacy
+page says the app sends the relay a Google access token, and that the
+records are deleted "as soon as that device is online"; the site and the
+README headline is "No server for your mail", not "no server of any
+kind". The files are the wording of record.
+
 | Where | Today | Becomes |
 | --- | --- | --- |
-| `SettingsView`, new footer under the account's "Read status" row (all platforms) | — | "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when — never who, where, or on what device, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Off: nothing is added and the relay is not contacted for this account." |
+| `SettingsView`, new footer under the account's "Read status" row (all platforms; `ReadStatusSetting.footer`) | — | "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when, or that it reached a device that hides opens — never who or where, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Turning this off stops it on this device at once and asks the relay to delete what it holds for this account, now if the app is online and otherwise when it next syncs; your other devices follow when they next sync. Removing the account asks for the same, which also clears read status for mail already sent from your other devices. If the account is removed or signed out before the relay could be reached, what it holds is left to expire within 30 days." |
+| Composer, the switch's help and VoiceOver label (all platforms) | — | "Read status" · "Read status is on for this message" / "Read status is off for this message" |
 | `SettingsView`, text under the row when unavailable | — | "Not available in this build" |
 | `NotificationsSection.footer`, iPhone / iPad | "Goes through a small relay that only ever sees your address and a change counter, never mail; …" | "Goes through a small relay that for new mail only ever sees your address and a change counter, never mail; …" (the rest unchanged) |
 | `NotificationsSection.footer`, Mac | "…composes the banner itself; nothing goes through a relay." | "…composes the banner itself; new mail never goes through a relay." |
@@ -322,11 +360,11 @@ new about its user, but the declaration must still be literally true.
 
 | | iPhone | iPad | Mac |
 | --- | --- | --- | --- |
-| Surface | Status in the message header (thread view); Recent Opens as a list pushed from the sidebar sheet; composer sheet | Same views in the iPad layout; Recent Opens in the sidebar column | Status in the message header (thread page); Recent Opens as a list page; inline composer or window |
-| Entry points | Tap the status for its events; sidebar sheet → "Recent Opens"; composer's ••• → "Read status" | Same; sidebar → "Recent Opens" | Click the status; sidebar → "Recent Opens"; `g o`; palette "Recent Opens"; composer's ••• → "Read status"; palette "Read status for this message" while composing |
+| Surface | Status and its events in the open message's header (thread view); composer sheet. Recent Opens (step 6): a list pushed from the sidebar sheet | Same views in the iPad layout | Status and its events in the open message's header (thread page); inline composer or window. Recent Opens (step 6): a list page |
+| Entry points | The composer's footer: the eye button, "Read status", when the From account has it on. Step 6: sidebar sheet → "Recent Opens" | Same | The same eye button in the composer's footer. Step 6: sidebar → "Recent Opens"; `g o`; palette "Recent Opens" |
 | Settings | Settings → Accounts → account → "Read status", off | same | same (Settings window) |
 | How it learns of opens | Sync on open, pull, background refresh; silent push when "New mail (push)" is on | same | The 30-second sync |
-| Status | Step 1 implemented (Sent / Not delivered / Replied in the open message's header); the rest not started | same | same |
+| Status | Steps 1–5 implemented: every status in the header, the setting, the composer switch, tracked sends, the poll, the off switch. Recent Opens and the silent push on open not started | same | same |
 
 ## Platform differences
 
@@ -338,24 +376,27 @@ new about its user, but the declaration must still be literally true.
 - **`g o` and the palette entries** exist on the Mac only (with a
   hardware keyboard the iPad uses the sidebar row). Platform idiom.
 - Nothing else. Wording, defaults, precedence, the flush rule and the off
-  switch are one implementation in the core and `AppModel`.
+  switch are one implementation in the core and `AppModel`; the
+  composer's switch and the Settings row are one view each, in the shared
+  shell. There is no Mac-only entry point for the composer's switch (no
+  key, no palette entry): the button is the same on all three.
 
 ## Acceptance criteria
 
 Core (`cargo test`, against `MemStore` / `FakeProvider`):
 
 - [x] R1, local half — `status_precedence_reply_beats_bounce_beats_sent`, `only_sent_mail_has_a_status`, `each_sent_message_is_judged_by_what_followed_it` (`core::readstatus`); at the bridge, `a_thread_carries_the_read_status_of_its_sent_mail` (`ffi`)
-- [ ] R1, R5 — with opens (step 5): `status_precedence_reply_beats_bounce_beats_open_beats_hidden`
+- [x] R1 — with opens: `status_precedence_reply_beats_bounce_beats_open_beats_hidden` (`core::readstatus`); at the bridge `a_thread_carries_opens_and_hidden_fetches` (`ffi::readstatus`)
 - [x] R2 — `local_statuses_need_no_relay_and_no_setting` (step 1: the rule takes the thread's messages and nothing else; the "fake's opens calls count zero" half joins it in step 5, when there are such calls)
 - [x] R3, R4 — `bounce_is_not_a_reply`, `reply_after_send_is_replied`
-- [ ] R11 — `setting_off_makes_no_opens_request` (register, query, delete all zero over a send and a sync round)
-- [ ] R12, R13 — `turning_off_deletes_once_and_retries_until_sent`, `off_learned_from_sync_stops_without_delete`
-- [ ] R16 — `flush_tracks_only_when_choice_and_setting_and_relay`, `setting_off_before_flush_sends_untracked`, `failed_registration_sends_without_pixel`, `retry_reuses_token`
-- [ ] R17 — `pixel_is_last_in_html`, `plain_only_message_gets_html_part`, `draft_never_carries_pixel`
+- [x] R11, R13 — `setting_off_makes_no_opens_request`: for an account with the setting off, a send the user asked to track, a sync round's poll and catch-up, and the same after "off" was learned through sync from another device make zero register, query and delete calls (`core::readstatus`); `a_provider_without_read_status_sends_untracked`
+- [x] R12 — `turning_off_deletes_once_and_retries_until_sent`, `turning_on_again_cancels_a_pending_delete` (`core::readstatus`); `turning_off_here_asks_the_relay_to_forget_the_mailbox` (`ffi::readstatus`). R13's "no delete from a device that learned it" is in `setting_off_makes_no_opens_request`
+- [x] R16 — `a_tracked_send_gets_its_token_when_it_is_queued`, `flush_tracks_only_when_choice_and_setting_and_relay`, `setting_off_before_flush_sends_untracked`, `failed_registration_sends_without_pixel` (network, refusal, rate limit, auth, and an answer that is not this message's pixel), `retry_reuses_token` (`core::readstatus`); the pixel's host — `the_pixel_is_on_the_relays_own_host_with_this_token` (`adapter-gmail::opens`)
+- [x] R17, R18 — `pixel_is_last_in_html`, `plain_only_message_gets_html_part`, `draft_never_carries_pixel`, `a_quoted_pixel_is_never_sent_on` (`core::readstatus`); `outgoing_html_loses_own_pixels_and_only_those` (`sanitize.rs`)
 - [x] R18 — `own_pixel_is_removed_without_marker`, `own_pixel_in_quoted_reply_is_removed`, `sanitize_stays_idempotent_with_own_pixel`, and that nothing changed for anyone else's pixel: `a_foreign_pixel_still_gets_the_marker` (`sanitize.rs`)
 - [x] R19, the reader — `own_pixel_token_is_read_from_raw_html` (`sanitize.rs`), `token_is_read_from_raw_sent_html` (`adapter-gmail`)
-- [ ] R19, the catch-up (step 5) — `catch_up_is_bounded`
-- [ ] R23 — `poll_skips_off_accounts_and_expired_tokens`, `repeated_poll_inserts_nothing`
+- [x] R19 — `tokens_are_kept_from_fetched_sent_mail`, `catch_up_is_bounded` (`core::readstatus`); `sent_threads_without_bodies_are_recent_sent_and_unfetched`, `open_tokens_and_events_round_trip` (`adapter-sqlite`)
+- [x] R23 — `poll_skips_off_accounts_and_expired_tokens` (a repeated answer inserts nothing), `poll_asks_by_age_and_in_batches` (`core::readstatus`); `a_query_answer_is_read_strictly` (`adapter-gmail::opens`)
 - [x] Migration — `v34_upgrade_adds_read_status_off_and_empty_tables`, `removing_account_removes_tokens_and_events` (`adapter-sqlite`)
 - [x] R9, R13 (the setting follows; no delete yet) — `read_status_setting_syncs_as_account_field` (`devsync`)
 - [x] R8, R10, R25 at the bridge — `read_status_is_off_by_default_and_needs_a_relay`, `the_switch_is_per_account_and_recorded_for_other_devices`, `a_changed_relay_forgets_the_old_ones_answer`; R11 for discovery — `the_relay_is_asked_only_for_an_account_with_read_status_on`, `discovery_does_nothing_while_read_status_is_off` (`ffi::readstatus`); the relay's answer — `relay_info_reads_the_opens_url_or_its_absence` (`adapter-gmail`)
@@ -371,10 +412,10 @@ Relay (`node --test`, no network):
 Shell (Swift Testing over `MockEngine`, `ios-app/HeyPigeonTests`):
 
 - [x] R1, local half — `eachStateHasItsWords`, `theMockFollowsTheCoresRule`, `aMockThreadShowsWhatBecameOfSentMail` (`ModelTests`, `ReadStatusTests`) — green in `ios-ci` and `macos-ci` on #142
-- [ ] R1, R5, R6 — with opens (step 5): `ReadStatusText` wording for Opened and Hidden, one and several recipients (`ModelTests`)
-- [ ] R15 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens` (`AppModelTests`)
+- [ ] R1, R5, R6 — `openedAndHiddenHaveTheirWords`, `detailsListWhatTheRelayReported`, `theMockRanksOpensLikeTheCore`, `aTranscriptCarriesNoPictureAddress` (`ModelTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
+- [ ] R15, R16 — `trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn`, `changingFromReevaluatesTrackOpens`, `aScheduledMessageKeepsTheChoiceMadeWhenItWasSent`, `theReadStatusRowSaysWhatItDoes` (`AppModelTests`) — written, not yet compiled
 - [ ] R7 — `recentOpensAreNewestFirstAndRespectTheAccountFilter`
-- [ ] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`, `theReadStatusRowIsNotShownYet`, `pushIsOfferedOnlyWhereTheAppCanBePushedTo` (`AppModelTests`) — written, not yet compiled: ticked when `ios-ci` and `macos-ci` are green
+- [x] R8, R10 — `readStatusIsOffByDefaultAndDisabledWithoutARelay`, `pushIsOfferedOnlyWhereTheAppCanBePushedTo` (`AppModelTests`) — green in `ios-ci` and `macos-ci` on #150 (`theReadStatusRowIsNotShownYet`, green there too, is replaced in step 5 by `theReadStatusRowSaysWhatItDoes`)
 
 Mac (`macos-app/HeyPigeonMacTests`):
 
@@ -382,7 +423,7 @@ Mac (`macos-app/HeyPigeonMacTests`):
 
 Whole feature:
 
-- [ ] Same wording and symbol on every platform (strings of R1, "Recent Opens", "Read status" found once, in the shared shell)
+- [ ] Same wording and symbol on every platform (strings of R1 and "Read status" are found once, in the shared shell: `ReadStatusText`, `ReadStatusSetting`; "Recent Opens" is step 6)
 - [ ] `MockEngine` covers the new operations
 - [ ] `rust-ci`, `ios-ci`, `macos-ci`, `deploy-relay` green
 - [ ] Every row of "Privacy copy" changed in the same PR that makes it necessary; reviewed by `security-privacy`
@@ -459,6 +500,13 @@ Whole feature:
   or browser is `opened`.
 - Cost stays $0 at personal volume.
 - Link-click tracking and blocker evasion are out.
+- **Only the composer tracks.** Mail sent without a composer showing the
+  "Read status" switch (unsubscribe, invitation answers, a saved draft
+  sent by Siri or a Shortcut) is never tracked (R15). Decided after the
+  security review of step 5.
+- **Removing an account deletes the mailbox's relay records** (R26),
+  on the reviewer's recommendation: the user is leaving, the records
+  should go. It replaces the earlier "removal sends nothing".
 - **Not delivered outranks Opened** when one of several recipients
   bounced and another opened (R1). Showing both was the alternative.
 - **A failed relay registration sends the message on time, untracked**
@@ -589,7 +637,7 @@ Step 3 on the deployed project, 2026-11-19:
   quiet console); measured memory; and the domain's certificate, which
   was still pending when last looked at.
 
-Step 4, 2026-11-19 — **Verified with notes**. Not merged.
+Step 4, 2026-11-19 — **Verified with notes**. Merged as #150; `rust-ci`, `ios-ci` (iPhone tests, iPad build), `macos-ci` and the relay checks were green on it, so the Swift compiled and the three new `AppModelTests` passed on both platforms.
 
 - Rust: `cargo fmt --all -- --check`, the `cargo test` line of `rust-ci`
   and its Swift bindgen step pass locally. `terraform fmt -check
@@ -616,4 +664,72 @@ Step 4, 2026-11-19 — **Verified with notes**. Not merged.
   against the real relay; the Mac build with a relay URL showing no push
   switch.
 
-Steps 5–7: not started.
+The deployed relay since: `https://o.heypigeon.app` is live with a
+certificate (an unknown-token pixel answers 200 `image/gif`, 42 bytes;
+`POST /v1/opens` without a token 401), and `register-token` reports
+`opensUrl = https://o.heypigeon.app`. `HEYPIGEON_MAC_OAUTH_CLIENT_ID` was
+added for the `infra` environment; that the apply put it into
+`GOOGLE_CLIENT_IDS` is not yet confirmed. `HEYPIGEON_RELAY_URL` on the
+`macos` environment is not confirmed.
+
+Step 5, 2026-11-19 — **Verified with notes**. Not merged.
+
+- Rust: `cargo fmt --all -- --check`, the `cargo test` line of `rust-ci`
+  and its Swift bindgen step pass locally. Relay tests pass (a comment
+  changed in `handlers.js`, nothing else).
+- Swift (`Models`, `RustEngine`, `MockEngine`, `AppModel`,
+  `ScheduledSends`, `ComposeView`, `MessageHeaderLine`, `SettingsView`,
+  `ModelTests`, `AppModelTests`) was written on Linux and has never been
+  compiled: `ios-ci` and `macos-ci` are its first build.
+- No mail was sent and the live relay was not called from here. What
+  only a real send to a real mailbox shows, and is therefore unverified:
+  that Gmail keeps the `<img>` in a sent message's HTML as written, so
+  the token is read back from it; that Gmail's image proxy, Apple Mail
+  and other clients fetch it as the classifier expects; that the relay
+  accepts the app's access token (and the Mac's client); the 2-minute
+  grace window against a real first open; the catch-up on a second
+  device; the delete on switching off; how the status and its events
+  look in the thread.
+- Decided in this step and recorded above: the poll's schedule (R23);
+  the event list shown inline rather than on a tap (R6); "one recipient"
+  counted over To and Cc (R5); the composer's switch as a button in the
+  footer on every platform, with no Mac key or palette entry; turning the
+  setting on again before a pending delete went out cancels the delete;
+  a scheduled message from a file an older build wrote goes untracked.
+- A message sent by Siri, a Shortcut or as an invitation's answer from an
+  account with read status on is tracked like any other: the setting is
+  the account's, and there is no composer to switch it off in.
+- Known and left: `README.md` says push is "off by default" while a build
+  with a relay starts with it on (`PushController`); not this feature's
+  sentence. `core::sync::settle_follow_ups` still counts a bounce as a
+  reply.
+
+Step 5 after the security review of #152, 2026-11-19:
+
+- Fixed, each with a test: the off switch's delete runs at once on the
+  engine's runtime, on every sync round, and before an account is
+  removed (R12, R26); it keeps the address to send it to; a device that
+  sent a tracked message after "off" deletes it when it learns (R13);
+  only the composer tracks (R15); the relay's address is an https origin
+  or nothing and the pixel tag escapes what it is given; relay calls
+  follow no redirects and read bounded answers; a `>` inside an
+  attribute no longer hides a pixel from the outgoing strip.
+- Copy made true: the Settings footer, the privacy page (what the access
+  token is for, "the relay's code does not store or log" in place of an
+  unverified absolute, what turning off and removing do and when, per
+  device), the site's "never goes to a server of ours" (AI features send
+  text to the provider the user chose), and the "is never called"
+  sentences in `DESIGN.md`, `relay/README.md` and the reviewer's guide.
+- Still to check on the deployed project (unchanged): that the
+  request-log exclusion keeps the `opens` request log out of storage,
+  and Cloud Trace — the privacy page now claims only what the code and
+  the configuration do.
+- Edges that remain, by design: records left for up to 30 days when an
+  account is removed or signed out before the relay was reached; a
+  device that has not synced "off" may send one more tracked message
+  (deleted when it learns); an "off" not pushed before an offline
+  removal can come back as "on" when the account is added again; a
+  removal's delete also clears the records of other devices that still
+  track.
+
+Steps 6–7: not started.

@@ -181,8 +181,8 @@ deployment branches limited to `main` — gate every apply.
 
 Without `OPENS_DOMAIN` the `opens` function is deployed and answers at its
 run.app URL (`terraform output opens_run_url`), but `register-token`
-reports no `opensUrl`, so no app uses it and no pixel is ever sent with a
-run.app address. To put it on `o.heypigeon.app` — by the Action, with two things
+reports no `opensUrl`, so no app can use it (read status is then
+unavailable in the apps) and no pixel is ever sent with a run.app address. To put it on `o.heypigeon.app` — by the Action, with two things
 done by hand once, in this order:
 
 1. **Verified owner.** Google lets only a verified owner of a domain map

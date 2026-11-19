@@ -234,38 +234,138 @@ struct AppModelTests {
     /// docs/specs/read-status.md R8, R10, R25: read status is off for
     /// every account, cannot be turned on in a build without a relay, and
     /// with one is one mailbox's switch.
-    @Test func readStatusIsOffByDefaultAndDisabledWithoutARelay() throws {
+    @Test func readStatusIsOffByDefaultAndDisabledWithoutARelay() async throws {
         // Whatever relay the test host's build carries, start without.
         try engine.configureRelay(url: "")
         #expect(model.accounts.count == 2)
         #expect(model.accounts.allSatisfy { !$0.readStatus })
         #expect(!model.readStatusAvailable)
         let first = model.accounts[0]
-        model.setReadStatus(true, for: first)
+        await model.setReadStatus(true, for: first)
         #expect(model.accounts.allSatisfy { !$0.readStatus })
         // Off is never refused.
-        model.setReadStatus(false, for: first)
+        await model.setReadStatus(false, for: first)
         #expect(model.accounts.allSatisfy { !$0.readStatus })
 
         #expect(throws: (any Error).self) { try engine.configureRelay(url: "http://plain.example") }
         try engine.configureRelay(url: "https://relay.example")
         #expect(model.readStatusAvailable)
-        model.setReadStatus(true, for: first)
+        await model.setReadStatus(true, for: first)
         #expect(model.accounts[0].readStatus)
         #expect(!model.accounts[1].readStatus)
         // Another setting of the account does not take it back.
         model.updateAccount(model.accounts[0], signature: "— P")
         #expect(model.accounts[0].readStatus)
-        model.setReadStatus(false, for: model.accounts[0])
+        await model.setReadStatus(false, for: model.accounts[0])
         #expect(!model.accounts[0].readStatus)
     }
 
-    /// The row stays out of Settings until a build sends a tracked
-    /// message: a switch that does nothing is worse than none.
-    @Test func theReadStatusRowIsNotShownYet() {
-        #expect(!ReadStatusSetting.isShown)
+    /// The row is in Settings, and its footer says what the app and the
+    /// relay do — the sentences the spec's privacy table holds it to.
+    @Test func theReadStatusRowSaysWhatItDoes() {
+        #expect(ReadStatusSetting.isShown)
         #expect(ReadStatusSetting.title == "Read status")
         #expect(ReadStatusSetting.unavailable == "Not available in this build")
+        let footer = ReadStatusSetting.footer
+        for part in ["invisible picture", "a small relay records", "never who or where", "never the message itself",
+                     "30 days", "require their consent", "Apple Mail hides opens", "Gmail on the web",
+                     "Turning this off stops it on this device at once",
+                     "asks the relay to delete what it holds for this account",
+                     "your other devices follow when they next sync",
+                     "Removing the account asks for the same",
+                     "left to expire within 30 days"] {
+            #expect(footer.contains(part), "\(part)")
+        }
+    }
+
+    /// R15, R16: a message asks to be tracked only when a composer showed
+    /// its switch and it is on, the account it goes from has read status
+    /// on, and the build has a relay. A draft no composer touched carries
+    /// no choice and is never tracked.
+    @Test func trackOpensDefaultsOnOnlyWhenTheAccountsSettingIsOn() throws {
+        #expect(SendDraft().trackOpens == nil)
+        var on = model.accounts[0]
+        on.readStatus = true
+        #expect(!AppModel.tracksOpens(SendDraft(), account: on, available: true))
+        // As the composer hands it over: the switch, which starts on.
+        var draft = SendDraft()
+        draft.trackOpens = true
+        let off = model.accounts[1]
+        #expect(AppModel.tracksOpens(draft, account: on, available: true))
+        #expect(!AppModel.tracksOpens(draft, account: off, available: true))
+        #expect(!AppModel.tracksOpens(draft, account: on, available: false))
+        #expect(!AppModel.tracksOpens(draft, account: nil, available: true))
+        var declined = draft
+        declined.trackOpens = false
+        #expect(!AppModel.tracksOpens(declined, account: on, available: true))
+    }
+
+    /// R15: the choice follows the From account — the same draft is
+    /// tracked from the account with read status on and not from the other.
+    @Test func changingFromReevaluatesTrackOpens() async throws {
+        try engine.configureRelay(url: "https://relay.example")
+        await model.setReadStatus(true, for: model.accounts[0])
+        let tracked = model.accounts[0].id, untracked = model.accounts[1].id
+        var draft = SendDraft()
+        draft.trackOpens = true
+        #expect(model.tracksOpens(draft, from: tracked))
+        #expect(!model.tracksOpens(draft, from: untracked))
+        #expect(!model.tracksOpens(draft, from: "nobody@x.test"))
+        // Turned off again: the next message from it is not tracked.
+        await model.setReadStatus(false, for: model.accounts[0])
+        #expect(!model.tracksOpens(draft, from: tracked))
+    }
+
+    /// R16: what a message waiting to be sent carries is the choice as it
+    /// stood when the user let it go — a setting turned on afterwards
+    /// does not track it.
+    @Test func aScheduledMessageKeepsTheChoiceMadeWhenItWasSent() async throws {
+        try engine.configureRelay(url: "https://relay.example")
+        let account = model.accounts[0]
+        var draft = SendDraft()
+        draft.to = ["ana@acme.test"]
+        draft.trackOpens = true
+        model.sendLater(draft, from: account.id, at: Date().addingTimeInterval(3_600))
+        #expect(model.scheduledSends.last?.draft.trackOpens == false)
+        await model.setReadStatus(true, for: account)
+        #expect(model.scheduledSends.last?.draft.trackOpens == false)
+        // Scheduled with the setting on, it is.
+        var second = SendDraft()
+        second.to = ["ana@acme.test"]
+        second.trackOpens = true
+        model.sendLater(second, from: account.id, at: Date().addingTimeInterval(7_200))
+        #expect(model.scheduledSends.last?.draft.trackOpens == true)
+    }
+
+    /// S1: mail that never passes a composer is not tracked, even from an
+    /// account with read status on — an unsubscribe request (a draft made
+    /// from a mailto link), an invitation's answer, a saved draft a
+    /// Shortcut sends. Only what a composer hands over carries a choice.
+    @Test func mailSentWithoutAComposerIsNotTracked() async throws {
+        try engine.configureRelay(url: "https://relay.example")
+        let account = model.accounts[0]
+        await model.setReadStatus(true, for: account)
+        // The three ways mail is sent with no composer shown.
+        let unsubscribe = SendDraft(mailto: try #require(URL(string: "mailto:leave@list.test?subject=unsubscribe")))
+        var answer = SendDraft()
+        answer.to = ["organizer@acme.test"]
+        answer.subject = "Accepted: Lunch"
+        var saved = SendDraft()
+        saved.to = ["ana@acme.test"]
+        saved.draftSaved = true
+        for draft in [unsubscribe, answer, saved] {
+            #expect(draft.trackOpens == nil)
+            #expect(!model.tracksOpens(draft, from: account.id))
+        }
+        // Scheduled without a composer's choice: stored as untracked.
+        model.sendLater(saved, from: account.id, at: Date().addingTimeInterval(3_600))
+        #expect(model.scheduledSends.last?.draft.trackOpens == false)
+        // The same draft out of a composer, switch on, is tracked; switched off, not.
+        var composed = answer
+        composed.trackOpens = true
+        #expect(model.tracksOpens(composed, from: account.id))
+        composed.trackOpens = false
+        #expect(!model.tracksOpens(composed, from: account.id))
     }
 
     /// Having a relay is not being able to push: the Mac build carries the

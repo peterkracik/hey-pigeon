@@ -2097,6 +2097,9 @@ final class AppModel {
         var d = draft
         d.fromAccountId = accountId
         d.draftSaved = true
+        // Read status as it stands now, when the user lets the message
+        // go: a setting turned on while it waits does not track it.
+        d.trackOpens = tracksOpens(draft, from: accountId)
         let item = ScheduledSend(id: d.draftKey, draft: d, accountId: accountId, at: date)
         scheduledSends.removeAll { $0.id == item.id }
         scheduledSends.append(item)
@@ -2147,6 +2150,10 @@ final class AppModel {
     private struct PendingSend {
         let draft: SendDraft
         let accountId: String
+        /// Whether the message goes out tracked, decided when Send was
+        /// pressed (`tracksOpens`). Apart from the draft, which keeps the
+        /// composer's own choice for an Undo.
+        var tracked = false
         var task: Task<Void, Never>?
         /// Its "Sending · Undo" toast, taken off when the send commits.
         var toastId: UUID?
@@ -2160,7 +2167,7 @@ final class AppModel {
         var d = draft
         d.fromAccountId = accountId
         let id = UUID()
-        pendingSends[id] = PendingSend(draft: d, accountId: accountId)
+        pendingSends[id] = PendingSend(draft: d, accountId: accountId, tracked: tracksOpens(d, from: accountId))
         pendingSends[id]?.task = Task { [weak self] in
             try? await Task.sleep(for: self?.sendUndoWindow ?? .seconds(5))
             guard !Task.isCancelled else { return }
@@ -2228,7 +2235,9 @@ final class AppModel {
             undoStack.removeAll { $0.id == shown }
         }
         do {
-            try await engine.perform(.send(pending.draft), accountId: pending.accountId)
+            var outgoing = pending.draft
+            outgoing.trackOpens = pending.tracked
+            try await engine.perform(.send(outgoing), accountId: pending.accountId)
             Haptics.success()
             show("Sent")
             if pending.draft.draftSaved { deleteDraft(pending.draft.draftKey, from: pending.accountId) }
@@ -2797,6 +2806,20 @@ final class AppModel {
         } catch { show(error.localizedDescription) }
     }
 
+    /// Whether a message goes out asking to be tracked (R15, R16): a
+    /// composer showed its switch and it is on, the account it is sent
+    /// from has read status on, and the build has a relay. A draft no
+    /// composer touched (`trackOpens` nil) is never tracked. Decided when
+    /// the user sends; the core checks the account again when the message
+    /// leaves.
+    static func tracksOpens(_ draft: SendDraft, account: MailAccount?, available: Bool) -> Bool {
+        (draft.trackOpens ?? false) && available && (account?.readStatus ?? false)
+    }
+
+    func tracksOpens(_ draft: SendDraft, from accountId: String) -> Bool {
+        Self.tracksOpens(draft, account: accounts.first { $0.id == accountId }, available: readStatusAvailable)
+    }
+
     /// Whether read status can be turned on here: the build has a relay
     /// (docs/specs/read-status.md R10).
     var readStatusAvailable: Bool { engine.readStatusAvailable() }
@@ -2804,9 +2827,9 @@ final class AppModel {
     /// The read-status switch of one mailbox (R8). The engine stores it on
     /// the account and syncs it; the accounts are read back either way, so
     /// a switch the engine refused shows what is true.
-    func setReadStatus(_ on: Bool, for account: MailAccount) {
+    func setReadStatus(_ on: Bool, for account: MailAccount) async {
         do {
-            try engine.setReadStatus(accountId: account.id, enabled: on)
+            try await engine.setReadStatus(accountId: account.id, enabled: on)
         } catch { show(error.localizedDescription) }
         reloadAccounts()
     }

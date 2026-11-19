@@ -35,8 +35,15 @@ and truthfully described.
    with scripts off, a strict CSP, remote images blocked by default with
    a per-sender allow, and every navigation handed to the default
    browser.
-4. **The relay sees an address and a change counter, never mail.** It is
-   optional and runs in the owner's own cloud project.
+4. **The relay sees an address and a change counter, never mail** — and,
+   for accounts with read status on (off by default, per account;
+   `docs/specs/read-status.md`), a random token per sent message and when
+   it was opened. For an account with it off nothing is added to outgoing
+   mail and `opens` is not called, with one exception: an account just
+   turned off or being removed sends one delete, retried until answered.
+   Serving the pixel, the relay sees the fetching client's IP address and
+   user agent in passing and does not store them. It is optional and runs
+   in the owner's own cloud project.
 5. **Cross-device state goes through the owner's own Drive app data
    folder** and carries app state (reminders, flags, prefs, labels,
    account name/colour/signature) — not mail bodies, not secrets.

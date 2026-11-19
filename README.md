@@ -12,10 +12,10 @@ Superhuman-competing.**
 
 Design doc: [DESIGN.md](./DESIGN.md). Site: [heypigeon.app](https://heypigeon.app).
 
-## No backend, ever
+## No backend for your mail, ever
 
-Hey Pigeon has **no server component of any kind** and never will by design.
-It's a local app — native on the Mac, the iPhone and the iPad, over one
+Hey Pigeon has **no server that ever receives your mail** and never will by
+design (the two optional exceptions below carry no mail). It's a local app — native on the Mac, the iPhone and the iPad, over one
 shared Rust core — that talks directly to Google's APIs using your own
 OAuth grant:
 
@@ -31,9 +31,10 @@ OAuth grant:
   provider) as opt-ins; which one answers, and the order they fall back in,
   is yours to set.
 
-Because there's no backend and no third-party data store, there's no
-"Hey Pigeon got breached" risk model to worry about — your data's exposure
-surface is exactly your own Google account's, unchanged by using this app.
+Because no server of ours ever holds your mail, there's no "Hey Pigeon got
+breached" risk model for it — your mail's exposure surface is exactly your
+own Google account's, unchanged by using this app. What the optional relay
+holds when you use it is listed below, and is never mail.
 
 The honest exceptions, both optional and both a tiny relay you host
 yourself in your own Google Cloud project, which never receives mail — see
@@ -43,10 +44,16 @@ yourself in your own Google Cloud project, which never receives mail — see
   relay for them. It sees your address and a change counter. Off by
   default; the app is complete without it.
 - Read status ("was my message opened") needs something a recipient's mail
-  app can fetch. For a mailbox that turns it on, the relay holds a random
-  token per sent message and when it was opened. The relay's half is
-  deployed; no app uses it yet, and when one does it will be off unless
-  you turn it on, per account.
+  app can fetch. Off unless you turn it on, per account (Settings →
+  Accounts). For an account with it on, mail you send carries an invisible
+  picture served by the relay, and the relay holds a random token per sent
+  message and when it was opened, for 30 days — never the message, its
+  subject or its recipients. Turning it off, or removing the account, has
+  the app ask the relay to delete those records; if the account is removed
+  or signed out before the relay could be reached they expire within 30
+  days. Your other devices follow when they next sync. For an
+  account with it off, nothing is added to your mail, and once that delete
+  has been answered the relay is not contacted about it.
 
 ## Status
 

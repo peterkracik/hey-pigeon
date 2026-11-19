@@ -541,7 +541,7 @@ pub fn own_pixel_token(raw_html: &str) -> Option<String> {
     let mut from = 0;
     while let Some(pos) = lower[from..].find("<img") {
         let tag = from + pos + 4;
-        let end = lower[tag..].find('>').map_or(lower.len(), |i| tag + i);
+        let end = raw_tag_end(&lower, tag);
         from = end;
         // `to_ascii_lowercase` keeps every byte offset, so the tag can be
         // read from the original (a token is returned lowercase anyway).
@@ -550,6 +550,57 @@ pub fn own_pixel_token(raw_html: &str) -> Option<String> {
         }
     }
     found
+}
+
+/// `raw_html` without any `<img>` that has the shape of the app's own
+/// pixel. For HTML on its way *out*: what the composer quoted is built
+/// from sanitized bodies and holds none, but a message must leave with
+/// exactly the one pixel it was registered with — never a second, and
+/// never another message's — whatever it was assembled from.
+pub fn without_own_pixels(raw_html: &str) -> Cow<'_, str> {
+    let lower = raw_html.to_ascii_lowercase();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find("<img") {
+        let tag = from + pos;
+        let inside = tag + 4;
+        let end = raw_tag_end(&lower, inside);
+        from = end;
+        if raw_src(&raw_html[inside..end])
+            .and_then(own_pixel_token_of_url)
+            .is_some()
+        {
+            let out = out.get_or_insert_with(|| String::with_capacity(raw_html.len()));
+            out.push_str(&raw_html[copied..tag]);
+            copied = (end + 1).min(raw_html.len());
+        }
+    }
+    match out {
+        Some(mut out) => {
+            out.push_str(&raw_html[copied..]);
+            Cow::Owned(out)
+        }
+        None => Cow::Borrowed(raw_html),
+    }
+}
+
+/// Where a raw tag that began before `from` ends: the index of its `>`,
+/// or the end of the text. A `>` inside a quoted attribute value
+/// (`alt="a > b"`) is part of the value, as it is to a browser — read
+/// naively, the tag would end there and its `src` would be missed.
+fn raw_tag_end(html: &str, from: usize) -> usize {
+    let mut quote: Option<u8> = None;
+    for (i, b) in html.bytes().enumerate().skip(from) {
+        match (quote, b) {
+            (Some(q), b) if b == q => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(b),
+            (None, b'>') => return i,
+            (None, _) => {}
+        }
+    }
+    html.len()
 }
 
 /// The value of the `src` attribute in the inside of a raw `<img …>` tag.
@@ -2341,6 +2392,44 @@ mod tests {
             assert_eq!(html(&once), once, "{input}");
             assert!(!once.contains("heypigeon.app"));
         }
+    }
+
+    /// Outgoing HTML loses every picture of the pixel's shape and nothing
+    /// else, so a message can be given exactly one.
+    #[test]
+    fn outgoing_html_loses_own_pixels_and_only_those() {
+        let own = format!(r#"<img src="{OWN}" width="1" height="1" alt="">"#);
+        let logo = r#"<img src="https://cdn.example/logo.png" width="120">"#;
+        let foreign = r#"<img src="https://track.example/o.gif" width="1" height="1">"#;
+        let html = format!(
+            "<p>Hi</p>{own}<blockquote>{logo}<IMG WIDTH=1 SRC='{OWN_SHOUTED}'>{foreign}</blockquote>{own}"
+        );
+        assert_eq!(
+            without_own_pixels(&html),
+            format!("<p>Hi</p><blockquote>{logo}{foreign}</blockquote>")
+        );
+        assert_eq!(own_pixel_token(&without_own_pixels(&html)), None);
+        // Nothing to take out: the same string, not a copy.
+        let plain = format!("<p>Hi</p>{logo}{foreign}");
+        assert!(matches!(without_own_pixels(&plain), Cow::Borrowed(_)));
+        // A `>` inside an attribute does not end the tag: the pixel
+        // behind it is still found, read and taken out.
+        let sneaky =
+            format!(r#"<p>a</p><img alt="a > b" title='x>y' src="{OWN}" width="1"><p>b</p>"#);
+        assert_eq!(own_pixel_token(&sneaky), Some(OWN_TOKEN.to_string()));
+        assert_eq!(without_own_pixels(&sneaky), "<p>a</p><p>b</p>");
+        assert_eq!(super::html(&sneaky), "<p>a</p><p>b</p>");
+        // An unclosed quote runs to the end: nothing is lost, nothing loops.
+        assert_eq!(
+            without_own_pixels("<p>a</p><img alt=\"x> <p>b</p>"),
+            "<p>a</p><img alt=\"x> <p>b</p>"
+        );
+        // An unclosed tag at the end does not panic or loop.
+        assert_eq!(
+            without_own_pixels(&format!("<p>a</p><img src=\"{OWN}\"")),
+            "<p>a</p>"
+        );
+        assert_eq!(without_own_pixels("<img"), "<img");
     }
 
     /// R19's reader: the token is read from the message as received, the

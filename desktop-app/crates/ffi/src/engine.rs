@@ -110,6 +110,9 @@ pub struct Engine {
     listener: Mutex<Option<Arc<dyn EngineListener>>>,
     /// Accounts with a delta sync in flight (foreground + background can overlap).
     syncing: Mutex<HashSet<AccountId>>,
+    /// Threads this launch already fetched to look for a read-status
+    /// token (`read_status_round`).
+    pub(crate) catch_up_tried: Mutex<HashSet<ThreadId>>,
     /// account → when the archive walk may fetch its next page
     /// (`OLDER_PAGE_GAP`, `OLDER_RATE_LIMIT_PAUSE`).
     older_due: Mutex<HashMap<AccountId, Instant>>,
@@ -189,6 +192,10 @@ impl Engine {
             client_secret: oauth.client_secret,
         };
         let provider = GmailProvider::new(oauth_client.clone(), Arc::clone(&secrets));
+        // Where the relay's read-status half answers, as the relay last
+        // said (readstatus.rs); nothing is asked there until an account
+        // has read status on.
+        provider.set_opens_url(secrets.get(crate::readstatus::OPENS_URL).ok().flatten());
         crate::settings::migrate_legacy_prefs(&store, &*secrets);
 
         let disconnected: HashSet<AccountId> = store
@@ -227,6 +234,7 @@ impl Engine {
             pending_oauth: Mutex::new(None),
             listener: Mutex::new(None),
             syncing: Mutex::new(HashSet::new()),
+            catch_up_tried: Mutex::new(HashSet::new()),
             older_due: Mutex::new(HashMap::new()),
             disconnected: Mutex::new(disconnected),
             sync_status: Mutex::new(HashMap::new()),
@@ -411,7 +419,7 @@ impl Engine {
         let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
-            messages: thread_messages(messages),
+            messages: thread_messages(messages, &self.store.open_events_for_thread(&thread_id)?),
         }))
     }
 
@@ -429,7 +437,7 @@ impl Engine {
         let messages = self.store.list_messages(&thread_id)?;
         Ok(Some(ThreadWithMessages {
             thread: thread.into(),
-            messages: thread_messages(messages),
+            messages: thread_messages(messages, &self.store.open_events_for_thread(&thread_id)?),
         }))
     }
 
@@ -835,6 +843,11 @@ impl Engine {
     /// (best effort — the lease expires on its own within 7 days anyway).
     pub async fn remove_account(&self, account_id: String) -> Result<(), EngineError> {
         self.forget_push_for_account(&account_id).await;
+        // Read status: the relay is asked to forget the mailbox, and the
+        // account's setting is pushed, before the rows that say so are
+        // gone (readstatus.rs). Bounded; removal never waits on it long
+        // and never fails for it.
+        self.leave_read_status(&account_id).await;
         self.store.delete_account(&account_id)?;
         let _ = self
             .secrets
@@ -1487,6 +1500,12 @@ impl Engine {
         for m in &full.messages {
             self.store.upsert_message(m).map_err(store_err)?;
         }
+        // The read-status token of the user's own sent mail, read from the
+        // message as Gmail holds it (the stored body no longer has the
+        // pixel): kept beside the message. Not worth failing the open for.
+        if let Err(e) = heypigeon_core::readstatus::remember_tokens(&self.store, &full.messages) {
+            log::warn!("read status: token of a sent message not kept: {e}");
+        }
         if full.whole_thread {
             // A stored message the whole thread no longer has was deleted
             // at Gmail and the sync has not caught up: there is nothing
@@ -1655,8 +1674,14 @@ impl Engine {
             self.renew_watch(account_id).await;
             // Where read status lives, asked of the relay once a day and
             // only for an account that has it on (readstatus.rs).
-            self.discover_opens(account_id).await;
+            self.discover_opens(account_id, false).await;
         }
+        // A pending "forget this mailbox" is tried on every round, whether
+        // or not Gmail answered this time: it is the relay's to answer.
+        self.flush_opens_delete(account_id).await;
+        // Read status: a pending "forget this mailbox", what the relay
+        // recorded, and the tokens of mail sent from another device.
+        let opened = result.is_ok() && self.read_status_round(account_id).await;
         // Threads a discarded change left different from Gmail while it
         // could not be asked (`discard_outbox`): Gmail just answered.
         let restored = result.is_ok() && self.restore_waiting_threads(account_id).await;
@@ -1693,10 +1718,10 @@ impl Engine {
                 false
             }
         };
-        changed || synced || ruled || restored
+        changed || synced || ruled || restored || opened
     }
 
-    async fn devsync_account(&self, account_id: &AccountId) -> bool {
+    pub(crate) async fn devsync_account(&self, account_id: &AccountId) -> bool {
         let result = {
             let provider = self.provider.read().await;
             devsync::sync_account(&*provider, &self.store, account_id).await
@@ -2062,6 +2087,7 @@ mod tests {
                     attachments: vec![],
                     reply_to_thread: None,
                     from_addr: None,
+                    track_opens: false,
                 },
             )
             .await;
@@ -2648,21 +2674,24 @@ mod tests {
             status("s1"),
             Some(MessageReadStatus {
                 state: MessageReadState::Replied,
-                at: Some(2_000)
+                at: Some(2_000),
+                events: vec![],
             })
         );
         assert_eq!(
             status("s2"),
             Some(MessageReadStatus {
                 state: MessageReadState::NotDelivered,
-                at: Some(4_000)
+                at: Some(4_000),
+                events: vec![],
             })
         );
         assert_eq!(
             status("s3"),
             Some(MessageReadStatus {
                 state: MessageReadState::Sent,
-                at: None
+                at: None,
+                events: vec![],
             })
         );
         assert_eq!(status("r"), None);

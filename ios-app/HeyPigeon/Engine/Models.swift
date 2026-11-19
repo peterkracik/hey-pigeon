@@ -162,49 +162,102 @@ struct MessageItem: Identifiable, Hashable, Sendable {
 
 /// The status of a message the user sent (docs/specs/read-status.md, R1).
 /// The core decides it (`heypigeon_core::readstatus`); the shells only
-/// show it. These are the states the mailbox itself can tell.
+/// show it.
 enum ReadState: Hashable, Sendable {
     /// Gmail accepted the message.
     case sent
+    /// Its picture was fetched by Apple's mail privacy proxy: delivered to
+    /// a device that hides opens. Never shown as opened.
+    case hidden
+    /// Its picture was fetched by a mail app or Gmail's image proxy.
+    case opened
     /// A bounce followed it in its thread.
     case notDelivered
     /// Someone answered in its thread.
     case replied
 }
 
-struct ReadStatus: Hashable, Sendable {
-    let state: ReadState
-    /// When the reply or the bounce arrived; nil for `.sent`.
-    var at: Date?
+/// One fetch of a tracked message's picture, as the relay reported it.
+struct ReadEvent: Hashable, Sendable {
+    /// False: delivered to a device that hides opens.
+    let opened: Bool
+    let at: Date
 }
 
-/// The read-status setting of an account (Settings › Accounts): its words,
-/// and whether the row is shown at all.
+struct ReadStatus: Hashable, Sendable {
+    let state: ReadState
+    /// When the reply or the bounce arrived, or the newest open or hidden
+    /// fetch; nil for `.sent`.
+    var at: Date?
+    /// Everything the relay reported for the message, newest first,
+    /// whatever `state` is; empty for a message that was not tracked.
+    var events: [ReadEvent] = []
+}
+
+/// The read-status setting of an account (Settings › Accounts) and the
+/// composer's switch: their words.
 enum ReadStatusSetting {
-    /// Off until the app can do what the switch says: no build sends a
-    /// tracked message yet, and a switch that does nothing is worse than
-    /// none. The step that sends turns this on, with the footer.
-    static let isShown = false
+    /// The row is in Settings: a build with this sends what it says.
+    static let isShown = true
+    /// The setting, and the composer's switch for one message.
     static let title = "Read status"
     /// Under the switch when the build has no relay (R10).
     static let unavailable = "Not available in this build"
-    /// Under the switch otherwise. Every sentence is true only of a build
-    /// that sends the picture — which is when `isShown` becomes true.
-    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when — never who, where, or on what device, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Off: nothing is added and the relay is not contacted for this account."
+    /// Under the switch otherwise. Each sentence is checked against what
+    /// the app and the relay do (docs/specs/read-status.md, "Privacy
+    /// copy"); change the behaviour and this changes with it.
+    static let footer = "Adds an invisible picture to mail you send from this account. When a recipient's mail app loads it, a small relay records that the message was opened and when, or that it reached a device that hides opens — never who or where, and never the message itself. The relay keeps this for 30 days. Recipients are not told and cannot agree to it first; in the EU and the UK that can require their consent, and it is yours to obtain. Apple Mail hides opens, and opening your own sent message in Gmail on the web counts as one. Turning this off stops it on this device at once and asks the relay to delete what it holds for this account, now if the app is online and otherwise when it next syncs; your other devices follow when they next sync. Removing the account asks for the same, which also clears read status for mail already sent from your other devices. If the account is removed or signed out before the relay could be reached, what it holds is left to expire within 30 days."
+    /// The composer's switch, for the pointer and VoiceOver.
+    static let composerOn = "Read status is on for this message"
+    static let composerOff = "Read status is off for this message"
 }
 
 /// The words and the symbol of a read status: one place, so the phone,
 /// the iPad and the Mac say the same thing.
 enum ReadStatusText {
-    /// "Sent", "Not delivered", "Replied 10:42" / "Replied yesterday" /
-    /// "Replied Mon" / "Replied Oct 3".
-    static func line(_ status: ReadStatus, now: Date = Date()) -> String {
+    /// "Sent", "Not delivered", "Delivered · opens hidden",
+    /// "Opened by Peter 10:42" (one recipient) / "Opened yesterday"
+    /// (several: who is not known), "Replied Mon".
+    ///
+    /// `recipients` is everyone the message went to that the thread knows
+    /// of (To and Cc); `names` the thread's people by lowercased address.
+    static func line(_ status: ReadStatus, recipients: [String] = [], names: [String: String] = [:],
+                     now: Date = Date()) -> String {
         switch status.state {
-        case .sent: "Sent"
-        case .notDelivered: "Not delivered"
-        case .replied: status.at.map { "Replied \(when($0, now: now))" } ?? "Replied"
+        case .sent: return "Sent"
+        case .notDelivered: return "Not delivered"
+        case .hidden: return "Delivered · opens hidden"
+        case .opened:
+            let time = status.at.map { " \(when($0, now: now))" } ?? ""
+            guard recipients.count == 1, let only = recipients.first else { return "Opened\(time)" }
+            return "Opened by \(names[only.lowercased()] ?? only)\(time)"
+        case .replied: return status.at.map { "Replied \(when($0, now: now))" } ?? "Replied"
         }
     }
+
+    /// The lines under the status of an open message: who could have
+    /// opened it when that is not one person, and what the relay reported,
+    /// newest first, when that says more than the status line does.
+    static func details(_ status: ReadStatus, recipients: [String] = [], now: Date = Date()) -> [String] {
+        var lines: [String] = []
+        let opens = status.events.filter(\.opened).count
+        if status.state == .opened || opens > 0, recipients.count > 1 {
+            lines.append("by one of \(recipients.count) recipients")
+        }
+        // One event that is the status itself needs no second line.
+        let told = status.events.count == 1 && (status.state == .opened || status.state == .hidden)
+        guard !status.events.isEmpty, !told else { return lines }
+        for event in status.events.prefix(maxEvents) {
+            let time = Formatters.messageTime(event.at, now: now)
+            lines.append(event.opened ? "Opened · \(time)" : "Delivered to a device that hides opens · \(time)")
+        }
+        let more = status.events.count - maxEvents
+        if more > 0 { lines.append("and \(more) earlier") }
+        return lines
+    }
+
+    /// Events listed under a message before "and N earlier".
+    static let maxEvents = 5
 
     /// The list rows' time, inside a sentence: "Yesterday" loses its
     /// capital, the rest (a time, a weekday, a date) stays as it is.
@@ -216,6 +269,8 @@ enum ReadStatusText {
     static func symbol(_ state: ReadState) -> String {
         switch state {
         case .sent: "checkmark"
+        case .hidden: "eye.slash"
+        case .opened: "eye"
         case .notDelivered: "exclamationmark.circle"
         case .replied: "arrowshape.turn.up.left"
         }
@@ -983,6 +1038,14 @@ struct SendDraft: Hashable {
     /// an address, never under a name the thread knows (the Mac opens the
     /// fields): a reply must not be sent somewhere the user did not see.
     var repliesElsewhere = false
+    /// The "Read status" choice for this one message
+    /// (docs/specs/read-status.md R15). nil until a composer has shown its
+    /// switch: the composer starts it on and writes the user's choice
+    /// here. Mail that never passes a composer — an unsubscribe request,
+    /// an invitation's answer, a saved draft a Shortcut sends — keeps nil
+    /// and is not tracked: the user never saw a switch for it
+    /// (`AppModel.tracksOpens`).
+    var trackOpens: Bool?
     /// Bumped when something other than the composer changed the open
     /// draft (Siri's "update draft"); the composer adopts the new fields.
     var externalRevision = 0
@@ -1292,7 +1355,10 @@ protocol MailEngine: AnyObject {
     func readStatusAvailable() -> Bool
     /// One mailbox's read-status switch. Stored on the account and synced
     /// to the user's other devices; throws when turned on without a relay.
-    func setReadStatus(accountId: String, enabled: Bool) throws
+    /// Async: the engine writes the setting and returns, and on its own
+    /// runtime pushes it to the other devices and — turned off — asks the
+    /// relay to delete the mailbox's records, without waiting for a sync.
+    func setReadStatus(accountId: String, enabled: Bool) async throws
     /// Async: with push on, the engine first forgets the device at the relay and stops the Gmail watch.
     func removeAccount(id: String) async throws
     /// App-wide preferences synced between the user's devices (`pref:<name>`

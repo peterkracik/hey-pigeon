@@ -47,6 +47,88 @@ struct ReadStatusTests {
         #expect(Set([ReadState.sent, .notDelivered, .replied].map(ReadStatusText.symbol)).count == 3)
     }
 
+    /// R1, R5: an open names the one recipient there was, and nobody when
+    /// there were several; "hidden" is its own words and never "Opened".
+    @Test func openedAndHiddenHaveTheirWords() {
+        let now = noon
+        let earlier = now.addingTimeInterval(-3_600)
+        let time = Formatters.rowTime(earlier, now: now)
+        let opened = ReadStatus(state: .opened, at: earlier)
+        let names = ["peter@acme.test": "Peter"]
+        #expect(ReadStatusText.line(opened, recipients: ["Peter@acme.test"], names: names, now: now) == "Opened by Peter \(time)")
+        #expect(ReadStatusText.line(opened, recipients: ["ana@acme.test"], names: names, now: now) == "Opened by ana@acme.test \(time)")
+        #expect(ReadStatusText.line(opened, recipients: ["peter@acme.test", "ana@acme.test"], names: names, now: now) == "Opened \(time)")
+        #expect(ReadStatusText.line(opened, now: now) == "Opened \(time)")
+        let yesterday = cal.date(byAdding: .day, value: -1, to: now)!
+        #expect(ReadStatusText.line(ReadStatus(state: .opened, at: yesterday), recipients: ["peter@acme.test"], names: names, now: now)
+                == "Opened by Peter yesterday")
+        let hidden = ReadStatus(state: .hidden, at: earlier)
+        #expect(ReadStatusText.line(hidden, recipients: ["peter@acme.test"], names: names, now: now) == "Delivered · opens hidden")
+        #expect(!ReadStatusText.line(hidden, now: now).contains("Opened"))
+        #expect(Set([ReadState.sent, .hidden, .opened, .notDelivered, .replied].map(ReadStatusText.symbol)).count == 5)
+    }
+
+    /// R5, R6: under the status, who could have opened it when that is not
+    /// one person, and what the relay reported when it says more.
+    @Test func detailsListWhatTheRelayReported() {
+        let now = noon
+        let t1 = now.addingTimeInterval(-3_600), t2 = now.addingTimeInterval(-1_800)
+        let one = ReadStatus(state: .opened, at: t1, events: [ReadEvent(opened: true, at: t1)])
+        // One open, one recipient: the status line said it all.
+        #expect(ReadStatusText.details(one, recipients: ["a@x.test"], now: now).isEmpty)
+        #expect(ReadStatusText.details(one, recipients: ["a@x.test", "b@x.test", "c@x.test"], now: now) == ["by one of 3 recipients"])
+        let both = ReadStatus(state: .opened, at: t2, events: [ReadEvent(opened: true, at: t2), ReadEvent(opened: false, at: t1)])
+        #expect(ReadStatusText.details(both, recipients: ["a@x.test"], now: now) == [
+            "Opened · \(Formatters.messageTime(t2, now: now))",
+            "Delivered to a device that hides opens · \(Formatters.messageTime(t1, now: now))",
+        ])
+        // A reply does not hide that it was opened before.
+        let replied = ReadStatus(state: .replied, at: now, events: [ReadEvent(opened: true, at: t1)])
+        #expect(ReadStatusText.details(replied, recipients: ["a@x.test"], now: now) == ["Opened · \(Formatters.messageTime(t1, now: now))"])
+        // An untracked message has nothing under it.
+        #expect(ReadStatusText.details(ReadStatus(state: .sent), recipients: ["a@x.test", "b@x.test"], now: now).isEmpty)
+        // A long list ends in a count.
+        let many = ReadStatus(state: .opened, at: now, events: (0..<8).map { ReadEvent(opened: true, at: now.addingTimeInterval(Double(-$0) * 600)) })
+        let lines = ReadStatusText.details(many, recipients: ["a@x.test"], now: now)
+        #expect(lines.count == ReadStatusText.maxEvents + 1)
+        #expect(lines.last == "and 3 earlier")
+    }
+
+    /// The mock's copy of the precedence with what the relay reported:
+    /// a reply, a bounce, an open, "hidden", sent.
+    @Test func theMockRanksOpensLikeTheCore() {
+        let t0 = noon
+        let open = ReadEvent(opened: true, at: t0.addingTimeInterval(600))
+        let hide = ReadEvent(opened: false, at: t0.addingTimeInterval(900))
+        let mine = makeMessage("s", from: "Me", address: "me@work.test", mine: true, at: t0)
+        func status(_ thread: [MessageItem], _ events: [ReadEvent]) -> ReadStatus? {
+            MockEngine.withReadStatus(thread, events: ["s": events]).first { $0.id == "s" }.flatMap { $0.readStatus }
+        }
+        #expect(status([mine], [])?.state == .sent)
+        #expect(status([mine], [hide]) == ReadStatus(state: .hidden, at: hide.at, events: [hide]))
+        // An open outranks a later hidden fetch; the list is newest first.
+        #expect(status([mine], [open, hide]) == ReadStatus(state: .opened, at: open.at, events: [hide, open]))
+        let bounce = makeMessage("b", from: "Mail Delivery Subsystem", address: "mailer-daemon@googlemail.com", at: t0.addingTimeInterval(60))
+        #expect(status([mine, bounce], [open])?.state == .notDelivered)
+        let reply = makeMessage("r", at: t0.addingTimeInterval(1_200))
+        #expect(status([mine, bounce, reply], [open, hide])?.state == .replied)
+        // Events for a message that is not the user's say nothing.
+        #expect(MockEngine.withReadStatus([reply], events: ["r": [open]])[0].readStatus == nil)
+    }
+
+    /// What an AI call is given of a thread (`ThreadDetail.transcript`) is
+    /// the messages' text: nothing of a picture's address can be in it,
+    /// whatever a body's HTML holds.
+    @Test func aTranscriptCarriesNoPictureAddress() {
+        let pixel = "https://o.heypigeon.app/o/0123456789abcdef0123456789abcdef.gif"
+        let m = MessageItem(id: "m", fromName: "Me", fromAddress: "me@work.test", to: ["ana@acme.test"], date: Date(),
+                            snippet: "See you Thursday.", bodyHTML: "<p>See you Thursday.</p><img src=\"\(pixel)\" width=\"1\" height=\"1\">",
+                            bodyText: "See you Thursday.", isRead: true, isMine: true)
+        let transcript = ThreadDetail.transcript(of: [m])
+        #expect(transcript.contains("See you Thursday."))
+        #expect(!transcript.contains("heypigeon.app") && !transcript.contains("0123456789abcdef") && !transcript.contains(".gif"))
+    }
+
     @Test func theMockFollowsTheCoresRule() {
         let t0 = noon
         let thread = MockEngine.withReadStatus([

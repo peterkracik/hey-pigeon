@@ -532,7 +532,7 @@ a Mac.
    AI bar; account settings; labels menu and management.
 3. **iOS-M3 — polish**: iPad split view and keyboard map, widgets (unread
    count, next reminder), Shortcuts actions, share extension ("send this
-   file"), optional push relay.
+   file"), optional relay (push; read status).
 4. **iOS-M4 — Siri and on-device AI**: App Intents over `AppModel`, the
    Spotlight index the new Siri reads, the Mail schema domain, on-screen
    awareness, Foundation Models as the zero-key AI default, widgets and
@@ -551,4 +551,6 @@ a Mac.
 
 Android (the same `ffi` crate would bind through UniFFI's Kotlin generator,
 but nobody is asking), the App Store, generic IMAP, any server beyond the
-optional metadata-only push relay (`relay/README.md`).
+optional relay (`relay/README.md`): push, which sees an address and a
+change counter, and read status, which for an account that turned it on
+holds a random token per sent message and when it was opened. Never mail.

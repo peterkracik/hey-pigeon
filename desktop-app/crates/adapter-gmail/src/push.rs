@@ -44,7 +44,7 @@ impl GmailProvider {
     ) -> Result<RelayInfo, MailError> {
         let token = self.access_token(account_id).await?;
         let resp = self
-            .http
+            .relay_http
             .get(relay_endpoint(relay_url))
             .bearer_auth(token)
             .send()
@@ -75,7 +75,7 @@ impl GmailProvider {
             "environment": environment,
         });
         let resp = self
-            .http
+            .relay_http
             .post(relay_endpoint(relay_url))
             .bearer_auth(token)
             .json(&body)
@@ -100,7 +100,7 @@ impl GmailProvider {
         let token = self.access_token(account_id).await?;
         let body = serde_json::json!({ "deviceToken": device_token });
         let resp = self
-            .http
+            .relay_http
             .delete(relay_endpoint(relay_url))
             .bearer_auth(token)
             .json(&body)

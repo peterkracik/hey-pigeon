@@ -147,6 +147,17 @@ struct ComposeView: View {
     private var showsFromRow: Bool {
         model.accounts.count > 1 || model.accounts.contains { !aliases(of: $0).isEmpty }
     }
+    /// Whether the composer shows "Read status": the From account has it
+    /// on (and the build has a relay). Read from the account chosen now,
+    /// so changing From shows or hides it.
+    private var readStatusOffered: Bool {
+        model.readStatusAvailable && (fromAccount?.readStatus ?? false)
+    }
+
+    /// The switch's position: on until the user turns it off (a draft no
+    /// composer has shown yet carries no choice).
+    private var tracksOpens: Bool { draft.trackOpens ?? true }
+
     private var canSend: Bool { !(allTo.isEmpty && allCc.isEmpty && allBcc.isEmpty) && !sending && !fromId.isEmpty }
 
     var body: some View {
@@ -362,6 +373,19 @@ struct ComposeView: View {
                     .pillButton()
                     .accessibilityLabel("Discard")
                 Spacer()
+                // Read status for this one message (docs/specs/read-status.md
+                // R15): there only when the account it is sent from has
+                // read status on, and on until switched off.
+                if readStatusOffered {
+                    Button { draft.trackOpens = !tracksOpens } label: {
+                        Image(systemName: tracksOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
+                    }
+                    .pillButton()
+                    .foregroundStyle(tracksOpens ? Theme.accent : Theme.textPrimary)
+                    .help(tracksOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
+                    .accessibilityLabel(ReadStatusSetting.title)
+                    .accessibilityValue(tracksOpens ? "On" : "Off")
+                }
                 if model.aiConfigured {
                     Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
                         .pillButton()
@@ -496,6 +520,10 @@ struct ComposeView: View {
         d.bodyRich = bodyRich
         d.attachments = attachments
         d.fromAddress = fromAddress
+        // What leaves the composer carries the switch's position, shown or
+        // not; whether the account tracks at all is decided when it is
+        // sent (AppModel.tracksOpens).
+        d.trackOpens = tracksOpens
         return d
     }
 

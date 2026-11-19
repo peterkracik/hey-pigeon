@@ -3,6 +3,7 @@
 
 pub mod drive;
 pub mod oauth;
+pub mod opens;
 pub mod push;
 
 use std::collections::HashMap;
@@ -77,6 +78,20 @@ pub(crate) fn http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// The client for the relay (push registration, read status). The same
+/// timeouts, and no redirects: the relay answers itself or not at all, and
+/// a request that carries the account's access token is never sent on to
+/// wherever an answer points.
+pub(crate) fn relay_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("heypigeon")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default()
+}
+
 /// What a full fetch of a thread (or of some of its messages) brought.
 pub struct FullFetch {
     /// The fetched messages, bodies included, `body_fetched` set.
@@ -125,6 +140,8 @@ fn expiry(expires_in: u64) -> SystemTime {
 
 pub struct GmailProvider {
     http: reqwest::Client,
+    /// For the relay only (`relay_http_client`): no redirects.
+    relay_http: reqwest::Client,
     client: ClientConfig,
     secrets: Arc<dyn SecretStore + Send + Sync>,
     tokens: Mutex<HashMap<AccountId, CachedToken>>,
@@ -146,12 +163,16 @@ pub struct GmailProvider {
     inline_parts: std::sync::Mutex<HashMap<(MessageId, usize), String>>,
     /// account → its send-as addresses, for the session.
     send_as: Mutex<HashMap<AccountId, Vec<SendAs>>>,
+    /// Where the relay's `opens` function answers (read status), when the
+    /// relay has said (`set_opens_url`); None = no read status here.
+    opens_url: std::sync::Mutex<Option<String>>,
 }
 
 impl GmailProvider {
     pub fn new(client: ClientConfig, secrets: Arc<dyn SecretStore + Send + Sync>) -> Self {
         Self {
             http: http_client(),
+            relay_http: relay_http_client(),
             client,
             secrets,
             tokens: Mutex::new(HashMap::new()),
@@ -161,6 +182,7 @@ impl GmailProvider {
             cooldown: std::sync::Mutex::new(HashMap::new()),
             inline_parts: std::sync::Mutex::new(HashMap::new()),
             send_as: Mutex::new(HashMap::new()),
+            opens_url: std::sync::Mutex::new(None),
         }
     }
 
@@ -2085,6 +2107,11 @@ impl MailProvider for GmailProvider {
             from_addr,
             in_reply_to,
             references,
+            // Read status is decided before the mutation gets here
+            // (`readstatus::prepare_send`): a tracked message arrives with
+            // its pixel already in `body_html`.
+            track_opens: _,
+            open_token: _,
         } = mutation
         {
             let extra = MimeExtra {
@@ -2259,6 +2286,28 @@ impl MailProvider for GmailProvider {
     async fn stop_watch(&self, account_id: &AccountId) -> Result<(), MailError> {
         self.post_json(account_id, &format!("{API}/stop"), &serde_json::json!({}))
             .await
+    }
+
+    // Read status: the relay's `opens` function (opens.rs).
+
+    async fn register_open_token(
+        &self,
+        account_id: &AccountId,
+        token: &str,
+    ) -> Result<String, MailError> {
+        self.opens_register(account_id, token).await
+    }
+
+    async fn query_opens(
+        &self,
+        account_id: &AccountId,
+        tokens: &[String],
+    ) -> Result<HashMap<String, Vec<OpenEvent>>, MailError> {
+        self.opens_query(account_id, tokens).await
+    }
+
+    async fn delete_open_tokens(&self, account_id: &AccountId) -> Result<(), MailError> {
+        self.opens_delete(account_id).await
     }
 }
 

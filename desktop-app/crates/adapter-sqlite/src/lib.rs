@@ -3094,6 +3094,132 @@ impl Store for SqliteStore {
         Ok(n > 0)
     }
 
+    // ---- read status (docs/specs/read-status.md; tables from v34) ----
+
+    fn open_token_put(&self, t: &OpenToken) -> Result<(), StoreError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO open_tokens (token, account_id, message_id, thread_id, sent_at, expires_at, polled_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(token) DO UPDATE SET
+                   message_id = COALESCE(open_tokens.message_id, excluded.message_id),
+                   thread_id = COALESCE(open_tokens.thread_id, excluded.thread_id)",
+                params![t.token, t.account_id, t.message_id, t.thread_id, t.sent_at, t.expires_at, t.polled_at],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn open_tokens_live(
+        &self,
+        account_id: &AccountId,
+        now: i64,
+    ) -> Result<Vec<OpenToken>, StoreError> {
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT token, account_id, message_id, thread_id, sent_at, expires_at, polled_at
+                   FROM open_tokens WHERE account_id = ?1 AND expires_at > ?2
+                  ORDER BY sent_at, token",
+            )?;
+            let rows = stmt.query_map(params![account_id, now], |r| {
+                Ok(OpenToken {
+                    token: r.get(0)?,
+                    account_id: r.get(1)?,
+                    message_id: r.get(2)?,
+                    thread_id: r.get(3)?,
+                    sent_at: r.get(4)?,
+                    expires_at: r.get(5)?,
+                    polled_at: r.get(6)?,
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
+    fn open_events_add(
+        &self,
+        token: &str,
+        events: &[OpenEvent],
+        polled_at: i64,
+    ) -> Result<usize, StoreError> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            // Only for a token this store keeps: an answer about anything
+            // else is not ours to record.
+            let known = tx.execute(
+                "UPDATE open_tokens SET polled_at = ?2 WHERE token = ?1",
+                params![token, polled_at],
+            )?;
+            let mut added = 0;
+            if known > 0 {
+                for e in events {
+                    added += tx.execute(
+                        "INSERT OR IGNORE INTO open_events (token, at, label) VALUES (?1, ?2, ?3)",
+                        params![token, e.at, e.label.as_str()],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(added)
+        })
+    }
+
+    fn open_events_for_thread(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<HashMap<MessageId, Vec<OpenEvent>>, StoreError> {
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT t.message_id, e.at, e.label
+                   FROM open_tokens t JOIN open_events e ON e.token = t.token
+                  WHERE t.thread_id = ?1 AND t.message_id IS NOT NULL
+                  ORDER BY e.at",
+            )?;
+            let rows = stmt.query_map(params![thread_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?;
+            let mut out: HashMap<MessageId, Vec<OpenEvent>> = HashMap::new();
+            for row in rows {
+                let (message_id, at, label) = row?;
+                // A label a newer build wrote and this one does not know
+                // is left out, never read as an open.
+                if let Some(label) = OpenLabel::parse(&label) {
+                    out.entry(message_id)
+                        .or_default()
+                        .push(OpenEvent { label, at });
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    fn sent_threads_without_bodies(
+        &self,
+        account_id: &AccountId,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<ThreadId>, StoreError> {
+        self.read(|c| {
+            // By thread first (recent threads are few and indexed by time),
+            // then that thread's messages: never a pass over every message.
+            let mut stmt = c.prepare_cached(
+                "SELECT t.id FROM threads t
+                  WHERE t.account_id = ?1 AND t.last_msg_at >= ?2
+                    AND EXISTS (SELECT 1 FROM messages m
+                                 WHERE m.thread_id = t.id AND m.date >= ?2 AND m.body_fetched = 0
+                                   AND m.label_ids LIKE '%\"SENT\"%'
+                                   AND m.label_ids NOT LIKE '%\"DRAFT\"%')
+                  ORDER BY t.last_msg_at DESC LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![account_id, since, limit], |r| r.get(0))?;
+            rows.collect()
+        })
+    }
+
     fn sync_device_id(&self) -> Result<String, StoreError> {
         self.with(|c| {
             // 64 random bits from SQLite itself — no rand dependency here.
@@ -4840,6 +4966,123 @@ mod tests {
         assert_eq!(s.list_accounts().unwrap().len(), 1);
     }
 
+    /// The read-status tables as the core uses them: a token is kept
+    /// once and gains its message when that is seen; events are kept once
+    /// however often the relay repeats them; a thread's events come back
+    /// by message; expired tokens are no longer "live".
+    #[test]
+    fn open_tokens_and_events_round_trip() {
+        let s = store();
+        let a1 = "a1".to_string();
+        let token = |t: &str, message: Option<&str>, sent_at: i64| OpenToken {
+            token: t.into(),
+            account_id: a1.clone(),
+            message_id: message.map(Into::into),
+            thread_id: message.map(|_| "th1".to_string()),
+            sent_at,
+            expires_at: sent_at + 100,
+            polled_at: None,
+        };
+        s.open_token_put(&token("aa", None, 10)).unwrap();
+        s.open_token_put(&token("bb", Some("m2"), 20)).unwrap();
+        // The sent message is seen: the token gains it, and keeps the
+        // time it was sent at.
+        s.open_token_put(&token("aa", Some("m1"), 999)).unwrap();
+        // A later, different claim does not move it.
+        s.open_token_put(&token("aa", Some("other"), 5)).unwrap();
+        let live = s.open_tokens_live(&a1, 50).unwrap();
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].token, "aa");
+        assert_eq!(live[0].message_id.as_deref(), Some("m1"));
+        assert_eq!((live[0].sent_at, live[0].expires_at), (10, 110));
+        assert_eq!(s.open_tokens_live(&a1, 115).unwrap().len(), 1);
+        assert!(s.open_tokens_live(&"a2".to_string(), 0).unwrap().is_empty());
+
+        let opened = OpenEvent {
+            label: OpenLabel::Opened,
+            at: 40,
+        };
+        let hidden = OpenEvent {
+            label: OpenLabel::Hidden,
+            at: 30,
+        };
+        assert_eq!(s.open_events_add("aa", &[opened, hidden], 60).unwrap(), 2);
+        // The relay says the same again, and one more.
+        let later = OpenEvent {
+            label: OpenLabel::Opened,
+            at: 70,
+        };
+        assert_eq!(
+            s.open_events_add("aa", &[opened, hidden, later], 80)
+                .unwrap(),
+            1
+        );
+        // Nothing is recorded for a token this store does not keep.
+        assert_eq!(s.open_events_add("zz", &[opened], 80).unwrap(), 0);
+        assert_eq!(s.open_tokens_live(&a1, 50).unwrap()[0].polled_at, Some(80));
+        // A label from a newer build is not read as anything.
+        s.with(|c| {
+            c.execute(
+                "INSERT INTO open_events (token, at, label) VALUES ('aa', 75, 'clicked')",
+                [],
+            )
+        })
+        .unwrap();
+        let by_message = s.open_events_for_thread(&"th1".to_string()).unwrap();
+        assert_eq!(by_message.len(), 1);
+        assert_eq!(by_message["m1"], vec![hidden, opened, later]);
+        assert!(s
+            .open_events_for_thread(&"nope".to_string())
+            .unwrap()
+            .is_empty());
+    }
+
+    /// R19's catch-up asks for the user's own recent sent mail whose body
+    /// this device has not read — and nothing else.
+    #[test]
+    fn sent_threads_without_bodies_are_recent_sent_and_unfetched() {
+        let s = store();
+        let a1 = "a1".to_string();
+        let put = |thread: &str, at: i64, labels: &[&str], fetched: bool| {
+            let t = Thread {
+                id: thread.into(),
+                account_id: a1.clone(),
+                last_msg_at: at,
+                msg_count: 1,
+                ..Default::default()
+            };
+            let m = Message {
+                id: format!("{thread}-m"),
+                thread_id: thread.into(),
+                account_id: a1.clone(),
+                from_addr: "me@example.com".into(),
+                date: at,
+                label_ids: labels.iter().map(|l| l.to_string()).collect(),
+                body_fetched: fetched,
+                ..Default::default()
+            };
+            s.upsert_thread_with_messages(&t, &[m]).unwrap();
+        };
+        put("sent-new", 900, &["SENT"], false);
+        put("sent-newer", 950, &["SENT", "INBOX"], false);
+        put("sent-read", 940, &["SENT"], true);
+        put("sent-old", 100, &["SENT"], false);
+        put("inbox", 930, &["INBOX"], false);
+        put("draft", 920, &["SENT", "DRAFT"], false);
+        assert_eq!(
+            s.sent_threads_without_bodies(&a1, 500, 10).unwrap(),
+            ["sent-newer", "sent-new"]
+        );
+        assert_eq!(
+            s.sent_threads_without_bodies(&a1, 500, 1).unwrap(),
+            ["sent-newer"]
+        );
+        assert!(s
+            .sent_threads_without_bodies(&"a2".to_string(), 0, 10)
+            .unwrap()
+            .is_empty());
+    }
+
     // ---------------------------------------------------------------- search
 
     fn seed_thread(
@@ -6224,6 +6467,8 @@ mod tests {
             from_addr: None,
             in_reply_to: None,
             references: None,
+            track_opens: false,
+            open_token: None,
         };
         let rows = [
             send(&["ana@x.com", "bo@x.com"], "Hello \"there\" & more"),

@@ -688,20 +688,7 @@ struct BriefCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(title: "Summary", systemImage: "sparkles") {
-                if state?.generating == true {
-                    ProgressView().controlSize(.small)
-                } else if state != nil {
-                    Button(action: refresh) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.footnote)
-                            .tapArea(horizontal: 12, vertical: 14)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
-                    .accessibilityLabel("Summarize again")
-                }
-            }
+            SectionTitle(title: "Summary", systemImage: "sparkles") { control }
             if let brief = state?.brief {
                 if !brief.status.isEmpty {
                     Text(SummaryMarkup.inline(brief.status))
@@ -738,6 +725,24 @@ struct BriefCard: View {
                 }
                 .font(Theme.sans(.subheadline, .medium))
             }
+        }
+    }
+
+    /// After the title's rule: the model at work, or the way to ask it
+    /// again. Something to press, so it keeps its own strength beside
+    /// the light grey title.
+    @ViewBuilder private var control: some View {
+        if state?.generating == true {
+            ProgressView().controlSize(.small)
+        } else if state != nil {
+            Button(action: refresh) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.footnote)
+                    .tapArea(horizontal: 12, vertical: 14)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.textTertiary)
+            .accessibilityLabel("Summarize again")
         }
     }
 }
@@ -803,13 +808,12 @@ struct BundleEditor: View {
         .inlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .barTrailing) {
-                // The editor's one action: the bar's own button, in the
-                // ink the app tints its bars with, at the weight of an
-                // action.
-                Button { save(trimmed, category, description) } label: {
-                    Text("Save").font(Theme.sans(.body, .semibold))
-                }
-                .disabled(trimmed.isEmpty)
+                // A navigation bar's item is the system's to draw: its
+                // words in the app's ink (the root's tint), as the design
+                // has it. An ink capsule here would sit inside the bar's
+                // own glass.
+                Button("Save") { save(trimmed, category, description) }
+                    .disabled(trimmed.isEmpty)
             }
         }
     }

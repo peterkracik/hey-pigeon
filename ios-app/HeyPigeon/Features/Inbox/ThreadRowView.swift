@@ -202,35 +202,6 @@ struct ThreadRowView: View {
     }
 }
 
-/// A few words and a glyph in one colour. It was a small filled pill (Jev
-/// labels, the reminder and need-reply badges, the AI's suggestion); in
-/// the paper look a state is writing, not a fill
-/// (docs/specs/marker-look.md, R7), so it sets its glyph and its words in
-/// `foreground`, in the mono, on whatever it stands on. The name and the
-/// initialiser stay for its callers; new code says what it means with
-/// `StateMark` (a state) or `TagText` (a label).
-struct Chip: View {
-    let text: String
-    var systemImage: String? = nil
-    /// The pill's fill. Nothing draws it any more.
-    let background: Color
-    let foreground: Color
-    /// The pill's shape, for state badges. Nothing draws it any more.
-    var capsule = false
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if let systemImage { Image(systemName: systemImage).font(Theme.glyph(.caption2, .semibold)) }
-            if !text.isEmpty { Text(text).font(Theme.tag).lineLimit(1) }
-        }
-        .foregroundStyle(foreground)
-        // Where it is a button's label it takes the tap as the pill did,
-        // and a little beyond: the words alone are a thin target. The
-        // layout does not move for it.
-        .tapArea(horizontal: 6, vertical: 6)
-    }
-}
-
 /// Jev priority, the desktop's indicator: three short bars (1 lit = low,
 /// 2 = medium, 3 = high; high in the alert colour), spam a blocked circle.
 struct PriorityIndicator: View {

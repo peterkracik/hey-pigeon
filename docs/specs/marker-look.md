@@ -83,9 +83,11 @@ feature file never writes a hex value or a system font.
   colour. The pin is ink. A filter that can be switched is a boxed chip
   with an `outline`.
 - **R8. One ink action.** A screen has one ink-filled primary action
-  (Compose, Reply, Send, Save, Add Google account): an ink capsule with
-  `onPrimary` words. Every other button is glass (what floats), an
-  outlined capsule or plain text. Deleting is `danger` text, not a fill.
+  (Compose, Reply, Send, Add Google account, Save in a sheet): an ink
+  capsule with `onPrimary` words. Every other button is glass (what
+  floats), an outlined capsule or plain text. An item of a navigation
+  bar (Done, Save) is the system's: its words in ink. Deleting is
+  `danger` text, not a fill.
 - **R9. Selection is ink.** The selected tab, segment or label is an ink
   capsule; the highlighted row of a list or a panel is `sunken` with a
   heavier name.

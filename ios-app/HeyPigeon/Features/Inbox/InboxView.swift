@@ -89,10 +89,10 @@ struct MailListScreen: View {
             }
             // On a wide iPad the rows keep to a readable column.
             .readableColumn()
-            // The paper (`listWash` draws flat in this look: the wash went
-            // with the cards): behind the list, the skeleton and "All
-            // clear" alike, in all three tabs.
-            .background(Theme.listWash)
+            // The paper: behind the list, the skeleton and "All clear"
+            // alike, in all three tabs. (A wash lay here while rows were
+            // cards; it went with them.)
+            .background(Theme.canvas)
             // ListTitle is the principal item. No .toolbar(removing: .title)
             // here: the principal counts as the title and went with it.
             .navigationTitle(tab == .inbox ? model.folder.title : tab.title)

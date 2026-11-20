@@ -24,7 +24,7 @@ struct BundlesPage: View {
             switcher: { page, contents in AnyView(BundlePageTabs(page: page, openCount: contents.open.count)) },
             emails: { contents in AnyView(BundleEmailList(contents: contents, state: state)) },
             info: { contents in AnyView(BundleInfoPage(contents: contents, state: state)) }
-        ))
+        ), listInset: MacLayout.listMargin)
             .scrollIndicators(.never)
             .frame(maxWidth: MacLayout.maxWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

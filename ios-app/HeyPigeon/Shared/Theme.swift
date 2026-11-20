@@ -8,25 +8,12 @@
 import SwiftUI
 
 enum Theme {
-    // The grey scale the first client's tokens came with. A few callers
-    // still name a step (the priority bars); new code uses the roles below.
-    static let navy950 = Color(hex: 0x0B0D12)
-    static let navy900 = Color(hex: 0x111318)
-    static let navy800 = Color(hex: 0x1D2027)
-    static let navy700 = Color(hex: 0x33363E)
-    static let navy500 = Color(hex: 0x75787F)
-    static let navy400 = Color(hex: 0x9A9CA2)
-    static let navy200 = Color(hex: 0xDEDFE2)
-    static let navy100 = Color(hex: 0xEEEEF0)
-    static let navy50 = Color(hex: 0xF7F7F8)
-
     // MARK: Pink
 
-    /// The pink as a fill: the AI's own button (the draft circle), the
-    /// progress of an analysis. Never a row's or a title's colour: as a
-    /// mark it is `marker`, as writing `pinkInk`.
+    /// The pink as a fill: the AI's own button (the draft circle) and
+    /// nothing else in the app's views. Never a row's or a title's
+    /// colour: as a mark it is `marker`, as writing `pinkInk`.
     static let accent = Color(hex: 0xEE4D9B)
-    static let accentSoft = Color(hex: 0xEE4D9B).opacity(0.13)
     /// The highlighter: a band behind a word that says "look here" — an
     /// unread sender, an action the AI suggests. Drawn by `marker()`.
     /// Half the pink on dark, where the pale band would glare.
@@ -53,11 +40,6 @@ enum Theme {
     /// The paper again on light; a step up on dark, where a sheet would
     /// otherwise merge with what it covers.
     static let raised = Color(light: .white, dark: Color(hex: 0x1E2026))
-    /// The wash that lay behind a mail list is gone with the cards: a
-    /// list stands on the flat paper. The names stay for their callers.
-    static let washWarm = canvas
-    static let washCool = canvas
-    static let listWash = Wash(base: canvas, warm: washWarm, cool: washCool)
     /// Sunken blocks (a search field, a row under the pointer, a
     /// placeholder bar): the one grey step below the paper.
     static let sunken = Color(light: Color(hex: 0xF4F4F6), dark: Color(hex: 0x23262D))
@@ -87,13 +69,6 @@ enum Theme {
     static let warning = Color(light: Color(hex: 0xB34E2E), dark: Color(hex: 0xF0916F))
     /// The row of the thread open beside the list (the iPad's columns).
     static let rowOpen = sunken
-    /// Read and unread rows stand on the same paper; what tells them
-    /// apart is the sender (`marker()` and the weight).
-    static let rowUnread = card
-    static let rowRead = canvas
-    /// The bar that marked an unread row's edge. Nothing draws it in
-    /// this look; the name stays until its last caller is gone.
-    static let unreadBar = Color.clear
     /// The pin's mark: ink, as every mark that is not a state is.
     static let pin = textPrimary
 
@@ -118,28 +93,6 @@ enum Theme {
         case .lavender: Color(light: Color(hex: 0x6A4FC4), dark: Color(hex: 0xA995F2))
         case .sky: Color(light: Color(hex: 0x2A6BAE), dark: Color(hex: 0x7FB2E8))
         case .amber: Color(light: Color(hex: 0xA9761E), dark: Color(hex: 0xE3B341))
-        }
-    }
-
-    /// The tinted surfaces of the chips this look no longer draws
-    /// (states are writing, not fills). Kept for the callers that still
-    /// ask; made once: `Color(light:dark:)` builds a dynamic platform
-    /// colour each call.
-    private static let tagBackgrounds: [AccountColor: Color] = Dictionary(
-        uniqueKeysWithValues: AccountColor.allCases.map { ($0, makeTagBackground($0)) }
-    )
-
-    static func tagBackground(_ c: AccountColor) -> Color {
-        tagBackgrounds[c] ?? makeTagBackground(c)
-    }
-
-    private static func makeTagBackground(_ c: AccountColor) -> Color {
-        switch c {
-        case .coral: Color(light: Color(hex: 0xFBE2DA), dark: Color(hex: 0x4A2A22))
-        case .mint: Color(light: Color(hex: 0xD9EFE6), dark: Color(hex: 0x1F3A30))
-        case .lavender: Color(light: Color(hex: 0xE9E3FA), dark: Color(hex: 0x332A4A))
-        case .sky: Color(light: Color(hex: 0xDDEAFB), dark: Color(hex: 0x1E2F45))
-        case .amber: Color(light: Color(hex: 0xFBEBD3), dark: Color(hex: 0x4A3A1E))
         }
     }
 
@@ -177,15 +130,9 @@ enum Theme {
     static let doneFill = Color(light: Color(hex: 0x0B0D12), dark: Color(hex: 0x33363E))
     /// Remind me as a fill that carries white text: the lavender tag's.
     static let remindFill = tagForeground(.lavender)
-
-    static func priorityColor(_ p: TriageLevel) -> Color {
-        switch p {
-        case .high: Color(hex: 0xB34E2E)
-        case .medium: Color(hex: 0xA9761E)
-        case .low: navy400
-        case .spam: navy200
-        }
-    }
+    /// Read / unread as a fill that carries white text: a neutral grey,
+    /// dark enough in both appearances.
+    static let readFill = Color(hex: 0x5D6069)
 
     // MARK: Type
 
@@ -373,32 +320,6 @@ enum Theme {
 struct TitleInk: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
         AnyShapeStyle(Theme.textTertiary.opacity(environment.colorSchemeContrast == .increased ? 1 : 0.5))
-    }
-}
-
-/// A list's background as a gradient along the diagonal: `warm` in the
-/// top leading corner, `cool` in the bottom trailing one, `base` through
-/// the middle. It was the trace of light behind the carded lists; in the
-/// paper look all three are the same white, so it draws flat, and the
-/// type stays for the places that still pass a wash
-/// (`.background(Theme.listWash)`). With Increase Contrast it is `base`.
-struct Wash: ShapeStyle {
-    let base: Color
-    let warm: Color
-    let cool: Color
-
-    func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
-        guard environment.colorSchemeContrast != .increased else { return AnyShapeStyle(base) }
-        return AnyShapeStyle(LinearGradient(
-            stops: [
-                Gradient.Stop(color: warm, location: 0),
-                Gradient.Stop(color: base, location: 0.48),
-                Gradient.Stop(color: base, location: 0.52),
-                Gradient.Stop(color: cool, location: 1),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        ))
     }
 }
 

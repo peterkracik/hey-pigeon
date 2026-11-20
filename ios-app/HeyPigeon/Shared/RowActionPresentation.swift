@@ -61,7 +61,7 @@ extension RowAction {
         case .remind: Theme.remindFill
         case .needReply: Theme.needReply
         case .pin: Theme.pinStrong
-        case .read: Theme.navy500
+        case .read: Theme.readFill
         }
     }
 

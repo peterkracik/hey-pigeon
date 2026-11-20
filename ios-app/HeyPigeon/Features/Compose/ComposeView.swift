@@ -1,6 +1,7 @@
 // Compose / reply / forward — the desktop Composer, one to one: From chip,
 // To / Cc / Bcc with recipient chips, Subject, a rich-text body, attachment
-// chips, and the footer with Send · Discard · AI · Attach · Aa. Send hands
+// chips, and the footer with Send · Discard · AI · Attach · Aa (on a phone:
+// Send · AI · Attach · Aa · More, with Discard under More). Send hands
 // the draft to the model, which holds it for the undo window before it goes
 // to the outbox (text part always, html part when formatting was applied);
 // an undone send reopens this view prefilled. Closing (the X; the sheet
@@ -340,86 +341,162 @@ struct ComposeView: View {
         .padding(.horizontal, 16).padding(.top, 10)
     }
 
-    /// Desktop footer: Send · Discard · AI · Attach · Aa (+ the format bar).
+    /// The footer: the format bar when Aa is on, over the actions.
+    ///
+    /// With read status and snippets there are up to eight controls, and
+    /// a phone's width holds about five: they used to share it, and Send
+    /// was squeezed to "S…". So the row has two shapes. Where the footer
+    /// is at least `wideFooter` points (the iPad's sheet, the Mac) every
+    /// action stands in it; anywhere narrower, what is used once in a
+    /// while (Discard, Read status, snippets) is under More and Send
+    /// keeps its size. The width decides, not what happens to fit, so a
+    /// button does not move when From changes.
     private var footer: some View {
         VStack(spacing: 8) {
             if showFormat { formatBar }
-            HStack(spacing: 10) {
-                Button { send() } label: {
-                    Label("Send", systemImage: "paperplane.fill")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Theme.onPrimary)
-                        .frame(height: 22) // the icon buttons' content height, so the pill matches the circles
-                        .padding(.horizontal, 6)
-                }
-                .pillButton(prominent: true)
-                .tint(Theme.textPrimary)
-                .disabled(!canSend)
-                if ComposePresentation.offersSendLater {
-                    // The same message at a later hour. It is sent by this
-                    // device, so the help says what that takes.
-                    Menu {
-                        ForEach(SendLaterPreset.available(), id: \.preset) { item in
-                            Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { send(at: item.date) }
-                        }
-                    } label: { Image(systemName: "clock").frame(width: 22, height: 22) }
-                        .pillButton()
-                        .labelOnlyMenu()
-                        .disabled(!canSend)
-                        .help("Send later — from this \(Device.name), while Hey Pigeon is open")
-                        .accessibilityLabel("Send later")
-                }
-                Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
-                    .pillButton()
-                    .accessibilityLabel("Discard")
-                Spacer()
-                // Read status for this one message (docs/specs/read-status.md
-                // R15): there only when the account it is sent from has
-                // read status on, and on until switched off.
-                if readStatusOffered {
-                    Button { draft.trackOpens = !tracksOpens } label: {
-                        Image(systemName: tracksOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
-                    }
-                    .pillButton()
-                    .foregroundStyle(tracksOpens ? Theme.accent : Theme.textPrimary)
-                    .help(tracksOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
-                    .accessibilityLabel(ReadStatusSetting.title)
-                    .accessibilityValue(tracksOpens ? "On" : "Off")
-                }
-                if model.aiConfigured {
-                    Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
-                        .pillButton()
-                        .accessibilityLabel("Write or edit with AI")
-                }
-                if ComposePresentation.offersSnippets, !model.snippets.isEmpty {
-                    Menu {
-                        ForEach(model.snippets) { snippet in
-                            Button(snippet.name) { insertAtCaret(snippet.body) }
-                        }
-                    } label: { Image(systemName: "text.quote").frame(width: 22, height: 22) }
-                        .pillButton()
-                        .labelOnlyMenu()
-                        .help("Insert a snippet (Settings › Compose)")
-                        .accessibilityLabel("Insert a snippet")
-                }
-                Menu {
-                    Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
-                    Button { showPhotos = true } label: { Label("Photo library", systemImage: "photo") }
-                } label: { Image(systemName: "paperclip").frame(width: 22, height: 22) }
-                    .pillButton()
-                    .labelOnlyMenu()
-                    .accessibilityLabel("Attach file")
-                Button { withAnimation { showFormat.toggle() } } label: {
-                    Text("Aa").font(.subheadline.weight(.bold)).frame(width: 22, height: 22)
-                }
-                .pillButton()
-                .foregroundStyle(showFormat ? Theme.accent : Theme.textPrimary)
-                .accessibilityLabel("Formatting")
+            ViewThatFits(in: .horizontal) {
+                actionRow(compact: false).frame(minWidth: Self.wideFooter)
+                actionRow(compact: true)
             }
             .padding(.horizontal, 16)
         }
         .padding(.vertical, 8)
         .background(footerBackground)
+    }
+
+    /// The narrowest footer that shows every action in the row.
+    private static let wideFooter: CGFloat = 480
+
+    /// Send (· Send later) on the left, the writing tools on the right.
+    /// `compact` moves Discard, Read status and the snippets into More.
+    private func actionRow(compact: Bool) -> some View {
+        HStack(spacing: 10) {
+            sendButton
+            if ComposePresentation.offersSendLater { sendLaterMenu }
+            if !compact { discardButton }
+            Spacer(minLength: 0)
+            if !compact, readStatusOffered { readStatusButton }
+            if model.aiConfigured { aiButton }
+            if !compact, offersSnippets { snippetsMenu }
+            attachMenu
+            formatButton
+            if compact { moreMenu }
+        }
+    }
+
+    /// Whether there is a snippet to insert.
+    private var offersSnippets: Bool { ComposePresentation.offersSnippets && !model.snippets.isEmpty }
+
+    private var sendButton: some View {
+        Button { send() } label: {
+            Label("Send", systemImage: "paperplane.fill")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Theme.onPrimary)
+                .frame(height: 22) // the icon buttons' content height, so the pill matches the circles
+                .padding(.horizontal, 6)
+        }
+        .pillButton(prominent: true)
+        .tint(Theme.textPrimary)
+        .disabled(!canSend)
+        // The one action the row may not shorten.
+        .fixedSize()
+        .layoutPriority(1)
+    }
+
+    /// The same message at a later hour. It is sent by this device, so
+    /// the help says what that takes.
+    private var sendLaterMenu: some View {
+        Menu {
+            ForEach(SendLaterPreset.available(), id: \.preset) { item in
+                Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { send(at: item.date) }
+            }
+        } label: { Image(systemName: "clock").frame(width: 22, height: 22) }
+            .pillButton()
+            .labelOnlyMenu()
+            .disabled(!canSend)
+            .help("Send later — from this \(Device.name), while Hey Pigeon is open")
+            .accessibilityLabel("Send later")
+    }
+
+    private var discardButton: some View {
+        Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
+            .pillButton()
+            .accessibilityLabel("Discard")
+    }
+
+    /// Read status for this one message (docs/specs/read-status.md R15):
+    /// there only when the account it is sent from has read status on,
+    /// and on until switched off.
+    private var readStatusButton: some View {
+        Button { draft.trackOpens = !tracksOpens } label: {
+            Image(systemName: tracksOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
+        }
+        .pillButton()
+        .foregroundStyle(tracksOpens ? Theme.accent : Theme.textPrimary)
+        .help(tracksOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
+        .accessibilityLabel(ReadStatusSetting.title)
+        .accessibilityValue(tracksOpens ? "On" : "Off")
+    }
+
+    private var aiButton: some View {
+        Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
+            .pillButton()
+            .accessibilityLabel("Write or edit with AI")
+    }
+
+    /// The snippets, each put in at the caret.
+    @ViewBuilder private var snippetItems: some View {
+        ForEach(model.snippets) { snippet in
+            Button(snippet.name) { insertAtCaret(snippet.body) }
+        }
+    }
+
+    private var snippetsMenu: some View {
+        Menu { snippetItems } label: { Image(systemName: "text.quote").frame(width: 22, height: 22) }
+            .pillButton()
+            .labelOnlyMenu()
+            .help("Insert a snippet (Settings › Compose)")
+            .accessibilityLabel("Insert a snippet")
+    }
+
+    private var attachMenu: some View {
+        Menu {
+            Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
+            Button { showPhotos = true } label: { Label("Photo library", systemImage: "photo") }
+        } label: { Image(systemName: "paperclip").frame(width: 22, height: 22) }
+            .pillButton()
+            .labelOnlyMenu()
+            .accessibilityLabel("Attach file")
+    }
+
+    private var formatButton: some View {
+        Button { withAnimation { showFormat.toggle() } } label: {
+            Text("Aa").font(.subheadline.weight(.bold)).frame(width: 22, height: 22)
+        }
+        .pillButton()
+        .foregroundStyle(showFormat ? Theme.accent : Theme.textPrimary)
+        .accessibilityLabel("Formatting")
+    }
+
+    /// The narrow footer's More: the read status switch (a tick says it
+    /// is on, so the choice is still one tap from being seen), the
+    /// snippets, and Discard last and in red, away from Send.
+    private var moreMenu: some View {
+        Menu {
+            if readStatusOffered {
+                Toggle(isOn: Binding(get: { tracksOpens }, set: { draft.trackOpens = $0 })) {
+                    Label(ReadStatusSetting.title, systemImage: "eye")
+                }
+            }
+            if offersSnippets {
+                Menu { snippetItems } label: { Label("Insert a snippet", systemImage: "text.quote") }
+            }
+            Divider()
+            Button(role: .destructive) { discard() } label: { Label("Discard draft", systemImage: "trash") }
+        } label: { Image(systemName: "ellipsis").frame(width: 22, height: 22) }
+            .pillButton()
+            .labelOnlyMenu()
+            .accessibilityLabel("More")
     }
 
     /// The From account's signature, when the body still ends with it.

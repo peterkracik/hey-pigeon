@@ -468,8 +468,10 @@ the signature while the body is pristine), To with recipient chips and a
 Cc/Bcc toggle, Subject, a rich-text body (iOS 26 `TextEditor` over
 `AttributedString`), attachment chips (Files or Photos, 18 MB cap), and the
 footer: Send · Discard · ✨ Edit with AI · Attach · Aa (bold, italic,
-underline, strikethrough, link). Plain text always goes out; an html part
-only when formatting was applied.
+underline, strikethrough, link). A footer narrower than 480 pt (the
+phone) keeps Send at full size and shows Send · ✨ · Attach · Aa · More,
+with the read status switch, the snippets and Discard under More. Plain
+text always goes out; an html part only when formatting was applied.
 
 ### States and motion
 

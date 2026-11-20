@@ -52,7 +52,7 @@ struct ThreadRowView: View {
     /// The preview's face: 14, a step under the subject's 15, and scaled
     /// with it.
     private static func preview(_ weight: Font.Weight) -> Font {
-        Theme.sans(size: 14, weight: weight, relativeTo: .subheadline)
+        Theme.text(.preview, weight)
     }
 
     var body: some View {

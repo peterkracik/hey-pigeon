@@ -169,6 +169,14 @@ enum Theme {
     /// The Pin swipe panel: the amber tag's foreground, dark enough to
     /// carry white text.
     static let pinStrong = tagForeground(.amber)
+    /// Mark done as a fill the system writes on in white (the Mac's
+    /// trackpad swipe, whose glyph the app cannot colour): ink on light;
+    /// on dark, where ink is light, a grey that still lifts off the
+    /// canvas. Where the app draws the panel itself it is `textPrimary`
+    /// with `onPrimary` on it.
+    static let doneFill = Color(light: Color(hex: 0x0B0D12), dark: Color(hex: 0x33363E))
+    /// Remind me as a fill that carries white text: the lavender tag's.
+    static let remindFill = tagForeground(.lavender)
 
     static func priorityColor(_ p: TriageLevel) -> Color {
         switch p {
@@ -241,6 +249,15 @@ enum Theme {
         case caption2
         /// A short text to read (a draft's first lines): `.subheadline`; the Mac's 13.
         case bodySmall
+        /// The name of a row in a menu or in Settings: 16 on the phone
+        /// (`.callout`); the Mac's 13.
+        case row
+        /// A row's preview, a filter's and a label tab's words: 14 on the
+        /// phone, scaled like `.subheadline`; the Mac's 13.
+        case preview
+        /// A section's footer, a small grey line of a page: `.footnote`;
+        /// the Mac's 12.
+        case footer
     }
 
     /// A role's font at a weight (`Theme.text(.secondary, .semibold)`).
@@ -251,6 +268,9 @@ enum Theme {
         case .caption: macOr(12, .caption, weight)
         case .caption2: macOr(11, .caption2, weight)
         case .bodySmall: macOr(13, .subheadline, weight)
+        case .row: macOr(13, .callout, weight)
+        case .preview: Typeface.sans(size: previewSize, weight: weight, relativeTo: previewStyle)
+        case .footer: macOr(12, .footnote, weight)
         }
     }
 
@@ -265,6 +285,9 @@ enum Theme {
         case .caption: systemMacOr(12, .caption, weight)
         case .caption2: systemMacOr(11, .caption2, weight)
         case .bodySmall: systemMacOr(13, .subheadline, weight)
+        case .row: systemMacOr(13, .callout, weight)
+        case .preview: systemMacOr(13, .subheadline, weight)
+        case .footer: systemMacOr(12, .footnote, weight)
         }
     }
 
@@ -293,6 +316,24 @@ enum Theme {
         return Typeface.mono(size: 11)
         #else
         return Typeface.mono(size: 11.5, relativeTo: .caption)
+        #endif
+    }
+
+    /// `preview`'s size, and the text style it scales with on the phone
+    /// (nil on the Mac, whose window does not scale).
+    private static var previewSize: CGFloat {
+        #if os(macOS)
+        return 13
+        #else
+        return 14
+        #endif
+    }
+
+    private static var previewStyle: Font.TextStyle? {
+        #if os(macOS)
+        return nil
+        #else
+        return .subheadline
         #endif
     }
 
@@ -382,9 +423,10 @@ extension View {
     func menuList() -> some View {
         groupedListStyle()
             .menuSectionSpacing()
-            // The inset-grouped default leaves a wide gutter in a sheet; keep
-            // the rows close to the edges like the inbox's.
-            .contentMargins(.horizontal, 12, for: .scrollContent)
+            // No card stands between the sheet's edge and a row any more,
+            // so the list adds no margin of its own: a row's words begin
+            // at the grouped list's inset, near the inbox rows' 16 pt.
+            .contentMargins(.horizontal, 0, for: .scrollContent)
             .contentMargins(.top, 4, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .background(Theme.raised)
@@ -419,7 +461,11 @@ extension View {
     @ViewBuilder
     func menuCard() -> some View {
         #if os(iOS)
-        listRowBackground(Color.clear).listRowSeparatorTint(Theme.separator)
+        listRowBackground(Color.clear)
+            .listRowSeparatorTint(Theme.separator)
+            // The hairline runs the row's whole width, under its glyph
+            // too; the system starts it at the row's words.
+            .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
         #else
         self
         #endif

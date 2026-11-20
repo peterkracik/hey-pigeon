@@ -39,7 +39,7 @@ struct ShareView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { PendingShare.clear(); onDone(false) } label: {
-                        Text("Cancel").font(Typeface.sans(.body, .semibold)).foregroundStyle(WidgetPalette.textPrimary)
+                        Text("Cancel").font(ShareType.sans(.body, mac: 13, .semibold)).foregroundStyle(WidgetPalette.textPrimary)
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -51,7 +51,7 @@ struct ShareView: View {
         }
         // Text that names no face of its own is set in the interface
         // face, and what the system tints is ink, as in the app.
-        .font(Typeface.sans(.callout))
+        .font(ShareType.sans(.callout, mac: 13))
         .foregroundStyle(WidgetPalette.textPrimary)
         .tint(WidgetPalette.textPrimary)
         .task { await load() }
@@ -83,13 +83,13 @@ struct ShareView: View {
             }
             ForEach(share.links, id: \.absoluteString) { link in
                 Label(link.absoluteString, systemImage: "link")
-                    .font(Typeface.sans(.callout, .medium))
+                    .font(ShareType.sans(.callout, mac: 13, .medium))
                     .lineLimit(2)
                     .shareRow(ruled: !share.text.isEmpty || link != share.links.first)
             }
             ForEach(share.files, id: \.storedName) { f in
                 Label { fileLine(f) } icon: { Image(systemName: "paperclip") }
-                    .font(Typeface.sans(.callout, .medium))
+                    .font(ShareType.sans(.callout, mac: 13, .medium))
                     .lineLimit(1)
                     .shareRow(ruled: !share.text.isEmpty || !share.links.isEmpty || f != share.files.first)
             }
@@ -98,7 +98,7 @@ struct ShareView: View {
             }
         }
         if let error {
-            Text(error).font(Typeface.sans(.footnote)).foregroundStyle(WidgetPalette.dangerText)
+            Text(error).font(ShareType.sans(.footnote, mac: 12)).foregroundStyle(WidgetPalette.dangerText)
                 .shareRow(ruled: hasRows)
         }
     }
@@ -114,7 +114,7 @@ struct ShareView: View {
     /// the mono, a step back.
     private func fileLine(_ file: PendingShare.File) -> Text {
         let size: Text = Text(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
-            .font(Typeface.mono(.footnote))
+            .font(ShareType.mono(.footnote, mac: 12))
             .foregroundStyle(WidgetPalette.textSecondary)
         return Text("\(Text(file.filename)) · \(size)")
     }
@@ -173,6 +173,27 @@ struct ShareView: View {
     }
 }
 
+/// The sheet's type: a text style on the phone, so Dynamic Type scales
+/// it; on the Mac, whose text styles are a step or two under its window's
+/// 13 pt, a size of its own (as `Theme.text` gives the app's views).
+private enum ShareType {
+    static func sans(_ style: Font.TextStyle, mac: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        #if os(macOS)
+        return Typeface.sans(size: mac, weight: weight)
+        #else
+        return Typeface.sans(style, weight)
+        #endif
+    }
+
+    static func mono(_ style: Font.TextStyle, mac: CGFloat) -> Font {
+        #if os(macOS)
+        return Typeface.mono(size: mac)
+        #else
+        return Typeface.mono(style)
+        #endif
+    }
+}
+
 private extension View {
     /// A row of the sheet: straight on its paper, 16 pt in, with the
     /// hairline that parts it from the row over it when there is one.
@@ -196,7 +217,7 @@ private struct ShareInkButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(Typeface.sans(.callout, .semibold))
+            .font(ShareType.sans(.callout, mac: 13, .semibold))
             .foregroundStyle(WidgetPalette.onPrimary)
             .padding(.horizontal, 16).padding(.vertical, 9)
             .background(WidgetPalette.textPrimary, in: Capsule())

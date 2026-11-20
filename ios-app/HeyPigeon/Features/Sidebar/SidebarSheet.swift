@@ -157,7 +157,7 @@ struct SidebarList: View {
         .menuList()
         // A row's name is the interface face at its medium weight; the
         // row on screen asks for the heavier one itself (`rowFont`).
-        .font(Theme.sans(.body, .medium))
+        .font(Theme.text(.row, .medium))
         .foregroundStyle(Theme.textPrimary)
         .labelDialogs($labelEditing)
     }
@@ -173,7 +173,7 @@ struct SidebarList: View {
     /// it and the checkmark, that is how the look marks a selected row
     /// (marker-look R9); the checkmark keeps it from resting on a colour.
     private static func rowFont(_ selected: Bool) -> Font {
-        Theme.sans(.body, selected ? .semibold : .medium)
+        Theme.text(.row, selected ? .semibold : .medium)
     }
 
     /// What lies under a row: the sunken step for the row on screen, the

@@ -242,7 +242,7 @@ private struct FilterPillLabel: View {
                     .foregroundStyle(isOn ? Theme.onPrimary.opacity(0.75) : Theme.textTertiary)
             }
         }
-        .font(Theme.sans(size: 14, weight: .medium, relativeTo: .subheadline))
+        .font(Theme.text(.preview, .medium))
         .foregroundStyle(isOn ? Theme.onPrimary : Theme.textPrimary)
         .padding(.leading, 10)
         .padding(.trailing, trailingPadding ?? 10)

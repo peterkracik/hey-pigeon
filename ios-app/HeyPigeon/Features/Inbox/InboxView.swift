@@ -415,7 +415,7 @@ struct TriageSplitBar: View {
     /// are plain words on the glass.
     private func segmentLabel(title: String, count: Int, on: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(title).font(Theme.sans(size: 14, weight: on ? .semibold : .medium, relativeTo: .subheadline))
+            Text(title).font(Theme.text(.preview, on ? .semibold : .medium))
             if count > 0 {
                 Text("\(count)").font(Theme.text(.meta, .medium))
                     .foregroundStyle(on ? Theme.onPrimary.opacity(0.75) : Theme.textTertiary)

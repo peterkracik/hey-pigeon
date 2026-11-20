@@ -1488,13 +1488,13 @@ extension View {
     /// name is the interface face at its medium weight. A line under a
     /// name, a value at a row's end and what is typed name their own.
     func settingsRows() -> some View {
-        font(Theme.sans(.body, .medium))
+        font(Theme.text(.row, .medium))
     }
 
     /// A section's footer, and any small grey line of a page: the list
     /// would set a footer in the system font.
     func settingsFooter() -> some View {
-        font(Theme.secondary).foregroundStyle(Theme.textTertiary)
+        font(Theme.text(.footer)).foregroundStyle(Theme.textTertiary)
     }
 
     /// A row that is a button ("Add account", "Ask my inbox"): the

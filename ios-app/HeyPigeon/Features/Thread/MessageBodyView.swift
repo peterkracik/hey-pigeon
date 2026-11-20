@@ -602,7 +602,7 @@ enum InlineImages {
         "\(hash)|" + images.map(\.id).joined(separator: ",")
     }
 
-    /// Whether the body shows this part inline, so its chip is redundant.
+    /// Whether the body shows this part inline, so its tile is redundant.
     static func isShownInline(_ a: AttachmentItem, in html: String?) -> Bool {
         guard let html, let id = a.contentId else { return false }
         return references(in: html).contains(normalize(id))
@@ -711,7 +711,7 @@ enum MailDocument {
 
     /// Posts the address of the link under the pointer, and null when the
     /// pointer leaves it. A mouse or a trackpad only: a finger's tap
-    /// arrives as a hover too, and its chip then stayed on screen.
+    /// arrives as a hover too, and its address then stayed on screen.
     static let hoverScript = #"""
     (function () {
       var w = window.webkit, h = w && w.messageHandlers && w.messageHandlers.pigeonHover;

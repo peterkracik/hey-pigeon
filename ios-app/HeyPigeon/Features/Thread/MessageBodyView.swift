@@ -1309,7 +1309,7 @@ extension HTMLView: NSViewRepresentable {
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         web.addGestureRecognizer(MessageMouseClaim())
-        // Transparent, so the message card's colour shows through as on iOS.
+        // Transparent, so the paper the message stands on shows through as on iOS.
         web.setValue(false, forKey: "drawsBackground")
         return web
     }

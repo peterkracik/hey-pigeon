@@ -90,15 +90,27 @@ struct StateMark: View {
     var text: String? = nil
     var systemImage: String? = nil
     let tint: Color
+    /// Medium where the state is the row's news ("Not sent"); regular
+    /// where it only accompanies it.
+    var weight: Font.Weight = .regular
 
     var body: some View {
         HStack(spacing: 4) {
             if let systemImage {
                 Image(systemName: systemImage).font(.system(size: 10, weight: .semibold)).accessibilityHidden(true)
             }
-            if let text, !text.isEmpty { Text(text).font(Theme.tag).lineLimit(1) }
+            if let text, !text.isEmpty { Text(text).font(font).lineLimit(1) }
         }
         .foregroundStyle(tint)
+    }
+
+    /// `Theme.tag` at this mark's weight (the sizes are that token's).
+    private var font: Font {
+        #if os(macOS)
+        return Theme.mono(size: 11, weight: weight)
+        #else
+        return Theme.mono(size: 11.5, weight: weight, relativeTo: .caption)
+        #endif
     }
 }
 
@@ -145,15 +157,24 @@ struct InkButtonStyle: ButtonStyle {
 }
 
 /// Every other capsule button: the ink as a hairline outline, the paper
-/// showing through.
+/// showing through. `compact` is the small one at the end of a row
+/// (Unblock, Forget, Send again): a size down and tighter, so the row
+/// keeps the height of its neighbours.
 struct OutlineButtonStyle: ButtonStyle {
+    var compact = false
     @Environment(\.isEnabled) private var isEnabled
+
+    /// Spelled out: with a private member the synthesized initialiser
+    /// is private too, and other files build this style.
+    init(compact: Bool = false) {
+        self.compact = compact
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(Theme.sans(.subheadline, .semibold))
+            .font(Theme.sans(compact ? .footnote : .subheadline, .semibold))
             .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 16).padding(.vertical, 9)
+            .padding(.horizontal, compact ? 12 : 16).padding(.vertical, compact ? 6 : 9)
             .background(Capsule().strokeBorder(Theme.textPrimary, lineWidth: 1))
             .opacity(isEnabled ? (configuration.isPressed ? 0.6 : 1) : 0.35)
             .contentShape(Capsule())

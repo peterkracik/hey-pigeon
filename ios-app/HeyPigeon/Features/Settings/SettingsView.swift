@@ -134,7 +134,7 @@ struct SettingsView: View {
                                  : "Images always load from \(model.imageSenders.count) senders")
                             Spacer()
                             Button("Forget") { model.imageSenders = [] }
-                                .buttonStyle(OutlineButtonStyle())
+                                .buttonStyle(OutlineButtonStyle(compact: true))
                         }
                     }
                     swipePicker(Self.swipeTitles[0], 0)
@@ -801,7 +801,7 @@ private struct KeyFieldRow: View {
                 .font(Theme.sans(.body))
                 .settingsFieldRule()
             Button(saving ? "Verifying…" : "Connect") { connect() }
-                .buttonStyle(OutlineButtonStyle())
+                .buttonStyle(OutlineButtonStyle(compact: true))
                 .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
         }
     }
@@ -1045,7 +1045,7 @@ private struct TriageSection: View {
                     Button("Reanalyze all emails") {
                         do { try model.reanalyzeAllEmails(); reanalyzeQueued = true } catch { self.error = error.localizedDescription }
                     }
-                    .buttonStyle(OutlineButtonStyle())
+                    .buttonStyle(OutlineButtonStyle(compact: true))
                     .disabled(model.analysis.isActive)
                     if reanalyzeQueued && !model.analysis.isActive && status?.enabled != true {
                         Text("Queued — runs once Auto-triage is on.").font(Theme.secondary).foregroundStyle(Theme.textTertiary)
@@ -1106,7 +1106,7 @@ private struct TriageSection: View {
                     .font(Theme.sans(.body))
                     .settingsFieldRule()
                 Button("Add") { add() }
-                    .buttonStyle(OutlineButtonStyle())
+                    .buttonStyle(OutlineButtonStyle(compact: true))
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             // On this one row, not on the labels: a modifier on the
@@ -1230,7 +1230,7 @@ private struct UpdatesRows: View {
             // An outlined capsule, as every button that is not the one
             // ink action: the form's own is a push button.
             Button("Check for Updates…") { updater.checkForUpdates() }
-                .buttonStyle(OutlineButtonStyle())
+                .buttonStyle(OutlineButtonStyle(compact: true))
                 .disabled(!updater.canCheckForUpdates)
         } header: {
             SectionTitle("Updates")

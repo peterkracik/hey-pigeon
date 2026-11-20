@@ -746,14 +746,6 @@ extension View {
             if ruled { RowRule().padding(.horizontal, inset) }
         }
     }
-
-    /// What drew the unread mark, a 3 pt bar on the row's left edge. This
-    /// look has no bar: unread is the sender in bold under the
-    /// highlighter (`ThreadRowView`). It draws nothing, and the name
-    /// stays until the bundle's rows, its last caller, let go of it.
-    func unreadEdge(_ unread: Bool) -> some View {
-        self
-    }
 }
 
 /// A day group's title: its name in the small mono capitals of every

@@ -178,16 +178,12 @@ enum ParcelCard {
 /// dismiss button after it), a hairline between two parcels and over the
 /// footer, and no card around any of it.
 struct ParcelCardView: View {
-    /// The surface a card would have been drawn on. Nothing is filled in
-    /// this look — the section stands on the list's own paper — and the
-    /// name stays for the Mac window's call (`ParcelCardView(surface:)`).
-    var surface: Color = Theme.card
     /// How far the section stands in from the row its host hands it. The
     /// phone's list hands the row over 12 pt from the screen's edges
     /// (`ThreadList`, from when this was a card with a margin of its
     /// own) and its mail rows and their titles start at 16: 4 pt more
     /// lines the section up with them. A host that hands the row over at
-    /// its own titles' margin passes 0.
+    /// its own titles' margin passes 0 (the Mac window's `InboxPage`).
     var inset: CGFloat = 4
     @Environment(AppModel.self) private var model
 

@@ -113,7 +113,7 @@ struct OutboxView: View {
                 // being sent or discarded, as the capsule beside it does.
                 HStack(spacing: 16) {
                     Button("Send again") { retry(change) }
-                        .buttonStyle(OutlineButtonStyle())
+                        .buttonStyle(OutlineButtonStyle(compact: true))
                     Button(role: .destructive) {
                         if change.kind == "send" { discarding = change } else { discard(change) }
                     } label: {
@@ -206,7 +206,7 @@ struct RulesView: View {
                             Text(address).lineLimit(1)
                             Spacer()
                             Button("Unblock") { model.unblock(address) }
-                                .buttonStyle(OutlineButtonStyle())
+                                .buttonStyle(OutlineButtonStyle(compact: true))
                         }
                     }
                 } header: {
@@ -221,7 +221,7 @@ struct RulesView: View {
                             Text(subjects[id] ?? "A muted thread").lineLimit(1)
                             Spacer()
                             Button("Unmute") { model.unmute(threadId: id) }
-                                .buttonStyle(OutlineButtonStyle())
+                                .buttonStyle(OutlineButtonStyle(compact: true))
                         }
                     }
                 } header: {
@@ -282,7 +282,7 @@ struct DiagnosticsSection: View {
                                 copied = report.url
                             }
                         }
-                        .buttonStyle(OutlineButtonStyle())
+                        .buttonStyle(OutlineButtonStyle(compact: true))
                     }
                 }
                 // What deletes is written in the danger colour: the role

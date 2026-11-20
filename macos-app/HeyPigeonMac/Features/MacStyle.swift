@@ -6,10 +6,11 @@
 // place between two rules. What floats — the batch bar, the thread's
 // triage bar — is the paper with a hairline and one soft shadow; the
 // Spotlight panel is the paper with an ink outline. Liquid Glass is kept
-// for what the system draws (the toolbar's items) and for the two things
-// that float like the phone's: the triage label pill and a bundle's page
-// tabs. The phone's tokens (Theme) are the source for every colour and
-// face; this file holds the window's own surfaces, measures and pieces.
+// for what the system draws (the toolbar's items) and for what floats as
+// the phone's glass does: the triage label pill, a bundle's page tabs and
+// the sidebar's button in the window's corner. The phone's tokens (Theme)
+// are the source for every colour and face; this file holds the window's
+// own surfaces, measures and pieces.
 
 import SwiftUI
 

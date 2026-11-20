@@ -100,7 +100,7 @@ struct TriageJournalView: View {
                     }
                     Spacer()
                     if agent.phase == .scan || agent.phase == .decide || agent.phase == .act {
-                        Button("Stop") { agent.cancel() }.buttonStyle(OutlineButtonStyle())
+                        Button("Stop") { agent.cancel() }.buttonStyle(OutlineButtonStyle(compact: true))
                     }
                 }
                 if let error = agent.error { Text(error).font(Theme.secondary).foregroundStyle(Theme.dangerText) }
@@ -116,7 +116,7 @@ struct TriageJournalView: View {
                             .buttonStyle(InkButtonStyle())
                         Spacer()
                         Button("Leave as is", role: .cancel) { agent.discardPlan(); model.triageAgent = nil }
-                            .buttonStyle(OutlineButtonStyle())
+                            .buttonStyle(OutlineButtonStyle(compact: true))
                     }
                 } else if [.done, .cancelled, .failed].contains(agent.phase) {
                     Button("Clear") { model.triageAgent = nil }

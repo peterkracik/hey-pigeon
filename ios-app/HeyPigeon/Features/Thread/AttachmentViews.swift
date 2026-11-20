@@ -164,7 +164,7 @@ private enum AttachmentThumbnail {
 }
 
 extension AttachmentItem {
-    /// The badge on a tile: "PDF", "PNG", "DOCX"; "FILE" when nothing says.
+    /// The type written on a tile: "PDF", "PNG", "DOCX"; "FILE" when nothing says.
     var typeLabel: String {
         if isPDF { return "PDF" }
         let ext = (filename as NSString).pathExtension.uppercased()

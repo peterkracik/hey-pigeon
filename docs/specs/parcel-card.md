@@ -202,7 +202,7 @@ presses it — the same request the link in the email makes.
 
 | | iPhone | iPad | Mac |
 | --- | --- | --- | --- |
-| Surface | First section of the inbox list (`ThreadList`), over "All clear" when empty | The same list, in the tabs and in the split layout's list column | First row of the window's inbox list (`InboxPage`), over "All clear" when empty |
+| Surface | First section of the inbox list (`ThreadList`), over "All clear" when empty | The same list, in the same tabs | First row of the window's inbox list (`InboxPage`), over "All clear" when empty |
 | Entry points | Tap: Track parcel, View details, …, +N more / Show less, X, Dismiss all. Long press on a row: the same menu | As iPhone; pointer and context menu | Click the same controls; right-click a row: the same menu. Palette (⌘K): "Track parcel · <title>" per parcel, "Dismiss all parcels" |
 | Settings | Settings › Inbox › Show parcels | same | same (the Settings page) |
 | Status | Implemented | Implemented | Implemented |

@@ -84,7 +84,7 @@ has processed the build; the same list is in the run's summary). An `ios-v*` tag
 too and takes the version from the tag name:
 
 ```sh
-git tag ios-v0.2.0 && git push origin ios-v0.2.0
+git tag ios-v0.3.0 && git push origin ios-v0.3.0
 ```
 
 The build is plain `xcodebuild` on a macOS runner — Expo's EAS Build cannot

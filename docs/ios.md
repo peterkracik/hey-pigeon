@@ -513,11 +513,14 @@ only when formatting was applied.
 
 ### iPad and hardware keyboards
 
-At regular width an iPad shows three columns (`Features/Pad/PadSplitView`:
-the sidebar's list, the thread list, the open thread) with the list's
-keys (`PadKeys`); see `porting-macos-ipados.md`. In a narrow window it is
-the phone's tabs. The open thread keeps to a readable column
-(`readableColumn`, 760 pt, centred) when its column is wider than that.
+An iPad shows the phone's layout at every width: the tabs, one list and
+a thread in its place, each kept to a readable column (`readableColumn`,
+760 pt, centred) when the screen is wider than that. It had three columns
+at regular width (`Features/Pad/PadSplitView`), which read as an ordinary
+mail client; they are no longer shown. The folders' drawer and the list's
+keys (`PadKeys`) are being rebuilt on the single list; see
+`porting-macos-ipados.md`. Until then a hardware keyboard has ⌘N and the
+open thread's own keys.
 
 ## Platform constraints and how we handle them
 

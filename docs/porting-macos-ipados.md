@@ -14,8 +14,8 @@ Models and widget work — reached the Mac.
 | --- | --- | --- |
 | Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on every push to `main` (the `mac-latest` release, with the Sparkle appcast installed apps update from) and on `mac-v*` tags |
 | Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
-| Layout | At regular width three columns (`Features/Pad/PadSplitView`: the sidebar's list · the thread list · the open thread); the phone's `TabView` + `NavigationStack` in a narrow window | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
-| Keyboard | `j` `k` and the arrows walk the list and open, `e` `h` `n` `s` `⌘⌫` on the open thread (its own buttons), `#` `u` `a` `f` `c` `/` `z` `Esc` (`PadKeys`), `r` on the reply pill, `⌘N` compose | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
+| Layout | The phone's at every width: the tabs, one list and a thread in its place (`TabView` + `NavigationStack`), each in a readable column on a wide screen. The three columns (`Features/Pad/PadSplitView`) are no longer shown | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
+| Keyboard | `e` `h` `n` `s` `⌘⌫` on the open thread (its own buttons), `r` on the reply pill, `⌘N` compose. The list's keys (`PadKeys`: `j` `k`, `#` `u` `a` `f` `c` `/` `z` `Esc`) went with the columns and return with a cursor (step 2 below) | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
 | Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` from the same `build-rust.sh` when `PLATFORM_NAME=macosx` (macOS 27 is Apple Silicon only; `ARCHS` can still add `x86_64`) |
 
@@ -52,21 +52,34 @@ few places that draw (the notification avatar, the attachment downscale).
 
 ## iPadOS: next steps
 
-Done: the **split view** (`RootView` shows `PadSplitView` on an iPad at
-regular width: `SidebarList` — the sheet's own list, with a Search row —
-· the phone's `ThreadList` · `ThreadView`; the open thread is the
-highlighted row and lives in `PadState`, one per scene) and the **list
-keyboard** (`PadKeys`; the next thread opens when the open one leaves the
-list, as on the Mac; the keys are key equivalents on hidden buttons, so
-no view has to hold the focus). Not checked on a device yet: `#` on a
-non-US keyboard, the arrows while the list has the system's focus, and
-the search field taking the caret on `/`.
+The iPad had a **split view** at regular width (`PadSplitView`:
+`SidebarList` · the phone's `ThreadList` · `ThreadView`, the open thread
+the highlighted row in `PadState`) with a **list keyboard** (`PadKeys`).
+A list beside a permanent reading pane read as an ordinary mail client,
+not as the single list the phone and the Mac are, so `RootView` now shows
+the phone's tabs on an iPad at every width. `Features/Pad` still compiles
+and `PadTests` still run: the steps below are built from it.
 
-1. **Multiple windows.** `AppModel` is one per process (`AppModel.current`);
+Not checked on a device yet: where iPadOS puts the tab bar at regular
+width (expected: floating at the top centre, as the Mac's toolbar tabs)
+and whether it crowds the list's ≡ circle, title and sparkle.
+
+1. **The folders as a drawer.** At regular width the sidebar sheet is a
+   centred form sheet, which reads as a dialog. `SidebarList(isColumn:
+   true)` becomes a sidebar column hidden by default, opened by the ≡
+   circle and ⌘S, as on the Mac; `PadSplitView`'s list, search and detail
+   columns are deleted.
+2. **The list keyboard, with a cursor.** `j` `k` and the arrows move a
+   cursor that appears only after a key press, Return opens, Esc goes
+   back; `e` `h` `n` `s` `⌘⌫` act on the cursor's row while no thread is
+   open (the open thread's are ThreadView's own). `PadState` keeps its
+   movement logic and holds the cursor instead of an open thread.
+3. **Finish.** The thread's glass bars capped at the readable column,
+   each day's rows on one rounded card at regular width (the Mac's day
+   cards), a hover tint on rows.
+4. **Multiple windows.** `AppModel` is one per process (`AppModel.current`);
    per-window state (open thread, sheets) would move into a scene-scoped
    object before `UIApplicationSupportsMultipleScenes` is turned on.
-2. **Pointer.** `SwipeableRow`'s drag tiers work with a trackpad swipe; a
-   hover action bar like the desktop's would be the iPad-native addition.
 
 ## macOS: how the native target is built
 

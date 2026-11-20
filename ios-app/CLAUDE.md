@@ -70,18 +70,19 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   fetched ahead of a tap only on an unmetered path
   (`AppModel.prefetchBodies`). No send-later on the phone
   (`ComposePresentation.offersSendLater`): iOS decides when the app runs.
-- **The iPad's columns are a layout, not a second app.** At regular
-  width on an iPad `RootView` shows `PadSplitView` (`Features/Pad`): the
-  sheet's `SidebarList`, the phone's `ThreadList` and `ThreadView` side
-  by side; anywhere else, the tabs. What is open belongs to `PadState`
-  (owned by `RootView`, so it outlives a resize across the width where
-  the layouts swap; with the auto-advance and the key map, `PadKeys`),
-  never to `AppModel`. The keys are key equivalents on buttons that draw
-  nothing, not focus-based `onKeyPress`: nothing has to hold the focus,
-  and a text field gets a bare letter first. The open thread's `e` `h`
-  `n` `s` `r` `⌘⌫` are ThreadView's own (`threadKey`): do not bind them a
-  second time. A new place must be reachable from `SidebarList` too,
-  since the columns have no tab bar.
+- **The iPad is the phone's layout, not a second app.** `RootView`
+  shows the tabs at every width: one list in a readable column
+  (`readableColumn`, 760 pt, centred) and a thread pushed in its place,
+  as on the phone and the Mac. No list-plus-reading-pane: that read as an
+  ordinary mail client. `Features/Pad` (`PadSplitView`, `PadState`,
+  `PadKeys`) is the earlier three-column layout, compiled and tested but
+  not shown; the folders' drawer and the list's keys are being rebuilt
+  from it (`../docs/porting-macos-ipados.md`), so do not add to the
+  columns. Keys are key equivalents on buttons that draw nothing, not
+  focus-based `onKeyPress`: nothing has to hold the focus, and a text
+  field gets a bare letter first. The open thread's `e` `h` `n` `s` `r`
+  `⌘⌫` are ThreadView's own (`threadKey`): do not bind them a second
+  time.
 - **Mute and block are the app's own rules**, two synced prefs the core
   applies at the end of every sync (`mute.threads`, `block.senders`;
   `AppModel.mute`, `.block`). Gmail's API has no mute and its filters need

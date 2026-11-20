@@ -73,42 +73,22 @@ struct HeyPigeonApp: App {
 
 /// Root navigation: the three-tab bar (Inbox · Remind me · Need reply,
 /// with Compose in the circle beside it; the search is pulled down over
-/// a list) plus the app-wide sheets and the toast. An
-/// iPad at regular width shows three columns instead (PadSplitView); the
-/// sheets and the toast are the same over either.
+/// a list) plus the app-wide sheets and the toast. The iPad has the same
+/// root at every width: one list in a readable column and a thread in
+/// its place, as on the phone and the Mac. Its three columns
+/// (`Features/Pad/PadSplitView`) read as an ordinary mail client and are
+/// no longer shown; the folders' drawer and the list's keys are rebuilt
+/// from them next (docs/porting-macos-ipados.md).
 struct RootView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
-    /// What the columns show. Kept here, not in PadSplitView: resizing an
-    /// iPad window across the width where the layouts swap rebuilds the
-    /// one shown, and the open thread must not close with it.
-    @State private var pad = PadState()
-
-    /// The split layout: an iPad wide enough for columns. Never a phone —
-    /// the large ones are "regular" in landscape too — and not an iPad in
-    /// Slide Over or a narrow split, which get the phone's layout.
-    private var showsColumns: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
-    }
 
     var body: some View {
-        withSheets(Group {
-            if showsColumns {
-                PadSplitView(state: pad)
-            } else {
-                tabs
-            }
-        })
-        // Narrowed to the tabs with a thread open: the stack pushes it
-        // (the same request a notification makes).
-        .onChange(of: showsColumns) { _, columns in
-            if !columns, let open = pad.openRow { model.openThread(id: open.id) }
-        }
+        withSheets(tabs)
     }
 
-    /// The phone's three tabs (an iPad in a narrow window has them too),
-    /// and Compose in the circle beside them.
+    /// The three tabs, on the phone and the iPad alike, and Compose in the
+    /// circle beside them.
     /// The search is not one of them: it opens over a list (the field
     /// pulled down above it, MailListScreen), and the bar keeps that
     /// list's tab selected meanwhile (`listTab`). A tap on any tab leaves
@@ -147,7 +127,7 @@ struct RootView: View {
             }
         }
         // ⌘N, which the top bar's Compose button used to carry: on a
-        // button that draws nothing, as the columns' keys are (PadKeys).
+        // button that draws nothing, so it works wherever the focus is.
         .background {
             Button("Compose") { model.composeDraft = SendDraft() }
                 .keyboardShortcut("n", modifiers: .command)
@@ -167,7 +147,7 @@ struct RootView: View {
     }
 }
 
-/// What the phone's bottom bar holds: a list's tab, or Compose — a button
+/// What the tab bar holds: a list's tab, or Compose — a button
 /// in a tab's place, never the selection.
 private enum BarSlot: Hashable {
     case list(MainTab)
@@ -175,7 +155,7 @@ private enum BarSlot: Hashable {
 }
 
 extension RootView {
-    /// The app-wide sheets and the toast, over the tabs or the columns.
+    /// The app-wide sheets and the toast, over the tabs.
     private func withSheets<Content: View>(_ content: Content) -> some View {
         @Bindable var model = model
         return content

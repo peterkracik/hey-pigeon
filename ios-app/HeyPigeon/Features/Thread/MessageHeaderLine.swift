@@ -74,13 +74,16 @@ struct MessageHeaderLine<Trailing: View>: View {
                 // (docs/specs/read-status.md): sent, bounced, delivered to
                 // a device that hides opens, opened or answered — and
                 // under it what the relay reported, when that says more.
-                // A state, so a glyph and a few words: in the danger
-                // colour when the message did not arrive, quiet otherwise.
+                // A state, so a glyph and a few words: quiet, but in the
+                // danger colour and the medium when the message did not
+                // arrive, which is news.
                 if inThread, let status = message.readStatus {
                     let recipients = message.to + message.cc
+                    let failed = status.state == .notDelivered
                     StateMark(text: ReadStatusText.line(status, recipients: recipients, names: names),
                               systemImage: ReadStatusText.symbol(status.state),
-                              tint: status.state == .notDelivered ? Theme.dangerText : Theme.textTertiary)
+                              tint: failed ? Theme.dangerText : Theme.textTertiary,
+                              weight: failed ? .medium : .regular)
                     // By position: two fetches in the same minute read alike.
                     let details = ReadStatusText.details(status, recipients: recipients)
                     ForEach(details.indices, id: \.self) { index in

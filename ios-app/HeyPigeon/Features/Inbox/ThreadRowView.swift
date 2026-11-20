@@ -109,12 +109,12 @@ struct ThreadRowView: View {
                 // and a swipe surface): the thread and the long-press menu
                 // accept or dismiss it.
                 if let s = row.openSuggestion {
-                    StateMark(text: s.title, systemImage: "sparkles", tint: Theme.pinkInk)
+                    StateMark(text: s.title, systemImage: "sparkles", tint: Theme.pinkInk, weight: .medium)
                         .accessibilityLabel("Suggested: \(s.title)")
                 }
                 // An unsent reply waits in the thread (the Drafts folder needs no mark).
                 if row.labels.contains("DRAFT"), model.view != .drafts {
-                    StateMark(text: "Draft", tint: Theme.state(.coral))
+                    StateMark(text: "Draft", tint: Theme.state(.coral), weight: .medium)
                 }
                 if row.hasAttachment {
                     Image(systemName: "paperclip").font(Theme.glyph(.caption)).foregroundStyle(Theme.textTertiary)

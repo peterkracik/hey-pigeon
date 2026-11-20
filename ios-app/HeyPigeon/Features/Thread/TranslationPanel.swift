@@ -145,8 +145,9 @@ struct TranslationPanel: View {
                         Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                             .font(Theme.text(.secondary, .semibold))
                     }
-                    // An outlined capsule: the panel has no ink action.
-                    .buttonStyle(OutlineButtonStyle())
+                    // An outlined capsule, the small one: the panel has no
+                    // ink action.
+                    .buttonStyle(OutlineButtonStyle(compact: true))
                     .accessibilityLabel("Copy the translation")
                 }
             }

@@ -68,7 +68,9 @@ struct InviteCard: View {
                         .disabled(added)
                     }
                 }
-                .buttonStyle(OutlineButtonStyle())
+                // The small capsule: four of them stand in a line of the
+                // thread, under the event they answer.
+                .buttonStyle(OutlineButtonStyle(compact: true))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,8 +79,9 @@ struct InviteCard: View {
     }
 
     /// The answers' words: the thread's small text in semibold, a step
-    /// under the event's own name (the capsule's default is a sheet's
-    /// button size).
+    /// under the event's own name. Said on the labels: the capsule's own
+    /// size is a text style, which is smaller than this in the Mac's
+    /// window.
     private static let answerFont = Theme.text(.secondary, .semibold)
 
     private var canAdd: Bool { CalendarAccess.isAvailable && !invite.isCancellation && invite.start != nil }

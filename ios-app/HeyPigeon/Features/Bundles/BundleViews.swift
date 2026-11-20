@@ -126,6 +126,10 @@ struct BundlesStack: View {
     var close: (() -> Void)? = nil
     /// The host's own pieces of the bundle view (the Mac window's).
     var parts: BundleScreenParts? = nil
+    /// How far the list's rows and titles, and the editor's fields, stand
+    /// in from the edges: the phone's 16 pt, where its mail rows start.
+    /// The Mac window passes the margin of its own lists.
+    var listInset: CGFloat = 16
     @Environment(AppModel.self) private var model
     @State private var creating = false
 
@@ -149,7 +153,7 @@ struct BundlesStack: View {
                 .navigationDestination(for: BundleRoute.self) { route in
                     switch route {
                     case .bundle(let id):
-                        BundleScreen(bundleId: id, parts: parts) { path.append(.thread($0)) }
+                        BundleScreen(bundleId: id, parts: parts, listInset: listInset) { path.append(.thread($0)) }
                             // One screen per bundle. The Mac's sidebar swaps
                             // the bundle at the same depth of the stack, and
                             // without an identity of its own the screen was
@@ -166,7 +170,7 @@ struct BundlesStack: View {
                     }
                 }
                 .navigationDestination(isPresented: $creating) {
-                    BundleEditor(title: "New bundle") { name, category, description in
+                    BundleEditor(title: "New bundle", inset: listInset) { name, category, description in
                         if let b = model.createBundle(name: name, category: category, description: description) {
                             creating = false
                             path = [.bundle(b.id)]
@@ -182,8 +186,7 @@ struct BundlesStack: View {
         let archived = model.archivedBundles
         if model.bundles.isEmpty {
             ContentUnavailableView {
-                Label("No bundles yet", systemImage: "square.stack")
-                    .font(Theme.display(24, relativeTo: .title2))
+                BundleEmptyTitle(title: "No bundles yet", systemImage: "square.stack")
             } description: {
                 Text("Bundles make themselves: mail about one trip, order or project is grouped as it arrives. To group something yourself, choose Add to bundle… on an email, or create one with +.")
                     .font(Theme.text(.bodySmall))
@@ -195,22 +198,44 @@ struct BundlesStack: View {
                 if !active.isEmpty {
                     // The active bundles have no title: the rule alone
                     // opens them.
-                    SectionRule().bundleTitleRow(first: true)
+                    SectionRule().bundleTitleRow(first: true, inset: listInset)
                     ForEach(active) { b in
                         NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
-                            .bundleRow(last: b.id == active.last?.id)
+                            .bundleRow(last: b.id == active.last?.id, inset: listInset)
                     }
                 }
                 if !archived.isEmpty {
-                    SectionTitle("Archived").bundleTitleRow(first: active.isEmpty)
+                    SectionTitle("Archived").bundleTitleRow(first: active.isEmpty, inset: listInset)
                     ForEach(archived) { b in
                         NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
-                            .bundleRow(last: b.id == archived.last?.id)
+                            .bundleRow(last: b.id == archived.last?.id, inset: listInset)
                     }
                 }
             }
             .bundleList()
             .foregroundStyle(Theme.textPrimary)
+        }
+    }
+}
+
+/// An empty state's title and symbol, as `ContentUnavailableView` takes
+/// them and as the inbox's empty state draws its own (`EmptyState`): the
+/// title in the display face, a little tight; the symbol standing back
+/// in the tertiary grey at the size the system gives it. Both are set
+/// on the text and the image themselves, where the system's own style
+/// cannot replace them.
+private struct BundleEmptyTitle: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(title)
+                .font(Theme.display(24, relativeTo: .title2))
+                .tracking(-0.4)
+                .foregroundStyle(Theme.textPrimary)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(Theme.textTertiary)
         }
     }
 }
@@ -349,8 +374,12 @@ enum BundlePage: Hashable, CaseIterable {
 /// their titles).
 struct BundleScreen: View {
     let bundleId: String
-    /// The host's own switcher and Emails page (the Mac window's).
+    /// The host's own switcher, Emails page and Info page (the Mac
+    /// window's).
     var parts: BundleScreenParts? = nil
+    /// How far the editor's fields stand in from the edges
+    /// (`BundlesStack.listInset`).
+    var listInset: CGFloat = 16
     /// Opens an email in the sheet's stack.
     var openThread: (ThreadRow) -> Void = { _ in }
     @Environment(AppModel.self) private var model
@@ -385,8 +414,7 @@ struct BundleScreen: View {
                 }
             } else {
                 ContentUnavailableView {
-                    Label("Bundle not found", systemImage: "square.stack")
-                        .font(Theme.display(24, relativeTo: .title2))
+                    BundleEmptyTitle(title: "Bundle not found", systemImage: "square.stack")
                 } description: {
                     Text("It may have been deleted on another device.")
                         .font(Theme.text(.bodySmall))
@@ -415,7 +443,8 @@ struct BundleScreen: View {
         }
         .navigationDestination(isPresented: $editing) {
             if let b = contents?.bundle {
-                BundleEditor(title: "Edit bundle", name: b.name, category: b.category, description: b.description) { name, category, description in
+                BundleEditor(title: "Edit bundle", name: b.name, category: b.category, description: b.description,
+                             inset: listInset) { name, category, description in
                     model.updateBundle(b, name: name, category: category, description: description)
                     editing = false
                 }
@@ -744,14 +773,17 @@ struct FactRow: View {
 /// Name, kind and the one-line description: "New bundle" and "Edit bundle".
 struct BundleEditor: View {
     let title: String
+    /// How far the fields stand in from the edges: the list's own measure.
+    let inset: CGFloat
     @State private var name: String
     @State private var category: BundleCategory
     @State private var description: String
     let save: (String, BundleCategory, String) -> Void
 
     init(title: String, name: String = "", category: BundleCategory = .other, description: String = "",
-         save: @escaping (String, BundleCategory, String) -> Void) {
+         inset: CGFloat = 16, save: @escaping (String, BundleCategory, String) -> Void) {
         self.title = title
+        self.inset = inset
         _name = State(initialValue: name)
         _category = State(initialValue: category)
         _description = State(initialValue: description)
@@ -763,8 +795,8 @@ struct BundleEditor: View {
     var body: some View {
         List {
             // The fields have no title: the rule alone opens them.
-            SectionRule().bundleTitleRow(first: true)
-            BundleFields(name: $name, category: $category, description: $description)
+            SectionRule().bundleTitleRow(first: true, inset: inset)
+            BundleFields(name: $name, category: $category, description: $description, inset: inset)
         }
         .bundleList()
         .navigationTitle(title)

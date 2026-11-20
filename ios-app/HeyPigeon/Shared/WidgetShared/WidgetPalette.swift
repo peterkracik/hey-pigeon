@@ -36,6 +36,13 @@ enum WidgetPalette {
     /// A sheet's paper: the share sheet. The paper white on light, a step
     /// up on dark (`Theme.raised`).
     static let raised = pair(0xFFFFFF, 0x1E2026)
+    /// The tint of the Lock Screen's platter under a Live Activity: black
+    /// at 60 %, the same in both appearances, with the wallpaper showing
+    /// through. It is not the paper, so what stands on it is drawn with
+    /// the dark column of this palette (the activity sets its colour
+    /// scheme), and the system's own button on it is `onPlatter`.
+    static let platter = Color.black.opacity(0.6)
+    static let onPlatter = Color.white
 
     // MARK: Pink
 

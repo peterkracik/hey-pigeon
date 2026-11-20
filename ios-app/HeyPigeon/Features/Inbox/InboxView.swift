@@ -1003,7 +1003,7 @@ struct EmptyState: View {
     /// what is read second, set on the text itself (the system would
     /// dress it in its own font and grey).
     private static func sentence(_ text: Text) -> some View {
-        text.font(Theme.text(.bodySmall)).foregroundStyle(Theme.textTertiary)
+        text.font(Theme.text(.bodySmall)).foregroundStyle(Theme.textSecondary)
     }
 
     /// The last sync's time, to stand in that sentence.
@@ -1013,9 +1013,10 @@ struct EmptyState: View {
 
     /// An empty state's title and symbol, as `ContentUnavailableView`
     /// takes them: the title in the display face, drawn a little tight,
-    /// as a sheet's is; the symbol standing back in the tertiary grey at
-    /// the size the system gives it. Both are set on the text and the
-    /// image themselves, where the system's own style cannot replace them.
+    /// as a sheet's is; the symbol in ink at the size the system gives
+    /// it (the one drawing on an otherwise empty page). Both are set on
+    /// the text and the image themselves, where the system's own style
+    /// cannot replace them.
     struct Title: View {
         let title: String
         let systemImage: String
@@ -1025,7 +1026,7 @@ struct EmptyState: View {
                 Text(title).font(Theme.display(24, relativeTo: .title2)).tracking(-0.4)
                     .foregroundStyle(Theme.textPrimary)
             } icon: {
-                Image(systemName: systemImage).foregroundStyle(Theme.textTertiary)
+                Image(systemName: systemImage).foregroundStyle(Theme.textPrimary)
             }
         }
     }

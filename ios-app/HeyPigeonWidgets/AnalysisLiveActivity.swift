@@ -18,8 +18,8 @@ struct AnalysisLiveActivity: Widget {
         ActivityConfiguration(for: AnalysisActivityAttributes.self) { context in
             AnalysisLockScreenView(state: context.state, isStale: context.isStale)
                 .environment(\.colorScheme, .dark)
-                .activityBackgroundTint(Color.black.opacity(0.6))
-                .activitySystemActionForegroundColor(.white)
+                .activityBackgroundTint(WidgetPalette.platter)
+                .activitySystemActionForegroundColor(WidgetPalette.onPlatter)
                 .widgetURL(AppGroup.Link.folder("inbox"))
         } dynamicIsland: { context in
             let s = context.state

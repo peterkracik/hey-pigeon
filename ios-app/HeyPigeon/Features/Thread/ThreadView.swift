@@ -513,14 +513,16 @@ struct ThreadView: View {
                 .labelOnlyMenu()
                 .accessibilityLabel("Edit labels")
             }
-            // States are writing in their colour, not fills.
+            // States are writing in their colour, not fills; in the
+            // medium, as what a thread's state has to say is its news.
             if let at = current.scheduledAt {
                 StateMark(text: Formatters.reminder(at), systemImage: current.isFollowUp ? "clock.arrow.circlepath" : "clock",
-                          tint: Theme.state(Self.remindTone))
+                          tint: Theme.state(Self.remindTone), weight: .medium)
                     .accessibilityLabel(current.isFollowUp ? "Follow up \(Formatters.reminder(at)) if no reply" : "Reminder \(Formatters.reminder(at))")
             }
             if current.needsReply {
-                StateMark(text: "Need reply", systemImage: "arrowshape.turn.up.left", tint: Theme.state(Self.replyTone))
+                StateMark(text: "Need reply", systemImage: "arrowshape.turn.up.left", tint: Theme.state(Self.replyTone),
+                          weight: .medium)
             }
             // A list's mail says how to leave it: one tap here.
             if let offer = unsubscribeOffer {
@@ -850,8 +852,9 @@ private struct DraftRow: View {
     let onDelete: () -> Void
 
     private static let tone = AccountColor.coral
-    /// The two buttons' words: the thread's small text in semibold (the
-    /// capsules' own default is a sheet's button size).
+    /// The two buttons' words: the thread's small text in semibold. Said
+    /// on the labels: the capsules' own size is a text style, which is
+    /// smaller than this in the Mac's window.
     private static let buttonFont = Theme.text(.secondary, .semibold)
 
     private var preview: String {
@@ -864,7 +867,8 @@ private struct DraftRow: View {
             Button(action: onEdit) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        StateMark(text: "Draft", systemImage: "pencil", tint: Theme.state(Self.tone))
+                        // The state is this row's news: the medium.
+                        StateMark(text: "Draft", systemImage: "pencil", tint: Theme.state(Self.tone), weight: .medium)
                         Text(draft.to.isEmpty ? "No recipients" : "to \(draft.to.joined(separator: ", "))")
                             .font(Theme.tag).foregroundStyle(Theme.textTertiary).lineLimit(1)
                         Spacer(minLength: 8)
@@ -884,7 +888,7 @@ private struct DraftRow: View {
                 Button(action: onEdit) {
                     Label("Edit", systemImage: "square.and.pencil").font(Self.buttonFont)
                 }
-                .buttonStyle(OutlineButtonStyle())
+                .buttonStyle(OutlineButtonStyle(compact: true))
                 Button(role: .destructive, action: onDelete) {
                     Label("Delete", systemImage: "trash").font(Self.buttonFont)
                 }
@@ -920,15 +924,16 @@ private struct HorizontalLine: Shape {
     }
 }
 
-/// `OutlineButtonStyle` in the danger colour, for a draft's Delete beside
-/// its Edit: deleting is danger writing in an outline, never a fill, and
-/// the shared capsule is ink only.
+/// The small `OutlineButtonStyle` (its `compact` measures) in the danger
+/// colour, for a draft's Delete beside its Edit: deleting is danger
+/// writing in an outline, never a fill, and the shared capsule is ink
+/// only.
 private struct DangerOutlineButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(Theme.sans(.subheadline, .semibold))
+            .font(Theme.sans(.footnote, .semibold))
             .foregroundStyle(Theme.dangerText)
-            .padding(.horizontal, 16).padding(.vertical, 9)
+            .padding(.horizontal, 12).padding(.vertical, 6)
             .background(Capsule().strokeBorder(Theme.dangerText, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.6 : 1)
             .contentShape(Capsule())

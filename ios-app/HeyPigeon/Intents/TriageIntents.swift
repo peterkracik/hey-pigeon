@@ -81,16 +81,16 @@ struct TriageSnippet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(agent.phase.title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(agent.phase.title).font(Theme.sans(.caption, .semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Text("\(agent.scanned) scanned").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text("\(agent.scanned) scanned").font(Theme.sans(.caption)).foregroundStyle(.secondary).monospacedDigit()
             }
-            if !agent.plan.note.isEmpty { Text(agent.plan.note).font(.subheadline) }
+            if !agent.plan.note.isEmpty { Text(agent.plan.note).font(Theme.sans(.subheadline)) }
             ForEach(agent.plan.proposals.prefix(8)) { p in
-                Text(p.line).font(.footnote).lineLimit(1)
+                Text(p.line).font(Theme.sans(.footnote)).lineLimit(1)
             }
             if agent.plan.proposals.count > 8 {
-                Text("+\(agent.plan.proposals.count - 8) more").font(.footnote).foregroundStyle(.secondary)
+                Text("+\(agent.plan.proposals.count - 8) more").font(Theme.sans(.footnote)).foregroundStyle(.secondary)
             }
         }
         .padding()

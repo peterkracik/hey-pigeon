@@ -307,7 +307,7 @@ struct ComposeView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Text(label)
-                    .font(.subheadline).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary)
                     .frame(width: labelWidth, alignment: .leading)
                     .padding(.top, 2)
                 content()
@@ -323,8 +323,8 @@ struct ComposeView: View {
             ForEach(attachments) { a in
                 HStack(spacing: 6) {
                     Image(systemName: "paperclip").font(.caption)
-                    Text(a.filename).font(.caption.weight(.medium)).lineLimit(1)
-                    Text(Self.size(a.size)).font(.caption2).foregroundStyle(Theme.textTertiary)
+                    Text(a.filename).font(Theme.sans(.caption, .medium)).lineLimit(1)
+                    Text(Self.size(a.size)).font(Theme.sans(.caption2)).foregroundStyle(Theme.textTertiary)
                     Button { attachments.removeAll { $0.id == a.id } } label: {
                         Image(systemName: "xmark").font(.caption2.weight(.bold))
                             // The chip's whole end, not just the glyph.
@@ -390,7 +390,7 @@ struct ComposeView: View {
     private var sendButton: some View {
         Button { send() } label: {
             Label("Send", systemImage: "paperplane.fill")
-                .font(.subheadline.weight(.bold))
+                .font(Theme.sans(.subheadline, .bold))
                 .foregroundStyle(Theme.onPrimary)
                 .frame(height: 22) // the icon buttons' content height, so the pill matches the circles
                 .padding(.horizontal, 6)
@@ -471,7 +471,7 @@ struct ComposeView: View {
 
     private var formatButton: some View {
         Button { withAnimation { showFormat.toggle() } } label: {
-            Text("Aa").font(.subheadline.weight(.bold)).frame(width: 22, height: 22)
+            Text("Aa").font(Theme.sans(.subheadline, .bold)).frame(width: 22, height: 22)
         }
         .pillButton()
         .foregroundStyle(showFormat ? Theme.accent : Theme.textPrimary)
@@ -648,7 +648,7 @@ struct ComposeView: View {
             if !showCc {
                 Button("Cc/Bcc") { showCc = true; focus = .cc }
                     .composeTextButton()
-                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.footnote, .semibold)).foregroundStyle(Theme.textTertiary)
             }
         }
         if showCc {
@@ -791,7 +791,7 @@ extension ComposeView {
 
     private var bodyEditor: some View {
         TextEditor(text: $body_, selection: $selection)
-            .font(.body)
+            .font(Theme.sans(.body))
             .foregroundStyle(Theme.textPrimary)
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
@@ -935,10 +935,10 @@ extension ComposeView {
     private var draftHeader: some View {
         HStack(spacing: 6) {
             Text("Draft")
-                .font(.system(size: 14, weight: .bold))
+                .font(Theme.sans(size: 14, weight: .bold))
                 .foregroundStyle(Theme.tagForeground(.mint))
             Text(recipientLine)
-                .font(.system(size: 14, weight: .semibold))
+                .font(Theme.sans(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
             Spacer()
@@ -948,7 +948,7 @@ extension ComposeView {
                     Image(systemName: showFields ? "chevron.up" : "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                 }
-                .font(.footnote.weight(.semibold))
+                .font(Theme.sans(.footnote, .semibold))
                 .foregroundStyle(Theme.textTertiary)
                 .contentShape(Rectangle())
             }

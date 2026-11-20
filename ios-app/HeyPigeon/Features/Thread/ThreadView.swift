@@ -605,7 +605,7 @@ struct ThreadView: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: replyKind.systemImage)
-                    Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
+                    Image(systemName: "chevron.down").font(Theme.glyph(.caption2, .bold))
                 }
                 .padding(.leading, 18).padding(.trailing, 12)
                 .frame(maxHeight: .infinity)
@@ -837,7 +837,7 @@ private struct DraftRow: View {
                     .tint(Theme.danger)
                 Spacer()
             }
-            .font(Theme.secondary.weight(.semibold))
+            .font(Theme.text(.secondary, .semibold))
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
             .controlSize(.small)
@@ -962,7 +962,7 @@ struct MessageRow: View {
                 Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
             }
         } label: {
-            Image(systemName: "ellipsis").font(Theme.secondary.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            Image(systemName: "ellipsis").font(Theme.glyph(.secondary, .semibold)).foregroundStyle(Theme.textTertiary)
                 .frame(width: ThreadChrome.actionsSize.width, height: ThreadChrome.actionsSize.height)
                 // 28 × 22 as drawn on the phone; 44 × 44 to the finger.
                 .tapArea(horizontal: 8, vertical: 11)
@@ -983,8 +983,8 @@ private struct EarlierRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 8) {
-                Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
-                Text("\(count) earlier messages").font(Theme.meta.weight(.medium))
+                Image(systemName: "chevron.down").font(Theme.glyph(.caption2, .bold))
+                Text("\(count) earlier messages").font(Theme.text(.meta, .medium))
                 Spacer()
             }
             .foregroundStyle(Theme.textTertiary)

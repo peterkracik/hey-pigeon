@@ -709,14 +709,14 @@ struct MacAIPanel: View {
                 prompt(shown)
             }
             if let error = runner.error {
-                Text(error).font(.footnote).foregroundStyle(Theme.dangerText)
+                Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText)
             }
             // What a click sends, and to whom (AIAssist.footnote, as under
             // the phone's sheet). The Mac sends the AIWriteContext too.
             Text(AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: true,
                                    destination: AIAssist.Destination(shown),
                                    refining: runner.result != nil))
-                .font(.caption2).foregroundStyle(Theme.textTertiary)
+                .font(Theme.sans(.caption2)).foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
@@ -734,7 +734,7 @@ struct MacAIPanel: View {
             HStack(spacing: 8) {
                 TextField(placeholder, text: $instruction)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 14))
+                    .font(Theme.sans(size: 14))
                     .focused($focused)
                     .onSubmit { go(shown) }
                     .onExitCommand { onClose() }
@@ -743,7 +743,7 @@ struct MacAIPanel: View {
                     ProgressView().controlSize(.small)
                     Button("Cancel") { runner.cancel() }
                         .buttonStyle(.plain)
-                        .font(.footnote.weight(.semibold))
+                        .font(Theme.sans(.footnote, .semibold))
                         .foregroundStyle(Theme.textSecondary)
                 } else {
                     Button { go(shown) } label: {
@@ -769,7 +769,7 @@ struct MacAIPanel: View {
             }
             chips(shown)
             HStack(spacing: 10) {
-                Text(hint).font(.caption).foregroundStyle(Theme.textTertiary)
+                Text(hint).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 Spacer()
                 if hasText {
                     Picker("Mode", selection: $mode) {
@@ -825,7 +825,7 @@ struct MacAIPanel: View {
     private func chip(_ title: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(Theme.sans(size: 12, weight: .semibold))
                 .foregroundStyle(primary ? Theme.onPrimary : Theme.textPrimary)
                 .padding(.horizontal, 11).padding(.vertical, 6)
                 .background(primary ? Theme.accent : Theme.sunken, in: Capsule())
@@ -842,19 +842,19 @@ struct MacAIPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(AIAssist.reviewTitle(r))
-                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 Spacer()
                 if running {
                     ProgressView().controlSize(.small)
                     Button("Cancel") { runner.cancel() }
                         .buttonStyle(.plain)
-                        .font(.footnote.weight(.semibold))
+                        .font(Theme.sans(.footnote, .semibold))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
             ScrollView {
                 Text(r.text)
-                    .font(.system(size: 13))
+                    .font(Theme.sans(size: 13))
                     .lineSpacing(3)
                     .foregroundStyle(Theme.textPrimary)
                     .textSelection(.enabled)

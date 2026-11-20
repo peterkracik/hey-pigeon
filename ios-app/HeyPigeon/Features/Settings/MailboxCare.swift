@@ -88,16 +88,16 @@ struct OutboxView: View {
     private func row(_ change: QueuedChange) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(change.title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary)
+                Text(change.title).font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.textPrimary)
                 Text(change.failed ? "Not sent" : "Waiting")
-                    .font(.caption.weight(.semibold))
+                    .font(Theme.sans(.caption, .semibold))
                     .foregroundStyle(change.failed ? Theme.warning : Theme.textTertiary)
                 Spacer()
                 if busy == change.id { ProgressView().controlSize(.small) }
             }
-            Text(change.summary).font(.footnote).foregroundStyle(Theme.textSecondary).lineLimit(2)
+            Text(change.summary).font(Theme.sans(.footnote)).foregroundStyle(Theme.textSecondary).lineLimit(2)
             if let error = notes[change.id] ?? change.lastError, !error.isEmpty {
-                Text(error).font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(3)
+                Text(error).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).lineLimit(3)
             }
             if change.failed {
                 HStack(spacing: 16) {
@@ -107,7 +107,7 @@ struct OutboxView: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .font(.footnote.weight(.semibold))
+                .font(Theme.sans(.footnote, .semibold))
                 .disabled(busy != nil)
                 .padding(.top, 2)
             }
@@ -251,7 +251,7 @@ struct DiagnosticsSection: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(Formatters.fullDate(report.date))
                             Text(ByteCountFormatter.string(fromByteCount: Int64(report.bytes), countStyle: .file))
-                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                         }
                         Spacer()
                         Button(copied == report.url ? "Copied" : "Copy") {

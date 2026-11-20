@@ -21,35 +21,35 @@ struct TriageJournalView: View {
                 Toggle(isOn: $model.triageDryRun) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Dry run")
-                        Text("\"Triage my inbox\" only reports what it would do.").font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text("\"Triage my inbox\" only reports what it would do.").font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Your triage rules")
                     TextEditor(text: $model.triageRules)
                         .frame(minHeight: 60)
-                        .font(.subheadline)
+                        .font(Theme.sans(.subheadline))
                     Text("In your words, one per line; they win over the built-in ones. \"Newsletters are done. Anything from the bank needs a reply.\"")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
             } header: {
                 Text("Rules")
             }
             .menuCard()
             if journal.entries.isEmpty {
-                Section { Text("No runs yet.").font(.footnote).foregroundStyle(Theme.textTertiary) }.menuCard()
+                Section { Text("No runs yet.").font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary) }.menuCard()
             }
             ForEach(journal.runs, id: \.id) { run in
                 Section {
                     ForEach(run.entries) { e in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
-                                Text(e.tool).font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                                Text(e.phase.title).font(.caption).foregroundStyle(Theme.textTertiary)
+                                Text(e.tool).font(Theme.sans(.caption, .semibold)).foregroundStyle(Theme.textSecondary)
+                                Text(e.phase.title).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                                 Spacer()
-                                Text(e.at, style: .time).font(.caption).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                                Text(e.at, style: .time).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).monospacedDigit()
                             }
-                            Text(e.detail).font(.footnote).foregroundStyle(Theme.textPrimary)
+                            Text(e.detail).font(Theme.sans(.footnote)).foregroundStyle(Theme.textPrimary)
                         }
                     }
                 } header: {
@@ -80,28 +80,28 @@ struct TriageJournalView: View {
                 HStack {
                     if ![.done, .cancelled, .failed, .confirm].contains(agent.phase) { ProgressView().padding(.trailing, 6) }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(agent.phase.title).font(.body.weight(.medium))
+                        Text(agent.phase.title).font(Theme.sans(.body, .medium))
                         Text("\(agent.scanned) scanned · \(agent.candidates) picked · \(agent.plan.proposals.count) proposed")
-                            .font(.caption).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).monospacedDigit()
                     }
                     Spacer()
                     if agent.phase == .scan || agent.phase == .decide || agent.phase == .act {
-                        Button("Stop") { agent.cancel() }.font(.footnote.weight(.semibold))
+                        Button("Stop") { agent.cancel() }.font(Theme.sans(.footnote, .semibold))
                     }
                 }
-                if let error = agent.error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
-                if !agent.plan.note.isEmpty { Text(agent.plan.note).font(.footnote).foregroundStyle(Theme.textSecondary) }
-                ForEach(agent.plan.proposals) { p in Text(p.line).font(.footnote) }
+                if let error = agent.error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
+                if !agent.plan.note.isEmpty { Text(agent.plan.note).font(Theme.sans(.footnote)).foregroundStyle(Theme.textSecondary) }
+                ForEach(agent.plan.proposals) { p in Text(p.line).font(Theme.sans(.footnote)) }
                 if agent.phase == .confirm {
                     HStack {
                         Button("Apply") { Task { await agent.applyPlan(); model.triageAgent = nil } }
-                            .font(.footnote.weight(.semibold))
+                            .font(Theme.sans(.footnote, .semibold))
                         Spacer()
                         Button("Leave as is", role: .cancel) { agent.discardPlan(); model.triageAgent = nil }
-                            .font(.footnote.weight(.semibold))
+                            .font(Theme.sans(.footnote, .semibold))
                     }
                 } else if [.done, .cancelled, .failed].contains(agent.phase) {
-                    Button("Clear") { model.triageAgent = nil }.font(.footnote.weight(.semibold))
+                    Button("Clear") { model.triageAgent = nil }.font(Theme.sans(.footnote, .semibold))
                 }
             } else {
                 Button {

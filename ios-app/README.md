@@ -47,9 +47,10 @@ ios-app/
 To work on the UI without any of 3–4, set `HEYPIGEON_MOCK=1` in the scheme:
 the app runs against an in-memory sample inbox.
 
-Fonts: drop `Manrope-SemiBold.ttf`, `Manrope-Bold.ttf`, `Manrope-ExtraBold.ttf`
-into `HeyPigeon/Resources/Fonts/` for the brand typeface; without them SwiftUI
-silently falls back to the system font.
+Fonts: Instrument Sans (interface) and DM Mono (times, counts, tags, titles)
+are in `HeyPigeon/Resources/Fonts/` with their licences (SIL Open Font
+License) and named in `project.yml` for the app and both extensions. Should
+a bundle lack them, `Typeface` falls back to the system font.
 
 ## Tests (CI)
 

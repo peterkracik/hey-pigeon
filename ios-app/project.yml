@@ -152,12 +152,16 @@ targets:
           - remote-notification # silent push from the optional relay
         BGTaskSchedulerPermittedIdentifiers:
           - app.heypigeon.refresh
-        # Drop Manrope-*.ttf into HeyPigeon/Resources/Fonts to get the brand
-        # typeface; without the files SwiftUI falls back to the system font.
+        # The app's two typefaces (HeyPigeon/Resources/Fonts, with their
+        # licences; Shared/WidgetShared/Typeface.swift): Instrument Sans for
+        # the interface, DM Mono for times, counts, tags and section titles.
         UIAppFonts:
-          - Manrope-SemiBold.ttf
-          - Manrope-Bold.ttf
-          - Manrope-ExtraBold.ttf
+          - InstrumentSans-Regular.ttf
+          - InstrumentSans-Medium.ttf
+          - InstrumentSans-SemiBold.ttf
+          - InstrumentSans-Bold.ttf
+          - DMMono-Regular.ttf
+          - DMMono-Medium.ttf
         # Only HTTPS (exempt). Without this every TestFlight build waits on a
         # manual "Missing Compliance" answer in App Store Connect.
         ITSAppUsesNonExemptEncryption: false
@@ -189,6 +193,8 @@ targets:
     sources:
       - path: HeyPigeonWidgets
       - path: HeyPigeon/Shared/WidgetShared
+      # The typefaces: an extension has a bundle of its own.
+      - path: HeyPigeon/Resources/Fonts
     entitlements:
       path: HeyPigeonWidgets/HeyPigeonWidgets.entitlements
       properties:
@@ -207,6 +213,13 @@ targets:
         CFBundleDisplayName: Hey Pigeon
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIAppFonts:
+          - InstrumentSans-Regular.ttf
+          - InstrumentSans-Medium.ttf
+          - InstrumentSans-SemiBold.ttf
+          - InstrumentSans-Bold.ttf
+          - DMMono-Regular.ttf
+          - DMMono-Medium.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
@@ -218,6 +231,8 @@ targets:
     sources:
       - path: HeyPigeonShare
       - path: HeyPigeon/Shared/WidgetShared
+      # The typefaces: an extension has a bundle of its own.
+      - path: HeyPigeon/Resources/Fonts
     entitlements:
       path: HeyPigeonShare/HeyPigeonShare.entitlements
       properties:
@@ -236,6 +251,13 @@ targets:
         CFBundleDisplayName: Hey Pigeon
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIAppFonts:
+          - InstrumentSans-Regular.ttf
+          - InstrumentSans-Medium.ttf
+          - InstrumentSans-SemiBold.ttf
+          - InstrumentSans-Bold.ttf
+          - DMMono-Regular.ttf
+          - DMMono-Medium.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController

@@ -59,7 +59,7 @@ struct SearchSpotlight: View {
                 .foregroundStyle(Theme.textTertiary)
             TextField("Search mail", text: $model.searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 20))
+                .font(Theme.sans(size: 20))
                 .focused($focused)
                 .onSubmit { submit() }
                 .onExitCommand { state.run(.escape, in: model) }
@@ -68,7 +68,7 @@ struct SearchSpotlight: View {
             if !model.searchText.isEmpty {
                 Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
-                    .font(.system(size: 15))
+                    .font(Theme.sans(size: 15))
                     .foregroundStyle(Theme.textTertiary)
                     .accessibilityLabel("Clear")
             }
@@ -90,7 +90,7 @@ struct SearchSpotlight: View {
                 if model.isSearchPending {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("No matches").font(.system(size: 13)).foregroundStyle(Theme.textTertiary)
+                    Text("No matches").font(Theme.sans(size: 13)).foregroundStyle(Theme.textTertiary)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -166,7 +166,7 @@ private struct ResultRow: View {
             MailLineSubject(row: row, gap: 8)
             Spacer(minLength: 8)
             Text(Formatters.rowTime(row.lastMessageAt))
-                .font(.system(size: 12))
+                .font(Theme.sans(size: 12))
                 .foregroundStyle(Theme.textTertiary)
                 .monospacedDigit()
         }

@@ -19,6 +19,8 @@ struct HeyPigeonApp: App {
         // Spotlight asks the app for items it should re-index, and the
         // iOS 27 search tool reads full items back through the same door.
         SpotlightIndexer.installDelegate()
+        // Bar titles and segmented controls in the app's type and ink.
+        SystemChrome.apply()
     }
 
     var body: some Scene {
@@ -26,6 +28,9 @@ struct HeyPigeonApp: App {
             RootView()
                 .environment(model)
                 .tint(Theme.textPrimary)
+                // Text that names no font of its own (a list's row, a
+                // button's title) is set in the interface face too.
+                .font(Theme.sans(.body))
                 .task {
                     await ReminderScheduler.requestPermission()
                     // With push on, iOS may have rotated the token since last launch.

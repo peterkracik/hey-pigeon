@@ -17,13 +17,13 @@ struct ToastStack: View {
         VStack(spacing: 8) {
             ForEach(model.toasts) { toast in
                 HStack(spacing: 12) {
-                    Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(2)
+                    Text(toast.text).font(Theme.sans(.subheadline, .medium)).lineLimit(2)
                     if toast.undo != nil {
                         // Through the model: the action leaves the undo
                         // stack with it, so `z` cannot take it back twice.
                         Button("Undo") { model.undo(toast: toast.id) }
                             .toastButton()
-                            .font(.subheadline.weight(.bold))
+                            .font(Theme.sans(.subheadline, .bold))
                             .foregroundStyle(Theme.accent)
                     }
                 }

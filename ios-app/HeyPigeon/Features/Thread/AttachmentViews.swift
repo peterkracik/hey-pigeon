@@ -90,12 +90,12 @@ private struct AttachmentTile: View {
                 .clipped()
             VStack(alignment: .leading, spacing: 6) {
                 Text(attachment.filename.isEmpty ? "Attachment" : attachment.filename)
-                    .font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.text(.caption, .medium)).foregroundStyle(Theme.textPrimary)
                     .lineLimit(2).multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
                     Text(attachment.typeLabel)
-                        .font(Theme.caption2.weight(.bold)).foregroundStyle(Theme.accent)
+                        .font(Theme.text(.caption2, .bold)).foregroundStyle(Theme.accent)
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(Theme.card, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     if let s = attachment.sizeText { Text(s).font(Theme.caption2).foregroundStyle(Theme.textTertiary) }
@@ -177,7 +177,7 @@ struct AttachmentInsightSheet: View {
                     ResultState(working: "Reading \(attachment.filename)…", error: error, isReady: insight != nil,
                                 retry: { attempt += 1 }) {
                         if let insight {
-                            Text(insight.summary).font(.body).foregroundStyle(Theme.textPrimary)
+                            Text(insight.summary).font(Theme.sans(.body)).foregroundStyle(Theme.textPrimary)
                             InsightFields(insight: insight)
                             AttachmentActionChips(actions: AttachmentUnderstanding.actions(for: insight), row: row)
                         }
@@ -231,7 +231,7 @@ private struct InsightFields: View {
             ForEach(pairs, id: \.0) { k, v in
                 HStack(alignment: .firstTextBaseline) {
                     Text(k).font(Theme.secondary).foregroundStyle(Theme.textTertiary).frame(width: 84, alignment: .leading)
-                    Text(v).font(Theme.secondary.weight(.medium)).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                    Text(v).font(Theme.text(.secondary, .medium)).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                     Spacer()
                 }
                 .padding(.vertical, 6)
@@ -306,7 +306,7 @@ struct SuggestionCard: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Accept: \(suggestion.title)")
             Button { model.dismissSuggestion(row) } label: {
-                Image(systemName: "xmark").font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                Image(systemName: "xmark").font(Theme.glyph(.caption, .semibold)).foregroundStyle(Theme.textTertiary)
                     .padding(6)
                     .tapArea(horizontal: 8, vertical: 10)
             }

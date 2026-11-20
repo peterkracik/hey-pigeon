@@ -208,7 +208,7 @@ struct MessageBodyView: View {
     private func imageButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(Theme.caption.weight(.semibold))
+                .font(Theme.text(.caption, .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .padding(.horizontal, 8).padding(.vertical, 3)
@@ -222,7 +222,7 @@ struct MessageBodyView: View {
     private var quoteButton: some View {
         Button { showQuoted = true } label: {
             // A quiet handle, not a second headline under the message.
-            Text("•••").font(Theme.caption2.weight(.bold)).kerning(2).foregroundStyle(Theme.textTertiary)
+            Text("•••").font(Theme.text(.caption2, .bold)).kerning(2).foregroundStyle(Theme.textTertiary)
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .tapArea(horizontal: 8, vertical: 14)

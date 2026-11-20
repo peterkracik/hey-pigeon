@@ -47,7 +47,7 @@ struct MenuBarExtraView: View {
                 if model.isSyncing {
                     ProgressView().controlSize(.mini)
                 } else if let at = model.lastSyncAt {
-                    Text("Synced \(Formatters.rowTime(at))").font(.caption).foregroundStyle(Theme.textTertiary)
+                    Text("Synced \(Formatters.rowTime(at))").font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
             }
             if !due.isEmpty {
@@ -58,7 +58,7 @@ struct MenuBarExtraView: View {
             }
             section(unread.isEmpty ? "Inbox" : "Unread · \(unread.count)", unread.prefix(5), time: { Formatters.rowTime($0.lastMessageAt) })
             if unread.isEmpty && due.isEmpty && needReply.isEmpty {
-                Label("All clear", systemImage: "bird").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                Label("All clear", systemImage: "bird").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
             }
             Divider()
             HStack(spacing: 8) {
@@ -95,10 +95,10 @@ struct MenuBarExtraView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(row.fromSummary).font(Theme.sender(!row.isRead)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                                    .font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                             }
                             Spacer(minLength: 6)
-                            Text(time(row)).font(.caption2).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                            Text(time(row)).font(Theme.sans(.caption2)).foregroundStyle(Theme.textTertiary).monospacedDigit()
                         }
                         .padding(.vertical, 4).padding(.horizontal, 6)
                         .contentShape(Rectangle())

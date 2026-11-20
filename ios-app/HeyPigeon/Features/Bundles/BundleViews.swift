@@ -63,12 +63,12 @@ struct BundleFoldRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Text(Formatters.rowTime(fold.newest))
-                        .font(.footnote)
+                        .font(Theme.sans(.footnote))
                         .foregroundStyle(Theme.textTertiary)
                         .monospacedDigit()
                 }
                 Text(fold.summary)
-                    .font(.footnote)
+                    .font(Theme.sans(.footnote))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
             }
@@ -242,15 +242,15 @@ struct BundleListRow: View {
         HStack(spacing: 12) {
             BundleIcon(category: bundle.category)
             VStack(alignment: .leading, spacing: 2) {
-                Text(bundle.name).font(.body.weight(.semibold)).lineLimit(1)
+                Text(bundle.name).font(Theme.sans(.body, .semibold)).lineLimit(1)
                 Text(bundle.description.isEmpty ? meta : bundle.description)
-                    .font(.footnote)
+                    .font(Theme.sans(.footnote))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
             if let at = bundle.lastActivityAt {
-                Text(Formatters.rowTime(at)).font(.footnote).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                Text(Formatters.rowTime(at)).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary).monospacedDigit()
             }
         }
         .padding(.vertical, 2)
@@ -394,14 +394,14 @@ struct BundleScreen: View {
                 Section {
                     Label("Made automatically. Tap ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.",
                           systemImage: "sparkles")
-                        .font(.footnote).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
                 }
                 .menuCard()
             }
             Section(c.open.isEmpty ? "Emails" : "Emails · \(c.open.count) open") {
                 if c.threads.isEmpty {
                     Text("No emails yet. Choose Add to bundle… on an email; mail that shares its booking, order or tracking number follows on its own.")
-                        .font(.footnote).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
                 }
                 ForEach(c.open) { row in threadRow(row, dimmed: false) }
                 if !c.done.isEmpty {
@@ -470,7 +470,7 @@ struct BundleScreen: View {
             }
             if !c.bundle.description.isEmpty {
                 Section {
-                    Text(c.bundle.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                    Text(c.bundle.description).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
                 }
                 .menuCard()
             }
@@ -480,8 +480,8 @@ struct BundleScreen: View {
                         Link(destination: l.url) {
                             HStack(spacing: 8) {
                                 Image(systemName: "shippingbox").font(.footnote).foregroundStyle(Theme.tagForeground(.sky))
-                                Text(l.host).font(.subheadline.weight(.medium)).lineLimit(1)
-                                Text(l.subject).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                                Text(l.host).font(Theme.sans(.subheadline, .medium)).lineLimit(1)
+                                Text(l.subject).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                                 Spacer(minLength: 0)
                                 Image(systemName: "arrow.up.right").font(.caption2).foregroundStyle(Theme.textTertiary)
                             }
@@ -498,7 +498,7 @@ struct BundleScreen: View {
                             Button { open(f.threadId) } label: { FactRow(fact: f) }
                                 .buttonStyle(.plain)
                             if let url = f.url {
-                                Link("Track", destination: url).font(.footnote.weight(.semibold))
+                                Link("Track", destination: url).font(Theme.sans(.footnote, .semibold))
                             }
                         }
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -509,7 +509,7 @@ struct BundleScreen: View {
             if c.links.isEmpty && c.facts.isEmpty && !(model.aiConfigured && !c.threads.isEmpty) {
                 Section {
                     Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
-                        .font(.footnote).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
                 }
                 .menuCard()
             }
@@ -535,7 +535,7 @@ struct BriefCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Summary", systemImage: "sparkles")
-                    .font(.caption.weight(.semibold))
+                    .font(Theme.sans(.caption, .semibold))
                     .foregroundStyle(Theme.textTertiary)
                 Spacer()
                 if state?.generating == true {
@@ -549,14 +549,14 @@ struct BriefCard: View {
             }
             if let brief = state?.brief {
                 if !brief.status.isEmpty {
-                    Text(SummaryMarkup.inline(brief.status)).font(.subheadline)
+                    Text(SummaryMarkup.inline(brief.status)).font(Theme.sans(.subheadline))
                 }
                 if !brief.actions.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("To do").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                        Text("To do").font(Theme.sans(.caption, .semibold)).foregroundStyle(Theme.textTertiary)
                         ForEach(brief.actions, id: \.self) { action in
                             Label {
-                                Text(SummaryMarkup.inline(action)).font(.subheadline)
+                                Text(SummaryMarkup.inline(action)).font(Theme.sans(.subheadline))
                             } icon: {
                                 Image(systemName: "circle").font(.caption).foregroundStyle(Theme.accent)
                             }
@@ -564,15 +564,15 @@ struct BriefCard: View {
                     }
                 }
             } else if let error = state?.error {
-                Text(error).font(.footnote).foregroundStyle(Theme.textTertiary)
-                Button("Try again", action: refresh).font(.subheadline)
+                Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
+                Button("Try again", action: refresh).font(Theme.sans(.subheadline))
             } else if state?.generating == true {
-                Text("Reading the bundle…").font(.subheadline).foregroundStyle(Theme.textTertiary)
+                Text("Reading the bundle…").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary)
             } else {
                 Button(action: refresh) {
                     Label("Summarize status and to-dos", systemImage: "text.badge.checkmark")
                 }
-                .font(.subheadline)
+                .font(Theme.sans(.subheadline))
             }
         }
         .padding(.vertical, 4)
@@ -590,10 +590,10 @@ struct FactRow: View {
                 .foregroundStyle(Theme.tagForeground(.sky))
                 .frame(width: 18)
                 .accessibilityHidden(true)
-            Text(fact.category.title).font(.subheadline).foregroundStyle(Theme.textSecondary)
-            Text(fact.value).font(.subheadline.weight(.semibold).monospaced()).lineLimit(1).textSelection(.enabled)
+            Text(fact.category.title).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
+            Text(fact.value).font(Theme.mono(.subheadline, .semibold)).lineLimit(1).textSelection(.enabled)
             Spacer(minLength: 8)
-            Text(Formatters.rowTime(fact.at)).font(.footnote).foregroundStyle(Theme.textTertiary)
+            Text(Formatters.rowTime(fact.at)).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -739,7 +739,7 @@ struct AddToBundleSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(b.name).foregroundStyle(Theme.textPrimary)
                     if let reason {
-                        Text(reason).font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(reason).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
             }

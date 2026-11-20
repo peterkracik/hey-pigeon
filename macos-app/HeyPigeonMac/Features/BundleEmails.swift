@@ -125,7 +125,7 @@ struct BundleEmailList: View {
             Text(text)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 12))
+        .font(Theme.sans(size: 12))
         .foregroundStyle(Theme.textTertiary)
         .padding(.horizontal, 34).padding(.top, 8).padding(.bottom, 10)
         .listRowInsets(EdgeInsets())

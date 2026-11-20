@@ -192,7 +192,7 @@ struct CommandPalette: View {
                     .foregroundStyle(Theme.textTertiary)
                 TextField(placeholder, text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 20))
+                    .font(Theme.sans(size: 20))
                     .focused($focused)
                     .onSubmit { runCursor() }
                     .onExitCommand { close() }
@@ -212,14 +212,14 @@ struct CommandPalette: View {
                                         .frame(width: 20)
                                         .foregroundStyle(index == cursor ? Theme.textPrimary : Theme.textSecondary)
                                     VStack(alignment: .leading, spacing: 1) {
-                                        Text(item.title).font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                                        Text(item.title).font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary)
                                         if let s = item.subtitle {
-                                            Text(s).font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                                            Text(s).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                                         }
                                     }
                                     Spacer()
                                     if let key = item.key {
-                                        Text(key).font(.caption.weight(.semibold).monospaced())
+                                        Text(key).font(Theme.mono(.caption, .semibold))
                                             .foregroundStyle(Theme.textTertiary)
                                             .padding(.horizontal, 6).padding(.vertical, 2)
                                             .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -235,7 +235,7 @@ struct CommandPalette: View {
                             .onHover { if $0 { cursor = index } }
                         }
                         if items.isEmpty {
-                            Text("No matches").font(.subheadline).foregroundStyle(Theme.textTertiary).padding(20)
+                            Text("No matches").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary).padding(20)
                         }
                     }
                     .padding(8)

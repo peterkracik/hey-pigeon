@@ -174,10 +174,10 @@ struct TabPill: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Text(title).font(Theme.sans(size: 13, weight: on ? .semibold : .regular))
                 if let count {
                     Text("\(count)")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(Theme.sans(size: 11, weight: .medium))
                         .foregroundStyle(countColor)
                         .monospacedDigit()
                 }

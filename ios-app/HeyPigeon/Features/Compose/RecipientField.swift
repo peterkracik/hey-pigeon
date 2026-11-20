@@ -42,7 +42,7 @@ struct RecipientField<Field: Hashable>: View {
             FlowLayout(spacing: 6) {
                 ForEach(addresses, id: \.self) { a in
                     HStack(spacing: 4) {
-                        Text(a).font(.footnote).lineLimit(1)
+                        Text(a).font(Theme.sans(.footnote)).lineLimit(1)
                         Button { addresses.removeAll { $0 == a } } label: {
                             Image(systemName: "xmark").font(.caption2.weight(.bold))
                                 // As tall as its chip and no taller: the next
@@ -105,9 +105,9 @@ struct RecipientField<Field: Hashable>: View {
     private func suggestion(_ p: PersonSuggestion) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             if p.person.name != p.person.address {
-                Text(p.person.name).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(p.person.name).font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
             }
-            Text(p.person.address).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+            Text(p.person.address).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)

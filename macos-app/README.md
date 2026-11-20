@@ -29,7 +29,7 @@ macos-app/
                           batch bar), ThreadPage (the title row over the shared ThreadView; + ThreadWindow),
                           WindowState (the open thread, the cursor, the keyboard map, every action),
                           CommandPalette (⌘K; ⌘B for bundles), ShortcutsSheet (?), MenuBarExtraView
-    Resources/            The Mac icon set; drop Manrope-*.ttf into Fonts/ for the brand typeface
+    Resources/            The Mac icon set (the fonts are the phone's: ../ios-app/HeyPigeon/Resources/Fonts)
   HeyPigeonMacShare/      The share menu's "Hey Pigeon": NSViewController over the shared ShareView
   HeyPigeonMacTests/      Swift Testing: the keyboard map, the selection, the palette filter, the widget links
   scripts/build-rust.sh   cargo (aarch64-apple-darwin) → uniffi → xcframework, via the iOS script

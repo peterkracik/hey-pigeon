@@ -43,7 +43,7 @@ struct AskSheet: View {
                             .id(i)
                         }
                         Text("Answered on this \(Device.name) from the index Siri uses. Nothing is sent anywhere.")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(20)
@@ -67,10 +67,10 @@ struct AskSheet: View {
     private var starter: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Ask about your own mail — who said what, when something is, what is still open.")
-                .font(.body).foregroundStyle(Theme.textSecondary)
+                .font(Theme.sans(.body)).foregroundStyle(Theme.textSecondary)
             ForEach(Self.suggestions, id: \.self) { s in
                 Button { question = s; ask() } label: {
-                    Text(s).font(.subheadline.weight(.medium)).foregroundStyle(Theme.textPrimary)
+                    Text(s).font(Theme.sans(.subheadline, .medium)).foregroundStyle(Theme.textPrimary)
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
@@ -123,11 +123,11 @@ private struct ConversationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(conversation.question)
-                .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                .font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.textSecondary)
             // An error wins over a partial answer, as before.
             ResultState(working: "Looking through your mail…", error: conversation.error,
                         isReady: conversation.error == nil && !conversation.answer.isEmpty, retry: retry) {
-                SummaryTextView(text: conversation.answer).font(.body).foregroundStyle(Theme.textPrimary)
+                SummaryTextView(text: conversation.answer).font(Theme.sans(.body)).foregroundStyle(Theme.textPrimary)
             }
             if !conversation.citations.isEmpty {
                 VStack(spacing: 1) {

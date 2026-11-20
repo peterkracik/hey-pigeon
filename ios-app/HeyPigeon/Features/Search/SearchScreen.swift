@@ -70,7 +70,7 @@ struct GmailSearchRow: View {
                 Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail")
                 Spacer()
             }
-            .font(inPanel ? .system(size: 12, weight: .medium) : .footnote.weight(.semibold))
+            .font(inPanel ? Theme.sans(size: 12, weight: .medium) : Theme.sans(.footnote, .semibold))
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, inPanel ? 20 : 16)
             .padding(.vertical, inPanel ? 0 : 12)
@@ -210,7 +210,7 @@ private struct FilterPillLabel: View {
                     .foregroundStyle(isOn ? Theme.canvas.opacity(0.7) : Theme.textTertiary)
             }
         }
-        .font(.subheadline.weight(.semibold))
+        .font(Theme.sans(.subheadline, .semibold))
         .foregroundStyle(isOn ? Theme.canvas : Theme.textPrimary)
         .padding(.leading, 12)
         .padding(.trailing, trailingPadding ?? 12)
@@ -301,9 +301,9 @@ struct PersonPicker: View {
     private func row(_ item: PersonSuggestion) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                name(item).font(.body.weight(.semibold)).lineLimit(1)
+                name(item).font(Theme.sans(.body, .semibold)).lineLimit(1)
                 Text(item.person.address)
-                    .font(.footnote)
+                    .font(Theme.sans(.footnote))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
@@ -365,7 +365,7 @@ struct RecentSearches: View {
                             .foregroundStyle(Theme.textTertiary)
                         Spacer()
                         Button("Clear") { model.clearRecentSearches() }
-                            .font(.footnote.weight(.semibold))
+                            .font(Theme.sans(.footnote, .semibold))
                             .foregroundStyle(Theme.accent)
                     }
                     .textCase(nil)

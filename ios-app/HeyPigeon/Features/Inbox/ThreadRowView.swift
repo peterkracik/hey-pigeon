@@ -41,12 +41,12 @@ struct ThreadRowView: View {
                     .font(Theme.sender(!row.isRead))
                     .lineLimit(1)
                 if row.isConversation {
-                    Text("\(row.messageCount)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                    Text("\(row.messageCount)").font(Theme.sans(.caption, .semibold)).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer(minLength: 8)
                 trailingMarks
                 Text(timeText)
-                    .font(.footnote)
+                    .font(Theme.sans(.footnote))
                     .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
                     .monospacedDigit()
             }
@@ -54,7 +54,7 @@ struct ThreadRowView: View {
             // draft, paperclip); labels and the bundle get their own line.
             HStack(spacing: 8) {
                 highlighted(row.subject.isEmpty ? "(no subject)" : row.subject)
-                    .font(.footnote.weight(row.isRead ? .regular : .semibold))
+                    .font(Theme.sans(.footnote, row.isRead ? .regular : .semibold))
                     .foregroundStyle(tone)
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -77,7 +77,7 @@ struct ThreadRowView: View {
             }
             if !row.snippet.isEmpty {
                 highlighted(row.snippet)
-                    .font(.footnote)
+                    .font(Theme.sans(.footnote))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
@@ -162,7 +162,7 @@ struct Chip: View {
     var body: some View {
         HStack(spacing: 4) {
             if let systemImage { Image(systemName: systemImage).font(.caption2) }
-            if !text.isEmpty { Text(text).font(.caption.weight(.semibold)).lineLimit(1) }
+            if !text.isEmpty { Text(text).font(Theme.sans(.caption, .semibold)).lineLimit(1) }
         }
         .foregroundStyle(foreground)
         .padding(.horizontal, capsule ? 9 : 7).padding(.vertical, 2)

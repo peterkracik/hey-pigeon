@@ -27,10 +27,10 @@ struct SummarySheet: View {
                 VStack(alignment: .leading, spacing: 12) {
                     ResultState(working: "Summarizing…", error: summary?.error, isReady: summary?.text != nil,
                                 retry: { model.retrySummary(presentation) }) {
-                        SummaryTextView(text: summary?.text ?? "").font(.body).foregroundStyle(Theme.textPrimary)
+                        SummaryTextView(text: summary?.text ?? "").font(Theme.sans(.body)).foregroundStyle(Theme.textPrimary)
                     }
                     Text(footnote)
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                         .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

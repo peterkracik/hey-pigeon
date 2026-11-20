@@ -55,10 +55,10 @@ struct ShortcutsSheet: View {
                             ForEach(rows, id: \.0) { key, what in
                                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                                     Text(key)
-                                        .font(.subheadline.weight(.semibold).monospaced())
+                                        .font(Theme.mono(.subheadline, .semibold))
                                         .foregroundStyle(Theme.textPrimary)
                                         .frame(width: 120, alignment: .leading)
-                                    Text(what).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                                    Text(what).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
                                 }
                             }
                         }
@@ -66,7 +66,7 @@ struct ShortcutsSheet: View {
                         .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     Text("The letters work while the list or the thread has the keyboard, never inside a text field. Every action is also in the Message and Go menus, with ⌘ shortcuts.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(.horizontal, 20).padding(.bottom, 20)
             }

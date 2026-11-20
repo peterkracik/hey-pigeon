@@ -38,7 +38,7 @@ struct RemindSheet: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Only if nobody replies")
                         Text("Clears itself as soon as someone else writes in the thread.")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 .tint(Theme.accent)

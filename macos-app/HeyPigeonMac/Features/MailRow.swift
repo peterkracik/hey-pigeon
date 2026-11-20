@@ -210,7 +210,7 @@ struct MailRow: View {
     private var trailing: some View {
         ZStack(alignment: .trailing) {
             Text(expanded ? Formatters.fullDate(row.lastMessageAt) : Formatters.rowTime(row.lastMessageAt))
-                .font(.system(size: 12))
+                .font(Theme.sans(size: 12))
                 .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -255,12 +255,12 @@ struct MailLineSender: View {
     var body: some View {
         HStack(spacing: 5) {
             Text(row.fromSummary)
-                .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
+                .font(Theme.sans(size: 13, weight: row.isRead ? .regular : .semibold))
                 .foregroundStyle(dimmed ? Theme.textSecondary : Theme.textPrimary)
                 .lineLimit(1)
             if showsCount && row.isConversation {
                 Text("\(row.messageCount)")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Theme.sans(size: 11, weight: .medium))
                     .foregroundStyle(Theme.textTertiary)
                     .monospacedDigit()
             }
@@ -279,12 +279,12 @@ struct MailLineSubject: View {
     var body: some View {
         HStack(spacing: gap) {
             Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                .font(.system(size: 13, weight: row.isRead ? .regular : .semibold))
+                .font(Theme.sans(size: 13, weight: row.isRead ? .regular : .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .layoutPriority(1)
             Text(row.snippet)
-                .font(.system(size: 13))
+                .font(Theme.sans(size: 13))
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
         }
@@ -307,7 +307,7 @@ private struct RowChip: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: systemImage).font(.system(size: 9, weight: .semibold))
-            Text(text).font(.system(size: 11, weight: .medium)).lineLimit(1)
+            Text(text).font(Theme.sans(size: 11, weight: .medium)).lineLimit(1)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 7).padding(.vertical, 3)
@@ -372,7 +372,7 @@ struct MailPreview: View {
         VStack(alignment: .leading, spacing: 12) {
             if let last = detail?.mail.last {
                 Text("\(last.isMine ? "Me" : last.fromName) to \(last.to.joined(separator: ", "))")
-                    .font(.system(size: 12))
+                    .font(Theme.sans(size: 12))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                 MessageBodyView(html: last.bodyHTML, text: last.bodyText ?? last.snippet, senderAddress: last.fromAddress,
@@ -383,7 +383,7 @@ struct MailPreview: View {
                 let files = (attachments[last.id] ?? []).filter { !InlineImages.isShownInline($0, in: last.bodyHTML) }
                 if !files.isEmpty { AttachmentChips(attachments: files) }
             } else if let failed {
-                Text(failed).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                Text(failed).font(Theme.sans(size: 13)).foregroundStyle(Theme.textSecondary)
             } else {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 18)
             }
@@ -393,7 +393,7 @@ struct MailPreview: View {
                 PillButton(title: "Forward", systemImage: "arrowshape.turn.up.right") { state.run(.forward, in: model, rows: [row]) }
                 Spacer(minLength: 8)
                 if row.isConversation {
-                    Text("\(row.messageCount) messages").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+                    Text("\(row.messageCount) messages").font(Theme.sans(size: 12)).foregroundStyle(Theme.textTertiary)
                 }
                 PillButton(title: "Open full thread", trailingImage: "chevron.right", strong: true) {
                     state.open(row, in: model)
@@ -457,7 +457,7 @@ struct PillButton: View {
     var body: some View {
         Button(action: action) {
             content
-                .font(.system(size: 12, weight: strong ? .semibold : .medium))
+                .font(Theme.sans(size: 12, weight: strong ? .semibold : .medium))
                 .foregroundStyle(strong ? Theme.textPrimary : Theme.textSecondary)
                 .padding(.horizontal, strong ? 12 : 10).frame(height: 28)
                 .background(fill, in: Capsule())

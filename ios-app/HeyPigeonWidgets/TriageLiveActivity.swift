@@ -22,12 +22,12 @@ struct TriageLiveActivity: Widget {
                         .font(.title2).foregroundStyle(WidgetPalette.accent)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(TriageTally.short(context.state)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(TriageTally.short(context.state)).font(Typeface.sans(.caption, .semibold)).foregroundStyle(.secondary)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(context.state.phaseTitle + (context.state.isDryRun ? " · dry run" : "")).font(.headline).lineLimit(1)
-                        if let s = context.state.currentSubject { Text(s).font(.subheadline).lineLimit(1) }
+                        Text(context.state.phaseTitle + (context.state.isDryRun ? " · dry run" : "")).font(Typeface.sans(.headline, .semibold)).lineLimit(1)
+                        if let s = context.state.currentSubject { Text(s).font(Typeface.sans(.subheadline)).lineLimit(1) }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -37,7 +37,7 @@ struct TriageLiveActivity: Widget {
                 Image(systemName: "sparkles").foregroundStyle(WidgetPalette.accent)
             } compactTrailing: {
                 Text(context.state.isFinished ? "Done" : "\(context.state.proposed)")
-                    .font(.caption.weight(.semibold)).monospacedDigit()
+                    .font(Typeface.sans(.caption, .semibold)).monospacedDigit()
             } minimal: {
                 Image(systemName: "sparkles").foregroundStyle(WidgetPalette.accent)
             }
@@ -67,14 +67,14 @@ private struct TriageLockScreenView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(state.isDryRun ? "Triage · dry run" : "Triage", systemImage: "sparkles")
-                    .font(.caption.weight(.semibold)).foregroundStyle(WidgetPalette.accent)
+                    .font(Typeface.sans(.caption, .semibold)).foregroundStyle(WidgetPalette.accent)
                 Spacer()
-                Text(state.phaseTitle).font(.caption).foregroundStyle(.secondary)
+                Text(state.phaseTitle).font(Typeface.sans(.caption)).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(TriageTally.long(state)).font(.headline).monospacedDigit()
+                Text(TriageTally.long(state)).font(Typeface.sans(.headline, .semibold)).monospacedDigit()
                 if let s = state.currentSubject, !state.isFinished {
-                    Text(s).font(.subheadline).lineLimit(1).foregroundStyle(.secondary)
+                    Text(s).font(Typeface.sans(.subheadline)).lineLimit(1).foregroundStyle(.secondary)
                 }
             }
             if !state.isFinished { StopButton() }
@@ -87,7 +87,7 @@ private struct StopButton: View {
     var body: some View {
         HStack {
             Button(intent: WidgetCancelTriageIntent()) {
-                Label("Stop", systemImage: "stop.fill").font(.caption.weight(.semibold))
+                Label("Stop", systemImage: "stop.fill").font(Typeface.sans(.caption, .semibold))
             }
             .buttonStyle(.bordered)
             Spacer()

@@ -63,7 +63,7 @@ struct MainToolbar: ToolbarContent {
             if let otherTitle {
                 ToolbarItem(placement: .navigation) {
                     Text(otherTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(Theme.sans(size: 14, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                         .padding(.horizontal, 6)
@@ -77,7 +77,7 @@ struct MainToolbar: ToolbarContent {
                 if !Connectivity.shared.isOnline {
                     Label(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send" : "Offline", systemImage: "wifi.slash")
                         .labelStyle(.titleAndIcon)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(Theme.sans(size: 12, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 6)
                         .help("No network. What you do is kept and sent when it is back.")

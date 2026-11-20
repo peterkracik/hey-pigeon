@@ -41,12 +41,12 @@ struct ComposeThreadHistory: View {
                 if let onQuote, let last = mail.last {
                     HStack {
                         Text(mail.count == 1 ? "Replying to" : "Conversation")
-                            .font(.footnote.weight(.semibold))
+                            .font(Theme.sans(.footnote, .semibold))
                             .foregroundStyle(Theme.textTertiary)
                         Spacer()
                         Button { onQuote(last) } label: {
                             Label("Quote in reply", systemImage: "text.quote")
-                                .font(.footnote.weight(.semibold))
+                                .font(Theme.sans(.footnote, .semibold))
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(Theme.accent)

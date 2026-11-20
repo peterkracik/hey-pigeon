@@ -37,7 +37,7 @@ struct BundleInfoPage: View {
             VStack(alignment: .leading, spacing: 0) {
                 if !contents.bundle.description.isEmpty {
                     Text(contents.bundle.description)
-                        .font(.system(size: 13))
+                        .font(Theme.sans(size: 13))
                         .foregroundStyle(Theme.textSecondary)
                         .textSelection(.enabled)
                         .padding(.horizontal, 18).padding(.top, 10)
@@ -61,7 +61,7 @@ struct BundleInfoPage: View {
                 }
                 if shipments.isEmpty && facts.isEmpty && !showsSummary {
                     Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
-                        .font(.system(size: 13))
+                        .font(Theme.sans(size: 13))
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.horizontal, 18).padding(.top, 16)
                 }
@@ -158,17 +158,17 @@ struct BundleInfoPage: View {
                 .foregroundStyle(Theme.tagForeground(.sky))
                 .frame(width: 18)
             Text(who)
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.sans(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .frame(width: 132, alignment: .leading)
             Text(status)
-                .font(.system(size: 13))
+                .font(Theme.sans(size: 13))
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
             if earlier > 0 {
                 Text("+\(earlier) earlier")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Theme.sans(size: 11, weight: .medium))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                     .layoutPriority(1)
@@ -204,13 +204,13 @@ struct BundleInfoPage: View {
                 .frame(width: 18)
                 .opacity(namesKind ? 1 : 0)
             Text(fact.category.title)
-                .font(.system(size: 13))
+                .font(Theme.sans(size: 13))
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: 132, alignment: .leading)
                 .opacity(namesKind ? 1 : 0)
             Text(fact.value)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .font(Theme.mono(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
         }
@@ -284,7 +284,7 @@ private struct BundleInfoRow<Line: View>: View {
                         Text(chip.title)
                         Image(systemName: chip.systemImage).font(.system(size: 9, weight: .semibold))
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Theme.sans(size: 11, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).frame(height: 22)
                     .background(MacTheme.selected, in: Capsule())
@@ -296,7 +296,7 @@ private struct BundleInfoRow<Line: View>: View {
             }
             ZStack(alignment: .trailing) {
                 Text(time)
-                    .font(.system(size: 12))
+                    .font(Theme.sans(size: 12))
                     .foregroundStyle(Theme.textTertiary)
                     .monospacedDigit()
                     .lineLimit(1)
@@ -346,7 +346,7 @@ private struct BundleSummary: View {
             if let brief = state?.brief {
                 if !brief.status.isEmpty {
                     Text(SummaryMarkup.inline(brief.status))
-                        .font(.system(size: 14))
+                        .font(Theme.sans(size: 14))
                         .lineSpacing(3)
                         .foregroundStyle(Theme.textPrimary)
                         .textSelection(.enabled)
@@ -355,7 +355,7 @@ private struct BundleSummary: View {
                 if !brief.actions.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("To do")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(Theme.sans(size: 11, weight: .semibold))
                             .foregroundStyle(Theme.textTertiary)
                             .accessibilityAddTraits(.isHeader)
                         ForEach(brief.actions, id: \.self) { action in
@@ -365,7 +365,7 @@ private struct BundleSummary: View {
                                     .foregroundStyle(Theme.accent)
                                     .accessibilityHidden(true)
                                 Text(SummaryMarkup.inline(action))
-                                    .font(.system(size: 13))
+                                    .font(Theme.sans(size: 13))
                                     .foregroundStyle(Theme.textPrimary)
                                     .textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -392,14 +392,14 @@ private struct BundleSummary: View {
 
     private func quiet(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13))
+            .font(Theme.sans(size: 13))
             .foregroundStyle(Theme.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func ask(_ title: String, systemImage: String) -> some View {
         Button(action: refresh) {
-            Label(title, systemImage: systemImage).font(.system(size: 12, weight: .medium))
+            Label(title, systemImage: systemImage).font(Theme.sans(size: 12, weight: .medium))
         }
         .pillButton()
     }

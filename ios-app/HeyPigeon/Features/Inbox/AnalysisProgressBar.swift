@@ -15,10 +15,10 @@ struct AnalysisProgressRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles").foregroundStyle(Theme.accent)
-                Text("Analyzing emails").font(.footnote.weight(.semibold))
+                Text("Analyzing emails").font(Theme.sans(.footnote, .semibold))
                 Spacer(minLength: 8)
                 Text(Self.count(progress))
-                    .font(.footnote).monospacedDigit().foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.footnote)).monospacedDigit().foregroundStyle(Theme.textTertiary)
                     .contentTransition(.numericText())
             }
             ProgressView(value: progress.fraction)

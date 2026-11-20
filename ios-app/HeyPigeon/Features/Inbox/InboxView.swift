@@ -198,7 +198,7 @@ struct OfflineBar: View {
         if !Connectivity.shared.isOnline {
             Label(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send when it is back" : "Offline",
                   systemImage: "wifi.slash")
-                .font(.footnote.weight(.medium))
+                .font(Theme.sans(.footnote, .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
@@ -211,7 +211,7 @@ struct OfflineBar: View {
             Button { model.openOutbox() } label: {
                 Label("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent · Review",
                       systemImage: "exclamationmark.triangle")
-                    .font(.footnote.weight(.medium))
+                    .font(Theme.sans(.footnote, .medium))
                     .foregroundStyle(Theme.warning)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(Theme.sunken)
@@ -284,19 +284,19 @@ struct ListTitle: View {
         HStack(spacing: 6) {
             Text(title).font(Theme.display(17, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
             if count > 0 {
-                Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                Text("\(count)").font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.textTertiary)
             }
             if model.accounts.count > 1 {
                 if let a = model.currentAccount {
                     Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
-                    Text(a.displayName).font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    Text(a.displayName).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 } else {
                     HStack(spacing: -2) {
                         ForEach(model.accounts.prefix(3)) { a in
                             Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
                         }
                     }
-                    Text("All").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                    Text("All").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
                 }
                 Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
             }
@@ -387,8 +387,8 @@ struct TriageSplitBar: View {
     /// One label as it is drawn: its name, the count behind the folder's.
     private func segmentLabel(title: String, count: Int, on: Bool) -> some View {
         HStack(spacing: 6) {
-            Text(title).font(.subheadline.weight(on ? .bold : .medium))
-            if count > 0 { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
+            Text(title).font(Theme.sans(.subheadline, on ? .bold : .medium))
+            if count > 0 { Text("\(count)").font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.textTertiary) }
         }
         .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -873,7 +873,7 @@ struct EmptyState: View {
             } actions: {
                 Button(action: connect) {
                     Text("Add Google account")
-                        .font(.subheadline.weight(.bold))
+                        .font(Theme.sans(.subheadline, .bold))
                         .foregroundStyle(Theme.onPrimary)
                         .padding(.horizontal, 6)
                 }

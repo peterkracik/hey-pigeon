@@ -227,7 +227,7 @@ private struct SidebarRow: View {
                     .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                     .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 13))
+                    .font(Theme.sans(size: 13))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -235,7 +235,7 @@ private struct SidebarRow: View {
                     Color.clear.frame(width: 18, height: 1)
                 } else if let trailing {
                     trailing
-                        .font(.system(size: 11, weight: .medium))
+                        .font(Theme.sans(size: 11, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
                         .monospacedDigit()
                 }
@@ -297,7 +297,7 @@ private struct MoreLabelsRow: View {
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 18)
                 Text(expanded ? "Show less" : "\(hidden) more")
-                    .font(.system(size: 13))
+                    .font(Theme.sans(size: 13))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
@@ -322,7 +322,7 @@ private struct SectionHeader: View {
             withAnimation(.snappy(duration: 0.2)) { open.toggle() }
         } label: {
             HStack(spacing: 5) {
-                Text(title).font(.system(size: 12, weight: .medium))
+                Text(title).font(Theme.sans(size: 12, weight: .medium))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .rotationEffect(.degrees(open ? 0 : -90))
@@ -371,8 +371,8 @@ private struct AccountFooter: View {
                 HStack(spacing: 8) {
                     avatar
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        Text(name).font(Theme.sans(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Text(detail).font(Theme.sans(size: 11)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -399,7 +399,7 @@ private struct AccountFooter: View {
     @ViewBuilder private var avatar: some View {
         if let a = model.currentAccount {
             Text(String(a.displayName.prefix(1)).uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.sans(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.tagForeground(a.color))
                 .frame(width: 24, height: 24)
                 .background(Theme.tagBackground(a.color), in: Circle())

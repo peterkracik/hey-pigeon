@@ -56,7 +56,7 @@ struct SwipeableRow<Content: View>: View {
                     if tier < 0 { Spacer(minLength: 0) }
                     VStack(spacing: 3) {
                         Image(systemName: action.systemImage).font(.title3.weight(.semibold))
-                        Text(action.title).font(.caption2.weight(.semibold)).lineLimit(1)
+                        Text(action.title).font(Theme.sans(.caption2, .semibold)).lineLimit(1)
                     }
                     .foregroundStyle(.white)
                     .frame(width: max(abs(offset), 64))

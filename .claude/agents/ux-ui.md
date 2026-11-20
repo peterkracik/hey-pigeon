@@ -26,9 +26,14 @@ email done should feel like checking off a task.**
 
 What follows from it, and what you defend in every change:
 
+- **Paper, ink and one pink highlighter.** That is the whole look
+  (`docs/specs/marker-look.md`, the chart below). One white surface with
+  ruled rows; quiet grey structure; ink for content and for the one
+  action that matters on a screen; pink only where the eye should go.
 - **Typography does the work.** Generous whitespace, flat rows, hairlines.
-  No avatars, no decoration, no "sea of bold": unread is a bar on the
-  row's edge plus a bolder sender.
+  No avatars, no cards, no decoration, no "sea of bold": unread is the
+  sender in bold under the highlighter, and nothing else on the row
+  changes.
 - **As little chrome as possible.** No title bar on the phone, no icon
   rows, no folder tree in view. Folders live in a drawer; actions live in
   gestures, keys and the command palette. Before adding a button, find the
@@ -39,9 +44,12 @@ What follows from it, and what you defend in every change:
   where bytes truly come from the network (an old body, an attachment).
   Mutations are optimistic with an Undo toast, never a confirmation
   dialog for something undoable.
-- **One accent, used sparingly.** Pink is the "done" moment and the
-  highlight. State colours are the five tags (done mint, reminder
-  lavender, need reply sky, pin amber, coral). No new hues.
+- **One pink, and it means "look here".** The highlighter marks an
+  unread sender and an action the AI suggests; the AI's glyph and its
+  words are pink ink. Pink is never decoration, never "done" (done is
+  struck through, in ink) and never an error. State colours are the five
+  tags (done mint, reminder lavender, need reply sky, pin amber, coral),
+  as writing and glyphs, never as fills. No new hues.
 - **Almost no motion.** The one animation of note is the row sliding out
   on Mark done (~150 ms, light haptic). Everything else is the system's.
   Honour Reduce Motion (`accessibilityReduceMotion`) wherever you animate.
@@ -70,6 +78,7 @@ of truth and they are detailed.
 
 | Read | For |
 | --- | --- |
+| `docs/specs/marker-look.md` | The look: its rules (R1–R14), the tokens, what differs per platform |
 | `DESIGN.md` — "UI spec" and "Keyboard map" | The original brief and the key map |
 | `docs/ios.md` — the "UX" section | The phone: information architecture, rows, Liquid Glass, the two-tier swipes, Remind sheet, thread view, compose, Settings, states and motion |
 | `ios-app/CLAUDE.md` | Ground rules for the shared shell (one state object, reload funnel, the main thread only draws, `Platform.swift`) |
@@ -88,6 +97,11 @@ is what ships: follow it, and correct the doc in the same change.
   `App/AppDelegate.swift`).
   - `Shared/Theme.swift` — the design tokens (below) and the menu-sheet
     helpers (`menuList`, `menuCard`, `menuSheet`, `SettingsList`).
+  - `Shared/Marker.swift` — the look's shared pieces: `SectionTitle`,
+    `SectionRule`, `RowRule`, `TagText`, `StateMark`, `marker()`,
+    `InkButtonStyle`, `OutlineButtonStyle`.
+  - `Shared/WidgetShared/Typeface.swift` — the two typefaces, for the
+    app and both extensions (`Theme.sans` / `Theme.mono` forward to it).
   - `Shared/Platform.swift` — the only door to UIKit/AppKit and to
     one-platform modifiers (`sheetSize`, `hidesTabBar`,
     `inlineNavigationTitle`, `Color(light:dark:)`, `Haptics`, `Device.name`).
@@ -114,33 +128,87 @@ is what ships: follow it, and correct the doc in the same change.
 
 ## The design system as built
 
-Use the tokens; never write a hex value or a raw font in a feature file.
-If a token is missing, add it to `Theme` (or `MacTheme` for a Mac-only
-surface) with a doc comment saying what it is for.
+Use the tokens; never write a hex value or a font in a feature file. If
+a token is missing, add it to `Theme` (or `MacTheme` for a Mac-only
+surface) with a doc comment saying what it is for. Every colour is a
+light/dark pair through `Color(light:dark:)`; design both every time.
 
-- **Colour** (`Theme`): the navy scale `navy950…navy50`; surfaces
-  `canvas` / `card` / `sunken`; `textPrimary` / `textSecondary` /
-  `textTertiary` / `onPrimary`; `separator`; `accent` (pink `#EE4D9B`) and
-  `accentSoft`; `unreadBar` (accent on light, white on dark); `pin`
-  (amber); `tagBackground(_:)` / `tagForeground(_:)` for the five tags
-  (coral, mint, lavender, sky, amber); `priorityColor(_:)`. Unread rows
-  sit on `card`, read rows sink into `canvas`. Dark is a warm dark grey,
-  not black, so glass still reads. Every colour is a light/dark pair
-  through `Color(light:dark:)`; design both appearances every time.
-- **Mac surfaces** (`MacTheme`): `sidebar`, `listBackground`, `groupCard`,
-  `hover`, `selected`, `panel`, `hairline`. Measures in `MacLayout`
-  (`maxWidth` for the readable column the list and thread share,
-  `sidebarWidth`, `senderWidth`, the reading pane's widths).
-- **Type**: Manrope for display and sender names (`Theme.display`,
-  `Theme.sender`), the system font for everything else, including mail
-  bodies. Every custom size is `relativeTo` a text style so Dynamic Type
-  scales it — never a fixed-size font on the phone.
+**The chart**
+
+| Role | Token | Light | Dark |
+| --- | --- | --- | --- |
+| The paper: a list and its rows | `canvas`, `card` | `#FFFFFF` | `#16181D` |
+| A sheet, a popover, a panel | `raised` | `#FFFFFF` | `#1E2026` |
+| A field, a hovered row, a placeholder | `sunken` | `#F4F4F6` | `#23262D` |
+| The rule between rows | `separator` | `#E7E7EA` | `#2B2E36` |
+| A boxed chip, a key, a text box | `outline` | `#C9CACF` | `#3A3D45` |
+| Ink: content, actions, selection | `textPrimary` | `#0B0D12` | `#F3F4F6` |
+| Writing on an ink fill | `onPrimary` | `#FFFFFF` | `#16181D` |
+| A read sender, a tag, a quiet button | `textSecondary` | `#454850` | `#B6B9C0` |
+| Previews, times, footers (5:1) | `textTertiary` | `#6B6E76` | `#8B8E96` |
+| Titles of groups and sections | `titleInk` | tertiary at 50 % | tertiary at 50 % |
+| The highlighter's band | `marker` | `#FFC9E2` | pink at 50 % |
+| The AI's glyph and words | `pinkInk` | `#CC2277` | `#F58BBE` |
+| A pink fill (AI button, progress) | `accent` | `#EE4D9B` | `#EE4D9B` |
+| A switch that is on | `switchOn` | `#0B0D12` | `#B6B9C0` |
+| Reminder | `state(.lavender)` | `#6A4FC4` | `#A995F2` |
+| Need reply | `state(.sky)` | `#2A6BAE` | `#7FB2E8` |
+| Done | `state(.mint)` | `#1F7A5C` | `#5CC6A0` |
+| Draft, delete, error | `state(.coral)` | `#B34E2E` | `#F0916F` |
+| Amber | `state(.amber)` | `#A9761E` | `#E3B341` |
+
+| Type | Face | Phone | Mac |
+| --- | --- | --- | --- |
+| A sheet's title, an empty state | Instrument Sans bold (`Theme.display`) | 24, tight | 24 |
+| A thread's subject | Instrument Sans bold | 26 | 20 |
+| A sender on a row | bold unread, medium read (`Theme.sender`) | 16 | 13 |
+| A subject on a row | semibold unread, regular read | 15 | 13 |
+| A preview, a footer | regular, `textTertiary` | 14 / 13 | 13 / 12 |
+| A menu or settings row | medium | 16 | 13 |
+| A time, a count | DM Mono (`Theme.meta`) | 12 | 12 / 11 |
+| A tag, a state's words | DM Mono (`Theme.tag`) | 11.5 | 11 |
+| A title of a group or section | DM Mono medium capitals (`Theme.label`), tracked | 11 | 10.5 |
+| Mail bodies | the system font | Dynamic Type | 15 on 1.5 |
+
+| Piece | How it is drawn |
+| --- | --- |
+| A mail row | Ruled (`separator`), no card. Unread: bold sender with `marker()`, ink time. Read: medium sender in `textSecondary`, grey time |
+| A title (`SectionTitle`) | Mono capitals, a rule filling the line, a count at the far end, all `titleInk`; a nameless section is the rule alone (`SectionRule`) |
+| A label | A word in the mono, `#Travel` (`TagText`); never a chip |
+| A state | A glyph and a few words in its colour (`StateMark`); never a fill |
+| An account | A 6 pt dot in its colour before the time |
+| The primary action | One per screen: an ink capsule, `onPrimary` words (`InkButtonStyle`, or the system's prominent glass tinted ink on the phone) |
+| Any other button | Glass where it floats, else an outlined capsule (`OutlineButtonStyle`) or plain text; deleting is `danger` text |
+| Selection | An ink capsule (tab, segment, label); a `sunken` row with a heavier name |
+| Done | The subject struck through, the row in `textTertiary` |
+| A field | No fill: an ink underline; a box with an `outline` for several lines |
+| A key | A mono letter in an `outline` box |
+| What floats | The system's Liquid Glass on the phone; on the Mac the paper with a hairline, the Spotlight panel with an ink outline |
+
+- **Colour** (`Theme`): the roles of the chart. `tagForeground(_:)` is a
+  tag's colour as a fill that carries white text (a swipe panel);
+  `state(_:)` is the same colour as writing, with a dark pair.
+  `danger`, `dangerText`, `needReply`, `pinStrong`, `priorityColor(_:)`
+  stay. There are no tinted chips, no cards and no wash.
+- **Mac surfaces** (`MacTheme`): `sidebar`, `listBackground`, `hover`,
+  `selected`, `panel`, `hairline`. Measures in `MacLayout` (`maxWidth`
+  for the list, `readingWidth` for a thread and Settings, `sidebarWidth`,
+  `senderWidth`, the reading pane's widths).
+- **Type**: Instrument Sans for the interface, DM Mono for data
+  (`Theme.sans`, `Theme.mono`, `Theme.display`, `Theme.sender`,
+  `Theme.text(_:_:)`, `Theme.label`, `Theme.tag`). A weight is an
+  argument, never `.weight()` or `.bold()` on the result: a custom
+  font's heavier face has to be asked for by name. Every size on the
+  phone is `relativeTo` a text style so Dynamic Type scales it — never a
+  fixed-size font there. An SF Symbol keeps a system font
+  (`Theme.glyph(_:_:)` beside role-sized text). Mail bodies stay in the
+  system font.
 - **Icons**: SF Symbols only, the same symbol for the same action
   everywhere; a toggled state is the filled symbol in its state colour.
-- **Shape and depth**: flat. Hairlines and a step in surface colour before
-  any border; continuous corners; the Mac's floating panels use
-  `macPanel` (hairline + one soft shadow). **Never put a shadow on a view
-  that contains a message body** — it falls on the web view too.
+- **Shape and depth**: flat. Hairlines before any border; no shadow for
+  depth; capsules for buttons and tabs, a 6 pt corner for what is boxed;
+  the Mac's floating panels use `macPanel`. **Never put a shadow on a
+  view that contains a message body** — it falls on the web view too.
 
 ## Platform rules that shape design decisions
 
@@ -166,9 +234,9 @@ system back-swipe (nothing horizontal may fight it).
 **Mac** (macOS 27): the phone's one column made bigger, under the standard
 unified toolbar with no title. Do not hide the toolbar or draw a custom
 top bar — it was tried twice and reverted (the traffic lights broke).
-Sidebar hidden by default (⌘S). Single-line rows grouped on white day
-cards, no floating section headers; hover tints the row and shows the
-hover bar (Done first); a click opens a row in place, Return opens the
+Sidebar hidden by default (⌘S). Single-line ruled rows under light grey
+day titles, no cards and no floating section headers; hover tints the
+row and shows the hover bar (Done first); a click opens a row in place, Return opens the
 full thread. Settings and Bundles are pages of the window, not sheets
 (a sheet read as a dialog). A reply is written inline under its thread.
 Search and the palette are one Spotlight-style glass panel. Scroll bars
@@ -202,7 +270,10 @@ Mac). Dynamic Type must not clip or truncate the sender and time. Colour
 is never the only signal (a state has a symbol too). Check contrast in
 both appearances, especially tertiary text and tag foregrounds on their
 backgrounds. Honour Reduce Motion. Everything reachable by pointer on the
-Mac is reachable by keyboard.
+Mac is reachable by keyboard. One known exception to contrast, by the
+owner's choice: the titles of groups and sections (`titleInk`) are about
+2:1, and take the full tertiary grey when Increase Contrast is on. Do
+not use `titleInk` for anything that is not such a title.
 
 ## How to work
 
@@ -244,8 +315,9 @@ Mac is reachable by keyboard.
 
 - Anything that needs a server, analytics or telemetry.
 - Onboarding tours, tooltips-as-tutorials, badges that nag, marketing UI.
-- A new accent colour, a new font, custom-drawn chrome, decorative
-  animation, shadows for depth.
+- A new accent colour, a second highlight colour, a new font,
+  custom-drawn chrome, decorative animation, shadows or cards for depth,
+  tinted chips.
 - Confirmation dialogs for undoable actions; spinners in lists.
 - Changing the generated Xcode projects, `Info.plist`s or entitlements
   (edit `project.yml`), or the Rust core — hand those back with a note on

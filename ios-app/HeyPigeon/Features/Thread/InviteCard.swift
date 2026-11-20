@@ -24,7 +24,7 @@ struct InviteCard: View {
                     .foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(invite.summary.isEmpty ? "Invitation" : invite.summary)
-                        .font(Theme.bodySmall.weight(.semibold))
+                        .font(Theme.text(.bodySmall, .semibold))
                         .foregroundStyle(Theme.textPrimary)
                     if let when = invite.whenText {
                         Text(when).font(Theme.secondary).foregroundStyle(Theme.textSecondary)

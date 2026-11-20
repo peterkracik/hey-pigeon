@@ -144,7 +144,7 @@ private struct BatchBar: View {
     var body: some View {
         HStack(spacing: 4) {
             Text("\(state.selection.count) selected")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.sans(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.leading, 10).padding(.trailing, 6)
             Divider().frame(height: 18)
@@ -156,7 +156,7 @@ private struct BatchBar: View {
             Divider().frame(height: 18)
             Button("Clear") { state.selection = [] }
                 .buttonStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.sans(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10)
                 .help("Clear the selection (Esc)")

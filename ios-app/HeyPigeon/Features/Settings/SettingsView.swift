@@ -85,7 +85,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Pinned list")
                             Text("Group pinned messages at the top of your inbox, above the rest.")
-                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                         }
                     }
                     // The Mac lists every thread with its chip; only the
@@ -95,7 +95,7 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Fold bundle updates")
                                 Text("Read confirmations, receipts and shipping updates in a bundle share one row in your inbox. Mail that needs you keeps its own row.")
-                                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                             }
                         }
                     }
@@ -108,7 +108,7 @@ struct SettingsView: View {
                             // of the parcel's number or its Gmail thread id, and
                             // a time), like every other setting.
                             Text("Parcels on their way get a card at the top of your inbox. Worked out on this \(Device.name) from your mail; Track parcel opens the email's own link in your browser. Which parcels you dismissed syncs to your other devices with your other settings.")
-                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                         }
                     }
                     Toggle(isOn: $model.loadRemoteImages) {
@@ -116,7 +116,7 @@ struct SettingsView: View {
                             Text("Load remote images")
                             // Privacy copy: what loading a picture from the web tells the sender.
                             Text("Show pictures from the web in every message without asking. The sender's server can then see that you opened the message, when, and your IP address.")
-                                .font(.caption).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                         }
                     }
                     if !model.imageSenders.isEmpty && !model.loadRemoteImages {
@@ -195,7 +195,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Show in the menu bar")
                 Text("The unread count in the menu bar, with what is due and what needs a reply a click away.")
-                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             }
         }
         #endif
@@ -215,7 +215,7 @@ struct SettingsView: View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                Text(detail).font(.caption).foregroundStyle(Theme.textTertiary)
+                Text(detail).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             }
         } icon: {
             Image(systemName: systemImage)
@@ -341,14 +341,14 @@ private struct AccountRow: View {
                 }
             }
             LabeledContent("Sync") {
-                Text(syncLine).font(.footnote).foregroundStyle(syncWarn ? Theme.dangerText : Theme.textSecondary)
+                Text(syncLine).font(Theme.sans(.footnote)).foregroundStyle(syncWarn ? Theme.dangerText : Theme.textSecondary)
                     .multilineTextAlignment(.trailing)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Signature")
                 TextEditor(text: $signature)
                     .frame(minHeight: 60)
-                    .font(.subheadline)
+                    .font(Theme.sans(.subheadline))
                     // Saved once typing pauses: every save is a synced write
                     // plus a reload of every account (it used to be one per
                     // keystroke). Closing Settings saves what is left.
@@ -358,7 +358,7 @@ private struct AccountRow: View {
                         saveSignature()
                     }
                     .onDisappear { saveSignature() }
-                Text("Appended to new messages from this account").font(.caption).foregroundStyle(Theme.textTertiary)
+                Text("Appended to new messages from this account").font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             }
             // docs/specs/read-status.md R8, R10: this mailbox's switch,
             // off until turned on, the same on every platform.
@@ -370,7 +370,7 @@ private struct AccountRow: View {
                         set: { on in Task { await model.setReadStatus(on, for: account) } }))
                         .disabled(!available)
                     Text(available ? ReadStatusSetting.footer : ReadStatusSetting.unavailable)
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
             }
             if disconnected {
@@ -381,10 +381,10 @@ private struct AccountRow: View {
             HStack(spacing: 12) {
                 Avatar(account: account)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(account.displayName).font(.body.weight(.medium))
-                    Text(account.email).font(.caption).foregroundStyle(Theme.textTertiary)
+                    Text(account.displayName).font(Theme.sans(.body, .medium))
+                    Text(account.email).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     if disconnected {
-                        Text("Disconnected — mail stops syncing until you sign in again").font(.caption).foregroundStyle(Theme.dangerText)
+                        Text("Disconnected — mail stops syncing until you sign in again").font(Theme.sans(.caption)).foregroundStyle(Theme.dangerText)
                     }
                 }
             }
@@ -430,7 +430,7 @@ struct Avatar: View {
         ZStack {
             Circle().fill(Theme.tagBackground(account.color))
             Text(String(account.displayName.prefix(1)).uppercased())
-                .font(.system(size: size * 0.42, weight: .bold))
+                .font(Theme.sans(size: size * 0.42, weight: .bold))
                 .foregroundStyle(Theme.tagForeground(account.color))
             if let url = account.avatarURL {
                 AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.clear }
@@ -486,18 +486,18 @@ private struct AISection: View {
                 HStack(spacing: 12) {
                     mark(preferred == .appleCloud ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(preferred.title).font(.body.weight(.medium))
-                        Text(shellLine(preferred)).font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(preferred.title).font(Theme.sans(.body, .medium))
+                        Text(shellLine(preferred)).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
                 }
             }
             if let active = status?.providerId, active != preferred.rawValue {
                 Text("Answering now: \(AIProvider(rawValue: active).title)")
-                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             } else if status?.configured == false {
                 Text("Nothing can answer yet: pick a provider this \(Device.name) can run, or paste a key.")
-                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             }
             Picker("If it can't answer", selection: Binding(
                 get: { AIFallbackPreset(order: status?.fallbackOrder ?? []) },
@@ -514,18 +514,18 @@ private struct AISection: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Suggest for new mail")
                         Text("Need reply, or Remind me on the date an email names")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 Toggle(isOn: $model.autoBundlesEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Make bundles")
                         Text("Group new mail about a trip, an order or a project")
-                            .font(.caption).foregroundStyle(Theme.textTertiary)
+                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("AI")
         } footer: {
@@ -570,9 +570,9 @@ private struct AISection: View {
         if !used.isEmpty {
             ForEach(used, id: \.key) { id, u in
                 Text("\(AIProvider(rawValue: id).title): \(AiUsageLedger.line(u, price: AiUsageLedger.prices[id]))")
-                    .font(.caption2.monospacedDigit())
+                    .font(Theme.sans(.caption2).monospacedDigit())
             }
-            Button("Reset usage") { usage.reset() }.font(.caption2.weight(.semibold))
+            Button("Reset usage") { usage.reset() }.font(Theme.sans(.caption2, .semibold))
         }
     }
 
@@ -635,7 +635,7 @@ private struct KeyedProviderControls: View {
             } else {
                 KeyFieldRow(placeholder: provider.keyPlaceholder, key: $key, saving: saving) { connect() }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
         }
         .task(id: provider) { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
@@ -703,13 +703,13 @@ private struct KeyHolderRow: View {
         HStack(spacing: 12) {
             mark(badge)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body.weight(.medium))
-                Text(status).font(.caption).foregroundStyle(Theme.textTertiary)
+                Text(title).font(Theme.sans(.body, .medium))
+                Text(status).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             }
             Spacer()
             if hasKey {
                 Button("Remove") { confirmRemove = true }
-                    .font(.footnote.weight(.semibold))
+                    .font(Theme.sans(.footnote, .semibold))
                     .confirmationDialog("Remove the \(name) key?", isPresented: $confirmRemove, titleVisibility: .visible) {
                         Button("Remove key", role: .destructive) { remove() }
                     } message: {
@@ -735,7 +735,7 @@ private struct KeyFieldRow: View {
                 .onSubmit { connect() }
             Button(saving ? "Verifying…" : "Connect") { connect() }
                 .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                .font(.footnote.weight(.semibold))
+                .font(Theme.sans(.footnote, .semibold))
         }
     }
 }
@@ -809,7 +809,7 @@ private struct SiriSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Let Siri see your inbox")
                     Text("Recent mail indexed on this \(Device.name) — subject, sender, people, labels, and the text of messages you have opened — so Siri and Spotlight can find a thread and \"Ask my inbox\" can answer from it. The index never leaves the device.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
             }
             if InboxAsk.isAvailable(model) {
@@ -941,8 +941,8 @@ private struct TriageSection: View {
                 HStack(spacing: 12) {
                     mark(current == .appleCloud ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(current.title).font(.body.weight(.medium))
-                        Text(appleLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(current.title).font(Theme.sans(.body, .medium))
+                        Text(appleLine).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
                 }
@@ -961,7 +961,7 @@ private struct TriageSection: View {
             }
             if status?.configured == true && status?.isAvailable(current) != true {
                 Text("\(current.title) can't run here yet, so Apple Intelligence or Jev classifies instead.")
-                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
             }
             if status?.configured == true {
                 Toggle("Auto-triage", isOn: Binding(get: { status?.enabled ?? false }, set: { setEnabled($0) }))
@@ -969,17 +969,17 @@ private struct TriageSection: View {
                     Button("Reanalyze all emails") {
                         do { try model.reanalyzeAllEmails(); reanalyzeQueued = true } catch { self.error = error.localizedDescription }
                     }
-                    .font(.footnote.weight(.semibold))
+                    .font(Theme.sans(.footnote, .semibold))
                     .disabled(model.analysis.isActive)
                     if reanalyzeQueued && !model.analysis.isActive && status?.enabled != true {
-                        Text("Queued — runs once Auto-triage is on.").font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text("Queued — runs once Auto-triage is on.").font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 if model.analysis.isActive {
                     AnalysisProgressRow(progress: model.analysis)
                 }
                 if let last = status?.lastError {
-                    Text("Last run failed: \(last)").font(.footnote).foregroundStyle(Theme.dangerText)
+                    Text("Last run failed: \(last)").font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText)
                 }
             }
             // "Hey Siri, triage my inbox": the agentic run over the engine
@@ -992,7 +992,7 @@ private struct TriageSection: View {
                           systemImage: "list.bullet.rectangle")
                 }
             }
-            if let error { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("Triage")
         } footer: {
@@ -1021,13 +1021,13 @@ private struct TriageSection: View {
             }
             .onMove { model.moveTriageLabels(from: $0, to: $1) }
             if model.triageLabels.isEmpty {
-                Text("No labels yet").font(.footnote).foregroundStyle(Theme.textTertiary)
+                Text("No labels yet").font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
             }
             HStack {
                 TextField("New label name", text: $newLabel).onSubmit { add() }
                 Button("Add") { add() }
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .font(.footnote.weight(.semibold))
+                    .font(Theme.sans(.footnote, .semibold))
             }
             // On this one row, not on the labels: a modifier on the
             // ForEach goes to every row, and each would present it.
@@ -1143,7 +1143,7 @@ private struct UpdatesRows: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Install updates automatically")
                     Text("A new build downloads in the background and installs when you next quit the app. Off, it asks first.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
             }
             Button("Check for Updates…") { updater.checkForUpdates() }
@@ -1191,7 +1191,7 @@ private struct NotificationsSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("New mail")
                     Text("A banner for each new unread thread the sync brings in while the app is in the background.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                 }
             }
             Button { SystemSettings.openNotificationSettings() } label: {
@@ -1202,12 +1202,12 @@ private struct NotificationsSection: View {
                 Toggle(isOn: Binding(get: { push.enabled }, set: { on in Task { await push.setEnabled(on) } })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("New mail (push)")
-                        Text(statusLine).font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(statusLine).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 .disabled(push.busy)
             }
-            if let error = push.lastError { Text(error).font(.footnote).foregroundStyle(Theme.dangerText) }
+            if let error = push.lastError { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
         } header: {
             Text("Notifications")
         } footer: {
@@ -1243,7 +1243,7 @@ private struct NotificationsSection: View {
 
 private func mark(_ text: String) -> some View {
     Text(text)
-        .font(.system(size: 12, weight: .bold))
+        .font(Theme.sans(size: 12, weight: .bold))
         .foregroundStyle(Theme.textSecondary)
         .frame(width: 32, height: 32)
         .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1270,7 +1270,7 @@ private struct ComposeSection: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(snippet.name.isEmpty ? "Untitled" : snippet.name).foregroundStyle(Theme.textPrimary)
-                            Text(snippet.body).font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                            Text(snippet.body).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                         }
                         Spacer()
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textTertiary)
@@ -1319,7 +1319,7 @@ private struct SnippetEditor: View {
             TextField("Name (shown in the menu)", text: $snippet.name)
                 .textFieldStyle(.roundedBorder)
             TextEditor(text: $snippet.body)
-                .font(.body)
+                .font(Theme.sans(.body))
                 .frame(minHeight: 160)
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
             HStack {

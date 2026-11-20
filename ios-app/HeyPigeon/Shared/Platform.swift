@@ -396,6 +396,29 @@ enum SystemSettings {
     }
 }
 
+// MARK: - The system's controls in the app's ink
+
+/// What the system draws itself, taught the app's type and ink once at
+/// launch: a navigation bar's title in the display face, and a segmented
+/// control whose selected segment is ink rather than the system's white
+/// tile (selection is ink everywhere else). The Mac has no such proxies
+/// and needs none: its window draws its own tabs (`TabPill`) and names
+/// its pages itself.
+enum SystemChrome {
+    @MainActor
+    static func apply() {
+        #if os(iOS)
+        if let face = UIFont(name: "InstrumentSans-Bold", size: 17) {
+            UINavigationBar.appearance().titleTextAttributes = [.font: face]
+        }
+        let segmented = UISegmentedControl.appearance()
+        segmented.selectedSegmentTintColor = UIColor(Theme.textPrimary)
+        segmented.setTitleTextAttributes([.foregroundColor: UIColor(Theme.onPrimary)], for: .selected)
+        segmented.setTitleTextAttributes([.foregroundColor: UIColor(Theme.textSecondary)], for: .normal)
+        #endif
+    }
+}
+
 // MARK: - Toolbar placements
 
 extension ToolbarItemPlacement {
@@ -1172,7 +1195,7 @@ extension View {
                         .help("Close and save the draft (Esc)")
                         .accessibilityLabel("Close and save draft")
                     Spacer()
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    Text(title).font(Theme.sans(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                     Spacer()
                     Button { toggleFullScreen() } label: { Image(systemName: sizeIcon).font(.system(size: 12, weight: .semibold)) }
                         .pillButton()

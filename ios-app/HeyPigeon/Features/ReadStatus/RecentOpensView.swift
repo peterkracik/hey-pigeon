@@ -29,8 +29,8 @@ struct RecentOpensView: View {
                         let empty = RecentOpens.emptyState(available: model.readStatusAvailable,
                                                            anyAccountOn: model.accounts.contains(where: \.readStatus))
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(empty.title).font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary)
-                            Text(empty.detail).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                            Text(empty.title).font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary)
+                            Text(empty.detail).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
                         }
                         .padding(.vertical, 6)
                         .accessibilityElement(children: .combine)
@@ -70,14 +70,14 @@ struct RecentOpensView: View {
             // a long name gives way, the time never does.
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(RecentOpens.who(item))
-                    .font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    .font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(format.time(item.openedAt))
-                    .font(.subheadline).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                    .font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary).monospacedDigit()
                     .lineLimit(1).fixedSize().layoutPriority(1)
                 Spacer(minLength: 0)
             }
             Text(RecentOpens.subject(item))
-                .font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                .font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

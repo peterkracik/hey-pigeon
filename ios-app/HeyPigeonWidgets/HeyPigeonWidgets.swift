@@ -86,12 +86,12 @@ struct WidgetSnoozeButton: View {
     var body: some View {
         #if os(iOS)
         Button(intent: WidgetSnoozeIntent(threadId: threadId)) {
-            Label("1 h", systemImage: "zzz").font(.caption.weight(.semibold))
+            Label("1 h", systemImage: "zzz").font(Typeface.sans(.caption, .semibold))
         }
         .buttonStyle(.bordered)
         #else
         Link(destination: AppGroup.Link.snooze(threadId)) {
-            Label("1 h", systemImage: "zzz").font(.caption.weight(.semibold))
+            Label("1 h", systemImage: "zzz").font(Typeface.sans(.caption, .semibold))
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(.fill.secondary, in: Capsule())
         }
@@ -163,14 +163,14 @@ struct UnreadView: View {
         case .accessoryCircular:
             VStack(spacing: 0) {
                 Image(systemName: "tray").font(.caption)
-                Text("\(snapshot.unreadTotal)").font(.title3.weight(.bold)).monospacedDigit()
+                Text("\(snapshot.unreadTotal)").font(Typeface.sans(.title3, .bold)).monospacedDigit()
             }
         case .accessoryRectangular:
             HStack {
                 Image(systemName: "tray")
                 VStack(alignment: .leading) {
-                    Text("\(snapshot.unreadTotal) unread").font(.headline)
-                    Text(snapshot.accounts.map { "\($0.name) \($0.unread)" }.joined(separator: " · ")).font(.caption).lineLimit(1)
+                    Text("\(snapshot.unreadTotal) unread").font(Typeface.sans(.headline, .semibold))
+                    Text(snapshot.accounts.map { "\($0.name) \($0.unread)" }.joined(separator: " · ")).font(Typeface.sans(.caption)).lineLimit(1)
                 }
             }
         #endif
@@ -179,13 +179,13 @@ struct UnreadView: View {
                 HStack {
                     Image(systemName: "tray").foregroundStyle(.secondary)
                     Spacer()
-                    Text("Inbox").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("Inbox").font(Typeface.sans(.caption, .semibold)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 Text("\(snapshot.unreadTotal)")
-                    .font(.system(size: 44, weight: .bold, design: .rounded)).monospacedDigit()
+                    .font(Typeface.sans(size: 44, weight: .bold)).monospacedDigit()
                     .contentTransition(.numericText())
-                Text("unread").font(.caption).foregroundStyle(.secondary)
+                Text("unread").font(Typeface.sans(.caption)).foregroundStyle(.secondary)
                 // One bar per account, in its colour, proportional to its share.
                 if snapshot.accounts.count > 1, snapshot.unreadTotal > 0 {
                     GeometryReader { geo in
@@ -249,7 +249,7 @@ struct NextReminderView: View {
     private var circular: some View {
         VStack(spacing: 0) {
             Image(systemName: isDue ? "clock.badge.exclamationmark" : "clock").font(.caption).widgetAccentable(isDue)
-            Text(dueText).font(.title3.weight(.bold)).monospacedDigit()
+            Text(dueText).font(Typeface.sans(.title3, .bold)).monospacedDigit()
         }
         .opacity(isDue ? 1 : 0.6)
         .widgetURL(AppGroup.Link.folder("scheduled"))
@@ -259,14 +259,14 @@ struct NextReminderView: View {
         Group {
             if let row {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(isDue ? "\(dueText) due" : "Next in \(row.at, style: .relative)").font(.headline).lineLimit(1)
-                    Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(.caption).lineLimit(2)
+                    Text(isDue ? "\(dueText) due" : "Next in \(row.at, style: .relative)").font(Typeface.sans(.headline, .semibold)).lineLimit(1)
+                    Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(Typeface.sans(.caption)).lineLimit(2)
                 }
                 .widgetURL(AppGroup.Link.thread(row.id))
             } else {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("No reminders").font(.headline)
-                    Text("Nothing scheduled").font(.caption)
+                    Text("No reminders").font(Typeface.sans(.headline, .semibold))
+                    Text("Nothing scheduled").font(Typeface.sans(.caption))
                 }
                 .widgetURL(AppGroup.Link.folder("scheduled"))
             }
@@ -297,9 +297,9 @@ struct NextReminderView: View {
                 HStack {
                     Label(isDue ? (snapshot.due.count == 1 ? "Due now" : "\(snapshot.due.count) due") : "Next reminder",
                           systemImage: row.isFollowUp ? "clock.arrow.circlepath" : "clock")
-                        .font(.caption.weight(.semibold)).foregroundStyle(isDue ? WidgetPalette.reminder : .secondary)
+                        .font(Typeface.sans(.caption, .semibold)).foregroundStyle(isDue ? WidgetPalette.reminder : .secondary)
                     Spacer()
-                    Text(isDue ? "now" : Self.when(row.at)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    Text(isDue ? "now" : Self.when(row.at)).font(Typeface.sans(.caption)).foregroundStyle(.secondary).monospacedDigit()
                 }
                 Link(destination: AppGroup.Link.thread(row.id)) {
                     RowView(row: row)
@@ -307,14 +307,14 @@ struct NextReminderView: View {
                 Spacer(minLength: 0)
                 HStack {
                     WidgetDoneButton(threadId: row.id) {
-                        Label("Done", systemImage: "checkmark").font(.caption.weight(.semibold))
+                        Label("Done", systemImage: "checkmark").font(Typeface.sans(.caption, .semibold))
                     }
                     if isDue {
                         WidgetSnoozeButton(threadId: row.id)
                     }
                     Spacer()
                     if snapshot.due.count + snapshot.upcoming.count > 1 {
-                        Text("+\(snapshot.due.count + snapshot.upcoming.count - 1) more").font(.caption2).foregroundStyle(.secondary)
+                        Text("+\(snapshot.due.count + snapshot.upcoming.count - 1) more").font(Typeface.sans(.caption2)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -379,7 +379,7 @@ struct NeedReplyView: View {
     private var circular: some View {
         VStack(spacing: 0) {
             Image(systemName: "arrowshape.turn.up.left").font(.caption).widgetAccentable(snapshot.needReplyTotal > 0)
-            Text("\(snapshot.needReplyTotal)").font(.title3.weight(.bold)).monospacedDigit()
+            Text("\(snapshot.needReplyTotal)").font(Typeface.sans(.title3, .bold)).monospacedDigit()
         }
         .opacity(snapshot.needReplyTotal > 0 ? 1 : 0.6)
         .widgetURL(AppGroup.Link.folder("needReply"))
@@ -388,11 +388,11 @@ struct NeedReplyView: View {
     private var rectangular: some View {
         VStack(alignment: .leading, spacing: 1) {
             if let row = snapshot.needReply.first {
-                Text(countText).font(.headline).lineLimit(1)
-                Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(.caption).lineLimit(2)
+                Text(countText).font(Typeface.sans(.headline, .semibold)).lineLimit(1)
+                Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(Typeface.sans(.caption)).lineLimit(2)
             } else {
-                Text("Nothing to answer").font(.headline)
-                Text("No thread needs a reply").font(.caption)
+                Text("Nothing to answer").font(Typeface.sans(.headline, .semibold))
+                Text("No thread needs a reply").font(Typeface.sans(.caption))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -414,7 +414,7 @@ struct NeedReplyView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Label(countText, systemImage: "arrowshape.turn.up.left")
-                        .font(.caption.weight(.semibold)).foregroundStyle(WidgetPalette.needReply)
+                        .font(Typeface.sans(.caption, .semibold)).foregroundStyle(WidgetPalette.needReply)
                     Spacer()
                 }
                 ForEach(shown) { row in
@@ -441,9 +441,9 @@ struct RowView: View {
         HStack(alignment: .top, spacing: 8) {
             Circle().fill(WidgetPalette.account(row.accountColor)).frame(width: 6, height: 6).padding(.top, 5)
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.from).font(.caption.weight(row.isUnread ? .bold : .semibold)).lineLimit(1)
-                Text(row.subject.isEmpty ? "(no subject)" : row.subject).font(.caption.weight(row.isUnread ? .semibold : .regular)).lineLimit(1)
-                Text(row.snippet).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text(row.from).font(Typeface.sans(.caption, row.isUnread ? .bold : .semibold)).lineLimit(1)
+                Text(row.subject.isEmpty ? "(no subject)" : row.subject).font(Typeface.sans(.caption, row.isUnread ? .semibold : .regular)).lineLimit(1)
+                Text(row.snippet).font(Typeface.sans(.caption2)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -459,8 +459,8 @@ struct EmptyWidgetView: View {
         VStack(alignment: .leading, spacing: 6) {
             Image(systemName: systemImage).foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            Text(title).font(.headline)
-            Text(detail).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(Typeface.sans(.headline, .semibold))
+            Text(detail).font(Typeface.sans(.caption)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }

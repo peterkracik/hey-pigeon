@@ -109,7 +109,7 @@ struct TranslationPanel: View {
                 ResultState(working: "Translating…", error: error, isReady: result != nil, retry: retry) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(result ?? "")
-                            .font(.body)
+                            .font(Theme.sans(.body))
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                         // A long passage arrives part by part.
@@ -143,7 +143,7 @@ struct TranslationPanel: View {
                         withAnimation(.snappy) { copied = true }
                     } label: {
                         Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                            .font(Theme.secondary.weight(.semibold))
+                            .font(Theme.text(.secondary, .semibold))
                     }
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
@@ -178,9 +178,9 @@ struct TranslationPanel: View {
         } label: {
             HStack(spacing: 4) {
                 Text(language)
-                Image(systemName: "chevron.down").font(Theme.caption2.weight(.bold))
+                Image(systemName: "chevron.down").font(Theme.glyph(.caption2, .bold))
             }
-            .font(Theme.bodySmall.weight(.semibold))
+            .font(Theme.text(.bodySmall, .semibold))
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
             .padding(.horizontal, 10).padding(.vertical, 5)

@@ -94,7 +94,7 @@ struct AIEditSheet: View {
                 }
                 if running { workingSection }
                 if let error = runner.error {
-                    Section { Text(error).foregroundStyle(Theme.dangerText).font(.footnote) }
+                    Section { Text(error).foregroundStyle(Theme.dangerText).font(Theme.sans(.footnote)) }
                 }
                 // What a tap sends, and to whom: a footer with no rows.
                 Section {
@@ -122,7 +122,7 @@ struct AIEditSheet: View {
                 Text("Working…").foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button("Cancel request") { runner.cancel() }
-                    .font(.subheadline.weight(.semibold))
+                    .font(Theme.sans(.subheadline, .semibold))
             }
         }
     }
@@ -139,7 +139,7 @@ struct AIEditSheet: View {
                 .disabled(running)
             Button { write(notes: briefTrimmed, shown: shown) } label: {
                 Label(isReply ? "Draft the reply" : "Write it", systemImage: "sparkles")
-                    .font(.body.weight(.semibold))
+                    .font(Theme.sans(.body, .semibold))
             }
             .foregroundStyle(Theme.accent)
             .disabled(running || !AIAssist.canRun(mode: .write, typed: briefTrimmed, hasText: hasText, isReply: isReply))
@@ -190,7 +190,7 @@ struct AIEditSheet: View {
     @ViewBuilder private func reviewSections(_ r: AIAssist.Outcome, shown: AIStatus?) -> some View {
         Section {
             Text(r.text)
-                .font(.body)
+                .font(Theme.sans(.body))
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
         } header: {
@@ -199,7 +199,7 @@ struct AIEditSheet: View {
         Section {
             Button { apply(r) } label: {
                 Label(AIAssist.applyTitle(r), systemImage: "checkmark")
-                    .font(.body.weight(.semibold))
+                    .font(Theme.sans(.body, .semibold))
             }
             .foregroundStyle(Theme.accent)
             .disabled(running)

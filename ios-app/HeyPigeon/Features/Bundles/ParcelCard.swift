@@ -194,7 +194,7 @@ struct ParcelCardView: View {
             Spacer()
             Button { model.dismissAllParcels() } label: {
                 Image(systemName: "xmark")
-                    .font(Theme.caption.weight(.semibold))
+                    .font(Theme.glyph(.caption, .semibold))
                     .foregroundStyle(Theme.textTertiary)
                     .tapArea(horizontal: 14, vertical: 14)
             }
@@ -212,7 +212,7 @@ struct ParcelCardView: View {
             } label: {
                 Label(model.parcelsExpanded ? "Show less" : "+\(more) more",
                       systemImage: model.parcelsExpanded ? "chevron.up" : "chevron.down")
-                    .font(Theme.bodySmall.weight(.medium))
+                    .font(Theme.text(.bodySmall, .medium))
                     .foregroundStyle(Theme.textSecondary)
                     .tapArea(horizontal: 14, vertical: 12)
             }
@@ -222,7 +222,7 @@ struct ParcelCardView: View {
             if model.parcelsExpanded {
                 Button { model.dismissAllParcels() } label: {
                     Text("Dismiss all")
-                        .font(Theme.bodySmall.weight(.medium))
+                        .font(Theme.text(.bodySmall, .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .tapArea(horizontal: 14, vertical: 12)
                 }
@@ -297,7 +297,7 @@ private struct ParcelRow: View {
     private var trackButton: some View {
         Button(action: track) {
             Text("Track parcel")
-                .font(Theme.bodySmall.weight(.bold))
+                .font(Theme.text(.bodySmall, .bold))
                 .foregroundStyle(Theme.onPrimary)
                 .padding(.horizontal, 6)
         }
@@ -310,7 +310,7 @@ private struct ParcelRow: View {
     private var detailsButton: some View {
         Button { model.openParcelDetails(parcel) } label: {
             Text("View details")
-                .font(Theme.bodySmall.weight(.medium))
+                .font(Theme.text(.bodySmall, .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .tapArea(horizontal: 8, vertical: 12)
         }
@@ -323,7 +323,7 @@ private struct ParcelRow: View {
             ParcelMenu(parcel: parcel)
         } label: {
             Image(systemName: "ellipsis")
-                .font(Theme.bodySmall.weight(.semibold))
+                .font(Theme.glyph(.bodySmall, .semibold))
                 .foregroundStyle(Theme.textTertiary)
                 .frame(width: 32, height: 32)
                 .tapArea(horizontal: 6, vertical: 6)

@@ -167,7 +167,7 @@ struct SidebarList: View {
             HStack {
                 Label(title ?? view.title, systemImage: view.systemImage)
                 Spacer()
-                if n > 0 { Text("\(n)").font(.subheadline).foregroundStyle(Theme.textTertiary) }
+                if n > 0 { Text("\(n)").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary) }
                 if model.tab == .inbox && model.folder == view {
                     Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                 }
@@ -241,7 +241,7 @@ struct SidebarList: View {
                         .opacity(hidden ? 0.5 : 1)
                     Spacer()
                     if b.openCount > 0 {
-                        Text("\(b.openCount)").font(.subheadline).foregroundStyle(Theme.textTertiary)
+                        Text("\(b.openCount)").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 .contentShape(Rectangle())
@@ -271,7 +271,7 @@ struct SidebarList: View {
             HStack {
                 Label(tab.title, systemImage: tab.systemImage)
                 Spacer()
-                if count > 0 { Text("\(count)").font(.subheadline).foregroundStyle(Theme.textTertiary) }
+                if count > 0 { Text("\(count)").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary) }
                 // Beside the list there is no tab bar to say which place
                 // is shown; the sheet has one behind it.
                 if isColumn && model.tab == tab {
@@ -303,9 +303,9 @@ struct SidebarList: View {
                         Text(title)
                     }
                     if disconnected {
-                        Text("Disconnected — mail is not syncing").font(.caption).foregroundStyle(Theme.dangerText)
+                        Text("Disconnected — mail is not syncing").font(Theme.sans(.caption)).foregroundStyle(Theme.dangerText)
                     } else if let subtitle {
-                        Text(subtitle).font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(subtitle).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 Spacer()

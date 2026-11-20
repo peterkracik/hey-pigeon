@@ -23,16 +23,16 @@ struct AnalysisLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(s.isFinished ? "Done" : "\(s.percent)%")
-                        .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+                        .font(Typeface.sans(.caption, .semibold)).monospacedDigit().foregroundStyle(.secondary)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(AnalysisCopy.title(s, isStale: context.isStale)).font(.headline).lineLimit(1)
+                    Text(AnalysisCopy.title(s, isStale: context.isStale)).font(Typeface.sans(.headline, .semibold)).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 4) {
                         ProgressView(value: s.fraction).tint(WidgetPalette.accent)
                         Text(AnalysisCopy.detail(s, isStale: context.isStale))
-                            .font(.caption).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                            .font(Typeface.sans(.caption)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             } compactLeading: {
@@ -85,15 +85,15 @@ private struct AnalysisLockScreenView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(AnalysisCopy.title(state, isStale: isStale), systemImage: state.isFinished ? "checkmark.seal" : "sparkles")
-                    .font(.caption.weight(.semibold)).foregroundStyle(WidgetPalette.accent)
+                    .font(Typeface.sans(.caption, .semibold)).foregroundStyle(WidgetPalette.accent)
                 Spacer()
                 if !state.isFinished {
-                    Text("\(state.percent)%").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    Text("\(state.percent)%").font(Typeface.sans(.caption)).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
             ProgressView(value: state.fraction).tint(WidgetPalette.accent)
             Text(AnalysisCopy.detail(state, isStale: isStale))
-                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                .font(Typeface.sans(.subheadline)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
         }
         .padding()
     }

@@ -211,17 +211,17 @@ struct ThreadsSnippet: View {
             ForEach(rows) { row in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(row.fromSummary).font(Theme.sans(.subheadline, row.isRead ? .semibold : .bold)).lineLimit(1)
+                        Text(row.fromSummary).font(.subheadline.weight(row.isRead ? .semibold : .bold)).lineLimit(1)
                         Spacer(minLength: 8)
-                        Text(trailing(row)).font(Theme.sans(.caption)).foregroundStyle(.secondary).monospacedDigit()
+                        Text(trailing(row)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     }
                     Text(row.subject.isEmpty ? "(no subject)" : row.subject)
-                        .font(Theme.sans(.subheadline, row.isRead ? .regular : .semibold)).lineLimit(1)
-                    Text(row.snippet).font(Theme.sans(.footnote)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.subheadline.weight(row.isRead ? .regular : .semibold)).lineLimit(1)
+                    Text(row.snippet).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             if rows.isEmpty {
-                Text("Nothing here.").font(Theme.sans(.subheadline)).foregroundStyle(.secondary)
+                Text("Nothing here.").font(.subheadline).foregroundStyle(.secondary)
             }
         }
         .padding()
@@ -241,8 +241,8 @@ struct SummarySnippet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(Theme.sans(.caption, .semibold)).foregroundStyle(.secondary)
-            Text(text).font(Theme.sans(.subheadline))
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(text).font(.subheadline)
         }
         .padding()
     }

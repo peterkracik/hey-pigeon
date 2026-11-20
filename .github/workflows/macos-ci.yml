@@ -118,6 +118,26 @@ jobs:
           status=${PIPESTATUS[0]}
           exit "$status"
 
+      # The pictures WindowPictureTests kept (HeyPigeonMacTests): the Mac
+      # window on the sample inbox, light and dark, without a Mac. Never
+      # fails the job: no pictures is a gap, not an error.
+      - name: Export the window's pictures
+        if: always()
+        run: |
+          xcrun xcresulttool export attachments \
+            --path "$RUNNER_TEMP/HeyPigeonMac.xcresult" \
+            --output-path "$RUNNER_TEMP/screens" || true
+          ls -la "$RUNNER_TEMP/screens" 2>/dev/null || true
+
+      - name: Upload the screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens-mac
+          path: ${{ runner.temp }}/screens
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload result bundle
         if: failure()
         uses: actions/upload-artifact@v4

@@ -2,22 +2,22 @@
 // BundlesPage (BundleScreenParts) as its Emails page is. The shared page
 // is the phone's grouped list; in this window it lay straight on the
 // canvas with bold list headers over full-width dividers and rows
-// stretched across the window, beside an Emails page of cards on the
-// list's background. Here it is the same surface as that page: white
-// cards on the list's background under the list's small grey group
-// titles, in a reading column (Settings' width) — the summary is prose,
-// and a kind, a number and a date 1900 pt apart are no row.
+// stretched across the window. Here it is drawn as the Emails page
+// beside it is: on the paper, each section under the list's light grey
+// title (`SectionTitle`) with hairlines between its rows and no card
+// around them, in a reading column (Settings' width) — the summary is
+// prose, and a kind, a number and a date 1900 pt apart are no row.
 //
 // Top to bottom: the bundle's description; Summary (the model's status
-// line and what is left to do, with its refresh in the title's row);
-// Tracking, one row per shipment (BundleTracking: a carrier's or shop's
-// name instead of a host, the links of one parcel folded under its
-// newest email); Key facts, kind by kind. A row is one line that tints
-// under the pointer, where the time gives way to its actions, as a mail
-// row's does. What a row is for is its click: a shipment opens its
-// tracking page, a fact is copied (an identifier is there to be pasted
-// somewhere). The rest — the email it came from, Copy link, Track — is
-// in the hover bar and the context menu.
+// line and what is left to do, with its refresh after the title's
+// rule); Tracking, one row per shipment (BundleTracking: a carrier's or
+// shop's name instead of a host, the links of one parcel folded under
+// its newest email); Key facts, kind by kind, their values in the mono.
+// A row is one line that tints under the pointer, where the time gives
+// way to its actions, as a mail row's does. What a row is for is its
+// click: a shipment opens its tracking page, a fact is copied (an
+// identifier is there to be pasted somewhere). The rest — the email it
+// came from, Copy link, Track — is in the hover bar and the context menu.
 
 import SwiftUI
 
@@ -40,22 +40,27 @@ struct BundleInfoPage: View {
                         .font(Theme.sans(size: 13))
                         .foregroundStyle(Theme.textSecondary)
                         .textSelection(.enabled)
-                        .padding(.horizontal, 18).padding(.top, 10)
+                        .padding(.horizontal, 4).padding(.top, 10)
                 }
                 if showsSummary {
                     let brief = model.brief(for: contents)
                     title("Summary", trailing: AnyView(summaryControl(brief)))
-                    card { BundleSummary(state: brief) { model.summarizeBundle(contents) } }
+                    section { BundleSummary(state: brief) { model.summarizeBundle(contents) } }
                 }
                 if !shipments.isEmpty {
                     title("Tracking")
-                    card { ForEach(shipments) { shipmentRow($0) } }
+                    section {
+                        ForEach(shipments) { shipment in
+                            shipmentRow(shipment, isLast: shipment.id == shipments.last?.id)
+                        }
+                    }
                 }
                 if !facts.isEmpty {
                     title("Key facts")
-                    card {
+                    section {
                         ForEach(Array(facts.enumerated()), id: \.element.id) { index, fact in
-                            factRow(fact, namesKind: index == 0 || facts[index - 1].category != fact.category)
+                            factRow(fact, namesKind: index == 0 || facts[index - 1].category != fact.category,
+                                    isLast: index == facts.count - 1)
                         }
                     }
                 }
@@ -63,7 +68,7 @@ struct BundleInfoPage: View {
                     Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
                         .font(Theme.sans(size: 13))
                         .foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 18).padding(.top, 16)
+                        .padding(.horizontal, 4).padding(.top, 16)
                 }
             }
             .frame(maxWidth: MacLayout.readingWidth)
@@ -78,34 +83,28 @@ struct BundleInfoPage: View {
 
     // MARK: Pieces
 
-    /// A section's title in the list's group-title type (GroupHeader's),
-    /// in from the card's edge as a day group's is.
+    /// A section's title as the list titles a day (`SectionTitle`: the
+    /// name in small mono capitals and a rule filling the line, in the
+    /// light grey of titles), a control after the rule where there is
+    /// one — it is something to press, so it keeps its own strength.
     private func title(_ text: String, trailing: AnyView? = nil) -> some View {
-        HStack(spacing: 6) {
-            Text(text)
-                .font(Theme.display(13, relativeTo: .caption))
-                .foregroundStyle(Theme.textTertiary)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 8)
-            if let trailing { trailing }
-        }
+        SectionTitle(title: text) { trailing }
         // As tall with a control in it as without: the titles keep one
         // rhythm down the page.
         .frame(height: 26)
-        .padding(.leading, 18).padding(.trailing, 10).padding(.top, 12).padding(.bottom, 2)
+        .padding(.top, 10).padding(.bottom, 2)
     }
 
-    /// A section's rows on one white card, as a day group's are. Flat: a
-    /// step in surface colour, no border and no shadow.
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    /// A section's rows, one under the other on the paper: hairlines
+    /// between them (each row draws its own), no card and no fill.
+    private func section<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) { content() }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(MacTheme.groupCard)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    /// Beside "Summary": the model at work, or the way to ask it again.
-    /// The first ask and a failed one are buttons in the card itself.
+    /// After "Summary" and its rule: the model at work, or the way to ask
+    /// it again. The first ask and a failed one are buttons in the
+    /// section itself.
     @ViewBuilder private func summaryControl(_ brief: BundleBriefState?) -> some View {
         if brief?.generating == true {
             // The one spinner on the page: the model's answer comes from
@@ -130,7 +129,7 @@ struct BundleInfoPage: View {
         contents.threads.first { $0.id == id }
     }
 
-    private func shipmentRow(_ shipment: BundleTracking.Shipment) -> some View {
+    private func shipmentRow(_ shipment: BundleTracking.Shipment, isLast: Bool) -> some View {
         let link = shipment.link
         let who = name(of: link)
         let status = link.subject.isEmpty ? link.host : link.subject
@@ -151,11 +150,12 @@ struct BundleInfoPage: View {
                 }
             },
             moreTitle: "Earlier updates",
+            ruled: !isLast,
             primary: { openURL(link.url) }
         ) {
             Image(systemName: "shippingbox")
                 .font(.system(size: 12))
-                .foregroundStyle(Theme.tagForeground(.sky))
+                .foregroundStyle(Theme.state(.sky))
                 .frame(width: 18)
             Text(who)
                 .font(Theme.sans(size: 13, weight: .semibold))
@@ -168,7 +168,7 @@ struct BundleInfoPage: View {
                 .lineLimit(1)
             if earlier > 0 {
                 Text("+\(earlier) earlier")
-                    .font(Theme.sans(size: 11, weight: .medium))
+                    .font(Theme.tag)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                     .layoutPriority(1)
@@ -178,7 +178,7 @@ struct BundleInfoPage: View {
 
     // MARK: Key facts
 
-    private func factRow(_ fact: BundleFactItem, namesKind: Bool) -> some View {
+    private func factRow(_ fact: BundleFactItem, namesKind: Bool, isLast: Bool) -> some View {
         var actions = [
             BundleInfoAction(title: "Copy", systemImage: "doc.on.doc") { copy(fact.value, saying: "Copied \(fact.value)") },
             BundleInfoAction(title: "Open the Email", systemImage: "envelope") { open(fact.threadId) },
@@ -194,13 +194,14 @@ struct BundleInfoPage: View {
             // A tracking number's link is what the row is most often
             // wanted for, so it shows without the pointer.
             chip: fact.url.map { url in BundleInfoAction(title: "Track", systemImage: "arrow.up.right") { openURL(url) } },
+            ruled: !isLast,
             primary: { copy(fact.value, saying: "Copied \(fact.value)") }
         ) {
             // A kind is named on its first row; the rows under it line
             // up on the value.
             Image(systemName: fact.category.systemImage)
                 .font(.system(size: 12))
-                .foregroundStyle(Theme.tagForeground(.sky))
+                .foregroundStyle(Theme.state(.sky))
                 .frame(width: 18)
                 .opacity(namesKind ? 1 : 0)
             Text(fact.category.title)
@@ -209,8 +210,9 @@ struct BundleInfoPage: View {
                 .lineLimit(1)
                 .frame(width: 132, alignment: .leading)
                 .opacity(namesKind ? 1 : 0)
+            // An identifier is data: in the mono.
             Text(fact.value)
-                .font(Theme.mono(size: 13, weight: .medium))
+                .font(Theme.mono(size: 12.5, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
         }
@@ -240,9 +242,10 @@ struct BundleInfoAction: Identifiable {
 }
 
 /// One line of the Info page: what it is at the leading end, when at the
-/// trailing end; under the pointer the row tints and the time gives way
-/// to the actions, as on a mail row. The line is a button of its own, so
-/// the row is reachable with the keyboard and reads as one element.
+/// trailing end in the mono, a hairline under it; under the pointer the
+/// row is the sunken grey and the time gives way to the actions, as on a
+/// mail row. The line is a button of its own, so the row is reachable
+/// with the keyboard and reads as one element.
 private struct BundleInfoRow<Line: View>: View {
     let time: String
     /// What VoiceOver reads for the line.
@@ -250,11 +253,14 @@ private struct BundleInfoRow<Line: View>: View {
     /// What a click does, for the tooltip and VoiceOver's hint.
     let help: String
     let actions: [BundleInfoAction]
-    /// An action shown without the pointer, as a small pill before the time.
+    /// An action shown without the pointer, as a small boxed chip before
+    /// the time.
     var chip: BundleInfoAction? = nil
     /// More for the context menu only, under their own title.
     var more: [BundleInfoAction] = []
     var moreTitle = ""
+    /// A hairline under the row: every row of a section but its last.
+    var ruled = true
     let primary: () -> Void
     @ViewBuilder let line: () -> Line
     @State private var hovering = false
@@ -279,16 +285,17 @@ private struct BundleInfoRow<Line: View>: View {
                 }
             }
             if let chip {
+                // Boxed, not filled: a word in the mono inside the
+                // outline, as every chip that can be pressed is.
                 Button(action: chip.run) {
                     HStack(spacing: 3) {
-                        Text(chip.title)
-                        Image(systemName: chip.systemImage).font(.system(size: 9, weight: .semibold))
+                        Text(chip.title).font(Theme.tag)
+                        Image(systemName: chip.systemImage).font(.system(size: 8, weight: .bold))
                     }
-                    .font(Theme.sans(size: 11, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 8).frame(height: 22)
-                    .background(MacTheme.selected, in: Capsule())
-                    .contentShape(Capsule())
+                    .padding(.horizontal, 7).frame(height: 20)
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .opacity(hovering ? 0 : 1)
@@ -296,9 +303,8 @@ private struct BundleInfoRow<Line: View>: View {
             }
             ZStack(alignment: .trailing) {
                 Text(time)
-                    .font(Theme.sans(size: 12))
+                    .font(Theme.meta)
                     .foregroundStyle(Theme.textTertiary)
-                    .monospacedDigit()
                     .lineLimit(1)
                     .opacity(hovering ? 0 : 1)
                     .accessibilityHidden(true)
@@ -310,11 +316,14 @@ private struct BundleInfoRow<Line: View>: View {
                     }
                 }
             }
-            .frame(minWidth: 64, alignment: .trailing)
+            .frame(minWidth: 72, alignment: .trailing)
         }
-        .padding(.leading, 14).padding(.trailing, 12)
-        .frame(height: 42)
+        .padding(.horizontal, 4)
+        .frame(height: MacLayout.rowHeight)
         .background(hovering ? MacTheme.hover : Color.clear)
+        .overlay(alignment: .bottom) {
+            if ruled { RowRule() }
+        }
         .onHover { hovering = $0 }
         .pointerStyle(.link)
         .contextMenu {
@@ -332,11 +341,11 @@ private struct BundleInfoRow<Line: View>: View {
     }
 }
 
-/// The model's brief in the Summary card, in the window's type: where
-/// things stand as a short paragraph, then what is left for the user.
-/// The to-dos are the model's words, not tasks the app keeps, so they
-/// carry a mark and no circle: a circle is something to tick, and
-/// nothing here could remember the tick.
+/// The model's brief under the Summary title, in the window's type:
+/// where things stand as a short paragraph, then what is left for the
+/// user. The to-dos are the model's words, not tasks the app keeps, so
+/// they carry a mark — the AI's, in its pink ink — and no circle: a
+/// circle is something to tick, and nothing here could remember the tick.
 private struct BundleSummary: View {
     let state: BundleBriefState?
     let refresh: () -> Void
@@ -346,7 +355,7 @@ private struct BundleSummary: View {
             if let brief = state?.brief {
                 if !brief.status.isEmpty {
                     Text(SummaryMarkup.inline(brief.status))
-                        .font(Theme.sans(size: 14))
+                        .font(Theme.sans(size: 14.5))
                         .lineSpacing(3)
                         .foregroundStyle(Theme.textPrimary)
                         .textSelection(.enabled)
@@ -355,14 +364,16 @@ private struct BundleSummary: View {
                 if !brief.actions.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("To do")
-                            .font(Theme.sans(size: 11, weight: .semibold))
+                            .font(Theme.label)
+                            .tracking(Theme.labelTracking)
+                            .textCase(.uppercase)
                             .foregroundStyle(Theme.textTertiary)
                             .accessibilityAddTraits(.isHeader)
                         ForEach(brief.actions, id: \.self) { action in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Image(systemName: "arrow.right")
                                     .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Theme.accent)
+                                    .foregroundStyle(Theme.pinkInk)
                                     .accessibilityHidden(true)
                                 Text(SummaryMarkup.inline(action))
                                     .font(Theme.sans(size: 13))
@@ -386,7 +397,7 @@ private struct BundleSummary: View {
                 ask("Summarize", systemImage: "sparkles")
             }
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
+        .padding(.horizontal, 4).padding(.top, 10).padding(.bottom, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -399,7 +410,12 @@ private struct BundleSummary: View {
 
     private func ask(_ title: String, systemImage: String) -> some View {
         Button(action: refresh) {
-            Label(title, systemImage: systemImage).font(Theme.sans(size: 12, weight: .medium))
+            // The words in the app's face, the glyph in the system's.
+            Label {
+                Text(title).font(Theme.sans(size: 12, weight: .semibold))
+            } icon: {
+                Image(systemName: systemImage).font(.system(size: 11, weight: .medium))
+            }
         }
         .pillButton()
     }

@@ -9,8 +9,8 @@
 // the window's toolbar, which names the page (MainToolbar). A bundle's
 // Emails page, its Info page and the switcher between them are the
 // window's own (BundleEmails.swift, BundleInfo.swift), handed to the
-// shared screen: the inbox's rows on their card, cards in a reading
-// column, and the toolbar's capsule tabs.
+// shared screen: the inbox's ruled rows, titled sections of ruled rows in
+// a reading column, and the toolbar's capsule tabs.
 
 import SwiftUI
 
@@ -28,15 +28,12 @@ struct BundlesPage: View {
             .scrollIndicators(.never)
             .frame(maxWidth: MacLayout.maxWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Behind a bundle's two pages the list's background, to the
-            // window's edges, so their white cards read as the inbox's
-            // do; the canvas behind every other page of the stack. Read
-            // off the path: a flag the screen set as it appeared was not
-            // always set, and the page then stood on a grey column
-            // between two strips of the canvas.
-            // An email open in the bundle stands on it as well: the
-            // thread's own page colour (`ThreadChrome.page`).
-            .background(state.showsBundleScreen || state.openThread != nil ? MacTheme.listBackground : MacTheme.content)
+            // The paper behind every page of the stack, to the window's
+            // edges: the list of bundles, a bundle's two pages and an
+            // email open in it stand on the one surface, as the inbox and
+            // a thread do. (The pages used to differ — white cards on a
+            // grey list — and the colour was read off the path.)
+            .background(MacTheme.content)
             // Focusable so the key map works after a click on the page, with
             // no ring drawn around it.
             .focusable()

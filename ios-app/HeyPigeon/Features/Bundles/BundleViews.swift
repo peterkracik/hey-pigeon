@@ -1,9 +1,10 @@
 // Bundles (docs/bundles.md): the mail about one specific thing — a trip,
 // an order, a project — grouped, with the model's brief (status, what is
 // left to do) and the key facts first. Shared by the phone, the iPad and
-// the Mac: the chip on a row, the sidebar section, the Bundles sheet, and
-// "Add to bundle…" on a thread. On the phone and iPad a bundle's quiet mail
-// also folds into one inbox row (`BundleFoldRow`, `AppModel.fold`).
+// the Mac: the bundle's mark on a row, the sidebar section, the Bundles
+// screen, and "Add to bundle…" on a thread. On the phone and iPad a
+// bundle's quiet mail also folds into one inbox row (`BundleFoldRow`,
+// `AppModel.fold`).
 //
 // The Bundles screen covers the window on iPhone and iPad (a sheet looked
 // like a dialog), presenting the shared sheets its emails' actions open
@@ -14,25 +15,36 @@
 // dialog too, and an email open in it was cut off from the window's keys
 // and composer. An email opens inside the stack and keeps every action
 // (swipes, the long-press menu, the thread view). On the Mac the window
-// hands the stack its own Emails page and page switcher
-// (`BundleScreenParts`): the window's list rows on their white card and
-// the toolbar's capsule tabs, where the phone's rows and a default
-// segmented control read as another app's.
+// hands the stack its own Emails page, Info page and page switcher
+// (`BundleScreenParts`): the window's one-line rows and the toolbar's
+// capsule tabs, where the phone's three-line rows and a segmented
+// control read as another app's.
+//
+// The screens are drawn in the paper look (docs/specs/marker-look.md).
+// Each list is the inbox's plain list on the canvas (`bundleList`): its
+// rows stand straight on the paper with a hairline between them
+// (`bundleRow`), and a section opens with its title (`SectionTitle`) or,
+// when it has no name, with the rule alone (`SectionRule`). The titles
+// are rows of the list, not its section headers: a plain list pins a
+// header to its top, and the Mac floats one on a grey band.
 
 import SwiftUI
 
-/// The bundle's mark on an inbox row: its icon and name.
+/// The bundle's mark on an inbox row: its glyph and its name, written in
+/// the mono in the sky of a state. Writing, not a chip: nothing is
+/// filled behind it. (The name is from when it was one.)
 struct BundleChip: View {
     let bundle: BundleItem
 
     var body: some View {
-        Chip(text: bundle.name, systemImage: bundle.category.systemImage,
-             background: Theme.tagBackground(.sky), foreground: Theme.tagForeground(.sky))
+        StateMark(text: bundle.name, systemImage: bundle.category.systemImage, tint: Theme.state(.sky))
             .accessibilityLabel("Bundle: \(bundle.name)")
     }
 }
 
-/// The bundle's icon on a soft tile (list rows, the folded inbox row).
+/// The bundle's icon in a box (the list of bundles, the pickers, the
+/// folded inbox row, a parcel): the glyph in the sky of a state inside a
+/// hairline outline with the look's 6 pt corner. No tinted fill.
 struct BundleIcon: View {
     let category: BundleCategory
     var size: CGFloat = 36
@@ -40,9 +52,11 @@ struct BundleIcon: View {
     var body: some View {
         Image(systemName: category.systemImage)
             .font(.system(size: size * 0.45, weight: .medium))
-            .foregroundStyle(Theme.tagForeground(.sky))
+            .foregroundStyle(Theme.state(.sky))
             .frame(width: size, height: size)
-            .background(Theme.tagBackground(.sky), in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1)
+            }
             .accessibilityHidden(true)
     }
 }
@@ -63,12 +77,11 @@ struct BundleFoldRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Text(Formatters.rowTime(fold.newest))
-                        .font(Theme.sans(.footnote))
+                        .font(Theme.meta)
                         .foregroundStyle(Theme.textTertiary)
-                        .monospacedDigit()
                 }
                 Text(fold.summary)
-                    .font(Theme.sans(.footnote))
+                    .font(Theme.sans(size: 14, relativeTo: .footnote))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
             }
@@ -89,9 +102,9 @@ enum BundleRoute: Hashable {
 
 /// What a host draws itself in the bundle view, in place of the phone's
 /// pieces. The Mac window gives its own (macos-app `BundleEmails.swift`,
-/// `BundleInfo.swift`): its list is single-line rows on a card with a
-/// hover bar, its switchers are capsule tabs, and its Info page is cards
-/// in a reading column. The phone and the iPad give none.
+/// `BundleInfo.swift`): its list is the window's single-line rows with a
+/// hover bar, its switchers are capsule tabs, and its Info page is titled
+/// sections in a reading column. The phone and the iPad give none.
 struct BundleScreenParts {
     /// The Emails · Info switcher, floating over the top of the page.
     let switcher: (Binding<BundlePage>, BundleContents) -> AnyView
@@ -164,35 +177,87 @@ struct BundlesStack: View {
     }
 
     @ViewBuilder private var list: some View {
+        // Read once: each is a filter over every bundle.
+        let active = model.activeBundles
+        let archived = model.archivedBundles
         if model.bundles.isEmpty {
             ContentUnavailableView {
                 Label("No bundles yet", systemImage: "square.stack")
+                    .font(Theme.display(24, relativeTo: .title2))
             } description: {
                 Text("Bundles make themselves: mail about one trip, order or project is grouped as it arrives. To group something yourself, choose Add to bundle… on an email, or create one with +.")
+                    .font(Theme.text(.bodySmall))
+                    .foregroundStyle(Theme.textTertiary)
             }
             .background(Theme.canvas)
         } else {
             List {
-                if !model.activeBundles.isEmpty {
-                    Section {
-                        ForEach(model.activeBundles) { b in
-                            NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
-                        }
+                if !active.isEmpty {
+                    // The active bundles have no title: the rule alone
+                    // opens them.
+                    SectionRule().bundleTitleRow(first: true)
+                    ForEach(active) { b in
+                        NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
+                            .bundleRow(last: b.id == active.last?.id)
                     }
-                    .menuCard()
                 }
-                if !model.archivedBundles.isEmpty {
-                    Section("Archived") {
-                        ForEach(model.archivedBundles) { b in
-                            NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
-                        }
+                if !archived.isEmpty {
+                    SectionTitle("Archived").bundleTitleRow(first: active.isEmpty)
+                    ForEach(archived) { b in
+                        NavigationLink(value: BundleRoute.bundle(b.id)) { BundleListRow(bundle: b) }
+                            .bundleRow(last: b.id == archived.last?.id)
                     }
-                    .menuCard()
                 }
             }
-            .menuList()
+            .bundleList()
             .foregroundStyle(Theme.textPrimary)
         }
+    }
+}
+
+private extension View {
+    /// A list of the Bundles screen: the inbox's plain list on the
+    /// canvas. The screen is a page, not a sheet, so it stands on the
+    /// canvas as the inbox does, not on the raised paper of the menu
+    /// sheets (`menuList`): the mail rows in it fill themselves with the
+    /// canvas, and on dark the two are a step apart. A row may be as low
+    /// as its content: a title, a rule.
+    func bundleList() -> some View {
+        listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, 1)
+            .scrollContentBackground(.hidden)
+            .background(Theme.canvas)
+    }
+
+    /// A row of one of these lists, ruled: straight on the paper, `inset`
+    /// in from the list's edges, with the hairline under it that parts
+    /// it from the next row. The last row of a group has none. The
+    /// hairline is the row's background, so it runs under a link's
+    /// chevron too.
+    func bundleRow(last: Bool = false, inset: CGFloat = 16) -> some View {
+        listRowInsets(EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset))
+            .listRowBackground(Color.clear.overlay(alignment: .bottom) {
+                if !last { RowRule().padding(.horizontal, inset) }
+            })
+            .listRowSeparator(.hidden)
+    }
+
+    /// A row with no hairline under it: a title, a note, a footer.
+    func bundlePlainRow(inset: CGFloat = 16) -> some View {
+        bundleRow(last: true, inset: inset)
+    }
+
+    /// The row of a section's title, or of the rule that opens a section
+    /// without one: the air over it that parts two sections (less at the
+    /// head of a list) and a little under it.
+    func bundleTitleRow(first: Bool = false, inset: CGFloat = 16) -> some View {
+        padding(.top, first ? 8 : 22).padding(.bottom, 4).bundlePlainRow(inset: inset)
+    }
+
+    /// A text field as the look draws one: no fill, an ink rule under it.
+    func bundleField() -> some View {
+        padding(.vertical, 10)
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.textPrimary).frame(height: 1) }
     }
 }
 
@@ -242,18 +307,23 @@ struct BundleListRow: View {
         HStack(spacing: 12) {
             BundleIcon(category: bundle.category)
             VStack(alignment: .leading, spacing: 2) {
-                Text(bundle.name).font(Theme.sans(.body, .semibold)).lineLimit(1)
+                Text(bundle.name)
+                    .font(Theme.sans(.body, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                // The counts are data and set in the mono; the user's own
+                // line about the bundle is prose.
                 Text(bundle.description.isEmpty ? meta : bundle.description)
-                    .font(Theme.sans(.footnote))
+                    .font(bundle.description.isEmpty ? Theme.tag : Theme.secondary)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
             if let at = bundle.lastActivityAt {
-                Text(Formatters.rowTime(at)).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                Text(Formatters.rowTime(at)).font(Theme.meta).foregroundStyle(Theme.textTertiary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
     }
 }
@@ -272,10 +342,11 @@ enum BundlePage: Hashable, CaseIterable {
 }
 
 /// The bundle view, full screen, in two pages the user swipes between:
-/// **Emails** (open first, done dimmed and folded past three; every row has
-/// the inbox's swipes and menu, and ⊖: not part of this bundle) and
-/// **Info** (the model's brief — where things stand, what is left to do —
-/// then tracking links and key facts as plain lists).
+/// **Emails** (open first, done struck through and folded past three;
+/// every row has the inbox's swipes and menu, and ⊖: not part of this
+/// bundle) and **Info** (the model's brief — where things stand, what is
+/// left to do — then tracking links and key facts as ruled rows under
+/// their titles).
 struct BundleScreen: View {
     let bundleId: String
     /// The host's own switcher and Emails page (the Mac window's).
@@ -313,8 +384,14 @@ struct BundleScreen: View {
                     }
                 }
             } else {
-                ContentUnavailableView("Bundle not found", systemImage: "square.stack",
-                                       description: Text("It may have been deleted on another device."))
+                ContentUnavailableView {
+                    Label("Bundle not found", systemImage: "square.stack")
+                        .font(Theme.display(24, relativeTo: .title2))
+                } description: {
+                    Text("It may have been deleted on another device.")
+                        .font(Theme.text(.bodySmall))
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
         }
         .background(Theme.canvas)
@@ -389,133 +466,180 @@ struct BundleScreen: View {
     // MARK: Emails
 
     private func emails(_ c: BundleContents) -> some View {
-        List {
+        // Read once: each is a filter over the bundle's threads.
+        let open = c.open
+        let done = c.done
+        // Past three, the done emails fold behind a row that opens them.
+        let folds = done.count > Self.doneShownUnfolded
+        // The title's count: how many are still open, when any are.
+        let openCount: String? = open.isEmpty ? nil : "\(open.count) open"
+        return List {
             if c.bundle.isAutomatic {
-                Section {
-                    Label("Made automatically. Tap ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.",
-                          systemImage: "sparkles")
-                        .font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
+                // A section with no name: the rule alone opens it.
+                SectionRule().bundleTitleRow(first: true)
+                Label {
+                    Text("Made automatically. Tap ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.")
+                        .font(Theme.sans(.footnote))
+                        .foregroundStyle(Theme.textTertiary)
+                } icon: {
+                    Image(systemName: "sparkles").font(.footnote).foregroundStyle(Theme.pinkInk)
                 }
-                .menuCard()
+                .padding(.vertical, 8)
+                .bundlePlainRow()
             }
-            Section(c.open.isEmpty ? "Emails" : "Emails · \(c.open.count) open") {
-                if c.threads.isEmpty {
-                    Text("No emails yet. Choose Add to bundle… on an email; mail that shares its booking, order or tracking number follows on its own.")
-                        .font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
+            SectionTitle("Emails", count: openCount)
+                .bundleTitleRow(first: !c.bundle.isAutomatic)
+            if c.threads.isEmpty {
+                Text("No emails yet. Choose Add to bundle… on an email; mail that shares its booking, order or tracking number follows on its own.")
+                    .font(Theme.sans(.footnote))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.vertical, 8)
+                    .bundlePlainRow()
+            }
+            ForEach(open) { row in
+                threadRow(row, last: done.isEmpty && row.id == open.last?.id)
+            }
+            if folds {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { showDone.toggle() }
+                } label: {
+                    HStack {
+                        Text(showDone ? "Hide \(done.count) done" : "\(done.count) done")
+                            .font(Theme.sans(.subheadline, .medium))
+                        Spacer()
+                        Image(systemName: showDone ? "chevron.up" : "chevron.down").font(.footnote)
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(minHeight: 46)
+                    .contentShape(Rectangle())
                 }
-                ForEach(c.open) { row in threadRow(row, dimmed: false) }
-                if !c.done.isEmpty {
-                    if c.done.count > Self.doneShownUnfolded {
-                        Button {
-                            withAnimation(.snappy(duration: 0.2)) { showDone.toggle() }
-                        } label: {
-                            HStack {
-                                Text(showDone ? "Hide \(c.done.count) done" : "\(c.done.count) done")
-                                Spacer()
-                                Image(systemName: showDone ? "chevron.up" : "chevron.down").font(.footnote)
-                            }
-                            .foregroundStyle(Theme.textSecondary)
-                        }
-                        .accessibilityLabel(showDone ? "Hide \(c.done.count) done emails" : "Show \(c.done.count) done emails")
-                    }
-                    if showDone || c.done.count <= Self.doneShownUnfolded {
-                        ForEach(c.done) { row in threadRow(row, dimmed: true) }
-                    }
+                .accessibilityLabel(showDone ? "Hide \(done.count) done emails" : "Show \(done.count) done emails")
+                .bundleRow(last: !showDone)
+            }
+            if !done.isEmpty && (showDone || !folds) {
+                ForEach(done) { row in
+                    threadRow(row, last: row.id == done.last?.id)
                 }
             }
-            .menuCard()
         }
-        .menuList()
+        .bundleList()
         .foregroundStyle(Theme.textPrimary)
     }
 
     /// An email as the inbox shows it — the same swipes, the same menu —
-    /// plus ⊖: not part of this bundle (the model learns from it).
-    private func threadRow(_ row: ThreadRow, dimmed: Bool) -> some View {
+    /// plus ⊖: not part of this bundle (the model learns from it). A done
+    /// one steps back to the tertiary grey with its subject and preview
+    /// struck through; the row does that itself for a done email shown
+    /// without its bundle's mark (`ThreadRowView`), so nothing dims it
+    /// from here. The row is ruled as the inbox's are (`ThreadList`):
+    /// 16 pt in, 12 above and below with the row's own 2, and the
+    /// hairline under it part of the row, so it slides with it under a
+    /// swipe.
+    private func threadRow(_ row: ThreadRow, last: Bool) -> some View {
         RowSwipes.row(row, model: model) {
-            HStack(spacing: 8) {
-                ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil, showsBundle: false)
-                    .opacity(dimmed ? 0.6 : 1)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.markRead(row)
-                        openThread(row)
-                    }
-                Button { model.removeFromBundle(row) } label: {
-                    Image(systemName: "minus.circle")
-                        .font(.body)
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: 36, height: 36)
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil, showsBundle: false)
                         .contentShape(Rectangle())
+                        .onTapGesture {
+                            model.markRead(row)
+                            openThread(row)
+                        }
+                    Button { model.removeFromBundle(row) } label: {
+                        Image(systemName: "minus.circle")
+                            .font(.body)
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(width: 32, height: 44, alignment: .trailing)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Not part of this bundle")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Not part of this bundle")
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                if !last { RowRule().padding(.horizontal, 16) }
             }
-            .padding(.horizontal, 16).padding(.vertical, 7)
-            .unreadEdge(!row.isRead)
         }
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
         .contextMenu { RowMenu(row: row) }
     }
 
     // MARK: Info
 
     private func info(_ c: BundleContents) -> some View {
-        List {
-            if model.aiConfigured && !c.threads.isEmpty {
-                Section {
-                    BriefCard(state: model.brief(for: c)) { model.summarizeBundle(c) }
-                }
-                .menuCard()
+        let hasBrief = model.aiConfigured && !c.threads.isEmpty
+        let hasNote = !c.bundle.description.isEmpty
+        return List {
+            if hasBrief {
+                BriefCard(state: model.brief(for: c)) { model.summarizeBundle(c) }
+                    .padding(.top, 8).padding(.bottom, 4)
+                    .bundlePlainRow()
             }
-            if !c.bundle.description.isEmpty {
-                Section {
-                    Text(c.bundle.description).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
-                }
-                .menuCard()
+            if hasNote {
+                // The user's own line about the bundle: a section with no
+                // name, which the rule alone opens.
+                SectionRule().bundleTitleRow(first: !hasBrief)
+                Text(c.bundle.description)
+                    .font(Theme.sans(.subheadline))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.vertical, 8)
+                    .bundlePlainRow()
             }
             if !c.links.isEmpty {
-                Section("Tracking") {
-                    ForEach(c.links) { l in
-                        Link(destination: l.url) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "shippingbox").font(.footnote).foregroundStyle(Theme.tagForeground(.sky))
-                                Text(l.host).font(Theme.sans(.subheadline, .medium)).lineLimit(1)
-                                Text(l.subject).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                                Spacer(minLength: 0)
-                                Image(systemName: "arrow.up.right").font(.caption2).foregroundStyle(Theme.textTertiary)
-                            }
-                        }
-                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                    }
+                SectionTitle("Tracking").bundleTitleRow(first: !hasBrief && !hasNote)
+                ForEach(c.links) { l in
+                    trackingRow(l).bundleRow(last: l.id == c.links.last?.id)
                 }
-                .menuCard()
             }
             if !c.facts.isEmpty {
-                Section("Key facts") {
-                    ForEach(c.facts) { f in
-                        HStack(spacing: 8) {
-                            Button { open(f.threadId) } label: { FactRow(fact: f) }
-                                .buttonStyle(.plain)
-                            if let url = f.url {
-                                Link("Track", destination: url).font(Theme.sans(.footnote, .semibold))
-                            }
-                        }
-                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                    }
+                SectionTitle("Key facts").bundleTitleRow(first: !hasBrief && !hasNote && c.links.isEmpty)
+                ForEach(c.facts) { f in
+                    factRow(f).bundleRow(last: f.id == c.facts.last?.id)
                 }
-                .menuCard()
             }
-            if c.links.isEmpty && c.facts.isEmpty && !(model.aiConfigured && !c.threads.isEmpty) {
-                Section {
-                    Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
-                        .font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
-                }
-                .menuCard()
+            if c.links.isEmpty && c.facts.isEmpty && !hasBrief {
+                SectionRule().bundleTitleRow(first: !hasNote)
+                Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
+                    .font(Theme.sans(.footnote))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.vertical, 8)
+                    .bundlePlainRow()
             }
         }
-        .menuList()
+        .bundleList()
         .foregroundStyle(Theme.textPrimary)
+    }
+
+    /// One tracking link: the host it opens, the subject of the email it
+    /// came from, and the arrow of a link that leaves the app.
+    private func trackingRow(_ l: BundleLinkItem) -> some View {
+        Link(destination: l.url) {
+            HStack(spacing: 8) {
+                Image(systemName: "shippingbox").font(.footnote).foregroundStyle(Theme.state(.sky))
+                Text(l.host).font(Theme.sans(.subheadline, .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(l.subject).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right").font(.caption2).foregroundStyle(Theme.textTertiary)
+            }
+            .frame(minHeight: 46)
+            .contentShape(Rectangle())
+        }
+    }
+
+    /// One key fact, and Track beside it when the fact has a page to
+    /// follow: plain ink text, not a second filled button.
+    private func factRow(_ f: BundleFactItem) -> some View {
+        HStack(spacing: 8) {
+            Button { open(f.threadId) } label: { FactRow(fact: f) }
+                .buttonStyle(.plain)
+            if let url = f.url {
+                Link("Track", destination: url)
+                    .font(Theme.sans(.footnote, .semibold))
+                    .tint(Theme.textPrimary)
+            }
+        }
+        .frame(minHeight: 46)
     }
 
     /// A fact opens the email it came from, in the sheet.
@@ -526,60 +650,72 @@ struct BundleScreen: View {
 
 /// The model's brief on a bundle: where things stand, then what is left
 /// for the user, with a refresh. Asks on a tap, or on open
-/// when `AppModel.summarizeBundleOnOpen` may.
+/// when `AppModel.summarizeBundleOnOpen` may. It opens as every block the
+/// AI wrote does: the sparkle in pink ink before the title, and Summarize
+/// again after the title's rule. (The name is from when it was a card.)
 struct BriefCard: View {
     let state: BundleBriefState?
     let refresh: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Summary", systemImage: "sparkles")
-                    .font(Theme.sans(.caption, .semibold))
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer()
+            SectionTitle(title: "Summary", systemImage: "sparkles") {
                 if state?.generating == true {
                     ProgressView().controlSize(.small)
                 } else if state != nil {
-                    Button(action: refresh) { Image(systemName: "arrow.clockwise").font(.footnote) }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Theme.textTertiary)
-                        .accessibilityLabel("Summarize again")
+                    Button(action: refresh) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.footnote)
+                            .tapArea(horizontal: 12, vertical: 14)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.textTertiary)
+                    .accessibilityLabel("Summarize again")
                 }
             }
             if let brief = state?.brief {
                 if !brief.status.isEmpty {
-                    Text(SummaryMarkup.inline(brief.status)).font(Theme.sans(.subheadline))
+                    Text(SummaryMarkup.inline(brief.status))
+                        .font(Theme.sans(.subheadline))
+                        .foregroundStyle(Theme.textPrimary)
                 }
                 if !brief.actions.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("To do").font(Theme.sans(.caption, .semibold)).foregroundStyle(Theme.textTertiary)
+                        Text("To do")
+                            .font(Theme.label)
+                            .tracking(Theme.labelTracking)
+                            .textCase(.uppercase)
+                            .foregroundStyle(Theme.textTertiary)
                         ForEach(brief.actions, id: \.self) { action in
                             Label {
-                                Text(SummaryMarkup.inline(action)).font(Theme.sans(.subheadline))
+                                Text(SummaryMarkup.inline(action))
+                                    .font(Theme.sans(.subheadline))
+                                    .foregroundStyle(Theme.textPrimary)
                             } icon: {
-                                Image(systemName: "circle").font(.caption).foregroundStyle(Theme.accent)
+                                // What the AI says is left to do: its pink ink.
+                                Image(systemName: "circle").font(.caption).foregroundStyle(Theme.pinkInk)
                             }
                         }
                     }
                 }
             } else if let error = state?.error {
-                Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
-                Button("Try again", action: refresh).font(Theme.sans(.subheadline))
+                Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText)
+                Button("Try again", action: refresh).font(Theme.sans(.subheadline, .semibold))
             } else if state?.generating == true {
                 Text("Reading the bundle…").font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary)
             } else {
                 Button(action: refresh) {
                     Label("Summarize status and to-dos", systemImage: "text.badge.checkmark")
                 }
-                .font(Theme.sans(.subheadline))
+                .font(Theme.sans(.subheadline, .medium))
             }
         }
-        .padding(.vertical, 4)
     }
 }
 
-/// One key fact on one line: its kind, the identifier, when its email came.
+/// One key fact on one line: its kind, the identifier, when its email
+/// came. The identifier (an order or a tracking number) and the time are
+/// data, and set in the mono.
 struct FactRow: View {
     let fact: BundleFactItem
 
@@ -587,13 +723,17 @@ struct FactRow: View {
         HStack(spacing: 8) {
             Image(systemName: fact.category.systemImage)
                 .font(.footnote)
-                .foregroundStyle(Theme.tagForeground(.sky))
+                .foregroundStyle(Theme.state(.sky))
                 .frame(width: 18)
                 .accessibilityHidden(true)
             Text(fact.category.title).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
-            Text(fact.value).font(Theme.mono(.subheadline, .semibold)).lineLimit(1).textSelection(.enabled)
+            Text(fact.value)
+                .font(Theme.mono(.caption, .medium))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .textSelection(.enabled)
             Spacer(minLength: 8)
-            Text(Formatters.rowTime(fact.at)).font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
+            Text(Formatters.rowTime(fact.at)).font(Theme.meta).foregroundStyle(Theme.textTertiary)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -622,47 +762,77 @@ struct BundleEditor: View {
 
     var body: some View {
         List {
+            // The fields have no title: the rule alone opens them.
+            SectionRule().bundleTitleRow(first: true)
             BundleFields(name: $name, category: $category, description: $description)
         }
-        .menuList()
+        .bundleList()
         .navigationTitle(title)
         .inlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .barTrailing) {
-                Button("Save") { save(trimmed, category, description) }
-                    .disabled(trimmed.isEmpty)
+                // The editor's one action: the bar's own button, in the
+                // ink the app tints its bars with, at the weight of an
+                // action.
+                Button { save(trimmed, category, description) } label: {
+                    Text("Save").font(Theme.sans(.body, .semibold))
+                }
+                .disabled(trimmed.isEmpty)
             }
         }
     }
 }
 
-/// The editor's fields, also inlined in the "Add to bundle" sheet.
+/// The editor's fields, also inlined in the "Add to bundle" sheet: rows
+/// of the list they are put in, `inset` in from its edges. A field has
+/// no fill, only an ink rule under it; the kind is a ruled row between
+/// the two, and the note about what joins the bundle ends them.
 struct BundleFields: View {
     @Binding var name: String
     @Binding var category: BundleCategory
     @Binding var description: String
+    var inset: CGFloat = 16
 
     var body: some View {
-        Section {
+        Group {
             TextField("Name, e.g. Lisbon trip", text: $name)
-            Picker("Kind", selection: $category) {
+                .font(Theme.sender(false))
+                .borderlessFields()
+                .bundleField()
+                .padding(.bottom, 8)
+                .bundlePlainRow(inset: inset)
+            Picker(selection: $category) {
                 ForEach(BundleCategory.allCases) { c in
                     Label(c.title, systemImage: c.systemImage).tag(c)
                 }
+            } label: {
+                Text("Kind").font(Theme.sender(false))
             }
+            .tint(Theme.textTertiary)
+            .frame(minHeight: 46)
+            .bundleRow(inset: inset)
             TextField("What it is about (optional)", text: $description, axis: .vertical)
                 .lineLimit(1...3)
-        } footer: {
+                .font(Theme.text(.bodySmall))
+                .borderlessFields()
+                .bundleField()
+                .padding(.bottom, 8)
+                .bundlePlainRow(inset: inset)
             Text("Mail that shares a booking, order or tracking number with an email in the bundle joins it on its own.")
+                .font(Theme.secondary)
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.top, 8)
+                .bundlePlainRow(inset: inset)
         }
-        .menuCard()
     }
 }
 
 // MARK: - Add to bundle
 
 /// "Add to bundle…": the likely bundle first, then the other active ones,
-/// then a new one; "Remove from …" when the thread is in one.
+/// then a new one; "Remove from …" when the thread is in one. A sheet of
+/// ruled rows under its title; Create and add is its one ink action, and
+/// removing is coral text, not a fill.
 struct AddToBundleSheet: View {
     let row: ThreadRow
     @Environment(AppModel.self) private var model
@@ -673,55 +843,85 @@ struct AddToBundleSheet: View {
     @State private var description = ""
     @State private var suggested: BundleItem?
 
+    /// How far the sheet's rows stand in from its edges.
+    private static let inset: CGFloat = 20
+
     private var current: BundleItem? { model.bundle(id: row.bundleId) }
     private var others: [BundleItem] {
         model.activeBundles.filter { $0.id != suggested?.id && $0.id != row.bundleId }
     }
 
     var body: some View {
+        // Read once: a filter over every bundle.
+        let rest = others
         List {
-            Section {
-                if let s = suggested {
-                    pick(s, reason: "Shares a booking, order or tracking number")
-                }
-            } header: {
-                SheetHeader(title: "Add to bundle", subtitle: row.subject.isEmpty ? row.fromSummary : row.subject) { dismiss() }
+            // The title is the list's first row and scrolls with it; a
+            // plain list would pin a section's header to the top.
+            SheetHeader(title: "Add to bundle", subtitle: row.subject.isEmpty ? row.fromSummary : row.subject) { dismiss() }
+                .padding(.top, 24)
+                .bundlePlainRow(inset: Self.inset)
+            if let s = suggested {
+                pick(s, reason: "Shares a booking, order or tracking number")
+                    .bundlePlainRow(inset: Self.inset)
             }
-            if !others.isEmpty {
-                Section("Bundles") {
-                    ForEach(others) { b in pick(b, reason: nil) }
+            if !rest.isEmpty {
+                SectionTitle("Bundles").bundleTitleRow(inset: Self.inset)
+                ForEach(rest) { b in
+                    pick(b, reason: nil)
+                        .bundleRow(last: b.id == rest.last?.id, inset: Self.inset)
                 }
             }
+            // A new bundle has no title: the rule alone opens it.
+            SectionRule().bundleTitleRow(inset: Self.inset)
             if creating {
-                BundleFields(name: $name, category: $category, description: $description)
-                Section {
-                    Button {
-                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if model.createBundle(name: trimmed, category: category, description: description, threadIds: [row.id]) != nil {
-                            dismiss()
-                        }
-                    } label: { Text("Create and add").frame(maxWidth: .infinity) }
-                        .pillButton(prominent: true)
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .listRowBackground(Color.clear)
+                BundleFields(name: $name, category: $category, description: $description, inset: Self.inset)
+                Button {
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if model.createBundle(name: trimmed, category: category, description: description, threadIds: [row.id]) != nil {
+                        dismiss()
+                    }
+                } label: {
+                    Text("Create and add")
+                        .font(Theme.text(.bodySmall, .semibold))
+                        .foregroundStyle(Theme.onPrimary)
+                        .frame(maxWidth: .infinity)
                 }
+                .pillButton(prominent: true)
+                .tint(Theme.textPrimary)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(.top, 14)
+                .bundlePlainRow(inset: Self.inset)
             } else {
-                Section {
-                    Button { withAnimation { creating = true } } label: { Label("New bundle…", systemImage: "plus") }
+                Button { withAnimation { creating = true } } label: {
+                    Label("New bundle…", systemImage: "plus")
+                        .font(Theme.sender(false))
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .bundlePlainRow(inset: Self.inset)
             }
             if let current {
-                Section {
-                    Button(role: .destructive) {
-                        model.removeFromBundle(row)
-                        dismiss()
-                    } label: { Label("Remove from \(current.name)", systemImage: "minus.circle") }
+                SectionRule().bundleTitleRow(inset: Self.inset)
+                Button(role: .destructive) {
+                    model.removeFromBundle(row)
+                    dismiss()
+                } label: {
+                    Label("Remove from \(current.name)", systemImage: "minus.circle")
+                        .font(Theme.sender(false))
+                        .foregroundStyle(Theme.dangerText)
+                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .bundlePlainRow(inset: Self.inset)
             }
         }
-        .groupedListStyle()
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 1)
         .scrollContentBackground(.hidden)
         .sheetSize(creating ? .large : .mediumOrLarge)
+        // A sheet stands on the raised paper.
+        .background(Theme.raised)
         .onAppear {
             suggested = model.suggestedBundle(for: row)
             // Nothing to pick from: straight to the new bundle's fields.
@@ -737,12 +937,14 @@ struct AddToBundleSheet: View {
             HStack(spacing: 12) {
                 BundleIcon(category: b.category, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(b.name).foregroundStyle(Theme.textPrimary)
+                    Text(b.name).font(Theme.sender(false)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     if let reason {
-                        Text(reason).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        Text(reason).font(Theme.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .contentShape(Rectangle())
         }
     }
 }

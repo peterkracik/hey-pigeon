@@ -26,12 +26,15 @@ struct OutboxSection: View {
                 HStack {
                     Label("Outbox", systemImage: model.failedChanges > 0 ? "exclamationmark.triangle" : "tray.and.arrow.up")
                     Spacer()
+                    // Counts are data: the mono, in the warning colour
+                    // while something was not sent.
                     Text(Self.status(waiting: model.queuedChanges, failed: model.failedChanges))
+                        .font(Theme.meta)
                         .foregroundStyle(model.failedChanges > 0 ? Theme.warning : Theme.textTertiary)
                 }
             }
         } footer: {
-            Text("What you do is applied on this \(Device.name) at once and sent to Gmail after. A change that could not be sent waits in the Outbox for you to send again or discard.")
+            Text("What you do is applied on this \(Device.name) at once and sent to Gmail after. A change that could not be sent waits in the Outbox for you to send again or discard.").settingsFooter()
         }
         .menuCard()
     }
@@ -62,13 +65,15 @@ struct OutboxView: View {
         SettingsList {
             Section {
                 if changes.isEmpty {
+                    // A sentence, not a row's name: the regular weight.
                     Text("Nothing is waiting. Everything you did has reached Gmail.")
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(Theme.sans(.body)).foregroundStyle(Theme.textSecondary)
                 }
                 ForEach(changes) { change in row(change) }
             }
             .menuCard()
         }
+        .settingsRows()
         .navigationTitle("Outbox")
         .inlineNavigationTitle()
         // As the page appears, and again whenever the engine's background
@@ -87,27 +92,36 @@ struct OutboxView: View {
 
     private func row(_ change: QueuedChange) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(change.title).font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.textPrimary)
-                Text(change.failed ? "Not sent" : "Waiting")
-                    .font(Theme.sans(.caption, .semibold))
-                    .foregroundStyle(change.failed ? Theme.warning : Theme.textTertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(change.title).font(Theme.sans(.body, .semibold)).foregroundStyle(Theme.textPrimary)
+                // Its state, as writing in its colour: not sent wants a
+                // look, waiting is only waiting.
+                StateMark(text: change.failed ? "Not sent" : "Waiting",
+                          tint: change.failed ? Theme.warning : Theme.textTertiary)
                 Spacer()
                 if busy == change.id { ProgressView().controlSize(.small) }
             }
-            Text(change.summary).font(Theme.sans(.footnote)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+            Text(change.summary).font(Theme.secondary).foregroundStyle(Theme.textSecondary).lineLimit(2)
             if let error = notes[change.id] ?? change.lastError, !error.isEmpty {
-                Text(error).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).lineLimit(3)
+                Text(error).font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(3)
             }
             if change.failed {
+                // The way on is an outlined capsule; Discard deletes, so
+                // it is the danger colour as text. A style each, or one
+                // tap on the row would press both. The word names its
+                // own colour, so it also dims itself while a change is
+                // being sent or discarded, as the capsule beside it does.
                 HStack(spacing: 16) {
                     Button("Send again") { retry(change) }
-                    Button("Discard", role: .destructive) {
+                        .buttonStyle(OutlineButtonStyle())
+                    Button(role: .destructive) {
                         if change.kind == "send" { discarding = change } else { discard(change) }
+                    } label: {
+                        Text("Discard").font(Theme.sans(.subheadline, .semibold)).foregroundStyle(Theme.dangerText)
+                            .opacity(busy != nil ? 0.35 : 1)
                     }
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
-                .font(Theme.sans(.footnote, .semibold))
                 .disabled(busy != nil)
                 .padding(.top, 2)
             }
@@ -157,11 +171,12 @@ struct RulesSection: View {
                         Label("Muted and blocked", systemImage: "bell.slash")
                         Spacer()
                         Text(Self.status(muted: model.mutedThreads.count, blocked: model.blockedSenders.count))
+                            .font(Theme.meta)
                             .foregroundStyle(Theme.textTertiary)
                     }
                 }
             } footer: {
-                Text("A muted thread is marked done again when a reply arrives; a thread whose mail is all from a blocked address goes to Spam. Both are this app's own rules, applied on each of your devices after a sync, and kept with your other settings in your Google Drive.")
+                Text("A muted thread is marked done again when a reply arrives; a thread whose mail is all from a blocked address goes to Spam. Both are this app's own rules, applied on each of your devices after a sync, and kept with your other settings in your Google Drive.").settingsFooter()
             }
             .menuCard()
         }
@@ -185,36 +200,42 @@ struct RulesView: View {
     var body: some View {
         SettingsList {
             if !model.blockedSenders.isEmpty {
-                Section("Blocked") {
+                Section {
                     ForEach(model.blockedSenders, id: \.self) { address in
                         HStack {
                             Text(address).lineLimit(1)
                             Spacer()
                             Button("Unblock") { model.unblock(address) }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(OutlineButtonStyle())
                         }
                     }
+                } header: {
+                    SectionTitle("Blocked")
                 }
                 .menuCard()
             }
             if !model.mutedThreads.isEmpty {
-                Section("Muted") {
+                Section {
                     ForEach(model.mutedThreads.reversed(), id: \.self) { id in
                         HStack {
                             Text(subjects[id] ?? "A muted thread").lineLimit(1)
                             Spacer()
                             Button("Unmute") { model.unmute(threadId: id) }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(OutlineButtonStyle())
                         }
                     }
+                } header: {
+                    SectionTitle("Muted")
                 }
                 .menuCard()
             }
             if model.blockedSenders.isEmpty && model.mutedThreads.isEmpty {
-                Section { Text("Nothing is muted or blocked.").foregroundStyle(Theme.textSecondary) }
+                // A sentence, not a row's name: the regular weight.
+                Section { Text("Nothing is muted or blocked.").font(Theme.sans(.body)).foregroundStyle(Theme.textSecondary) }
                     .menuCard()
             }
         }
+        .settingsRows()
         .navigationTitle("Muted and blocked")
         .inlineNavigationTitle()
         .task(id: model.mutedThreads) {
@@ -250,8 +271,9 @@ struct DiagnosticsSection: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(Formatters.fullDate(report.date))
+                            // A size is data: the mono.
                             Text(ByteCountFormatter.string(fromByteCount: Int64(report.bytes), countStyle: .file))
-                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.meta).foregroundStyle(Theme.textTertiary)
                         }
                         Spacer()
                         Button(copied == report.url ? "Copied" : "Copy") {
@@ -260,17 +282,22 @@ struct DiagnosticsSection: View {
                                 copied = report.url
                             }
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(OutlineButtonStyle())
                     }
                 }
-                Button("Delete all reports", role: .destructive) {
+                // What deletes is written in the danger colour: the role
+                // alone gives the system's red.
+                Button(role: .destructive) {
                     DiagnosticsCollector.deleteAll()
                     reports = []
+                } label: {
+                    Text("Delete all reports").foregroundStyle(Theme.dangerText)
                 }
+                .settingsRowButton()
             } header: {
-                Text("Diagnostics")
+                SectionTitle("Diagnostics")
             } footer: {
-                Text("When the app crashes or hangs, the system hands it a report soon after. The reports are kept on this \(Device.name) only, out of its backups: nothing is sent anywhere unless you copy one out.")
+                Text("When the app crashes or hangs, the system hands it a report soon after. The reports are kept on this \(Device.name) only, out of its backups: nothing is sent anywhere unless you copy one out.").settingsFooter()
             }
             .menuCard()
         }

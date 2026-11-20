@@ -501,7 +501,12 @@ struct SheetHeader: View {
 }
 
 /// Settings' container: the phone's menu list; on the Mac a grouped form
-/// with no scroll bar.
+/// with no scroll bar, on the paper. The grouped form is kept for what
+/// it does to a row (the label at the leading end, a switch or a picker
+/// at the trailing one); the boxes it draws around its sections are
+/// asked away by clearing its rows' background, as `menuCard` does for
+/// the phone's grouped list, and the rules it draws between rows take
+/// the app's hairline.
 struct SettingsList<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
@@ -509,7 +514,11 @@ struct SettingsList<Content: View>: View {
         #if os(iOS)
         List { content() }.menuList()
         #else
-        Form { content() }
+        Form {
+            content()
+                .listRowBackground(Color.clear)
+                .listRowSeparatorTint(Theme.separator)
+        }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.never)

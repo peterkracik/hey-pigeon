@@ -77,7 +77,7 @@ struct MessageBodyView: View {
                 // they do not load even when pictures are allowed.
                 if known.trackers > 0 {
                     Label("\(known.trackers) \(known.trackers == 1 ? "tracker" : "trackers") blocked", systemImage: "eye.slash")
-                        .font(Theme.caption)
+                        .font(Theme.secondary)
                         .foregroundStyle(Theme.textTertiary)
                         .accessibilityLabel(known.trackers == 1 ? "1 tracking picture blocked" : "\(known.trackers) tracking pictures blocked")
                 }
@@ -86,12 +86,12 @@ struct MessageBodyView: View {
                 if misleadingLinks > 0 {
                     Label(misleadingLinks == 1 ? "1 link goes to another site than it shows"
                           : "\(misleadingLinks) links go to another site than they show", systemImage: "link")
-                        .font(Theme.caption)
+                        .font(Theme.secondary)
                         .foregroundStyle(Theme.textTertiary)
                 }
                 if !imagesAllowed && known.hasRemoteImages {
                     HStack(spacing: 6) {
-                        Text("Images hidden").font(Theme.caption).foregroundStyle(Theme.textTertiary)
+                        Text("Images hidden").font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                         Spacer()
                         imageButton("Load") { loadOnce = true }
                             .accessibilityLabel("Load images in this message")
@@ -205,6 +205,11 @@ struct MessageBodyView: View {
         }
     }
 
+    /// The app's own controls around the mail ("Load", the quote's •••)
+    /// are boxed chips: an outline with 6 pt corners and no fill, so
+    /// nothing of the app's reads as part of the message.
+    private static let chipBox = RoundedRectangle(cornerRadius: 6, style: .continuous)
+
     private func imageButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
@@ -212,7 +217,7 @@ struct MessageBodyView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(Self.chipBox.strokeBorder(Theme.outline, lineWidth: 1))
                 // The chip is some 22 pt tall: taller to the finger.
                 .tapArea(vertical: 11)
         }
@@ -222,9 +227,9 @@ struct MessageBodyView: View {
     private var quoteButton: some View {
         Button { showQuoted = true } label: {
             // A quiet handle, not a second headline under the message.
-            Text("•••").font(Theme.text(.caption2, .bold)).kerning(2).foregroundStyle(Theme.textTertiary)
+            Text("•••").font(Theme.text(.caption2, .bold)).kerning(2).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(Self.chipBox.strokeBorder(Theme.outline, lineWidth: 1))
                 .tapArea(horizontal: 8, vertical: 14)
         }
         .buttonStyle(.plain)
@@ -830,13 +835,16 @@ extension View {
     func hoveredLinkStatus() -> some View {
         overlayPreferenceValue(HoveredLinkKey.self, alignment: .bottomLeading) { text in
             if let text {
+                // It lies over the mail, so it is the raised paper in a
+                // boxed chip's outline: readable on any message.
                 Text(text)
                     .font(Theme.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
                     .padding(6)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)

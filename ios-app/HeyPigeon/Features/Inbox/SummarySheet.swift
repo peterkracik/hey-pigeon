@@ -1,5 +1,9 @@
 // The AI summary of a day group or an open thread, in a sheet that slides
 // up like compose. Generation runs in AppModel; this only shows the cache.
+//
+// On the raised paper (docs/specs/marker-look.md): what the AI wrote opens
+// under its title — the pink sparkle, "Summary" and a rule in the light
+// grey of structure — and the line that says what was sent is a footer.
 
 import SwiftUI
 
@@ -25,18 +29,21 @@ struct SummarySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    SectionTitle("Summary", systemImage: "sparkles")
                     ResultState(working: "Summarizing…", error: summary?.error, isReady: summary?.text != nil,
                                 retry: { model.retrySummary(presentation) }) {
-                        SummaryTextView(text: summary?.text ?? "").font(Theme.sans(.body)).foregroundStyle(Theme.textPrimary)
+                        SummaryTextView(text: summary?.text ?? "")
+                            .font(Theme.sans(.body)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
                     }
                     Text(footnote)
-                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
-                        .padding(.top, 8)
+                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
+                        .padding(.top, 2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
+                .padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 20)
             }
-            .background(Theme.canvas)
+            // A sheet stands on the raised paper.
+            .background(Theme.raised)
             .navigationTitle(presentation.title)
             .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

@@ -527,7 +527,7 @@ enum ToastMetrics {
     static let verticalPadding: CGFloat = 12
     #else
     static let bottomInset: CGFloat = 18
-    /// The Mac's thread bar is one small card: the toast stays where it is.
+    /// The Mac's thread bar is one small panel: the toast stays where it is.
     static let bottomInsetOverThread: CGFloat = 18
     static let verticalPadding: CGFloat = 11
     #endif
@@ -722,34 +722,40 @@ extension View {
         #endif
     }
 
-    /// The thread's Reply pill: the phone's glass capsule; on the Mac the
-    /// window's sunken pill (the composer's buttons), inside the bar's card.
+    /// The thread's Reply pill: the phone's glass capsule; on the Mac an
+    /// outlined capsule, as the window's pills are (`MacPillButtonStyle`).
+    /// The Mac does not draw the pill today — its Reply · Reply all ·
+    /// Forward are at the last message's foot (`ThreadReplyFoot`) — so
+    /// this is what it would stand on if it did.
     @ViewBuilder
     func replyPillSurface() -> some View {
         #if os(iOS)
         glassEffect(.regular, in: .capsule)
         #else
-        background(Theme.sunken, in: Capsule())
+        background(Capsule().strokeBorder(Theme.textPrimary, lineWidth: 1))
         #endif
     }
 
     /// The thread's floating bar: the phone's glass capsule; on the Mac a
-    /// flat card with a hairline and a soft shadow — glass stretched across
-    /// the thread refracted the message under it into a smear.
+    /// paper panel (the raised paper, a hairline, one soft shadow) —
+    /// glass stretched across the thread refracted the message under it
+    /// into a smear. The bar floats over the messages and holds none, so
+    /// its shadow falls on no web view.
     @ViewBuilder
     func floatingBar() -> some View {
         #if os(iOS)
         glassEffect(.regular, in: .capsule)
         #else
-        background(Theme.card, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.separator, lineWidth: 1))
-            .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+        background(MacTheme.panel, in: Capsule())
+            .overlay(Capsule().strokeBorder(MacTheme.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.1), radius: 10, y: 2)
         #endif
     }
 
     /// A button in the thread's bar: plain on the phone's glass; on the
-    /// Mac a square that tints under the pointer, as the window's icon
-    /// buttons do (a plain button there gives no sign that it is one).
+    /// Mac a square that takes the sunken grey under the pointer, as the
+    /// window's icon buttons do (a plain button there gives no sign that
+    /// it is one).
     @ViewBuilder
     func barButton() -> some View {
         #if os(iOS)
@@ -788,40 +794,39 @@ enum ThreadChrome {
     /// MainToolbar), after its Back: a principal item there is a bordered
     /// pill in the middle of the window, half over the sidebar.
     static let titleInBar = false
-    /// One card as wide as its contents, in the middle of the bottom
+    /// One panel as wide as its contents, in the middle of the bottom
     /// edge: the triage buttons. The phone's two capsules, stacked and
     /// stretched across the thread, read as a smear of the message under
     /// them.
     static let oneBar = true
     /// Reply · Reply all · Forward are pills at the foot of the last
     /// message (`ThreadReplyFoot`), as under a row's preview in the
-    /// list; the floating card keeps the triage alone.
+    /// list; the floating panel keeps the triage alone.
     static let replyAtFoot = true
-    /// The messages are one rounded card (`threadCard`, `rowShape`),
-    /// this far in from the column's edges.
-    static let cardInset: CGFloat = 16
-    static let cardRadius: CGFloat = 14
-    /// The subject's and the chips' margin: the card's inset and a
-    /// message's own padding, so they start where the text in the card
-    /// does.
-    static let headerInset: CGFloat = 32
-    /// The thread stands on the list's background and its messages on
-    /// one white card, as a day group's rows do: closed and open
-    /// messages share the surface, and the hairlines part them.
-    static let page = MacTheme.listBackground
-    static let closedRow = MacTheme.groupCard
-    static let openRow = MacTheme.groupCard
+    /// The messages stand straight on the paper, as wide as the reading
+    /// column and square: no card, so no inset and no corners
+    /// (`threadCard`, `rowShape`).
+    static let cardInset: CGFloat = 0
+    static let cardRadius: CGFloat = 0
+    /// The subject's and the marks' margin: a message's own padding, so
+    /// they start where the messages' text does.
+    static let headerInset: CGFloat = 16
+    /// One surface: the thread, its closed messages and its open ones
+    /// are the paper, and the hairlines part them.
+    static let page = Theme.canvas
+    static let closedRow = Theme.canvas
+    static let openRow = Theme.canvas
     /// A message's •••: the square of a row's own button
     /// (`IconButton.Size.small`).
     static let actionsSize = CGSize(width: 26, height: 26)
     #endif
 
-    /// The surface of one row of the thread's messages: the card's
-    /// corners on its first and last rows, square between them (and
-    /// everywhere on the phone). The rows carry the card's shape
-    /// themselves, as the rows of a day group in the Mac's list do: the
-    /// card is not clipped, because a clip, like a shadow, would lie
-    /// over the web view of every message in it.
+    /// The surface of one row of the thread's messages: square, on the
+    /// phone and on the Mac alike (`cardRadius` is 0 on both: the
+    /// messages are ruled, not carded). The rows still carry their shape
+    /// themselves — were they ever rounded again, it would be here and
+    /// not by a clip, because a clip, like a shadow, would lie over the
+    /// web view of every message in it.
     static func rowShape(first: Bool, last: Bool) -> UnevenRoundedRectangle {
         UnevenRoundedRectangle(topLeadingRadius: first ? cardRadius : 0, bottomLeadingRadius: last ? cardRadius : 0,
                                bottomTrailingRadius: last ? cardRadius : 0, topTrailingRadius: first ? cardRadius : 0,
@@ -844,25 +849,26 @@ extension View {
         #endif
     }
 
-    /// The thread's messages as one card: the hairlines between the
-    /// rows, in the card's shape, and the card's inset from the column's
-    /// edges (the Mac's 16 pt and 14 pt corners; nothing and square on
-    /// the phone and the iPad, whose rows stay flat and edge to edge).
-    /// No shadow and no clip: both would fall on the web view of every
-    /// message in it — the rows are shaped instead (`ThreadChrome.rowShape`).
+    /// What holds the thread's messages. No card on any platform (the
+    /// name is from when the Mac had one): the Mac's rows stand straight
+    /// on the paper, as wide as the reading column (`cardInset` is 0),
+    /// with nothing painted behind them — each rules itself along its
+    /// bottom edge (ThreadView's `MessageRow.ruled`). The phone's and the
+    /// iPad's run edge to edge. No shadow and no clip, here or ever: both
+    /// would fall on the web view of every message.
     @ViewBuilder
     func threadCard() -> some View {
         #if os(macOS)
-        background(Theme.separator.opacity(0.6), in: ThreadChrome.rowShape(first: true, last: true))
-            .padding(.horizontal, ThreadChrome.cardInset)
+        padding(.horizontal, ThreadChrome.cardInset)
         #else
         background(Theme.separator.opacity(0.6))
         #endif
     }
 
     /// A message row's surface colour: in the row's shape on the Mac
-    /// (the card's corners); the phone's plain fill, which also runs
-    /// under the safe area's sides in landscape, as it always did.
+    /// (square, as `rowShape` is now); the phone's plain fill, which
+    /// also runs under the safe area's sides in landscape, as it always
+    /// did.
     @ViewBuilder
     func threadRowSurface(_ color: Color, in shape: UnevenRoundedRectangle) -> some View {
         #if os(macOS)
@@ -917,8 +923,9 @@ private struct MacHoverTint<S: Shape>: ViewModifier {
 
 /// Reply · Reply all · Forward at the foot of the thread's last message
 /// on the Mac: the pills under a row's preview in the list (macos-app
-/// `PillButton`). Nothing on the phone and the iPad, whose Reply pill
-/// floats over the triage bar.
+/// `PillButton`) — Reply the ink one, the thread's one ink action, the
+/// other two outlined. Nothing on the phone and the iPad, whose Reply
+/// pill floats over the triage bar.
 struct ThreadReplyFoot: View {
     let onAction: (ReplyKind) -> Void
 
@@ -926,7 +933,7 @@ struct ThreadReplyFoot: View {
         #if os(macOS)
         HStack(spacing: 6) {
             ForEach(ReplyKind.allCases) { kind in
-                PillButton(title: kind.title, systemImage: kind.systemImage) { onAction(kind) }
+                PillButton(title: kind.title, systemImage: kind.systemImage, ink: kind == .reply) { onAction(kind) }
             }
             Spacer(minLength: 0)
         }
@@ -977,8 +984,8 @@ enum MailTypography {
 }
 
 #if os(macOS)
-/// The thread bar's button: a square that tints under the pointer and
-/// dims while pressed or disabled.
+/// The thread bar's button: a square that takes the sunken grey under
+/// the pointer and dims while pressed or disabled.
 struct MacBarButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         Square(configuration: configuration)
@@ -993,7 +1000,7 @@ struct MacBarButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .background(hovering && isEnabled ? Theme.sunken : .clear,
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
                 .onHover { hovering = $0 }
         }
@@ -1131,7 +1138,8 @@ extension View {
     }
 
     /// The phone's glass button; on the Mac the window's flat pill (a glass
-    /// button there is a bordered white box).
+    /// button there is a bordered white box): an ink capsule for the main
+    /// action, an outlined one for every other (`MacPillButtonStyle`).
     @ViewBuilder
     func pillButton(prominent: Bool = false) -> some View {
         #if os(iOS)
@@ -1156,7 +1164,9 @@ extension View {
 
     /// The composer's title, close and size buttons: the phone's navigation
     /// bar; on the Mac a header row at the top — a Mac sheet puts toolbar
-    /// items in a bar along its bottom.
+    /// items in a bar along its bottom. The Mac's row stands on the
+    /// sheet's raised paper, its two buttons outlined pills, and ends with
+    /// the rule that opens the fields under it.
     @ViewBuilder
     func composeChrome(title: String, fullScreen: Bool, close: @escaping () -> Void,
                        toggleFullScreen: @escaping () -> Void) -> some View {
@@ -1190,7 +1200,7 @@ extension View {
                         .help("Close and save the draft (Esc)")
                         .accessibilityLabel("Close and save draft")
                     Spacer()
-                    Text(title).font(Theme.sans(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    Text(title).font(Theme.sans(size: 14, weight: .bold)).foregroundStyle(Theme.textPrimary)
                     Spacer()
                     Button { toggleFullScreen() } label: { Image(systemName: sizeIcon).font(.system(size: 12, weight: .semibold)) }
                         .pillButton()
@@ -1198,17 +1208,25 @@ extension View {
                         .accessibilityLabel(sizeLabel)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
-                Divider()
+                // The fields are a section with no name: they open with
+                // the rule alone, in from the edges as their hairlines
+                // are. (The phone's fields draw theirs under the system's
+                // bar; here the header is the app's, and holds it.)
+                SectionRule().padding(.horizontal, 16)
             }
-            .background(Theme.canvas)
+            // The sheet's own surface (ComposeView's), so what scrolls
+            // under the header does not show through it.
+            .background(Theme.raised)
         }
         #endif
     }
 }
 
 #if os(macOS)
-/// The Mac's pill: the sunken fill (or the primary colour for the main
-/// action), no border, dimmed when disabled.
+/// The Mac's pill. `prominent` is the main action, one a screen: an ink
+/// capsule with the paper's colour for its words. Every other pill is
+/// the ink as a hairline outline with no fill, the paper showing
+/// through. Both dim while pressed or disabled.
 struct MacPillButtonStyle: ButtonStyle {
     let prominent: Bool
     @Environment(\.isEnabled) private var isEnabled
@@ -1217,7 +1235,8 @@ struct MacPillButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 10).padding(.vertical, 7)
             .foregroundStyle(prominent ? Theme.onPrimary : Theme.textPrimary)
-            .background(prominent ? Theme.textPrimary : Theme.sunken, in: Capsule())
+            .background(prominent ? Theme.textPrimary : Color.clear, in: Capsule())
+            .overlay(Capsule().strokeBorder(prominent ? Color.clear : Theme.textPrimary, lineWidth: 1))
             .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
             .contentShape(Capsule())
     }

@@ -1,6 +1,8 @@
 // `?` / ⌘/: the keyboard map on one sheet — the desktop's cheat sheet. The
 // bare keys work when the list or the thread has the focus (not in a text
-// field); the ⌘ equivalents are in the menus and work everywhere.
+// field); the ⌘ equivalents are in the menus and work everywhere. Each
+// group stands under its light grey title, its rows ruled, every key a
+// keycap (`KeyCaps`).
 
 import SwiftUI
 
@@ -42,36 +44,65 @@ struct ShortcutsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Keyboard").font(Theme.display(22, relativeTo: .title2)).foregroundStyle(Theme.textPrimary)
+                Text("Keyboard").font(Theme.display(24, relativeTo: .title2)).tracking(-0.4)
+                    .foregroundStyle(Theme.textPrimary)
                 Spacer()
-                Button(role: .close) { dismiss() }
+                // The sheet's close: an outlined circle, as every button
+                // that is not the screen's ink action is outlined.
+                Button(role: .close) { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(width: 28, height: 28)
+                        .overlay(Circle().strokeBorder(Theme.textPrimary, lineWidth: 1))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+                .accessibilityLabel("Close")
             }
-            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 8)
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 12)
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 16) {
                     ForEach(Self.groups, id: \.0) { title, rows in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(title).font(Theme.display(13, relativeTo: .caption)).foregroundStyle(Theme.textTertiary)
-                            ForEach(rows, id: \.0) { key, what in
-                                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                    Text(key)
-                                        .font(Theme.mono(.subheadline, .semibold))
-                                        .foregroundStyle(Theme.textPrimary)
-                                        .frame(width: 120, alignment: .leading)
-                                    Text(what).font(Theme.sans(.subheadline)).foregroundStyle(Theme.textSecondary)
-                                }
+                        VStack(alignment: .leading, spacing: 0) {
+                            SectionTitle(title).padding(.bottom, 2)
+                            ForEach(Array(rows.enumerated()), id: \.element.0) { index, row in
+                                ShortcutRow(keys: row.0, what: row.1, isLast: index == rows.count - 1)
                             }
                         }
-                        .padding(14)
-                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     Text("The letters work while the list or the thread has the keyboard, never inside a text field. Every action is also in the Message and Go menus, with ⌘ shortcuts.")
-                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.sans(size: 12)).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(.horizontal, 20).padding(.bottom, 20)
             }
         }
         .frame(width: 520, height: 640)
-        .background(Theme.canvas)
+        .background(Theme.raised)
+    }
+}
+
+/// One shortcut: its keys as caps in a fixed column, what they do beside
+/// them, a hairline under the row (but for a group's last).
+private struct ShortcutRow: View {
+    let keys: String
+    let what: String
+    var isLast = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            KeyCaps(keys: keys, ink: Theme.textPrimary)
+                .frame(width: 120, alignment: .leading)
+            Text(what)
+                .font(Theme.sans(size: 12.5))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.top, 2)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .overlay(alignment: .bottom) {
+            if !isLast { RowRule() }
+        }
     }
 }

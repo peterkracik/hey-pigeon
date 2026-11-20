@@ -98,18 +98,16 @@ struct TranslationPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Translation")
-                    .font(Theme.display(17, relativeTo: .headline))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                languageMenu
-            }
+            // The translation's block opens as every block the AI writes
+            // does: the sparkle and the name over a rule, with the
+            // language — the one control — after the rule.
+            SectionTitle(title: "Translation", systemImage: "sparkles") { languageMenu }
             ScrollView {
                 ResultState(working: "Translating…", error: error, isReady: result != nil, retry: retry) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(result ?? "")
                             .font(Theme.sans(.body))
+                            .lineSpacing(4)
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)
                         // A long passage arrives part by part.
@@ -132,9 +130,11 @@ struct TranslationPanel: View {
             // iPad's readable-column margins (`readableColumn`) are the
             // thread's, not this panel's.
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            // A hairline parts the translation from what is said about it.
+            RowRule()
             HStack(alignment: .top) {
                 Text(footnoteShown)
-                    .font(Theme.caption).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 Spacer(minLength: 8)
                 if let result, !pending {
                     Button {
@@ -145,15 +145,16 @@ struct TranslationPanel: View {
                         Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                             .font(Theme.text(.secondary, .semibold))
                     }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.small)
+                    // An outlined capsule: the panel has no ink action.
+                    .buttonStyle(OutlineButtonStyle())
                     .accessibilityLabel("Copy the translation")
                 }
             }
         }
-        .padding(16)
-        .background(Theme.canvas)
+        .padding(.horizontal, 20).padding(.vertical, 16)
+        // A sheet on the phone, a popover on the iPad and the Mac: the
+        // raised paper either way.
+        .background(Theme.raised)
         .panelSize(.medium)
         // A new language, or Try again: the task before it is cancelled,
         // so a late answer for the old request is dropped.
@@ -167,7 +168,9 @@ struct TranslationPanel: View {
     }
 
     /// The target language: the device's, the user's other languages, then
-    /// the common set. Picking one translates again.
+    /// the common set. Picking one translates again. It ends the title's
+    /// line as plain ink writing with a chevron: a control, so it keeps
+    /// its strength beside the light grey title, and nothing fills it.
     private var languageMenu: some View {
         Menu {
             ForEach(Translation.choices(picked: language), id: \.self) { l in
@@ -178,13 +181,14 @@ struct TranslationPanel: View {
         } label: {
             HStack(spacing: 4) {
                 Text(language)
+                    .font(Theme.text(.bodySmall, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
                 Image(systemName: "chevron.down").font(Theme.glyph(.caption2, .bold))
+                    .foregroundStyle(Theme.textTertiary)
             }
-            .font(Theme.text(.bodySmall, .semibold))
-            .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(Theme.sunken, in: Capsule())
+            // A line of words: taller to the finger.
+            .tapArea(vertical: 12)
         }
         .labelOnlyMenu()
         .accessibilityLabel("Translate into \(language)")

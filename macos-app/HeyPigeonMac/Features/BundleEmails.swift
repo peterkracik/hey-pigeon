@@ -5,17 +5,17 @@
 // bold section header and the system's segmented control, read as another
 // app's inside this window. Here the emails are the window's list: the
 // inbox's row (MailRow — one line, the hover bar, the trackpad swipes, the
-// context menu, a click opening it in place) on the inbox's white card,
-// over the list's background. Open emails first, with no title (the tab
-// counts them); then the done ones under the list's small grey group
-// title, set back, and folded past three. ⊖ (not part of this bundle) is
-// in the hover bar and the context menu.
+// context menu, a click opening it in place), ruled, on the paper. Open
+// emails first, under a rule and no title (the tab counts them); then the
+// done ones under the list's light grey title, struck through and set
+// back, and folded past three. ⊖ (not part of this bundle) is in the
+// hover bar and the context menu.
 
 import SwiftUI
 
-/// Emails · Info as the toolbar's tabs are (TabPill), on a glass capsule:
-/// it floats over the top of the page, which scrolls under it as the list
-/// does under the toolbar's own items.
+/// Emails · Info as the toolbar's tabs are (TabPill: the shown one an ink
+/// capsule), on a glass capsule: it floats over the top of the page,
+/// which scrolls under it as the list does under the toolbar's own items.
 struct BundlePageTabs: View {
     @Binding var page: BundlePage
     /// Beside "Emails", as the toolbar's tabs carry their counts.
@@ -56,14 +56,15 @@ struct BundleEmailList: View {
                 note("No emails yet. Choose Add to bundle… on an email; mail that shares its booking, order or tracking number follows on its own.",
                      systemImage: nil)
             }
-            card(contents.open, dimmed: false)
+            mailRows(contents.open, done: false)
             if !contents.done.isEmpty {
                 doneTitle
-                if showDone || !folds { card(contents.done, dimmed: true) }
+                if showDone || !folds { mailRows(contents.done, done: true) }
             }
         }
         // The inbox list's own shape (InboxPage).
         .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 1)
         .scrollContentBackground(.hidden)
         .scrollIndicators(.never)
         .contentMargins(.top, 6, for: .scrollContent)
@@ -72,28 +73,31 @@ struct BundleEmailList: View {
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: state.expanded)
     }
 
-    /// Rows sharing one white card, as a day group's do in the inbox.
-    private func card(_ rows: [ThreadRow], dimmed: Bool) -> some View {
+    /// The rows of one group, ruled as a day's are in the inbox. The open
+    /// ones have no title, so the group opens with the rule alone, along
+    /// the first row's top edge; the done ones are struck through and set
+    /// back.
+    private func mailRows(_ rows: [ThreadRow], done: Bool) -> some View {
         ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-            MailRow(row: row, state: state,
-                    position: .init(first: index == 0, last: index == rows.count - 1),
-                    inBundle: true, dimmed: dimmed)
+            MailRow(row: row, state: state, isLast: index == rows.count - 1, opensGroup: !done && index == 0,
+                    inBundle: true, dimmed: done)
         }
     }
 
-    /// "Done" in the list's group-title type (GroupHeader's); past three
-    /// done emails it is the fold's button, with their count.
+    /// "Done" as the list titles a group (`SectionTitle`: the name, a
+    /// rule, how many stand under it); past three done emails it is the
+    /// fold's button — their count in its words, the chevron after the
+    /// rule.
     @ViewBuilder private var doneTitle: some View {
         Group {
             if folds {
                 Button {
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { showDone.toggle() }
                 } label: {
-                    HStack(spacing: 5) {
-                        Text("\(contents.done.count) done")
+                    SectionTitle(title: "\(contents.done.count) done") {
                         Image(systemName: showDone ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
-                        Spacer()
+                            .foregroundStyle(Theme.textTertiary)
                     }
                     .contentShape(Rectangle())
                 }
@@ -101,16 +105,14 @@ struct BundleEmailList: View {
                 .help(showDone ? "Hide the done emails" : "Show the done emails")
                 .accessibilityLabel(showDone ? "Hide \(contents.done.count) done emails" : "Show \(contents.done.count) done emails")
             } else {
-                HStack {
-                    Text("Done")
-                    Spacer()
-                }
-                .accessibilityAddTraits(.isHeader)
+                SectionTitle("Done", count: contents.done.count)
+                    // One stop for VoiceOver ("Done, 2"), as the inbox's
+                    // day titles are.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
             }
         }
-        .font(Theme.display(13, relativeTo: .caption))
-        .foregroundStyle(Theme.textTertiary)
-        .padding(.horizontal, 34).padding(.top, 16).padding(.bottom, 6)
+        .padding(.horizontal, MacLayout.listMargin).padding(.top, 18).padding(.bottom, 2)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
@@ -120,14 +122,16 @@ struct BundleEmailList: View {
     private func note(_ text: String, systemImage: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if let systemImage {
-                Image(systemName: systemImage).accessibilityHidden(true)
+                // The AI's sparkle, in its pink ink.
+                Image(systemName: systemImage).font(.system(size: 11))
+                    .foregroundStyle(Theme.pinkInk)
+                    .accessibilityHidden(true)
             }
-            Text(text)
+            Text(text).font(Theme.sans(size: 12))
             Spacer(minLength: 0)
         }
-        .font(Theme.sans(size: 12))
         .foregroundStyle(Theme.textTertiary)
-        .padding(.horizontal, 34).padding(.top, 8).padding(.bottom, 10)
+        .padding(.horizontal, MacLayout.listMargin).padding(.top, 8).padding(.bottom, 10)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)

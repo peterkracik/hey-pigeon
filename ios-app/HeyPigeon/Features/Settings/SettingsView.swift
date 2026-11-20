@@ -6,7 +6,12 @@
 // classifier select box, with Jev too, auto-triage, reanalyze, the labels), Inbox (pinned list, swipe
 // actions — the desktop's hover actions), About. Account removal and
 // anything that deletes asks once. Same sheet look as the sidebar (Theme's
-// menuList / menuCard / menuSheet).
+// menuList / menuCard / menuSheet): each section under its title
+// (`SectionTitle`), ruled rows on the sheet's paper. A row's name is the
+// medium weight; what stands at its end is in the mono when it is data
+// (a count, a version, a time); a switch that is on is ink; a field has
+// an ink underline and a text of several lines an outlined box; what
+// deletes is written in `dangerText` (docs/specs/marker-look.md).
 
 import AppIntents
 import SwiftUI
@@ -85,19 +90,21 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Pinned list")
                             Text("Group pinned messages at the top of your inbox, above the rest.")
-                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                         }
                     }
-                    // The Mac lists every thread with its chip; only the
-                    // phone and the iPad fold.
+                    .tint(Theme.switchOn)
+                    // The Mac lists every thread under its bundle's name;
+                    // only the phone and the iPad fold.
                     if AppModel.foldsOnThisPlatform {
                         Toggle(isOn: $model.foldBundlesEnabled) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Fold bundle updates")
                                 Text("Read confirmations, receipts and shipping updates in a bundle share one row in your inbox. Mail that needs you keeps its own row.")
-                                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                                    .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                             }
                         }
+                        .tint(Theme.switchOn)
                     }
                     Toggle(isOn: $model.parcelCardEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -108,23 +115,26 @@ struct SettingsView: View {
                             // of the parcel's number or its Gmail thread id, and
                             // a time), like every other setting.
                             Text("Parcels on their way get a card at the top of your inbox. Worked out on this \(Device.name) from your mail; Track parcel opens the email's own link in your browser. Which parcels you dismissed syncs to your other devices with your other settings.")
-                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    .tint(Theme.switchOn)
                     Toggle(isOn: $model.loadRemoteImages) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Load remote images")
                             // Privacy copy: what loading a picture from the web tells the sender.
                             Text("Show pictures from the web in every message without asking. The sender's server can then see that you opened the message, when, and your IP address.")
-                                .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                                .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                         }
                     }
+                    .tint(Theme.switchOn)
                     if !model.imageSenders.isEmpty && !model.loadRemoteImages {
                         HStack {
                             Text(model.imageSenders.count == 1 ? "Images always load from 1 sender"
                                  : "Images always load from \(model.imageSenders.count) senders")
                             Spacer()
                             Button("Forget") { model.imageSenders = [] }
+                                .buttonStyle(OutlineButtonStyle())
                         }
                     }
                     swipePicker(Self.swipeTitles[0], 0)
@@ -132,33 +142,44 @@ struct SettingsView: View {
                     swipePicker(Self.swipeTitles[2], 2)
                     swipePicker(Self.swipeTitles[3], 3)
                 } header: {
-                    Text("Inbox")
+                    SectionTitle("Inbox")
                 } footer: {
-                    Text(Self.swipeFooter)
+                    Text(Self.swipeFooter).settingsFooter()
                 }
                 .menuCard()
                 OutboxSection()
                 RulesSection()
-                Section("Appearance") {
+                Section {
                     Picker("Appearance", selection: $appearance) {
                         ForEach(Appearance.allCases) { a in Text(a.title).tag(a.rawValue) }
                     }
                     .pickerStyle(.segmented)
                     menuBarToggle
+                } header: {
+                    SectionTitle("Appearance")
                 }
                 .menuCard()
                 DiagnosticsSection(reports: $diagnosticReports)
                 Section {
-                    LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")
+                    // A version is data: the mono, at the row's end.
+                    LabeledContent("Version") {
+                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")
+                            .font(Theme.meta).foregroundStyle(Theme.textTertiary)
+                    }
+                    // Ink, as every action: the Mac has no tint of the
+                    // app's and drew the two links in the system's blue.
                     Link("heypigeon.app", destination: URL(string: "https://heypigeon.app")!)
+                        .tint(Theme.textPrimary)
                     Link("Privacy", destination: URL(string: "https://heypigeon.app/privacy.html")!)
+                        .tint(Theme.textPrimary)
                 } header: {
-                    Text("About")
+                    SectionTitle("About")
                 } footer: {
-                    Text(Self.aboutFooter)
+                    Text(Self.aboutFooter).settingsFooter()
                 }
                 .menuCard()
             }
+            .settingsRows()
             .navigationTitle("Settings")
             .toolbarTitleDisplayMode(.inline)
             // The pages, by route. On the Mac their Back is the window's
@@ -195,9 +216,10 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Show in the menu bar")
                 Text("The unread count in the menu bar, with what is due and what needs a reply a click away.")
-                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
         }
+        .tint(Theme.switchOn)
         #endif
     }
 
@@ -215,7 +237,7 @@ struct SettingsView: View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                Text(detail).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                Text(detail).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
         } icon: {
             Image(systemName: systemImage)
@@ -230,10 +252,11 @@ struct SettingsView: View {
                 AccountRow(account: a, state: model.accountStates[a.id], onRemove: { removing = a })
             }
             Button { Task { await model.addAccount() } } label: { Label("Add account", systemImage: "plus.circle") }
+                .settingsRowButton()
         } header: {
-            Text("Accounts")
+            SectionTitle("Accounts")
         } footer: {
-            Text("Connected mailboxes shown in the sidebar.")
+            Text("Connected mailboxes shown in the sidebar.").settingsFooter()
         }
         .menuCard()
     }
@@ -245,6 +268,7 @@ struct SettingsView: View {
         )) {
             ForEach(RowAction.allCases) { a in Label(a.title, systemImage: a.systemImage).tag(a) }
         }
+        .settingsMenuValue()
     }
 
     /// The four tiers, in the words of the gesture each platform has: the
@@ -283,6 +307,7 @@ private struct SettingsPage<Content: View>: View {
 
     var body: some View {
         SettingsList { content() }
+            .settingsRows()
             .navigationTitle(title)
             .toolbarTitleDisplayMode(.inline)
             .dismissKeyboardOnScroll(.interactively)
@@ -313,7 +338,10 @@ private struct AccountRow: View {
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             LabeledContent("Name") {
+                // What is typed is a value, not a row's name: the regular
+                // weight, at the row's end.
                 TextField("Name", text: $name)
+                    .font(Theme.sans(.body))
                     .multilineTextAlignment(.trailing)
                     .onSubmit { saveName() }
                     // Saved once typing pauses, like the signature: it was
@@ -327,12 +355,15 @@ private struct AccountRow: View {
                     .onDisappear { saveName() }
             }
             LabeledContent("Color") {
-                HStack(spacing: 10) {
+                // The dots an account is marked with, in the colour it is
+                // written in (lighter on dark); the chosen one has an ink
+                // ring. Each still takes a 32 × 44 pt tap.
+                HStack(spacing: 18) {
                     ForEach(AccountColor.allCases, id: \.self) { c in
                         Button { model.updateAccount(account, color: c) } label: {
-                            Circle().fill(Theme.tagForeground(c)).frame(width: 22, height: 22)
-                                .overlay { if c == account.color { Circle().stroke(Theme.textPrimary, lineWidth: 2).padding(-3) } }
-                                .tapArea(horizontal: 5, vertical: 11)
+                            Circle().fill(Theme.state(c)).frame(width: 14, height: 14)
+                                .overlay { if c == account.color { Circle().strokeBorder(Theme.textPrimary, lineWidth: 1.5).padding(-4.5) } }
+                                .tapArea(horizontal: 9, vertical: 15)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(c.rawValue)
@@ -341,14 +372,19 @@ private struct AccountRow: View {
                 }
             }
             LabeledContent("Sync") {
-                Text(syncLine).font(Theme.sans(.footnote)).foregroundStyle(syncWarn ? Theme.dangerText : Theme.textSecondary)
+                // A state and a time: data, so the mono. A sync that
+                // failed is written in the danger colour, never a chip.
+                Text(syncLine).font(Theme.meta).foregroundStyle(syncWarn ? Theme.dangerText : Theme.textSecondary)
                     .multilineTextAlignment(.trailing)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Signature")
                 TextEditor(text: $signature)
                     .frame(minHeight: 60)
-                    .font(Theme.sans(.subheadline))
+                    // A signature is mail, and mail is set in the system
+                    // font it is shown in, not in the interface's.
+                    .font(.subheadline)
+                    .settingsTextBox()
                     // Saved once typing pauses: every save is a synced write
                     // plus a reload of every account (it used to be one per
                     // keystroke). Closing Settings saves what is left.
@@ -358,7 +394,7 @@ private struct AccountRow: View {
                         saveSignature()
                     }
                     .onDisappear { saveSignature() }
-                Text("Appended to new messages from this account").font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                Text("Appended to new messages from this account").font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
             // docs/specs/read-status.md R8, R10: this mailbox's switch,
             // off until turned on, the same on every platform.
@@ -369,22 +405,29 @@ private struct AccountRow: View {
                         get: { account.readStatus },
                         set: { on in Task { await model.setReadStatus(on, for: account) } }))
                         .disabled(!available)
+                        .tint(Theme.switchOn)
                     Text(available ? ReadStatusSetting.footer : ReadStatusSetting.unavailable)
-                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 }
             }
             if disconnected {
                 Button { Task { await model.addAccount(loginHint: account.id) } } label: { Label("Reconnect", systemImage: "arrow.clockwise") }
+                    .settingsRowButton()
             }
-            Button(role: .destructive, action: onRemove) { Label("Remove", systemImage: "trash") }
+            // What removes is written in the danger colour, glyph and
+            // word: the role alone gives the system's red.
+            Button(role: .destructive, action: onRemove) {
+                Label("Remove", systemImage: "trash").foregroundStyle(Theme.dangerText).tint(Theme.dangerText)
+            }
+            .settingsRowButton()
         } label: {
             HStack(spacing: 12) {
                 Avatar(account: account)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(account.displayName).font(Theme.sans(.body, .medium))
-                    Text(account.email).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                    Text(account.displayName).font(Theme.sans(.body, .semibold))
+                    Text(account.email).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     if disconnected {
-                        Text("Disconnected — mail stops syncing until you sign in again").font(Theme.sans(.caption)).foregroundStyle(Theme.dangerText)
+                        Text("Disconnected — mail stops syncing until you sign in again").font(Theme.secondary).foregroundStyle(Theme.dangerText)
                     }
                 }
             }
@@ -421,17 +464,19 @@ private struct AccountRow: View {
     }
 }
 
-/// Initials in the account's tag colours; the Google photo when there is one.
+/// The account's initial, written in the account's colour inside an
+/// outlined circle (a state is writing, not a tinted fill); the Google
+/// photo when there is one.
 struct Avatar: View {
     let account: MailAccount
     var size: CGFloat = 32
 
     var body: some View {
         ZStack {
-            Circle().fill(Theme.tagBackground(account.color))
+            Circle().strokeBorder(Theme.outline, lineWidth: 1)
             Text(String(account.displayName.prefix(1)).uppercased())
                 .font(Theme.sans(size: size * 0.42, weight: .bold))
-                .foregroundStyle(Theme.tagForeground(account.color))
+                .foregroundStyle(Theme.state(account.color))
             if let url = account.avatarURL {
                 AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.clear }
                     .clipShape(Circle())
@@ -448,7 +493,7 @@ struct Avatar: View {
 /// user pastes — tokens only, no account sign-in). Under it, the picked
 /// provider's state: availability for Apple's models, the key and the
 /// model for a keyed one. "If it can't answer" orders the rest. Under the
-/// card, what each provider has cost in tokens since the last reset.
+/// section, what each provider has cost in tokens since the last reset.
 private struct AISection: View {
     @Environment(AppModel.self) private var model
     @State private var status: AIStatus?
@@ -476,6 +521,7 @@ private struct AISection: View {
                 ForEach(choices) { p in Text(p.title).tag(p) }
             }
             .pickerStyle(.menu)
+            .settingsMenuValue()
             if preferred.takesKey {
                 KeyedProviderControls(provider: preferred, hasKey: status?.hasKey(preferred) == true,
                                       answering: status?.providerId == preferred.rawValue) {
@@ -486,18 +532,18 @@ private struct AISection: View {
                 HStack(spacing: 12) {
                     mark(preferred == .appleCloud ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(preferred.title).font(Theme.sans(.body, .medium))
-                        Text(shellLine(preferred)).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        Text(preferred.title).font(Theme.sans(.body, .semibold))
+                        Text(shellLine(preferred)).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
                 }
             }
             if let active = status?.providerId, active != preferred.rawValue {
                 Text("Answering now: \(AIProvider(rawValue: active).title)")
-                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             } else if status?.configured == false {
                 Text("Nothing can answer yet: pick a provider this \(Device.name) can run, or paste a key.")
-                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
             Picker("If it can't answer", selection: Binding(
                 get: { AIFallbackPreset(order: status?.fallbackOrder ?? []) },
@@ -506,28 +552,32 @@ private struct AISection: View {
                 ForEach(AIFallbackPreset.allCases) { f in Text(f.title).tag(f) }
             }
             .pickerStyle(.menu)
+            .settingsMenuValue()
             if status?.configured == true {
                 Toggle("Auto-summarize", isOn: $model.autoSummarize)
+                    .tint(Theme.switchOn)
             }
             if anyApple {
                 Toggle(isOn: $model.suggestEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Suggest for new mail")
                         Text("Need reply, or Remind me on the date an email names")
-                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                            .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                 }
+                .tint(Theme.switchOn)
                 Toggle(isOn: $model.autoBundlesEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Make bundles")
                         Text("Group new mail about a trip, an order or a project")
-                            .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                            .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                 }
+                .tint(Theme.switchOn)
             }
-            if let error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.secondary).foregroundStyle(Theme.dangerText) }
         } header: {
-            Text("AI")
+            SectionTitle("AI")
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Pick who summarizes, drafts and edits. Apple Intelligence on this \(Device.name) runs with nothing leaving the device and no key. Apple's cloud (Private Cloud Compute) is Apple's own larger model: your request goes to Apple's servers, is never stored, and needs no key either. ChatGPT, Claude and Gemini each take an API key you paste — no account sign-in — and email content goes to that provider only on an explicit AI action: drafting and editing always run on your tap; summaries run on your tap too, unless you turn on auto-summarize. Keys stay on this device (paste them on each one); the provider, the models and the fallback order follow you to your other devices.")
@@ -543,6 +593,7 @@ private struct AISection: View {
                 }
                 usageLines
             }
+            .settingsFooter()
         }
         .menuCard()
         .task { load() }
@@ -564,15 +615,23 @@ private struct AISection: View {
     }
 
     /// Tokens per provider since the last reset (iOS 27 `response.usage`),
-    /// and a Reset when there is anything to reset.
+    /// and a Reset when there is anything to reset. Counts are data, so
+    /// the mono; the Reset is a title's small capitals, in ink and
+    /// underlined, which is what tells it from the grey lines over it.
     @ViewBuilder private var usageLines: some View {
         let used = usage.byProvider.filter { !$0.value.isEmpty }.sorted { $0.key < $1.key }
         if !used.isEmpty {
             ForEach(used, id: \.key) { id, u in
                 Text("\(AIProvider(rawValue: id).title): \(AiUsageLedger.line(u, price: AiUsageLedger.prices[id]))")
-                    .font(Theme.sans(.caption2).monospacedDigit())
+                    .font(Theme.mono(.caption2))
             }
-            Button("Reset usage") { usage.reset() }.font(Theme.sans(.caption2, .semibold))
+            Button { usage.reset() } label: {
+                Text("Reset usage")
+                    .font(Theme.label).tracking(Theme.labelTracking).underline()
+                    .textCase(.uppercase)
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .settingsRowButton()
         }
     }
 
@@ -632,10 +691,11 @@ private struct KeyedProviderControls: View {
                     ForEach(models) { m in Text(m.label).tag(m.id) }
                 }
                 .pickerStyle(.menu)
+                .settingsMenuValue()
             } else {
                 KeyFieldRow(placeholder: provider.keyPlaceholder, key: $key, saving: saving) { connect() }
             }
-            if let error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.secondary).foregroundStyle(Theme.dangerText) }
         }
         .task(id: provider) { load() }
         .onChange(of: model.prefsVersion) { _, _ in load() }
@@ -703,25 +763,30 @@ private struct KeyHolderRow: View {
         HStack(spacing: 12) {
             mark(badge)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(Theme.sans(.body, .medium))
-                Text(status).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                Text(title).font(Theme.sans(.body, .semibold))
+                Text(status).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
             Spacer()
             if hasKey {
-                Button("Remove") { confirmRemove = true }
-                    .font(Theme.sans(.footnote, .semibold))
-                    .confirmationDialog("Remove the \(name) key?", isPresented: $confirmRemove, titleVisibility: .visible) {
-                        Button("Remove key", role: .destructive) { remove() }
-                    } message: {
-                        Text("The key is deleted from this \(Device.name). \(resumes) here again once you paste one.")
-                    }
+                // Removing is written in the danger colour: text, not a
+                // fill.
+                Button { confirmRemove = true } label: {
+                    Text("Remove").font(Theme.text(.secondary, .semibold)).foregroundStyle(Theme.dangerText)
+                }
+                .settingsRowButton()
+                .confirmationDialog("Remove the \(name) key?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                    Button("Remove key", role: .destructive) { remove() }
+                } message: {
+                    Text("The key is deleted from this \(Device.name). \(resumes) here again once you paste one.")
+                }
             }
         }
     }
 }
 
 /// The row a key is pasted into, with Connect (the key is verified
-/// before it is stored).
+/// before it is stored): the field on an ink underline, Connect an
+/// outlined capsule beside it.
 private struct KeyFieldRow: View {
     let placeholder: String
     @Binding var key: String
@@ -729,13 +794,15 @@ private struct KeyFieldRow: View {
     let connect: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             SecureField(placeholder, text: $key)
                 .plainInput()
                 .onSubmit { connect() }
+                .font(Theme.sans(.body))
+                .settingsFieldRule()
             Button(saving ? "Verifying…" : "Connect") { connect() }
+                .buttonStyle(OutlineButtonStyle())
                 .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                .font(Theme.sans(.footnote, .semibold))
         }
     }
 }
@@ -809,28 +876,34 @@ private struct SiriSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Let Siri see your inbox")
                     Text("Recent mail indexed on this \(Device.name) — subject, sender, people, labels, and the text of messages you have opened — so Siri and Spotlight can find a thread and \"Ask my inbox\" can answer from it. The index never leaves the device.")
-                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 }
             }
+            .tint(Theme.switchOn)
             if InboxAsk.isAvailable(model) {
                 Button { model.askFromSettings() } label: {
                     Label("Ask my inbox", systemImage: "questionmark.bubble")
                 }
+                .settingsRowButton()
             }
             #if os(iOS)
             // The Mac has neither the Siri tip nor ShortcutsLink: Siri
             // offers the phrases itself and the Shortcuts app lists the
-            // actions on its own.
+            // actions on its own. Both are the system's own views; the
+            // link takes its outlined style, so the page has no filled
+            // button that is not its one ink action.
             SiriTipView(intent: WhatNeedsReplyIntent())
             ShortcutsLink()
+                .shortcutsLinkStyle(.automaticOutline)
             #endif
             Button { SystemSettings.openAppSettings() } label: {
                 Label(Self.systemButtonTitle, systemImage: "gear")
             }
+            .settingsRowButton()
         } header: {
-            Text("Siri & Search")
+            SectionTitle("Siri & Search")
         } footer: {
-            Text(Self.footer)
+            Text(Self.footer).settingsFooter()
         }
         .menuCard()
     }
@@ -874,6 +947,7 @@ private struct DefaultAppSection: View {
                 Button { SystemSettings.openDefaultApps(); refresh() } label: {
                     Label("Make Hey Pigeon the default email app", systemImage: "envelope.badge.person.crop")
                 }
+                .settingsRowButton()
             }
             #else
             Button { SystemSettings.openDefaultApps() } label: {
@@ -881,9 +955,9 @@ private struct DefaultAppSection: View {
             }
             #endif
         } header: {
-            Text("Default email app")
+            SectionTitle("Default email app")
         } footer: {
-            Text(Self.footer)
+            Text(Self.footer).settingsFooter()
         }
         .menuCard()
         .onAppear { refresh() }
@@ -936,13 +1010,14 @@ private struct TriageSection: View {
                 ForEach(TriageClassifier.allCases) { c in Text(c.title).tag(c) }
             }
             .pickerStyle(.menu)
+            .settingsMenuValue()
             switch current {
             case .apple, .appleCloud:
                 HStack(spacing: 12) {
                     mark(current == .appleCloud ? "PCC" : "AI")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(current.title).font(Theme.sans(.body, .medium))
-                        Text(appleLine).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        Text(current.title).font(Theme.sans(.body, .semibold))
+                        Text(appleLine).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
                 }
@@ -961,25 +1036,26 @@ private struct TriageSection: View {
             }
             if status?.configured == true && status?.isAvailable(current) != true {
                 Text("\(current.title) can't run here yet, so Apple Intelligence or Jev classifies instead.")
-                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
             if status?.configured == true {
                 Toggle("Auto-triage", isOn: Binding(get: { status?.enabled ?? false }, set: { setEnabled($0) }))
+                    .tint(Theme.switchOn)
                 HStack {
                     Button("Reanalyze all emails") {
                         do { try model.reanalyzeAllEmails(); reanalyzeQueued = true } catch { self.error = error.localizedDescription }
                     }
-                    .font(Theme.sans(.footnote, .semibold))
+                    .buttonStyle(OutlineButtonStyle())
                     .disabled(model.analysis.isActive)
                     if reanalyzeQueued && !model.analysis.isActive && status?.enabled != true {
-                        Text("Queued — runs once Auto-triage is on.").font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        Text("Queued — runs once Auto-triage is on.").font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 if model.analysis.isActive {
                     AnalysisProgressRow(progress: model.analysis)
                 }
                 if let last = status?.lastError {
-                    Text("Last run failed: \(last)").font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText)
+                    Text("Last run failed: \(last)").font(Theme.secondary).foregroundStyle(Theme.dangerText)
                 }
             }
             // "Hey Siri, triage my inbox": the agentic run over the engine
@@ -992,13 +1068,13 @@ private struct TriageSection: View {
                           systemImage: "list.bullet.rectangle")
                 }
             }
-            if let error { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
+            if let error { Text(error).font(Theme.secondary).foregroundStyle(Theme.dangerText) }
         } header: {
-            Text("Triage")
+            SectionTitle("Triage")
         } footer: {
             // Privacy copy must be true (CLAUDE.md): what each classifier
             // is sent (settings.rs classify_pending_inner, keyed.rs).
-            Text(Self.footer)
+            Text(Self.footer).settingsFooter()
         }
         .menuCard()
         .task { load() }
@@ -1021,13 +1097,17 @@ private struct TriageSection: View {
             }
             .onMove { model.moveTriageLabels(from: $0, to: $1) }
             if model.triageLabels.isEmpty {
-                Text("No labels yet").font(Theme.sans(.footnote)).foregroundStyle(Theme.textTertiary)
+                Text("No labels yet").font(Theme.secondary).foregroundStyle(Theme.textTertiary)
             }
-            HStack {
+            // A name to type stands on an ink underline; Add is an
+            // outlined capsule, dimmed until there is a name.
+            HStack(spacing: 12) {
                 TextField("New label name", text: $newLabel).onSubmit { add() }
+                    .font(Theme.sans(.body))
+                    .settingsFieldRule()
                 Button("Add") { add() }
+                    .buttonStyle(OutlineButtonStyle())
                     .disabled(newLabel.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .font(Theme.sans(.footnote, .semibold))
             }
             // On this one row, not on the labels: a modifier on the
             // ForEach goes to every row, and each would present it.
@@ -1039,9 +1119,9 @@ private struct TriageSection: View {
                 Text("It leaves the bar over your inbox, on every device.")
             }
         } header: {
-            Text("Labels")
+            SectionTitle("Labels")
         } footer: {
-            Text("What mail is sorted into, and the bar over your inbox, in this order. \(Self.labelHint)")
+            Text("What mail is sorted into, and the bar over your inbox, in this order. \(Self.labelHint)").settingsFooter()
         }
         .menuCard()
     }
@@ -1143,15 +1223,19 @@ private struct UpdatesRows: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Install updates automatically")
                     Text("A new build downloads in the background and installs when you next quit the app. Off, it asks first.")
-                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 }
             }
+            .tint(Theme.switchOn)
+            // An outlined capsule, as every button that is not the one
+            // ink action: the form's own is a push button.
             Button("Check for Updates…") { updater.checkForUpdates() }
+                .buttonStyle(OutlineButtonStyle())
                 .disabled(!updater.canCheckForUpdates)
         } header: {
-            Text("Updates")
+            SectionTitle("Updates")
         } footer: {
-            Text("Once an hour the app asks GitHub for the newest build of Hey Pigeon for Mac and verifies the download's signature. The check carries nothing about your mail.")
+            Text("Once an hour the app asks GitHub for the newest build of Hey Pigeon for Mac and verifies the download's signature. The check carries nothing about your mail.").settingsFooter()
         }
         .menuCard()
     }
@@ -1191,27 +1275,30 @@ private struct NotificationsSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("New mail")
                     Text("A banner for each new unread thread the sync brings in while the app is in the background.")
-                        .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 }
             }
+            .tint(Theme.switchOn)
             Button { SystemSettings.openNotificationSettings() } label: {
                 Label("Notification settings for Hey Pigeon", systemImage: "bell.badge")
             }
+            .settingsRowButton()
             #endif
             if push.canEnable {
                 Toggle(isOn: Binding(get: { push.enabled }, set: { on in Task { await push.setEnabled(on) } })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("New mail (push)")
-                        Text(statusLine).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                        Text(statusLine).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                 }
+                .tint(Theme.switchOn)
                 .disabled(push.busy)
             }
-            if let error = push.lastError { Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText) }
+            if let error = push.lastError { Text(error).font(Theme.secondary).foregroundStyle(Theme.dangerText) }
         } header: {
-            Text("Notifications")
+            SectionTitle("Notifications")
         } footer: {
-            Text(Self.footer)
+            Text(Self.footer).settingsFooter()
         }
         .menuCard()
         .onAppear { push.refreshStatus() }
@@ -1241,12 +1328,15 @@ private struct NotificationsSection: View {
     }
 }
 
+/// A provider's two or three letters on its tile: the mono in an outlined
+/// box, as a key is drawn, with no fill. The size is fixed with the
+/// tile's, which does not grow with the text size.
 private func mark(_ text: String) -> some View {
     Text(text)
-        .font(Theme.sans(size: 12, weight: .bold))
+        .font(Theme.mono(size: 11, weight: .medium))
         .foregroundStyle(Theme.textSecondary)
         .frame(width: 32, height: 32)
-        .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
 }
 
 // MARK: - Compose
@@ -1265,12 +1355,13 @@ private struct ComposeSection: View {
                     Text("\(seconds) seconds").tag(seconds)
                 }
             }
+            .settingsMenuValue()
             ForEach(model.snippets) { snippet in
                 Button { editing = snippet } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(snippet.name.isEmpty ? "Untitled" : snippet.name).foregroundStyle(Theme.textPrimary)
-                            Text(snippet.body).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                            Text(snippet.body).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(1)
                         }
                         Spacer()
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textTertiary)
@@ -1280,15 +1371,16 @@ private struct ComposeSection: View {
                 .buttonStyle(.plain)
             }
             Button { editing = Snippet(name: "", body: "") } label: { Label("New snippet", systemImage: "plus") }
+                .settingsRowButton()
                 // On one row, not on the section: a section hands its
                 // modifiers to every row, and each would present the sheet.
                 .sheet(item: $editing) { snippet in
                     SnippetEditor(snippet: snippet)
                 }
         } header: {
-            Text("Compose")
+            SectionTitle("Compose")
         } footer: {
-            Text(Self.footer)
+            Text(Self.footer).settingsFooter()
         }
         .menuCard()
     }
@@ -1302,7 +1394,9 @@ private struct ComposeSection: View {
     }()
 }
 
-/// One snippet: its name and its text, saved or deleted.
+/// One snippet: its name and its text, saved or deleted. The name stands
+/// on an ink underline, the text in an outlined box; Save is the sheet's
+/// one ink action and Delete is written in the danger colour.
 private struct SnippetEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -1317,28 +1411,44 @@ private struct SnippetEditor: View {
             // SheetHeader); its close, and Esc, leave without saving.
             SheetHeader(title: isNew ? "New snippet" : "Snippet") { dismiss() }
             TextField("Name (shown in the menu)", text: $snippet.name)
-                .textFieldStyle(.roundedBorder)
+                .font(Theme.sans(.body, .medium))
+                .settingsFieldRule()
             TextEditor(text: $snippet.body)
                 .font(Theme.sans(.body))
                 .frame(minHeight: 160)
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
+                .settingsTextBox()
             HStack {
                 if !isNew {
-                    Button("Delete", role: .destructive) {
+                    Button(role: .destructive) {
                         model.snippets.removeAll { $0.id == snippet.id }
                         dismiss()
+                    } label: {
+                        Text("Delete")
+                            .font(Theme.sans(.subheadline, .semibold))
+                            .foregroundStyle(Theme.dangerText)
+                            .tapArea(horizontal: 6, vertical: 12)
                     }
+                    .buttonStyle(.plain)
                 }
                 Spacer()
-                Button("Save") { save() }
-                    .pillButton(prominent: true)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
+                // Drawn as the composer's Send is: the prominent pill
+                // tinted ink, its word in the paper's colour (on dark the
+                // ink is light, and the system's white word is lost on it).
+                Button { save() } label: {
+                    Text("Save")
+                        .font(Theme.sans(.subheadline, .semibold))
+                        .foregroundStyle(Theme.onPrimary)
+                        .padding(.horizontal, 6)
+                }
+                .pillButton(prominent: true)
+                .tint(Theme.textPrimary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
             }
         }
         .padding(20)
         .snippetEditorSize()
-        .background(Theme.canvas)
+        .background(Theme.raised)
     }
 
     private func save() {
@@ -1365,5 +1475,56 @@ private extension View {
         #else
         frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         #endif
+    }
+}
+
+// MARK: - The look's pieces of a settings page
+
+/// What the paper look asks of a settings page (docs/specs/marker-look.md),
+/// said once for Settings and the pages pushed from it: the Outbox, Muted
+/// and blocked, Siri triage.
+extension View {
+    /// The type of a settings list's rows, set once on the list: a row's
+    /// name is the interface face at its medium weight. A line under a
+    /// name, a value at a row's end and what is typed name their own.
+    func settingsRows() -> some View {
+        font(Theme.sans(.body, .medium))
+    }
+
+    /// A section's footer, and any small grey line of a page: the list
+    /// would set a footer in the system font.
+    func settingsFooter() -> some View {
+        font(Theme.secondary).foregroundStyle(Theme.textTertiary)
+    }
+
+    /// A row that is a button ("Add account", "Ask my inbox"): the
+    /// phone's list row as it is; plain text on the Mac, where a form
+    /// draws a push button's bezel around it and the page's rows are
+    /// text. The composer's helper is that very gate.
+    func settingsRowButton() -> some View {
+        composeTextButton()
+    }
+
+    /// The word a menu shows at a row's end, with its chevrons: the grey
+    /// of a value, not the ink the app tints its controls with.
+    func settingsMenuValue() -> some View {
+        tint(Theme.textTertiary)
+    }
+
+    /// A field's ink underline (R11): no fill and no bezel, one rule
+    /// under what is typed.
+    func settingsFieldRule() -> some View {
+        borderlessFields()
+            .padding(.bottom, 8)
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.textPrimary).frame(height: 1) }
+    }
+
+    /// A text of several lines (R11): no fill, a 6 pt box in the outline
+    /// grey. The padding is what the box stands off the editor's own text
+    /// inset, so the words begin about 12 pt in.
+    func settingsTextBox() -> some View {
+        scrollContentBackground(.hidden)
+            .padding(.horizontal, 7).padding(.vertical, 4)
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
     }
 }

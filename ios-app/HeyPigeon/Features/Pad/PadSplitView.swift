@@ -259,8 +259,9 @@ private struct PadDetailColumn: View {
                     // nothing to pick, and most iPads have no keyboard.
                     ContentUnavailableView("No thread open", systemImage: "envelope.open")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        // The list's wash, as the empty list beside it has;
-                        // an open thread stays on the flat canvas.
+                        // The list's own background, as the empty list
+                        // beside it has (`listWash` draws the flat paper
+                        // in this look, the canvas an open thread is on).
                         .background(Theme.listWash)
                 }
             }

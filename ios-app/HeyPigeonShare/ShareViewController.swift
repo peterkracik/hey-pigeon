@@ -10,6 +10,14 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
+        // The bar's title in the app's display face, as the app teaches
+        // its own bars at launch (`SystemChrome`, which an extension
+        // cannot see). The extension is a process of its own, so this
+        // reaches nothing but the sheet; without the face in the bundle
+        // the system's title stays.
+        if let face = UIFont(name: "InstrumentSans-Bold", size: 17) {
+            UINavigationBar.appearance().titleTextAttributes = [.font: face]
+        }
         let host = UIHostingController(rootView: ShareView(
             items: extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? [],
             onDone: { [weak self] opened in self?.finish(opened: opened) },

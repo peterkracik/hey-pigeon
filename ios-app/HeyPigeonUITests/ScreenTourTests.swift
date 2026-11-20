@@ -59,28 +59,33 @@ final class ScreenTourTests: XCTestCase {
         if tap(app.buttons["Need reply"].firstMatch) { keep("\(prefix)-04-need-reply", app) }
         _ = tap(app.buttons["Inbox"].firstMatch)
 
-        // Folders and accounts, then Settings from it.
+        // Folders and accounts, then Settings from it. Settings is the
+        // list's last row and a lazy list has not made it yet: scroll to
+        // the end before looking for it.
         if tap(app.buttons["Folders and accounts"].firstMatch) {
             keep("\(prefix)-05-folders", app)
-            let settings = element(app, containing: "Settings")
-            if settings.waitForExistence(timeout: 5) {
+            app.swipeUp()
+            app.swipeUp()
+            keep("\(prefix)-06-folders-end", app)
+            if tap(app.buttons["Settings"].firstMatch) || tap(element(app, containing: "Settings")) {
+                keep("\(prefix)-07-settings", app)
                 app.swipeUp()
-                keep("\(prefix)-06-folders-end", app)
-                if tap(app.buttons["Settings"].firstMatch) || tap(settings) {
-                    keep("\(prefix)-07-settings", app)
-                    app.swipeUp()
-                    keep("\(prefix)-08-settings-further", app)
-                    app.swipeUp()
-                    keep("\(prefix)-09-settings-end", app)
-                }
+                keep("\(prefix)-08-settings-further", app)
+                app.swipeUp()
+                keep("\(prefix)-09-settings-end", app)
+            } else {
+                keepTree("\(prefix)-06-folders-end-tree", app)
             }
             closeSheets(app)
         }
 
         // A new message.
-        if tap(app.buttons["Compose"].firstMatch) {
+        let compose = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Compose")).firstMatch
+        if tap(compose) {
             keep("\(prefix)-10-compose", app)
             closeSheets(app)
+        } else {
+            keepTree("\(prefix)-10-compose-tree", app)
         }
     }
 
@@ -149,7 +154,7 @@ final class ScreenTourTests: XCTestCase {
         for _ in 0..<2 {
             let list = element(app, containing: subject)
             if list.exists, list.isHittable { return }
-            let close = app.buttons["Close"].firstMatch
+            let close = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Close")).firstMatch
             if close.exists, close.isHittable {
                 close.tap()
             } else {
@@ -159,6 +164,15 @@ final class ScreenTourTests: XCTestCase {
             // The sheet's own animation; a bounded wait.
             _ = element(app, containing: subject).waitForExistence(timeout: 3)
         }
+    }
+
+    /// Keeps what the test can see of the screen, as text, where the walk
+    /// could not go on: the labels say why.
+    private func keepTree(_ name: String, _ app: XCUIApplication) {
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = name
+        tree.lifetime = .keepAlways
+        add(tree)
     }
 
     /// Keeps a picture of the screen under `name`, once it has settled.

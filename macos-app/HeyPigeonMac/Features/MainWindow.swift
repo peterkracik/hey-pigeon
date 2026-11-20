@@ -1,16 +1,18 @@
 // The main window, in the first desktop client's shape under a standard
 // Mac toolbar (MainToolbar: the traffic lights where they always are, the
-// sidebar button and the view's title beside them, the actions at the
-// right): the grey sidebar (SidebarColumn, ⌘S puts it away) beside the
-// content — the list full width up to a readable maximum with rows that
-// open in place, a full thread in its place (NavigationStack, as in
-// MailListScreen), Settings, or the Bundles page (BundlesPage). The search and the command palette float
-// over the blurred window as Spotlight panels (SearchSpotlight,
-// CommandPalette); the sidebar button is a glass circle in the bottom
-// corner. The look is in MacStyle. The sheets the phone presents from its root (Remind
-// me, compose, the summary, Ask my inbox) are presented here, the toast floats
-// over the bottom edge, and the keyboard map works wherever the focus is as
-// long as it is not a text field.
+// tabs and the view's title beside them, the actions at the right): the
+// sidebar (SidebarColumn, ⌘S puts it away), the paper like the rest and
+// parted from the content by a hairline, beside the content — the list
+// full width up to a readable maximum with rows that open in place, a
+// full thread in its place (NavigationStack, as in MailListScreen),
+// Settings, or the Bundles page (BundlesPage). The search and the command
+// palette float over the dimmed window as Spotlight panels
+// (SearchSpotlight, CommandPalette); the sidebar button is a glass circle
+// in the bottom corner. The look is in MacStyle. The sheets the phone
+// presents from its root (Remind me, compose, the summary, Ask my inbox)
+// are presented here, the toast floats over the bottom edge, and the
+// keyboard map works wherever the focus is as long as it is not a text
+// field.
 
 import SwiftUI
 
@@ -60,8 +62,9 @@ struct MainWindow: View {
                     Rectangle().fill(MacTheme.hairline).frame(width: 1)
                 }
                 if state.showSettings {
+                    // Settings is read, not scanned: the reading column.
                     SettingsView(path: $state.settingsPath)
-                        .frame(maxWidth: 760)
+                        .frame(maxWidth: MacLayout.readingWidth)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .transition(.opacity)
                 } else if state.showBundles {
@@ -78,8 +81,8 @@ struct MainWindow: View {
                     if let row = state.path.last {
                         ThreadPage(row: row, state: state)
                     } else {
-                        ContentUnavailableView("No thread open", systemImage: "envelope.open",
-                                               description: Text("Pick one in the list, or press ↩ on the highlighted row."))
+                        MacEmptyState(title: "No thread open", systemImage: "envelope.open",
+                                      detail: "Pick one in the list, or press ↩ on the highlighted row.")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(MacTheme.content)
                     }
@@ -165,7 +168,8 @@ struct MainWindow: View {
         .sheet(isPresented: $state.showTriage) {
             NavigationStack { TriageJournalView() }
                 .frame(minWidth: 560, idealWidth: 620, minHeight: 560, idealHeight: 680)
-                .background(Theme.canvas)
+                // A sheet is the raised paper, as the journal's own list is.
+                .background(Theme.raised)
         }
         .disconnectedAlert()
         // The model's sheet flags are the phone's; here Settings is a page

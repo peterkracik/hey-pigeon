@@ -1,9 +1,13 @@
-// One inbox row, three lines: sender · time, subject, one-line snippet —
-// plus a fourth line of chips (triage labels, the bundle) only when there
-// is something to say. No avatar, no indent:
-// the unread mark is the bar on the row's left edge (InboxView) and the
-// bold sender; in the unified view the account shows as a small dot
-// before the time.
+// One inbox row, three lines: sender · marks · time, subject, one-line
+// preview — plus a fourth line (the bundle, the triage labels as words)
+// only when there is something to say. No avatar, no indent and no bar on
+// the row's edge: unread is the sender in bold under the highlighter
+// (`marker()`) with the time in ink, and a read row's sender steps back
+// to the secondary grey. In the unified view the account is a small dot
+// in its colour before the time. Done is struck through: while a swipe
+// is about to mark the row done, and on a done email listed in its
+// bundle, which also steps back to the tertiary grey
+// (docs/specs/marker-look.md: R2, R3, R7, R10).
 
 import SwiftUI
 
@@ -12,82 +16,127 @@ struct ThreadRowView: View {
     let showAccountDot: Bool
     /// Search words to underline in the subject and snippet.
     var highlight: [String] = []
-    /// The bundle chip; off inside the bundle's own view.
+    /// The bundle's mark; off inside the bundle's own view.
     var showsBundle = true
     @Environment(AppModel.self) private var model
+    /// Letting go of the swipe in progress would mark this row done
+    /// (`SwipeableRow`): the subject and the preview are struck through
+    /// meanwhile, as they will be.
+    @Environment(\.swipeMarksDone) private var swipeMarksDone
+    /// How far the account's dot stands off the first line's baseline, so
+    /// that it sits at mid-height beside the time. It grows with the text.
+    @ScaledMetric(relativeTo: .callout) private var dotLift: CGFloat = 3
 
     private var account: MailAccount? { model.account(for: row) }
 
-    private var tone: Color { Theme.textPrimary }
+    /// Done and still on screen, which the check beside the time says:
+    /// anywhere but the Archive, where every row is and none needs
+    /// telling apart.
+    private var showsDone: Bool { row.isDone && model.view != .archive }
 
-    private var senderText: Text {
-        let name = row.fromSummary
-        guard showAccountDot, let a = account, let first = name.first else {
-            return Text(name).foregroundStyle(tone)
-        }
-        // Bold as well as coloured: the account reads at a glance even for
-        // an unread row, whose whole name is already semibold.
-        return Text(String(first)).foregroundStyle(Theme.tagForeground(a.color)).fontWeight(.heavy)
-            + Text(name.dropFirst()).foregroundStyle(tone)
+    /// A done email listed in its bundle's own view (under Done there,
+    /// for reference): it steps back to the tertiary grey with its
+    /// subject and preview struck through, as on the Mac. In a search or
+    /// a folder a done thread reads as any other row, with the check
+    /// beside its time: most of what a search finds is done, and a list
+    /// of struck lines is hard to read.
+    private var setBack: Bool { row.isDone && !showsBundle }
+
+    /// The sender: ink while unread, the secondary grey once read, the
+    /// tertiary one when the row is set back.
+    private var senderInk: Color {
+        if setBack { return Theme.textTertiary }
+        return row.isRead ? Theme.textSecondary : Theme.textPrimary
+    }
+
+    /// The preview's face: 14, a step under the subject's 15, and scaled
+    /// with it.
+    private static func preview(_ weight: Font.Weight) -> Font {
+        Theme.sans(size: 14, weight: weight, relativeTo: .subheadline)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        // A value, not the property: the guide's closure then holds a
+        // number and nothing of the view.
+        let lift = dotLift
+        // The design has 3 pt between lines that are 22, 20 and 19 pt
+        // tall. The faces' own lines are 19.5, 18.3 and 17 pt here, so the
+        // 2 pt each one lacks go into the gap: the baselines stand as far
+        // apart as they were drawn.
+        VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // Unified view: the sender's first letter takes the account
-                // colour. Nothing is added to the row; the mark sits where the
-                // eye lands first.
-                senderText
+                Text(row.fromSummary)
                     .font(Theme.sender(!row.isRead))
+                    .foregroundStyle(senderInk)
                     .lineLimit(1)
+                    // Unread is the highlighter. Not on a row that is set
+                    // back: pink says "look here", and that one is dealt
+                    // with (its weight still says it was not read).
+                    .marker(!row.isRead && !setBack && !row.fromSummary.isEmpty)
                 if row.isConversation {
-                    Text("\(row.messageCount)").font(Theme.sans(.caption, .semibold)).foregroundStyle(Theme.textTertiary)
+                    Text("\(row.messageCount)").font(Theme.meta).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer(minLength: 8)
                 trailingMarks
+                // Unified view: the account is a dot in its colour before
+                // the time. Nothing in the sender's name is tinted, so the
+                // highlighter is the only colour on the name.
+                if showAccountDot, let account {
+                    Circle().fill(Theme.state(account.color)).frame(width: 6, height: 6)
+                        .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.bottom] + lift }
+                        .accessibilityHidden(true)
+                }
                 Text(timeText)
-                    .font(Theme.sans(.footnote))
-                    .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
-                    .monospacedDigit()
-            }
-            // Subject line carries the state chips at its end (suggestion,
-            // draft, paperclip); labels and the bundle get their own line.
-            HStack(spacing: 8) {
-                highlighted(row.subject.isEmpty ? "(no subject)" : row.subject)
-                    .font(Theme.sans(.footnote, row.isRead ? .regular : .semibold))
-                    .foregroundStyle(tone)
+                    .font(Theme.meta)
+                    .foregroundStyle(row.isRead || setBack ? Theme.textTertiary : Theme.textPrimary)
                     .lineLimit(1)
+                    // The time is never the one to give way: a long name
+                    // is cut short first, at any text size.
+                    .layoutPriority(1)
+            }
+            // The subject line carries what is said about the thread at
+            // its end (the AI's suggestion, a draft, the paperclip);
+            // labels and the bundle get their own line.
+            HStack(spacing: 10) {
+                highlighted(row.subject.isEmpty ? "(no subject)" : row.subject,
+                            match: Theme.text(.bodySmall, .semibold))
+                    .font(Theme.text(.bodySmall, row.isRead ? .regular : .semibold))
+                    .foregroundStyle(setBack ? Theme.textTertiary : Theme.textPrimary)
+                    .lineLimit(1)
+                    .struckThrough(setBack || swipeMarksDone)
                 Spacer(minLength: 0)
                 // The AI's proposal, read-only here (the row is a tap target
                 // and a swipe surface): the thread and the long-press menu
                 // accept or dismiss it.
                 if let s = row.openSuggestion {
-                    Chip(text: s.title, systemImage: "sparkles",
-                         background: Theme.accentSoft, foreground: Theme.textPrimary, capsule: true)
+                    StateMark(text: s.title, systemImage: "sparkles", tint: Theme.pinkInk)
                         .accessibilityLabel("Suggested: \(s.title)")
                 }
                 // An unsent reply waits in the thread (the Drafts folder needs no mark).
                 if row.labels.contains("DRAFT"), model.view != .drafts {
-                    Chip(text: "Draft", background: Theme.tagBackground(.coral), foreground: Theme.tagForeground(.coral))
+                    StateMark(text: "Draft", tint: Theme.state(.coral))
                 }
                 if row.hasAttachment {
-                    Image(systemName: "paperclip").font(.caption2).foregroundStyle(Theme.textTertiary)
+                    Image(systemName: "paperclip").font(Theme.glyph(.caption)).foregroundStyle(Theme.textTertiary)
                         .accessibilityHidden(true) // "Has attachment", in the row's value
                 }
             }
             if !row.snippet.isEmpty {
-                highlighted(row.snippet)
-                    .font(Theme.sans(.footnote))
+                highlighted(row.snippet, match: Self.preview(.semibold))
+                    .font(Self.preview(.regular))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
+                    .struckThrough(setBack || swipeMarksDone)
             }
-            // What the mail is (triage labels) and what it belongs to (the
-            // bundle), under the preview so the subject keeps its width.
+            // What the mail is (its triage labels, as words) and what it
+            // belongs to (the bundle), under the preview so the subject
+            // keeps its width.
             if !triageNames.isEmpty || bundle != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: 12) {
                     if let bundle { BundleChip(bundle: bundle) }
                     ForEach(triageNames, id: \.self) { name in
-                        Chip(text: name, background: Theme.sunken, foreground: Theme.textSecondary)
+                        // Said by its name, as it was: the # is for the eye.
+                        TagText(name).accessibilityLabel(name)
                     }
                 }
                 .padding(.top, 2)
@@ -95,22 +144,24 @@ struct ThreadRowView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        // Unread is a bar and a font weight, the marks are bare symbols:
-        // none of it was said aloud.
+        // Unread is the highlighter and a font weight, the marks are bare
+        // symbols: none of it was said aloud.
         .accessibilityValue(row.spokenState(showsDone: model.view != .archive))
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The text with every search word underlined in the accent and lifted
-    /// to the primary colour; plain text when there is nothing to mark.
-    private func highlighted(_ text: String) -> Text {
+    /// The text with every search word underlined in ink, set in `match`
+    /// (the line's own face, a weight up) and lifted to the primary
+    /// colour; plain text when there is nothing to mark.
+    private func highlighted(_ text: String, match: Font) -> Text {
         guard !highlight.isEmpty else { return Text(text) }
         var marked = AttributedString(text)
         for word in highlight {
             var rest = marked.startIndex..<marked.endIndex
             while let hit = marked[rest].range(of: word, options: [.caseInsensitive, .diacriticInsensitive]) {
+                marked[hit].font = match
                 marked[hit].foregroundColor = Theme.textPrimary
-                marked[hit].underlineStyle = Text.LineStyle(pattern: .solid, color: Theme.accent)
+                marked[hit].underlineStyle = Text.LineStyle(pattern: .solid, color: Theme.textPrimary)
                 rest = hit.upperBound..<marked.endIndex
             }
         }
@@ -132,41 +183,51 @@ struct ThreadRowView: View {
         return Formatters.rowTime(row.lastMessageAt)
     }
 
-    /// Small marks next to the time, only when true.
+    /// Small marks next to the time, only when true: each a glyph in its
+    /// state's colour (a reminder lavender, Need reply sky, done mint),
+    /// the pin in ink.
     @ViewBuilder
     private var trailingMarks: some View {
-        HStack(spacing: 6) {
-            if row.scheduledAt != nil { mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock") }
-            if row.needsReply { mark("arrowshape.turn.up.left") }
-            if row.isPinned { mark("pin.fill") }
-            if row.isDone && model.view != .archive { mark("checkmark") }
+        if row.scheduledAt != nil {
+            mark(row.isFollowUp ? "clock.arrow.circlepath" : "clock", Theme.state(.lavender))
         }
+        if row.needsReply { mark("arrowshape.turn.up.left", Theme.state(.sky)) }
+        if row.isPinned { mark("pin.fill", Theme.pin) }
+        if showsDone { mark("checkmark", Theme.state(.mint)) }
     }
 
-    private func mark(_ name: String) -> some View {
+    private func mark(_ name: String, _ tint: Color) -> some View {
         // Said through the row's value (`spokenState`), not as symbol names.
-        Image(systemName: name).font(.caption).foregroundStyle(Theme.textTertiary).accessibilityHidden(true)
+        Image(systemName: name).font(Theme.glyph(.meta, .semibold)).foregroundStyle(tint).accessibilityHidden(true)
     }
 }
 
-/// A small label pill: Jev labels, the reminder and need-reply badges, the
-/// AI's suggestion.
+/// A few words and a glyph in one colour. It was a small filled pill (Jev
+/// labels, the reminder and need-reply badges, the AI's suggestion); in
+/// the paper look a state is writing, not a fill
+/// (docs/specs/marker-look.md, R7), so it sets its glyph and its words in
+/// `foreground`, in the mono, on whatever it stands on. The name and the
+/// initialiser stay for its callers; new code says what it means with
+/// `StateMark` (a state) or `TagText` (a label).
 struct Chip: View {
     let text: String
     var systemImage: String? = nil
+    /// The pill's fill. Nothing draws it any more.
     let background: Color
     let foreground: Color
-    /// Pill shape for state badges (reminder, need reply).
+    /// The pill's shape, for state badges. Nothing draws it any more.
     var capsule = false
 
     var body: some View {
         HStack(spacing: 4) {
-            if let systemImage { Image(systemName: systemImage).font(.caption2) }
-            if !text.isEmpty { Text(text).font(Theme.sans(.caption, .semibold)).lineLimit(1) }
+            if let systemImage { Image(systemName: systemImage).font(Theme.glyph(.caption2, .semibold)) }
+            if !text.isEmpty { Text(text).font(Theme.tag).lineLimit(1) }
         }
         .foregroundStyle(foreground)
-        .padding(.horizontal, capsule ? 9 : 7).padding(.vertical, 2)
-        .background(background, in: RoundedRectangle(cornerRadius: capsule ? 100 : 6, style: .continuous))
+        // Where it is a button's label it takes the tap as the pill did,
+        // and a little beyond: the words alone are a thin target. The
+        // layout does not move for it.
+        .tapArea(horizontal: 6, vertical: 6)
     }
 }
 
@@ -181,7 +242,9 @@ struct PriorityIndicator: View {
                 .accessibilityLabel("Likely spam")
         } else {
             let level = priority == .high ? 3 : priority == .medium ? 2 : 1
-            let lit = priority == .high ? Theme.tagForeground(.coral) : Theme.tagForeground(.amber)
+            // The state's colour as a mark on the paper: it has a lighter
+            // pair for dark, where the fill's own was too dim.
+            let lit = priority == .high ? Theme.state(.coral) : Theme.state(.amber)
             // A faint step of the text colour, in both appearances: the
             // fixed light grey it was outshone the lit bars on dark.
             let unlit = Theme.textTertiary.opacity(0.4)

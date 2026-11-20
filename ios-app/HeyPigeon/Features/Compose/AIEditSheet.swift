@@ -12,6 +12,12 @@
 // lock itself (Cancel too) until the provider answered and then replaced
 // the text at once, with nothing to take it back. Content leaves the
 // device on an explicit tap only; the footer says what and to whom.
+//
+// A menu sheet on the raised paper (docs/specs/marker-look.md): the
+// presets are ruled rows under their titles ("Edit", "Tone"), the
+// instruction's field has an ink underline and no fill, the brief — a
+// text of several lines — a box with an outline, and the only pink is
+// the AI's sparkle.
 
 import SwiftUI
 
@@ -95,14 +101,17 @@ struct AIEditSheet: View {
                 if running { workingSection }
                 if let error = runner.error {
                     Section { Text(error).foregroundStyle(Theme.dangerText).font(Theme.sans(.footnote)) }
+                        .menuCard()
                 }
                 // What a tap sends, and to whom: a footer with no rows.
                 Section {
                     EmptyView()
                 } footer: {
-                    Text(footnote(shown))
+                    Text(footnote(shown)).font(Self.footerFont).foregroundStyle(Theme.textTertiary)
                 }
             }
+            // The menu sheets' list: the raised paper, ruled rows, no cards.
+            .menuList()
             .navigationTitle(mode == .write ? "Write with AI" : "Edit with AI")
             .inlineNavigationTitle()
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
@@ -114,17 +123,24 @@ struct AIEditSheet: View {
         }
     }
 
+    /// A row of the sheet: a menu row's medium.
+    private static let rowFont = Theme.sans(.callout, .medium)
+    /// What is said under a section, and the privacy line: the footer's
+    /// size in the tertiary grey.
+    private static let footerFont = Theme.sans(.footnote)
+
     /// The request that is out: said in words, with the way to stop it.
     private var workingSection: some View {
         Section {
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Working…").foregroundStyle(Theme.textSecondary)
+                Text("Working…").font(Self.rowFont).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button("Cancel request") { runner.cancel() }
                     .font(Theme.sans(.subheadline, .semibold))
             }
         }
+        .menuCard()
     }
 
     // MARK: Write
@@ -134,51 +150,78 @@ struct AIEditSheet: View {
             TextField(isReply ? "Notes for the reply — what to say, agree to, or ask…"
                               : "What should the email say?",
                       text: $brief, axis: .vertical)
+                .font(Theme.sans(.callout))
                 .lineLimit(3...8)
                 .focused($briefFocused)
                 .disabled(running)
+                // A text of several lines: no fill, a box with an outline.
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
+            // The AI's own row: its sparkle is the sheet's one pink, its
+            // words are ink.
             Button { write(notes: briefTrimmed, shown: shown) } label: {
-                Label(isReply ? "Draft the reply" : "Write it", systemImage: "sparkles")
-                    .font(Theme.sans(.body, .semibold))
+                Label {
+                    Text(isReply ? "Draft the reply" : "Write it").font(Theme.sans(.callout, .semibold))
+                } icon: {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.pinkInk)
+                }
             }
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(Theme.textPrimary)
             .disabled(running || !AIAssist.canRun(mode: .write, typed: briefTrimmed, hasText: hasText, isReply: isReply))
         } footer: {
             Text(isReply
                  ? "Drafts an answer to the conversation; your notes steer it, or leave them empty. You review it before it replaces the message."
                  : "Writes the whole message from your brief. You review it before it replaces the message.")
+                .font(Self.footerFont).foregroundStyle(Theme.textTertiary)
         }
+        .menuCard()
     }
 
     // MARK: Edit
 
     @ViewBuilder private func editSections(_ shown: AIStatus?) -> some View {
         Section {
-            HStack {
-                TextField("Tell the AI what to change…", text: $instruction)
-                    .onSubmit { edit(instructionTrimmed, shown: shown) }
-                    .disabled(running)
-                Button { edit(instructionTrimmed, shown: shown) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                    .disabled(running || !AIAssist.canRun(mode: .edit, typed: instructionTrimmed, hasText: hasText, isReply: isReply))
-                    .accessibilityLabel("Apply the instruction")
+            // The instruction's field: no fill, an ink underline.
+            VStack(spacing: 8) {
+                HStack {
+                    TextField("Tell the AI what to change…", text: $instruction)
+                        .font(Theme.sans(.callout))
+                        .onSubmit { edit(instructionTrimmed, shown: shown) }
+                        .disabled(running)
+                    // An ink circle once there is something to send.
+                    Button { edit(instructionTrimmed, shown: shown) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
+                        .tint(Theme.textPrimary)
+                        .disabled(running || !AIAssist.canRun(mode: .edit, typed: instructionTrimmed, hasText: hasText, isReply: isReply))
+                        .accessibilityLabel("Apply the instruction")
+                }
+                Rectangle().fill(Theme.textPrimary).frame(height: 1)
             }
         } footer: {
             Text(hasSelection ? "Applies to the selected text." : "Applies to the whole message.")
+                .font(Self.footerFont).foregroundStyle(Theme.textTertiary)
         }
-        Section("Edit") {
+        .menuCard()
+        Section {
             ForEach(AIAssist.edits) { p in
                 preset(p) { instruction in edit(instruction, shown: shown) }
             }
+        } header: {
+            SectionTitle("Edit")
         }
-        Section("Tone") {
+        .menuCard()
+        Section {
             ForEach(AIAssist.tonesBeyondEdits) { p in
                 preset(p) { instruction in edit(instruction, shown: shown) }
             }
+        } header: {
+            SectionTitle("Tone")
         }
+        .menuCard()
     }
 
+    /// One preset: a ruled row, its name in ink.
     private func preset(_ p: AIAssist.Preset, run: @escaping (String) -> Void) -> some View {
-        Button { run(p.instruction) } label: { Text(p.title) }
+        Button { run(p.instruction) } label: { Text(p.title).font(Self.rowFont) }
             .foregroundStyle(Theme.textPrimary)
             .disabled(running)
     }
@@ -191,28 +234,40 @@ struct AIEditSheet: View {
         Section {
             Text(r.text)
                 .font(Theme.sans(.body))
+                .lineSpacing(4)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
         } header: {
-            Text(AIAssist.reviewTitle(r)).textCase(nil)
+            Text(AIAssist.reviewTitle(r)).font(Self.footerFont).foregroundStyle(Theme.textTertiary).textCase(nil)
         }
+        .menuCard()
         Section {
+            // Using it is the page's action: ink. Dropping it is the
+            // danger colour, as writing.
             Button { apply(r) } label: {
                 Label(AIAssist.applyTitle(r), systemImage: "checkmark")
-                    .font(Theme.sans(.body, .semibold))
+                    .font(Theme.sans(.callout, .semibold))
             }
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(Theme.textPrimary)
             .disabled(running)
-            Button("Discard", role: .destructive) { runner.discard() }
-                .disabled(running)
+            Button(role: .destructive) { runner.discard() } label: {
+                // Said on the words themselves: the role's own red is
+                // the system's, not the app's danger colour.
+                Text("Discard").font(Self.rowFont).foregroundStyle(Theme.dangerText)
+            }
+            .disabled(running)
         }
-        Section("Tone") {
+        .menuCard()
+        Section {
             ForEach(AIAssist.tones) { tone in
                 preset(tone) { instruction in
                     runner.refine(r, with: instruction, history: history, context: context, shown: shown, in: model)
                 }
             }
+        } header: {
+            SectionTitle("Tone")
         }
+        .menuCard()
     }
 
     // MARK: Requests

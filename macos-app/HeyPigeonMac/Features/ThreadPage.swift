@@ -5,12 +5,12 @@
 // (Features/Thread/ThreadView) in a reading column of its own
 // (`MacLayout.readingWidth`, kept by the shared view's `threadColumn`, so
 // a thread window and an email on the Bundles page have it too) on the
-// list's background — the messages as one white card that ends with
-// Reply · Reply all · Forward, the triage buttons on a small card at the
-// bottom. The thread's "close" (after done, delete, mark
-// unread, move) hands the window to the next thread, or back to the list
-// when there is none. ThreadWindow is the same thread in a window of its
-// own (⌘↩).
+// paper — the messages one under the other, parted by hairlines, the
+// last ending with Reply (the ink pill) · Reply all · Forward, the triage
+// buttons on a small paper panel at the bottom. The thread's "close"
+// (after done, delete, mark unread, move) hands the window to the next
+// thread, or back to the list when there is none. ThreadWindow is the
+// same thread in a window of its own (⌘↩).
 
 import SwiftUI
 
@@ -30,7 +30,7 @@ struct ThreadPage: View {
             // The column is the thread view's own (`threadColumn`): in
             // the middle of the window, or of the reading pane.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MacTheme.listBackground)
+            .background(MacTheme.content)
             // Focusable so the key map works after a click in the thread, with
             // no ring drawn around the page.
             .focusable()
@@ -62,15 +62,16 @@ struct ThreadWindow: View {
                 ThreadView(row: row) { dismissWindow(id: MacWindows.thread, value: threadId) }
                     .scrollIndicators(.never)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(MacTheme.listBackground)
+                    .background(MacTheme.content)
             }
             .frame(minWidth: 540, minHeight: 480)
             .overlay(alignment: .bottom) { ToastStack() }
             .onAppear { ThreadWindows.open.insert(threadId) }
             .onDisappear { ThreadWindows.open.remove(threadId) }
         } else {
-            ContentUnavailableView("This thread is no longer here", systemImage: "envelope.open")
+            MacEmptyState(title: "This thread is no longer here", systemImage: "envelope.open")
                 .frame(minWidth: 540, minHeight: 480)
+                .background(MacTheme.content)
         }
     }
 }

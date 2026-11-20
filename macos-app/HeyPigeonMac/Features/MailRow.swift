@@ -1,38 +1,43 @@
 // One row of the list, in the first desktop client's shape
-// (desktop-app/src/lib/InboxList.svelte): a single line — the sender in a
-// fixed column, the subject and the snippet, the badges, the time — on
-// its day group's white card (the rows of a group share one card; each
-// row draws its piece, `Position`). Under the pointer the time gives way
-// to Done (the desktop's strike-through, then the row leaves), the other
-// swipe actions from Settings and the arrow that opens the full thread.
-// (A done circle at the row's start read as a selection checkbox.) The
-// pointer is the hand over a row, as it was in the first desktop client;
-// a click opens the row in place: the latest message, whole, Reply ·
-// Reply all · Forward and "Open full thread ›" (MailPreview). ⌘ and ⇧
-// gather rows for the batch bar; the context menu and two-finger trackpad
-// swipes act on the row too. A bundle's Emails page lists its mail with
-// the same row (BundleEmailList, `inBundle`): no bundle chip, since every
-// row there would carry the same one, ⊖ (not part of this bundle) in the
-// hover bar, and no cursor, as the Bundles page has none.
+// (desktop-app/src/lib/InboxList.svelte): a single line — the account's
+// dot, the sender in a fixed column, the subject and the snippet, the
+// state marks, the time — on the paper, with a hairline under it (but for
+// the last row of its group). Unread is the sender in bold under the
+// highlighter; the row under the pointer is the sunken grey, the cursor's
+// and a selected one a step stronger with an ink rule down its leading
+// edge and a heavier name. Under the pointer the time gives way to Done
+// (the row's ink action: the subject is struck through, then the row
+// leaves), the other swipe actions from Settings and the arrow that opens
+// the full thread. (A done circle at the row's start read as a selection
+// checkbox.) The pointer is the hand over a row, as it was in the first
+// desktop client; a click opens the row in place, under a hairline and
+// beside the ink rule: the latest message, whole, Reply · Reply all ·
+// Forward and "Open full thread ›" (MailPreview). ⌘ and ⇧ gather rows for
+// the batch bar; the context menu and two-finger trackpad swipes act on
+// the row too. A bundle's Emails page lists its mail with the same row
+// (BundleEmailList, `inBundle`): no bundle mark, since every row there
+// would carry the same one, ⊖ (not part of this bundle) in the hover bar,
+// and no cursor, as the Bundles page has none.
 
 import AppKit
 import SwiftUI
 
 struct MailRow: View {
-    /// Where the row sits in its day group: the group's card rounds its
-    /// first row's top corners and its last row's bottom ones.
-    struct Position {
-        var first = true
-        var last = true
-    }
-
     let row: ThreadRow
     @Bindable var state: WindowState
-    var position = Position()
+    /// The last row of its group: it has no hairline under it (the next
+    /// thing down is the next group's title and its rule).
+    var isLast = false
+    /// The first row of a group that has no title (a bundle's open
+    /// emails): the rule that opens such a group runs along its top edge.
+    /// Part of the row, not a 1 pt row of its own, which a list would
+    /// give its least row height.
+    var opensGroup = false
     /// On a bundle's Emails page (the header comment says what differs).
     var inBundle = false
-    /// A done email in a bundle: there for reference, set back until the
-    /// pointer is on it or it is open.
+    /// A done email in a bundle: there for reference, struck through and
+    /// set back to the tertiary grey until the pointer is on it or it is
+    /// open.
     var dimmed = false
     @Environment(AppModel.self) private var model
     @State private var hovering = false
@@ -44,37 +49,52 @@ struct MailRow: View {
     /// The window's cursor is the list's: under the Bundles page it is out
     /// of sight, and its row may be in the bundle too.
     private var selected: Bool { !inBundle && state.selection.contains(row.id) }
+    /// Done is struck through: while the strike runs after a click on
+    /// Done, and on a bundle's done emails.
+    private var struck: Bool { completing || dimmed }
+    /// A done row steps back to the tertiary grey, until the pointer is
+    /// on it or it is open.
+    private var setBack: Bool { completing || dimmed && !expanded && !hovering }
+    /// The account's dot, where the list mixes accounts. Through the
+    /// model's map, which changes only when an account does: every row
+    /// used to scan the accounts on every render.
+    private var account: MailAccount? {
+        model.selectedAccountId == nil && model.accountsById.count > 1 ? model.account(for: row) : nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             line
-                .opacity(dimmed && !expanded && !hovering ? 0.6 : 1)
             if expanded {
                 Hairline()
+                // The message starts where the sender's name does.
                 MailPreview(row: row, state: state)
+                    .padding(.leading, account == nil ? 0 : 18)
                     .transition(.opacity)
             }
         }
-        // The hover / cursor tint fills the row to 1 pt of the card's edge,
-        // rounded only where the card is (an inset pill left a white frame
-        // around every highlighted row).
-        .background(background, in: UnevenRoundedRectangle(topLeadingRadius: position.first ? 13 : 0,
-                                                            bottomLeadingRadius: position.last ? 13 : 0,
-                                                            bottomTrailingRadius: position.last ? 13 : 0,
-                                                            topTrailingRadius: position.first ? 13 : 0,
-                                                            style: .continuous))
-        .padding(1)
-        // This row's piece of its group's white card; no shadow (on a card
-        // holding a message it fell on the message's web view too).
-        .background {
-            UnevenRoundedRectangle(topLeadingRadius: position.first ? 14 : 0,
-                                   bottomLeadingRadius: position.last ? 14 : 0,
-                                   bottomTrailingRadius: position.last ? 14 : 0,
-                                   topTrailingRadius: position.first ? 14 : 0,
-                                   style: .continuous)
-                .fill(MacTheme.groupCard)
+        // The pointer's and the cursor's tint fills the row, square, from
+        // one margin of the list to the other.
+        .background(background)
+        // The hairline under the row. An overlay, not a row of its own:
+        // the list's cursor and the scroll target count rows.
+        .overlay(alignment: .bottom) {
+            if !isLast { RowRule().allowsHitTesting(false) }
         }
-        .padding(.horizontal, 16)
+        .overlay(alignment: .top) {
+            if opensGroup { SectionRule().allowsHitTesting(false) }
+        }
+        // The cursor's row, a selected one and the one open in place carry
+        // an ink rule down their leading edge, the open row's message
+        // too. Drawn over the row, never clipped into it and with no
+        // shadow: the row may hold a message's web view.
+        .overlay(alignment: .leading) {
+            if selected || expanded {
+                Rectangle().fill(Theme.textPrimary).frame(width: 2).allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, MacLayout.listMargin)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
@@ -106,20 +126,18 @@ struct MailRow: View {
 
     private var line: some View {
         HStack(spacing: 12) {
-            marker
+            accountDot
             // The sender column and the subject · snippet, as the search
             // panel's results draw them too (MailLineSender, MailLineSubject).
             MailLineSender(row: row, width: state.readingPane && !inBundle ? MacLayout.paneSenderWidth : MacLayout.senderWidth,
-                           showsCount: true, dimmed: row.isRead && !expanded)
-            MailLineSubject(row: row, gap: 10)
-            .strikethrough(completing, color: Theme.textTertiary)
-            .opacity(completing ? 0.5 : 1)
+                           showsCount: true, dimmed: row.isRead, heavy: selected || expanded, setBack: setBack)
+            MailLineSubject(row: row, gap: 10, struck: struck, setBack: setBack)
             Spacer(minLength: 8)
             badges
             trailing
         }
-        .padding(.leading, 10).padding(.trailing, 12)
-        .frame(height: 42)
+        .padding(.horizontal, 4)
+        .frame(height: MacLayout.rowHeight)
         .contentShape(Rectangle())
         // A click opens the row in place (the arrow and Return open the
         // full thread); ⌘ and ⇧ gather rows for the batch bar.
@@ -142,7 +160,7 @@ struct MailRow: View {
         // have no pointer to bring it up; the row reads as one element.
         .accessibilityElement(children: .combine)
         // The state in the words the phone's row uses (ThreadRow.spokenState):
-        // the chips said "Reply" and a bare time, the symbols nothing.
+        // the marks said "Reply" and a bare time, the symbols nothing.
         .accessibilityValue(row.spokenState(showsDone: false))
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { state.open(row, in: model) }
@@ -157,47 +175,54 @@ struct MailRow: View {
         }
     }
 
-    /// Unread: a dot on the left edge, in the account's colour when the
-    /// list mixes accounts. Read rows keep a faint account dot there.
-    @ViewBuilder private var marker: some View {
-        // Through the model's map, which changes only when an account does:
-        // every row used to scan the accounts on every render.
-        let account = model.selectedAccountId == nil && model.accountsById.count > 1 ? model.account(for: row) : nil
-        Circle()
-            .fill(account.map { Theme.tagForeground($0.color) } ?? Theme.unreadBar)
-            .frame(width: 6, height: 6)
-            .opacity(row.isRead ? (account == nil ? 0 : 0.3) : 1)
-            .accessibilityHidden(true) // "Unread", in the row's value
+    /// The account, where the list mixes accounts: a 6 pt dot in its
+    /// colour at the row's start, fainter once the row is read. It is
+    /// not the unread mark — that is the sender, bold under the
+    /// highlighter — and with one account on screen there is no dot.
+    @ViewBuilder private var accountDot: some View {
+        if let account {
+            Circle()
+                .fill(Theme.state(account.color))
+                .frame(width: 6, height: 6)
+                .opacity(row.isRead ? 0.35 : 1)
+                .accessibilityHidden(true)
+        }
     }
 
+    /// The row's states as writing in their colour (`StateMark`), never
+    /// as filled chips; the paperclip and the pin are bare glyphs.
     @ViewBuilder private var badges: some View {
-        // The Mac lists bundle mail row by row (no folding), so the chip
+        // The Mac lists bundle mail row by row (no folding), so the mark
         // is what ties a row to its bundle.
         if !inBundle, let b = model.bundle(id: row.bundleId) {
-            RowChip(text: b.name, systemImage: b.category.systemImage, tint: Theme.tagForeground(.sky))
+            StateMark(text: b.name, systemImage: b.category.systemImage, tint: Theme.state(.sky))
         }
         // The AI's proposal and an unsent reply, as the phone's row shows
         // them (ThreadRowView): here a suggestion was only in the context
         // menu and inside the thread, and a draft nowhere. Read-only — the
-        // thread and the menu accept or dismiss a suggestion.
+        // thread and the menu accept or dismiss a suggestion. The
+        // suggestion is the one mark in pink ink: it is the AI's.
         if let s = row.openSuggestion {
-            RowChip(text: s.title, systemImage: "sparkles", tint: Theme.textPrimary, background: Theme.accentSoft)
+            StateMark(text: s.title, systemImage: "sparkles", tint: Theme.pinkInk)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Suggested: \(s.title)")
         }
         if row.labels.contains("DRAFT"), model.view != .drafts {
-            RowChip(text: "Draft", systemImage: "pencil", tint: Theme.danger)
+            StateMark(text: "Draft", systemImage: "pencil", tint: Theme.state(.coral))
         }
         if row.hasAttachment {
             Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
                 .accessibilityHidden(true)
         }
         if row.needsReply {
-            RowChip(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Theme.needReply)
+            StateMark(text: "Reply", systemImage: "arrowshape.turn.up.left", tint: Theme.state(.sky))
                 .accessibilityHidden(true)
         }
+        // A reminder is lavender whether it is due or still ahead: pink
+        // is the unread sender's and the AI's, not "this came due".
         if let at = row.scheduledAt {
-            RowChip(text: Formatters.rowTime(at), systemImage: row.isFollowUp ? "arrow.uturn.left.circle" : "clock",
-                 tint: at < Date() ? Theme.accent : Theme.textSecondary)
+            StateMark(text: Formatters.rowTime(at), systemImage: row.isFollowUp ? "arrow.uturn.left.circle" : "clock",
+                      tint: Theme.state(.lavender))
                 .accessibilityHidden(true)
         }
         if row.isPinned {
@@ -206,21 +231,22 @@ struct MailRow: View {
         }
     }
 
-    /// The time, or under the pointer the actions and the arrow.
+    /// The time in the mono — ink while the row is unread, the tertiary
+    /// grey once read — or under the pointer the actions and the arrow.
     private var trailing: some View {
         ZStack(alignment: .trailing) {
             Text(expanded ? Formatters.fullDate(row.lastMessageAt) : Formatters.rowTime(row.lastMessageAt))
-                .font(Theme.sans(size: 12))
-                .foregroundStyle(row.isRead ? Theme.textTertiary : Theme.textSecondary)
-                .monospacedDigit()
+                .font(Theme.meta)
+                .foregroundStyle(row.isRead || setBack ? Theme.textTertiary : Theme.textPrimary)
                 .lineLimit(1)
                 .opacity(hovering ? 0 : 1)
             if hovering { RowActions(row: row, state: state, inBundle: inBundle) { complete() } }
         }
-        .frame(minWidth: 64, alignment: .trailing)
+        .frame(minWidth: 72, alignment: .trailing)
     }
 
-    /// Done: the strike runs, then the row is marked done and leaves
+    /// Done: the strike runs (the subject struck through, the row set
+    /// back to the tertiary grey), then the row is marked done and leaves
     /// (auto-advance hands the highlight on). On a done row it undoes.
     private func complete() {
         // With Reduce Motion the row just leaves: no strike to wait for.
@@ -241,81 +267,81 @@ struct MailRow: View {
     }
 }
 
-/// The sender column of a single-line row: the name in a fixed width,
-/// bolder while unread, and the thread's message count after it. The
-/// window's row and the search panel's result each give their own width.
+/// The sender column of a single-line row: the name in a fixed width —
+/// bold under the highlighter while unread, medium once read — and the
+/// thread's message count after it in the mono. The window's row and the
+/// search panel's result each give their own width.
 struct MailLineSender: View {
     let row: ThreadRow
     let width: CGFloat
     /// The message count of a conversation, after the name.
     var showsCount = false
-    /// A read row's name a step lighter (the window's list).
+    /// A read row's name in the secondary grey (the window's list).
     var dimmed = false
+    /// The highlighted row (the list's cursor, a selection, the row open
+    /// in place, a panel's highlight): a read name takes the semibold, in
+    /// ink. An unread one is bold already.
+    var heavy = false
+    /// A done row set back: the name in the tertiary grey.
+    var setBack = false
+
+    private var font: Font {
+        if !row.isRead { return Theme.sender(true) }
+        return heavy ? Theme.sans(size: 13, weight: .semibold) : Theme.sender(false)
+    }
+
+    private var ink: Color {
+        if setBack { return Theme.textTertiary }
+        return dimmed && !heavy ? Theme.textSecondary : Theme.textPrimary
+    }
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(row.fromSummary)
-                .font(Theme.sans(size: 13, weight: row.isRead ? .regular : .semibold))
-                .foregroundStyle(dimmed ? Theme.textSecondary : Theme.textPrimary)
+                .font(font)
+                .foregroundStyle(ink)
                 .lineLimit(1)
+                .marker(!row.isRead)
             if showsCount && row.isConversation {
                 Text("\(row.messageCount)")
-                    .font(Theme.sans(size: 11, weight: .medium))
+                    .font(Theme.mono(size: 11))
                     .foregroundStyle(Theme.textTertiary)
-                    .monospacedDigit()
             }
         }
         .frame(width: width, alignment: .leading)
     }
 }
 
-/// The subject, bolder while unread, and the snippet after it in grey,
+/// The subject, semibold while unread, and the snippet after it in grey,
 /// on one line; the subject keeps its width first.
 struct MailLineSubject: View {
     let row: ThreadRow
     /// The space between the subject and the snippet.
     let gap: CGFloat
+    /// A done row: the subject and the snippet struck through.
+    var struck = false
+    /// A done row set back: the subject in the tertiary grey too.
+    var setBack = false
 
     var body: some View {
         HStack(spacing: gap) {
             Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                 .font(Theme.sans(size: 13, weight: row.isRead ? .regular : .semibold))
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(setBack ? Theme.textTertiary : Theme.textPrimary)
+                .struckThrough(struck)
                 .lineLimit(1)
                 .layoutPriority(1)
             Text(row.snippet)
                 .font(Theme.sans(size: 13))
                 .foregroundStyle(Theme.textTertiary)
+                .struckThrough(struck)
                 .lineLimit(1)
         }
     }
 }
 
-/// A small tinted label: Reply, a reminder's time.
-/// (Not the phone's `Chip`: that one is a rounded rectangle in the text
-/// styles' sizes with its own fill and ink; this is an 11 pt capsule
-/// washed in its tint, sized for a 42 pt single-line row. They share no
-/// measure, so one component would be all parameters.)
-private struct RowChip: View {
-    let text: String
-    let systemImage: String
-    let tint: Color
-    /// The fill, when it is not a wash of the tint (the suggestion's
-    /// accent behind primary text, as on the phone).
-    var background: Color? = nil
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: systemImage).font(.system(size: 9, weight: .semibold))
-            Text(text).font(Theme.sans(size: 11, weight: .medium)).lineLimit(1)
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(background ?? tint.opacity(0.12), in: Capsule())
-    }
-}
-
-/// Under the pointer: Done first, the other swipe actions from Settings,
+/// Under the pointer: Done first — the row's ink action, a check on an
+/// ink circle — the other swipe actions from Settings as plain glyphs,
 /// then the arrow to the full thread. On a bundle's page ⊖ comes before
 /// the arrow: the email is not part of this bundle (the model learns from
 /// it; the context menu's "Not part of …" is the same action).
@@ -336,7 +362,9 @@ private struct RowActions: View {
     var body: some View {
         HStack(spacing: 0) {
             IconButton(RowAction.done.glyph(for: row),
-                       help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))", size: .small) { onDone() }
+                       help: "\(RowAction.done.label(for: row)) (\(RowAction.done.key))", size: .small,
+                       prominent: true) { onDone() }
+                .padding(.trailing, 2)
             ForEach(actions) { action in
                 IconButton(action.glyph(for: row), help: "\(action.label(for: row)) (\(action.key))", size: .small) {
                     state.run(action.command, in: model, rows: [row])
@@ -352,12 +380,14 @@ private struct RowActions: View {
     }
 }
 
-/// The open row's card body: the latest message (who it is to, then the
-/// whole body — the list scrolls, as the first desktop client's did; a
-/// fold cut a message off mid-sentence with nothing to say so), then
-/// Reply · Reply all · Forward and the way to the full thread. The thread
-/// is read once, from the store or the network, the first time the card
-/// opens.
+/// The open row's body, under its line and a hairline: the latest
+/// message (who it is to, then the whole body — the list scrolls, as the
+/// first desktop client's did; a fold cut a message off mid-sentence with
+/// nothing to say so), then Reply (the ink pill) · Reply all · Forward
+/// and the way to the full thread, outlined. The thread is read once,
+/// from the store or the network, the first time the row opens. No card,
+/// no clip and no shadow around it: either would lie over the message's
+/// web view.
 struct MailPreview: View {
     let row: ThreadRow
     @Bindable var state: WindowState
@@ -365,14 +395,14 @@ struct MailPreview: View {
     @State private var detail: ThreadDetail?
     @State private var failed: String?
     /// The attachments of the thread's messages, by message: read once the
-    /// card is open, as the thread view does.
+    /// row is open, as the thread view does.
     @State private var attachments: [String: [AttachmentItem]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let last = detail?.mail.last {
                 Text("\(last.isMine ? "Me" : last.fromName) to \(last.to.joined(separator: ", "))")
-                    .font(Theme.sans(size: 12))
+                    .font(Theme.meta)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                 MessageBodyView(html: last.bodyHTML, text: last.bodyText ?? last.snippet, senderAddress: last.fromAddress,
@@ -388,12 +418,13 @@ struct MailPreview: View {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 18)
             }
             HStack(spacing: 6) {
-                PillButton(title: "Reply", systemImage: "arrowshape.turn.up.left") { state.run(.reply, in: model, rows: [row]) }
+                PillButton(title: "Reply", systemImage: "arrowshape.turn.up.left", ink: true) { state.run(.reply, in: model, rows: [row]) }
                 PillButton(title: "Reply all", systemImage: "arrowshape.turn.up.left.2") { state.run(.replyAll, in: model, rows: [row]) }
                 PillButton(title: "Forward", systemImage: "arrowshape.turn.up.right") { state.run(.forward, in: model, rows: [row]) }
                 Spacer(minLength: 8)
                 if row.isConversation {
-                    Text("\(row.messageCount) messages").font(Theme.sans(size: 12)).foregroundStyle(Theme.textTertiary)
+                    Text("\(row.messageCount) messages").font(Theme.meta).foregroundStyle(Theme.textTertiary)
+                        .padding(.trailing, 6)
                 }
                 PillButton(title: "Open full thread", trailingImage: "chevron.right", strong: true) {
                     state.open(row, in: model)
@@ -401,11 +432,12 @@ struct MailPreview: View {
                 .help("Open the full thread (↩)")
             }
         }
-        // The same margin on both sides of the message and its buttons.
-        .padding(.horizontal, 20).padding(.vertical, 14)
+        // The row's own margin at the sides (MailRow adds the account
+        // dot's column), air over the message and under its buttons.
+        .padding(.horizontal, 4).padding(.top, 14).padding(.bottom, 16)
         .task(id: row.id) {
             // The stored copy first (whole when the thread was opened or
-            // prefetched, else its snippet), then Gmail's: the card used
+            // prefetched, else its snippet), then Gmail's: the row used
             // to spin until the network had answered.
             let id = row.id
             if detail == nil, let local = try? await model.engine.readInBackground({ try $0.threadLocal(id: id) }),
@@ -426,57 +458,61 @@ struct MailPreview: View {
     }
 }
 
-/// The pills under a row's preview: Reply · Reply all · Forward (quiet,
-/// an icon first, a stronger fill under the pointer) and "Open full
-/// thread ›" (`strong`: the one that goes somewhere — primary ink, the
-/// selected fill, its chevron after the words). One 28 pt capsule; the
-/// strong one was spelled out beside the others. The open thread's last
-/// message ends with the same three (the shared shell's `ThreadReplyFoot`).
+/// The pills under a row's preview: Reply (`ink`: the row's one ink
+/// action, the paper's colour for its words), Reply all · Forward
+/// (outlined in ink, an icon first, the sunken grey under the pointer)
+/// and "Open full thread ›" (`strong`: the one that goes somewhere —
+/// outlined too, in the semibold, its chevron after the words). One 28 pt
+/// capsule. The open thread's last message ends with the same three
+/// reply pills (the shared shell's `ThreadReplyFoot`).
 struct PillButton: View {
     let title: String
     var systemImage: String? = nil
     /// A symbol after the title (the strong pill's chevron).
     var trailingImage: String? = nil
     var strong = false
+    /// The ink pill: filled, with `onPrimary` words.
+    var ink = false
     let action: () -> Void
     @State private var hovering = false
 
     init(title: String, systemImage: String? = nil, trailingImage: String? = nil, strong: Bool = false,
-         action: @escaping () -> Void) {
+         ink: Bool = false, action: @escaping () -> Void) {
         self.title = title
         self.systemImage = systemImage
         self.trailingImage = trailingImage
         self.strong = strong
+        self.ink = ink
         self.action = action
     }
 
+    /// Ink for the ink pill (a little lighter under the pointer); for an
+    /// outlined one nothing, or the sunken grey under the pointer.
     private var fill: Color {
-        strong || hovering ? MacTheme.selected : MacTheme.hover
+        if ink { return Theme.textPrimary.opacity(hovering ? 0.85 : 1) }
+        return hovering ? Theme.sunken : Color.clear
     }
 
     var body: some View {
         Button(action: action) {
-            content
-                .font(Theme.sans(size: 12, weight: strong ? .semibold : .medium))
-                .foregroundStyle(strong ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, strong ? 12 : 10).frame(height: 28)
-                .background(fill, in: Capsule())
-                .contentShape(Capsule())
+            HStack(spacing: systemImage == nil ? 4 : 6) {
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 11, weight: .medium))
+                        .accessibilityHidden(true)
+                }
+                Text(title).font(Theme.sans(size: 12.5, weight: ink || strong ? .semibold : .medium))
+                if let trailingImage {
+                    Image(systemName: trailingImage).font(.system(size: 9, weight: .bold))
+                        .accessibilityHidden(true)
+                }
+            }
+            .foregroundStyle(ink ? Theme.onPrimary : Theme.textPrimary)
+            .padding(.horizontal, 12).frame(height: 28)
+            .background(fill, in: Capsule())
+            .overlay(Capsule().strokeBorder(ink ? Color.clear : Theme.textPrimary, lineWidth: 1))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-    }
-
-    @ViewBuilder private var content: some View {
-        if let systemImage {
-            Label(title, systemImage: systemImage)
-        } else {
-            HStack(spacing: 4) {
-                Text(title)
-                if let trailingImage {
-                    Image(systemName: trailingImage).font(.system(size: 10, weight: .semibold))
-                }
-            }
-        }
     }
 }

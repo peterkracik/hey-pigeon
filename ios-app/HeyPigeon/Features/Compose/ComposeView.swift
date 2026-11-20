@@ -1,4 +1,4 @@
-// Compose / reply / forward — the desktop Composer, one to one: From chip,
+// Compose / reply / forward — the desktop Composer, one to one: From,
 // To / Cc / Bcc with recipient chips, Subject, a rich-text body, attachment
 // chips, and the footer with Send · Discard · AI · Attach · Aa (on a phone:
 // Send · AI · Attach · Aa · More, with Discard under More). Send hands
@@ -13,6 +13,12 @@
 // reply, the floating toolbar and the AI panel (ComposeMac.swift). The
 // struct itself holds what both share: the fields, the attachments, the
 // footer and the draft's lifecycle.
+//
+// On the paper (docs/specs/marker-look.md): a field has no fill, its name
+// in small mono capitals and a hairline under it; a recipient and an
+// attachment are boxed chips (an outline, 6 pt corners); Send is the
+// sheet's one ink action and the AI's sparkle its pink. The message
+// itself is mail: it is written in the system font, as it will be read.
 
 import PhotosUI
 import SwiftUI
@@ -83,7 +89,16 @@ struct ComposeView: View {
 
     /// The field labels' column, growing with the text size ("Subject"
     /// was cut at larger ones) and still one width for every row.
-    @ScaledMetric(relativeTo: .subheadline) private var labelWidth: CGFloat = 56
+    @ScaledMetric(relativeTo: .caption2) private var labelWidth: CGFloat = 64
+
+    /// A field's name ("To", "Subject") and the small text buttons of the
+    /// fields ("Cc/Bcc"): small mono capitals in the tertiary grey. A
+    /// step more present than a section's title, which names no control.
+    private static let fieldLabel = Theme.mono(size: 11, relativeTo: .caption2)
+    /// The capitals' letter-spacing (0.06 em of their 11 pt).
+    private static let fieldLabelTracking: CGFloat = 0.7
+    /// What is boxed (a recipient, an attachment) has 6 pt corners.
+    private static let chipBox = RoundedRectangle(cornerRadius: 6, style: .continuous)
 
     private enum Field { case to, cc, bcc, subject, body }
     private static let maxAttachBytes = MailLimits.maxAttachmentBytes
@@ -193,7 +208,8 @@ struct ComposeView: View {
             .dismissKeyboardOnScroll(.interactively)
             footer
         }
-        .background(Theme.canvas)
+        // A sheet stands on the raised paper.
+        .background(Theme.raised)
         .borderlessFields()
         .composeChrome(title: draft.replyToThreadId == nil ? "New message" : "Reply",
                        fullScreen: model.composeFullScreen,
@@ -291,51 +307,60 @@ struct ComposeView: View {
                     }
                 }
             } label: {
+                // The account as its dot and its address, in ink: writing
+                // on the field's line, with nothing filled behind it.
                 HStack(spacing: 8) {
-                    if let a = fromAccount { Circle().fill(Theme.tagForeground(a.color)).frame(width: 8, height: 8) }
-                    Text(fromAddress ?? fromAccount?.email ?? "Choose account").foregroundStyle(Theme.textPrimary)
+                    if let a = fromAccount { Circle().fill(Theme.state(a.color)).frame(width: 8, height: 8) }
+                    Text(fromAddress ?? fromAccount?.email ?? "Choose account")
+                        .font(Theme.text(.bodySmall, .medium)).foregroundStyle(Theme.textPrimary)
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Theme.sunken, in: Capsule())
+                // A line of words: taller to the finger.
+                .tapArea(vertical: 10)
             }
             .labelOnlyMenu()
         }
     }
 
+    /// One field: its name in small mono capitals, the field with no fill
+    /// and the hairline under it, as wide as the fields.
     private func fieldRow<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Text(label)
-                    .font(Theme.sans(.subheadline)).foregroundStyle(Theme.textTertiary)
+                    .font(Self.fieldLabel).tracking(Self.fieldLabelTracking).textCase(.uppercase)
+                    .foregroundStyle(Theme.textTertiary)
                     .frame(width: labelWidth, alignment: .leading)
-                    .padding(.top, 2)
+                    // The capitals sit on the first line of what is
+                    // written beside them.
+                    .padding(.top, 4)
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 9)
-            Divider().padding(.leading, 16)
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            RowRule().padding(.horizontal, 16)
         }
     }
 
+    /// The attachments as boxed chips: the name, the size in the mono,
+    /// and the × that takes one off.
     private var attachmentChips: some View {
         FlowLayout(spacing: 8) {
             ForEach(attachments) { a in
-                HStack(spacing: 6) {
-                    Image(systemName: "paperclip").font(.caption)
-                    Text(a.filename).font(Theme.sans(.caption, .medium)).lineLimit(1)
-                    Text(Self.size(a.size)).font(Theme.sans(.caption2)).foregroundStyle(Theme.textTertiary)
+                HStack(spacing: 7) {
+                    Image(systemName: "paperclip").font(.caption).foregroundStyle(Theme.textSecondary)
+                    Text(a.filename).font(Theme.text(.secondary, .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(Self.size(a.size)).font(Theme.mono(size: 11, relativeTo: .caption2)).foregroundStyle(Theme.textTertiary)
                     Button { attachments.removeAll { $0.id == a.id } } label: {
-                        Image(systemName: "xmark").font(.caption2.weight(.bold))
+                        Image(systemName: "xmark").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
                             // The chip's whole end, not just the glyph.
                             .tapArea(horizontal: 10, vertical: 9)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Remove \(a.filename)")
                 }
-                .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Theme.sunken, in: Capsule())
+                .background(Self.chipBox.strokeBorder(Theme.outline, lineWidth: 1))
             }
         }
         .padding(.horizontal, 16).padding(.top, 10)
@@ -362,6 +387,8 @@ struct ComposeView: View {
         }
         .padding(.vertical, 8)
         .background(footerBackground)
+        // A hairline parts the actions from what is written above them.
+        .overlay(alignment: .top) { RowRule() }
     }
 
     /// The narrowest footer that shows every action in the row.
@@ -387,10 +414,12 @@ struct ComposeView: View {
     /// Whether there is a snippet to insert.
     private var offersSnippets: Bool { ComposePresentation.offersSnippets && !model.snippets.isEmpty }
 
+    /// Send: the composer's one ink action — the pill's own prominent
+    /// surface tinted ink, with the paper's colour for its words.
     private var sendButton: some View {
         Button { send() } label: {
             Label("Send", systemImage: "paperplane.fill")
-                .font(Theme.sans(.subheadline, .bold))
+                .font(Theme.text(.bodySmall, .semibold))
                 .foregroundStyle(Theme.onPrimary)
                 .frame(height: 22) // the icon buttons' content height, so the pill matches the circles
                 .padding(.horizontal, 6)
@@ -426,20 +455,22 @@ struct ComposeView: View {
 
     /// Read status for this one message (docs/specs/read-status.md R15):
     /// there only when the account it is sent from has read status on,
-    /// and on until switched off.
+    /// and on until switched off. The glyph says which (an eye, or the
+    /// eye struck out), in ink either way: pink is not "on".
     private var readStatusButton: some View {
         Button { draft.trackOpens = !tracksOpens } label: {
             Image(systemName: tracksOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
         }
         .pillButton()
-        .foregroundStyle(tracksOpens ? Theme.accent : Theme.textPrimary)
+        .foregroundStyle(Theme.textPrimary)
         .help(tracksOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
         .accessibilityLabel(ReadStatusSetting.title)
         .accessibilityValue(tracksOpens ? "On" : "Off")
     }
 
+    /// The AI: its sparkle in pink ink, the one pink of the footer.
     private var aiButton: some View {
-        Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.accent).frame(width: 22, height: 22) }
+        Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.pinkInk).frame(width: 22, height: 22) }
             .pillButton()
             .accessibilityLabel("Write or edit with AI")
     }
@@ -469,13 +500,17 @@ struct ComposeView: View {
             .accessibilityLabel("Attach file")
     }
 
+    /// Aa: shows and hides the format bar. In ink either way (pink is not
+    /// "on"): the bar standing over the row is the state the eye sees,
+    /// and VoiceOver hears it as selected.
     private var formatButton: some View {
         Button { withAnimation { showFormat.toggle() } } label: {
-            Text("Aa").font(Theme.sans(.subheadline, .bold)).frame(width: 22, height: 22)
+            Text("Aa").font(Theme.text(.bodySmall, .bold)).frame(width: 22, height: 22)
         }
         .pillButton()
-        .foregroundStyle(showFormat ? Theme.accent : Theme.textPrimary)
+        .foregroundStyle(Theme.textPrimary)
         .accessibilityLabel("Formatting")
+        .accessibilityAddTraits(showFormat ? .isSelected : [])
     }
 
     /// The narrow footer's More: the read status switch (a tick says it
@@ -639,16 +674,19 @@ struct ComposeView: View {
         if let url { link(url) }
     }
 
-    /// The From chip and the To / Cc / Bcc / Subject rows, on both
+    /// The From line and the To / Cc / Bcc / Subject rows, on both
     /// platforms (the Mac folds them behind its "Draft to …" line).
     @ViewBuilder private var recipientRows: some View {
         if showsFromRow { fromRow }
         fieldRow("To") {
             RecipientField(addresses: $to, focused: $focus, field: .to, people: people, text: $typedTo)
             if !showCc {
+                // Written as the fields' names are: it adds two of them.
                 Button("Cc/Bcc") { showCc = true; focus = .cc }
                     .composeTextButton()
-                    .font(Theme.sans(.footnote, .semibold)).foregroundStyle(Theme.textTertiary)
+                    .font(Self.fieldLabel).tracking(Self.fieldLabelTracking).textCase(.uppercase)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.top, 4)
             }
         }
         if showCc {
@@ -657,6 +695,10 @@ struct ComposeView: View {
         }
         fieldRow("Subject") {
             TextField("", text: $draft.subject)
+                // The subject is the message's title: a step heavier
+                // than what is typed around it.
+                .font(Theme.sans(.body, .semibold))
+                .foregroundStyle(Theme.textPrimary)
                 .focused($focus, equals: .subject)
                 // Return in the Subject goes on to the body on the Mac.
                 .onSubmit { if ComposePresentation.subjectReturnMovesToBody { focus = .body } }
@@ -761,14 +803,17 @@ extension ComposeView {
         pristine = false
     }
     private func adoptBody(of d: SendDraft) { body_ = Self.richBody(of: d) }
-    private var footerBackground: Color { Theme.canvas }
+    /// The sheet's own paper, so the text scrolling under the footer
+    /// does not show through it.
+    private var footerBackground: Color { Theme.raised }
 
     /// Under a reply's text: the conversation it answers, the latest
-    /// message open. The sheet covers the thread, and a reply used to be
-    /// written without the mail it answers anywhere in sight.
+    /// message open, under its own title ("Conversation" over a rule,
+    /// which is what parts it from the reply). The sheet covers the
+    /// thread, and a reply used to be written without the mail it
+    /// answers anywhere in sight.
     @ViewBuilder private var replyHistory: some View {
         if let threadId = draft.replyToThreadId {
-            Divider().padding(.top, 16)
             ComposeThreadHistory(threadId: threadId, showsSubject: false, onQuote: { quote($0) }) { _ in }
         }
     }
@@ -784,14 +829,21 @@ extension ComposeView {
         focus = .body
     }
 
-    /// The From chip and the To / Cc / Bcc / Subject rows.
+    /// The From line and the To / Cc / Bcc / Subject rows, under the rule
+    /// a section with no name opens with (the bar above is the system's
+    /// and draws none).
     @ViewBuilder private var headerFields: some View {
+        SectionRule().padding(.horizontal, 16).padding(.top, 6)
         recipientRows
     }
 
     private var bodyEditor: some View {
         TextEditor(text: $body_, selection: $selection)
-            .font(Theme.sans(.body))
+            // The message is mail, so it is written in the system font,
+            // as it will be read — and as its bold and italic runs are
+            // set (`toggleIntent`): in the interface's face, a word made
+            // bold changed typeface.
+            .font(.body)
             .foregroundStyle(Theme.textPrimary)
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
@@ -803,9 +855,11 @@ extension ComposeView {
             .onChange(of: body_) { _, _ in pristine = false }
     }
 
-    /// The glass format bar the footer's Aa shows.
+    /// The format bar the footer's Aa shows: an outlined capsule on the
+    /// footer's paper, its tools in ink. It stands in the footer, over
+    /// nothing, so it is drawn on the paper and not as glass.
     private var formatBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 0) {
             format("Bold", "bold") { toggleIntent(.stronglyEmphasized) }
             format("Italic", "italic") { toggleIntent(.emphasized) }
             format("Underline", "underline") { toggleUnderline() }
@@ -813,13 +867,13 @@ extension ComposeView {
             format("Link", "link") { askLink = true }
             Spacer()
         }
-        .padding(.horizontal, 12)
-        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 6)
+        .background(Capsule().strokeBorder(Theme.outline, lineWidth: 1))
         .padding(.horizontal, 16)
     }
 
     private func format(_ label: String, _ systemImage: String, _ run: @escaping () -> Void) -> some View {
-        Button(action: run) { Image(systemName: systemImage).frame(width: 36, height: 36) }
+        Button(action: run) { Image(systemName: systemImage).frame(width: 44, height: 44).contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.textPrimary)
             .accessibilityLabel(label)
@@ -895,13 +949,19 @@ extension ComposeView {
         pristine = false
     }
     private func adoptBody(of d: SendDraft) { editor.set(draft: d) }
-    private var footerBackground: Color { inline ? Theme.card : Theme.canvas }
+    /// The sheet's own paper under the footer; under a thread the reply's
+    /// box is the surface, and a fill here would square its corners.
+    private var footerBackground: Color { inline ? Color.clear : Theme.raised }
 
     /// Under the thread: the "Draft to …" line (the fields behind it, a
     /// window button and a close), the editor, the attachments and the
-    /// footer, on a card like the thread's open message — no chrome and
-    /// no scroll view of its own, the thread's does the scrolling. No
-    /// shadow and no clip: both would fall on the editor's web view.
+    /// footer, in a box on the thread's paper — an outline with 10 pt
+    /// corners, as a text of several lines is boxed, and no card: no
+    /// chrome and no scroll view of its own, the thread's does the
+    /// scrolling. No shadow and no clip: both would fall on the editor's
+    /// web view. The box stands out of the messages' text column by its
+    /// own 16 pt of padding, so the reply's words start where the
+    /// messages' do.
     private var inlineContent: some View {
         VStack(spacing: 0) {
             headerFields
@@ -909,9 +969,9 @@ extension ComposeView {
             if !attachments.isEmpty { attachmentChips }
             footer
         }
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
-        .padding(.horizontal, 12).padding(.top, 10)
+        .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
+        .padding(.horizontal, max(0, ThreadChrome.headerInset - 16)).padding(.top, 10)
         .borderlessFields()
     }
 
@@ -931,24 +991,26 @@ extension ComposeView {
 
     /// "Draft to Ana, Marek" under the thread, with the fields behind a
     /// disclosure — the reply's recipients are the thread's, and the line
-    /// says so without a form.
+    /// says so without a form. "Draft" is a state: small mono capitals in
+    /// the draft's colour, as a title is set; the disclosure is written
+    /// as the fields' names are.
     private var draftHeader: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Text("Draft")
-                .font(Theme.sans(size: 14, weight: .bold))
-                .foregroundStyle(Theme.tagForeground(.mint))
+                .font(Theme.label).tracking(Theme.labelTracking).textCase(.uppercase)
+                .foregroundStyle(Theme.state(.coral))
             Text(recipientLine)
-                .font(Theme.sans(size: 14, weight: .semibold))
+                .font(Theme.sans(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
             Spacer()
             Button { withAnimation(.snappy(duration: 0.2)) { showFields.toggle() } } label: {
                 HStack(spacing: 4) {
                     Text(showFields ? "Hide fields" : "To · Cc · Subject")
+                        .font(Self.fieldLabel).tracking(Self.fieldLabelTracking).textCase(.uppercase)
                     Image(systemName: showFields ? "chevron.up" : "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                 }
-                .font(Theme.sans(.footnote, .semibold))
                 .foregroundStyle(Theme.textTertiary)
                 .contentShape(Rectangle())
             }

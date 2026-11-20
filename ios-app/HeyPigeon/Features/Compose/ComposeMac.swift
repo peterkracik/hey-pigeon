@@ -553,8 +553,10 @@ extension View {
 // MARK: - The toolbars
 
 /// The formatting tools: bold, italic, underline, strikethrough, link,
-/// the two lists, clear formatting and the AI. `floating` is the dark bar
-/// over a selection; otherwise the format bar under the footer's Aa.
+/// the two lists, clear formatting and the AI. `floating` is the bar
+/// over a selection — the raised paper in an outline, as what floats in
+/// the window is; otherwise the format bar under the footer's Aa. The
+/// tools are ink on both; the AI's sparkle is the one pink.
 struct EditorTools: View {
     let editor: MacComposeEditor
     let floating: Bool
@@ -562,7 +564,12 @@ struct EditorTools: View {
     let onLink: () -> Void
     let onAI: () -> Void
 
-    private var foreground: Color { floating ? Theme.onPrimary : Theme.textPrimary }
+    private var foreground: Color { Theme.textPrimary }
+    /// The tile a format that is on stands on: a step off the bar under
+    /// it (sunken on the floating bar's paper, paper on the format bar's
+    /// sunken capsule).
+    private var activeTile: Color { floating ? Theme.sunken : Theme.raised }
+    private var bar: RoundedRectangle { RoundedRectangle(cornerRadius: 10, style: .continuous) }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -579,28 +586,31 @@ struct EditorTools: View {
             }
             if showsAI {
                 divider
-                button("Edit with AI", "sparkles", key: "⌘J", tint: Theme.accent, action: onAI)
+                button("Edit with AI", "sparkles", key: "⌘J", tint: Theme.pinkInk, action: onAI)
             }
         }
         .padding(floating ? 4 : 2)
-        .background(floating ? Theme.textPrimary : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(floating ? Theme.raised : Color.clear, in: bar)
+        .overlay(bar.strokeBorder(floating ? Theme.outline : Color.clear, lineWidth: 1))
     }
 
     private var divider: some View {
-        Rectangle().fill(foreground.opacity(0.25)).frame(width: 1, height: 16).padding(.horizontal, 3)
+        Rectangle().fill(Theme.outline).frame(width: 1, height: 16).padding(.horizontal, 3)
     }
 
-    /// A toggle: lit while its format is on at the selection.
+    /// A toggle: on a tile of its own while its format is on at the
+    /// selection. A shape, not a colour: pink is not "on".
     private func tool(_ label: String, _ systemImage: String, command: String, key: String) -> some View {
         let on = editor.activeFormats.contains(command)
-        return button(label, systemImage, key: key, tint: on ? Theme.accent : nil) { editor.exec(command) }
+        return button(label, systemImage, key: key, on: on) { editor.exec(command) }
     }
 
-    private func button(_ label: String, _ systemImage: String, key: String?, tint: Color? = nil,
+    private func button(_ label: String, _ systemImage: String, key: String?, tint: Color? = nil, on: Bool = false,
                         action: @escaping () -> Void) -> some View {
         // The Mac's icon button in its tool size (macos-app MacStyle).
         IconButton(systemImage, help: key.map { "\(label) (\($0))" } ?? label, size: .tool,
                    tint: tint ?? foreground, label: label, action: action)
+            .background(on ? activeTile : Color.clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 
@@ -625,15 +635,17 @@ struct SelectionToolbar: View {
 
     var body: some View {
         EditorTools(editor: editor, floating: true, showsAI: showsAI, onLink: onLink, onAI: onAI)
-            .shadow(color: .black.opacity(0.22), radius: 10, y: 4)
+            // It lies over the words being written: one soft shadow
+            // lifts the paper bar off them (the bar holds no message).
+            .shadow(color: .black.opacity(0.1), radius: 10, y: 2)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
             .offset(x: origin.x, y: origin.y)
             .transition(.opacity)
     }
 }
 
-/// The format bar the footer's Aa shows: the same tools on the sunken
-/// capsule the phone's glass bar has.
+/// The format bar the footer's Aa shows: the same tools on a sunken
+/// capsule, where the phone has an outlined one.
 struct MacFormatBar: View {
     let editor: MacComposeEditor
     let onLink: () -> Void
@@ -659,6 +671,11 @@ struct MacFormatBar: View {
 /// after `AIAssist.timeout`; the result is reviewed, refined (tone chips
 /// chain on it) and only then replaces the selection or the message.
 /// Content leaves the device on an explicit click only.
+///
+/// A panel of the window: the raised paper in an outline, no shadow. The
+/// line has an ink underline and no fill; the presets are boxed chips,
+/// the one that leads in ink; the result is boxed as a text of several
+/// lines is.
 struct MacAIPanel: View {
     let subject: String
     let history: String?
@@ -709,77 +726,94 @@ struct MacAIPanel: View {
                 prompt(shown)
             }
             if let error = runner.error {
-                Text(error).font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText)
+                Text(error).font(Self.smallFont).foregroundStyle(Theme.dangerText)
             }
             // What a click sends, and to whom (AIAssist.footnote, as under
             // the phone's sheet). The Mac sends the AIWriteContext too.
             Text(AIAssist.footnote(mode: mode, isReply: isReply, sendsWriter: true,
                                    destination: AIAssist.Destination(shown),
                                    refining: runner.result != nil))
-                .font(Theme.sans(.caption2)).foregroundStyle(Theme.textTertiary)
+                .font(Self.smallFont).foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
         .onAppear { focused = true }
         .onDisappear { runner.cancel() }
     }
+
+    /// The panel's small text (a hint, the privacy line, an error): the
+    /// window's footer size.
+    private static let smallFont = Theme.sans(size: 12)
+    /// What is boxed (a preset, the result) has 6 pt corners.
+    private static let box = RoundedRectangle(cornerRadius: 6, style: .continuous)
 
     // MARK: Asking
 
     private func prompt(_ shown: AIStatus?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                TextField(placeholder, text: $instruction)
-                    .textFieldStyle(.plain)
-                    .font(Theme.sans(size: 14))
-                    .focused($focused)
-                    .onSubmit { go(shown) }
-                    .onExitCommand { onClose() }
-                    .disabled(running)
-                if running {
-                    ProgressView().controlSize(.small)
-                    Button("Cancel") { runner.cancel() }
+            // The line: no fill, an ink underline.
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    TextField(placeholder, text: $instruction)
+                        .textFieldStyle(.plain)
+                        .font(Theme.sans(size: 14))
+                        .focused($focused)
+                        .onSubmit { go(shown) }
+                        .onExitCommand { onClose() }
+                        .disabled(running)
+                    if running {
+                        ProgressView().controlSize(.small)
+                        Button("Cancel") { runner.cancel() }
+                            .buttonStyle(.plain)
+                            .font(Theme.sans(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        // Ink once the line can be sent, a faint ink
+                        // until then.
+                        Button { go(shown) } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Theme.onPrimary)
+                                .frame(width: 26, height: 26)
+                                .background(Theme.textPrimary.opacity(canGo ? 1 : 0.3), in: Circle())
+                        }
                         .buttonStyle(.plain)
-                        .font(Theme.sans(.footnote, .semibold))
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    Button { go(shown) } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(canGo ? Theme.onPrimary : Theme.textTertiary)
+                        .disabled(!canGo)
+                        .help(mode == .write ? "Write it (↩)" : "Apply (↩)")
+                    }
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.textTertiary)
                             .frame(width: 26, height: 26)
-                            .background(canGo ? Theme.accent : Theme.sunken, in: Circle())
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canGo)
-                    .help(mode == .write ? "Write it (↩)" : "Apply (↩)")
+                    .help("Close (Esc)")
                 }
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: 26, height: 26)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Close (Esc)")
+                Rectangle().fill(Theme.textPrimary).frame(height: 1)
             }
             chips(shown)
             HStack(spacing: 10) {
-                Text(hint).font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                Text(hint).font(Self.smallFont).foregroundStyle(Theme.textTertiary)
                 Spacer()
                 if hasText {
-                    Picker("Mode", selection: $mode) {
-                        ForEach(AIAssist.Mode.allCases) { Text($0.rawValue).tag($0) }
+                    // The window's switcher (`TabPill`: the shown one an
+                    // ink capsule), in an outlined capsule as the phone's
+                    // segments are. The system's segmented control fills
+                    // its selection with the system blue here.
+                    HStack(spacing: 2) {
+                        ForEach(AIAssist.Mode.allCases) { m in
+                            TabPill(title: m.rawValue, on: mode == m) { mode = m }
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(width: 130)
+                    .padding(2)
+                    .background(Capsule().strokeBorder(Theme.outline, lineWidth: 1))
                     .disabled(running)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Mode")
                 }
             }
         }
@@ -822,14 +856,17 @@ struct MacAIPanel: View {
         }
     }
 
+    /// A preset as a boxed chip: an outline, no fill. The one that leads
+    /// (`primary`) is ink, with the paper's colour for its words.
     private func chip(_ title: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(Theme.sans(size: 12, weight: .semibold))
                 .foregroundStyle(primary ? Theme.onPrimary : Theme.textPrimary)
-                .padding(.horizontal, 11).padding(.vertical, 6)
-                .background(primary ? Theme.accent : Theme.sunken, in: Capsule())
-                .contentShape(Capsule())
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(primary ? Theme.textPrimary : Color.clear, in: Self.box)
+                .overlay(Self.box.strokeBorder(primary ? Theme.textPrimary : Theme.outline, lineWidth: 1))
+                .contentShape(Self.box)
         }
         .buttonStyle(.plain)
         .disabled(running)
@@ -842,16 +879,17 @@ struct MacAIPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(AIAssist.reviewTitle(r))
-                    .font(Theme.sans(.caption)).foregroundStyle(Theme.textTertiary)
+                    .font(Self.smallFont).foregroundStyle(Theme.textTertiary)
                 Spacer()
                 if running {
                     ProgressView().controlSize(.small)
                     Button("Cancel") { runner.cancel() }
                         .buttonStyle(.plain)
-                        .font(Theme.sans(.footnote, .semibold))
+                        .font(Theme.sans(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
+            // A text of several lines: a box with an outline, no fill.
             ScrollView {
                 Text(r.text)
                     .font(Theme.sans(size: 13))
@@ -862,7 +900,7 @@ struct MacAIPanel: View {
                     .padding(10)
             }
             .frame(maxHeight: 220)
-            .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Self.box.strokeBorder(Theme.outline, lineWidth: 1))
             FlowLayout(spacing: 6) {
                 ForEach(AIAssist.tones) { tone in
                     chip(tone.title) {

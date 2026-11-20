@@ -1,10 +1,10 @@
 // Search. On the phone the field hides above each list and is pulled down
 // (MailListScreen, `pullDownSearch`); it holds only the words. The filters
-// are buttons along the top — From, To, Unread and the account — that the
-// model turns into the core's operators. With nothing typed the screen
+// are boxed chips along the top — From, To, Unread and the account — that
+// the model turns into the core's operators. With nothing typed the screen
 // lists recent searches. Results use the inbox's rows and gestures, with
-// the matching words underlined. The iPad's columns (PadSearchList) and
-// the Mac's panel show the same pieces.
+// the matching words underlined in ink. The iPad's columns (PadSearchList)
+// and the Mac's panel show the same pieces.
 
 import SwiftUI
 
@@ -54,8 +54,10 @@ struct SearchPane: View {
 /// (AppModel.searchGmail). What it finds joins the results.
 struct GmailSearchRow: View {
     /// In the Mac's search panel: its 36 pt line in the panel's 12 pt
-    /// type, on the panel's glass. Elsewhere the phone's row on the canvas.
-    /// One row and one wording for both; each keeps its own size.
+    /// type, on the panel's own surface and under the panel's own rule.
+    /// Elsewhere the phone's row on the canvas, parted from the results
+    /// over it by a hairline as far in as theirs. One row and one wording
+    /// for both; each keeps its own size.
     var inPanel = false
     @Environment(AppModel.self) private var model
 
@@ -65,41 +67,46 @@ struct GmailSearchRow: View {
                 if model.isSearchingGmail {
                     ProgressView().controlSize(.small)
                 } else {
-                    Image(systemName: "tray.and.arrow.down")
+                    Image(systemName: "tray.and.arrow.down").font(Theme.glyph(inPanel ? .caption : .bodySmall, .medium))
                 }
                 Text(model.isSearchingGmail ? "Asking Gmail…" : "Search all of Gmail")
+                    .font(inPanel ? Theme.sans(size: 12, weight: .medium) : Theme.sans(.footnote, .semibold))
                 Spacer()
             }
-            .font(inPanel ? Theme.sans(size: 12, weight: .medium) : Theme.sans(.footnote, .semibold))
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, inPanel ? 20 : 16)
             .padding(.vertical, inPanel ? 0 : 12)
             .frame(height: inPanel ? 36 : nil)
+            .frame(minHeight: inPanel ? nil : 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(model.isSearchingGmail)
         .background(inPanel ? Color.clear : Theme.canvas)
+        .overlay(alignment: .top) {
+            if !inPanel { RowRule().padding(.horizontal, 16) }
+        }
         // The pointer's tooltip and VoiceOver's hint say the same thing.
         .help("Finds older mail that is not on this \(Device.name) yet")
         .accessibilityHint("Finds older mail that is not on this \(Device.name) yet")
     }
 }
 
-/// "3 results" over the list; the core returns at most `AppModel.searchLimit`.
-/// Internal, like the filter bar, the picker and the recent list below:
-/// the Mac's list column shows the same pieces.
+/// "3 results" over the list, in the mono as every count is; the core
+/// returns at most `AppModel.searchLimit`. Internal, like the filter bar,
+/// the picker and the recent list below: the Mac's list column shows the
+/// same pieces.
 struct ResultCount: View {
     let count: Int
 
     var body: some View {
         HStack {
             Text(count >= AppModel.searchLimit ? "\(AppModel.searchLimit)+ results" : count == 1 ? "1 result" : "\(count) results")
-                .font(Theme.display(13, relativeTo: .caption))
+                .font(Theme.meta)
                 .foregroundStyle(Theme.textTertiary)
             Spacer()
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
         .padding(.top, 2)
         .padding(.bottom, 6)
     }
@@ -114,10 +121,16 @@ enum PersonField: String, Identifiable {
     var title: String { self == .from ? "From" : "To" }
 }
 
-/// The row of filter buttons. Off: grey with a chevron. On: filled, showing
-/// the value, with an × to remove it.
+/// The row of filter buttons, each a boxed chip (docs/specs/marker-look.md,
+/// R7). Off: an outline around ink words, with a chevron where it opens
+/// something. On: an ink fill showing the value in the paper's colour,
+/// with an × to remove it.
 struct SearchFilterBar: View {
     @Binding var picking: PersonField?
+    /// What the bar paints behind itself. On the phone the results scroll
+    /// under it, so it is opaque: the canvas, unless the host stands on
+    /// another surface (a panel) and names it.
+    var surface: Color = Theme.canvas
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -144,6 +157,9 @@ struct SearchFilterBar: View {
                         }
                     } label: {
                         let account = model.accounts.first { $0.id == model.searchFilters.accountId }
+                        // The dot stands on the chip's ink fill, which is
+                        // dark on light and light on dark: the tag's own
+                        // colour reads on both, its lighter pair would not.
                         FilterPillLabel(
                             title: account?.displayName ?? "All accounts",
                             isOn: account != nil,
@@ -159,7 +175,7 @@ struct SearchFilterBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
-        .background(Theme.canvas)
+        .background(surface)
         .animation(.easeOut(duration: 0.15), value: model.searchFilters)
     }
 
@@ -168,7 +184,7 @@ struct SearchFilterBar: View {
         HStack(spacing: 0) {
             Button { picking = field } label: {
                 FilterPillLabel(title: value?.name ?? field.title, isOn: value != nil, chevron: value == nil,
-                                trailingPadding: value == nil ? 12 : 4)
+                                trailingPadding: value == nil ? 10 : 4)
             }
             .accessibilityLabel(value.map { "\(field.title) \($0.name)" } ?? field.title)
             if value != nil {
@@ -178,8 +194,8 @@ struct SearchFilterBar: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(Theme.canvas.opacity(0.7))
-                        .padding(.leading, 4).padding(.trailing, 11)
+                        .foregroundStyle(Theme.onPrimary.opacity(0.75))
+                        .padding(.leading, 4).padding(.trailing, 10)
                         .frame(minHeight: 32)
                         .contentShape(Rectangle())
                 }
@@ -187,11 +203,27 @@ struct SearchFilterBar: View {
             }
         }
         .buttonStyle(.plain)
-        .background(value != nil ? Theme.textPrimary : Theme.sunken, in: Capsule())
+        .background { FilterBox(isOn: value != nil) }
     }
 }
 
-/// The look of one filter button; the background is drawn here unless the
+/// A filter's box, 6 pt at the corners: an outline while the filter is
+/// off, an ink fill once it is on (a filter is boxed, and selection is
+/// ink).
+private struct FilterBox: View {
+    let isOn: Bool
+
+    var body: some View {
+        let box = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        if isOn {
+            box.fill(Theme.textPrimary)
+        } else {
+            box.strokeBorder(Theme.outline, lineWidth: 1)
+        }
+    }
+}
+
+/// The look of one filter button; the box is drawn here unless the
 /// caller draws it around more than the label (From / To with the ×).
 private struct FilterPillLabel: View {
     let title: String
@@ -202,33 +234,32 @@ private struct FilterPillLabel: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
+            if let dot { Circle().fill(dot).frame(width: 6, height: 6) }
             Text(title).lineLimit(1)
             if chevron {
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(isOn ? Theme.canvas.opacity(0.7) : Theme.textTertiary)
+                    .foregroundStyle(isOn ? Theme.onPrimary.opacity(0.75) : Theme.textTertiary)
             }
         }
-        .font(Theme.sans(.subheadline, .semibold))
-        .foregroundStyle(isOn ? Theme.canvas : Theme.textPrimary)
-        .padding(.leading, 12)
-        .padding(.trailing, trailingPadding ?? 12)
+        .font(Theme.sans(size: 14, weight: .medium, relativeTo: .subheadline))
+        .foregroundStyle(isOn ? Theme.onPrimary : Theme.textPrimary)
+        .padding(.leading, 10)
+        .padding(.trailing, trailingPadding ?? 10)
         // At least, not exactly: the title grows with the text size.
         .frame(minHeight: 32)
         .background {
-            if trailingPadding == nil {
-                Capsule().fill(isOn ? Theme.textPrimary : Theme.sunken)
-            }
+            if trailingPadding == nil { FilterBox(isOn: isOn) }
         }
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
     }
 }
 
 // MARK: From / To picker
 
 /// A short sheet of the people the mail comes from; the field narrows it
-/// by name or address, and "From “…”" takes whatever was typed.
+/// by name or address, and "From “…”" takes whatever was typed. Its rows
+/// stand on the sheet's paper, ruled, under their title.
 struct PersonPicker: View {
     let field: PersonField
     @Environment(AppModel.self) private var model
@@ -249,36 +280,56 @@ struct PersonPicker: View {
     }
 
     var body: some View {
+        // Once per pass: every row asks which of them is the last.
+        let shown = matches
         NavigationStack {
             List {
-                if !typed.isEmpty && !matches.contains(where: { $0.person.address == typed.lowercased() }) {
+                if !typed.isEmpty && !shown.contains(where: { $0.person.address == typed.lowercased() }) {
                     Button {
                         let value = typed.filter { !$0.isWhitespace }
                         choose(SearchPerson(name: value, address: value.lowercased()))
                     } label: {
-                        Label("\(field.title) “\(typed)”", systemImage: "magnifyingglass")
-                            .foregroundStyle(Theme.textPrimary)
+                        Label {
+                            Text("\(field.title) “\(typed)”").font(Theme.sender(false))
+                        } icon: {
+                            Image(systemName: "magnifyingglass").font(Theme.glyph(.bodySmall))
+                        }
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(minHeight: 46)
                     }
-                    .listRowBackground(Theme.canvas)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                    .listRowBackground(Theme.raised)
+                    .listRowSeparator(.hidden)
                 }
                 Section {
-                    ForEach(matches) { item in
-                        Button { choose(item.person) } label: { row(item) }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Theme.canvas)
+                    ForEach(shown) { item in
+                        Button { choose(item.person) } label: {
+                            row(item)
+                                .padding(.horizontal, 20)
+                                .ruledBelow(item.id != shown.last?.id, inset: 20)
+                                // The whole line takes the tap, margins
+                                // and rule included.
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .listRowBackground(Theme.raised)
+                        .listRowSeparator(.hidden)
                     }
                 } header: {
-                    if !matches.isEmpty {
-                        Text(typed.isEmpty ? "Frequent" : "People")
-                            .font(Theme.display(13, relativeTo: .caption))
-                            .foregroundStyle(Theme.textTertiary)
-                            .textCase(nil)
+                    if !shown.isEmpty {
+                        // 20 pt in, as the sheet's rows are; the title
+                        // stands a little further under the field than a
+                        // group's does under the group before it.
+                        SectionTitle(typed.isEmpty ? "Frequent" : "People")
+                            .listRowInsets(EdgeInsets(top: 22, leading: 20, bottom: 4, trailing: 20))
                     }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .background(Theme.canvas)
+            // A sheet: the raised paper, a step up from the canvas on dark.
+            .background(Theme.raised)
             .alwaysShownSearch(text: $query, prompt: "Name or email")
             .plainInput()
             .navigationTitle(field.title)
@@ -301,30 +352,32 @@ struct PersonPicker: View {
     private func row(_ item: PersonSuggestion) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                name(item).font(Theme.sans(.body, .semibold)).lineLimit(1)
+                Text(item.person.name).font(Theme.sender(false)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(item.person.address)
-                    .font(Theme.sans(.footnote))
+                    .font(Theme.text(.secondary))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            if let owner = account(of: item) {
+                Circle().fill(Theme.state(owner.color)).frame(width: 6, height: 6).accessibilityHidden(true)
+            }
             if current?.address == item.person.address {
-                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Theme.accent)
+                // The one chosen: ink, as every selection is.
+                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Theme.textPrimary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 9)
+        .frame(minHeight: 46)
         .contentShape(Rectangle())
     }
 
-    /// With several accounts the first letter takes the account's colour,
-    /// as in the inbox rows.
-    private func name(_ item: PersonSuggestion) -> Text {
-        let name = item.person.name
-        guard model.accounts.count > 1, let first = name.first,
-              let account = model.accounts.first(where: { $0.id == item.accountId })
-        else { return Text(name).foregroundStyle(Theme.textPrimary) }
-        return Text(String(first)).foregroundStyle(Theme.tagForeground(account.color))
-            + Text(name.dropFirst()).foregroundStyle(Theme.textPrimary)
+    /// With several accounts, the one a person last wrote to: a dot in its
+    /// colour at the row's end, as on the inbox's rows. Nil with one
+    /// account, where there is nothing to tell apart.
+    private func account(of item: PersonSuggestion) -> MailAccount? {
+        guard model.accounts.count > 1 else { return nil }
+        return model.accounts.first { $0.id == item.accountId }
     }
 
     private func choose(_ person: SearchPerson?) {
@@ -336,39 +389,51 @@ struct PersonPicker: View {
 
 // MARK: Recent
 
-/// Nothing typed and no filter on: the last few searches, newest first.
+/// Nothing typed and no filter on: the last few searches, newest first,
+/// ruled rows under their title; "Clear" stands at the title's end.
 struct RecentSearches: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         if model.recentSearches.isEmpty {
             ContentUnavailableView {
-                Label("Search your mail", systemImage: "magnifyingglass")
-                    .font(Theme.display(20, relativeTo: .title3))
+                EmptyState.Title(title: "Search your mail", systemImage: "magnifyingglass")
             }
         } else {
             List {
                 Section {
                     ForEach(model.recentSearches) { entry in
-                        Button { model.runRecentSearch(entry) } label: { RecentSearchRow(entry: entry) }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Theme.canvas)
-                            .listRowSeparator(.hidden)
-                            .swipeActions {
-                                Button("Remove", systemImage: "trash", role: .destructive) { model.forgetSearch(entry) }
-                            }
+                        Button { model.runRecentSearch(entry) } label: {
+                            RecentSearchRow(entry: entry)
+                                .padding(.horizontal, 16)
+                                .ruledBelow(entry != model.recentSearches.last)
+                                // The whole line takes the tap, margins
+                                // and rule included.
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        // Clear: the rows stand on what holds the list,
+                        // the phone's canvas or the Mac's panel.
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .swipeActions {
+                            Button("Remove", systemImage: "trash", role: .destructive) { model.forgetSearch(entry) }
+                        }
                     }
                 } header: {
-                    HStack {
-                        Text("Recent")
-                            .font(Theme.display(13, relativeTo: .caption))
-                            .foregroundStyle(Theme.textTertiary)
-                        Spacer()
-                        Button("Clear") { model.clearRecentSearches() }
-                            .font(Theme.sans(.footnote, .semibold))
-                            .foregroundStyle(Theme.accent)
+                    // The control is not structure: it keeps its ink.
+                    SectionTitle(title: "Recent") {
+                        Button { model.clearRecentSearches() } label: {
+                            Text("Clear")
+                                .font(Theme.text(.secondary, .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                                .tapArea(horizontal: 8, vertical: 12)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .textCase(nil)
+                    .listRowInsets(EdgeInsets(top: 18, leading: 16, bottom: 6, trailing: 16))
                 }
             }
             .listStyle(.plain)
@@ -396,19 +461,34 @@ private struct RecentSearchRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "clock")
-                .font(.subheadline)
+                .font(Theme.glyph(.bodySmall))
                 .foregroundStyle(Theme.textTertiary)
             HStack(spacing: 6) {
                 if !entry.text.isEmpty {
-                    Text(entry.text).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    // The words in a row's own face (16 on the phone, the
+                    // Mac's 13).
+                    Text(entry.text).font(Theme.sender(false)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 }
-                ForEach(tags, id: \.self) { tag in
-                    Chip(text: tag, background: Theme.sunken, foreground: Theme.textSecondary)
-                }
+                ForEach(tags, id: \.self) { tag in FilterTag(title: tag) }
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .frame(minHeight: 46)
         .contentShape(Rectangle())
+    }
+}
+
+/// A filter of a remembered search, drawn as the filter it was: boxed in
+/// the outline grey, a size under the chips of the bar above it.
+private struct FilterTag: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(Theme.text(.caption, .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
     }
 }

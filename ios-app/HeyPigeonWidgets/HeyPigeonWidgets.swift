@@ -10,6 +10,14 @@
 // and Snooze buttons are heypigeon://done and heypigeon://snooze links the
 // app acts on when it opens — a Mac widget's intent runs in the extension,
 // which has no engine.
+//
+// Drawn in the app's look (docs/specs/marker-look.md) with what this
+// target has in Theme's place: Typeface for the two faces and
+// WidgetPalette for the colours. Counts and times are in the mono, a
+// title is small mono capitals, an unread sender is bold under the
+// highlighter, and a button is an ink capsule or its outline. The
+// container is the system's and is left to it; so are the Lock Screen's
+// accessories, whose colours the system replaces with its own.
 
 import AppIntents
 import SwiftUI
@@ -60,42 +68,41 @@ enum WidgetFamilies {
 
 /// Done on a widget row: an intent that runs in the app's process on iOS,
 /// a link that opens the app on the Mac (same mark-done, same Undo toast).
+/// It is the row's one action, so it is the ink capsule on both.
 struct WidgetDoneButton<Content: View>: View {
     let threadId: String
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         #if os(iOS)
-        Button(intent: WidgetMarkDoneIntent(threadId: threadId)) { content() }
-            .buttonStyle(.bordered).tint(WidgetPalette.accent)
+        Button(intent: WidgetMarkDoneIntent(threadId: threadId)) { capsule }
+            .buttonStyle(.plain)
         #else
-        Link(destination: AppGroup.Link.done(threadId)) {
-            content()
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(WidgetPalette.accent.opacity(0.18), in: Capsule())
-                .foregroundStyle(WidgetPalette.accent)
-        }
+        Link(destination: AppGroup.Link.done(threadId)) { capsule }
         #endif
+    }
+
+    private var capsule: some View {
+        content().modifier(WidgetCapsule(filled: true))
     }
 }
 
-/// "1 h" on a due reminder: the same two shapes as Done.
+/// "1 h" on a due reminder: the same two ways as Done, as an outlined
+/// capsule beside Done's ink.
 struct WidgetSnoozeButton: View {
     let threadId: String
 
     var body: some View {
         #if os(iOS)
-        Button(intent: WidgetSnoozeIntent(threadId: threadId)) {
-            Label("1 h", systemImage: "zzz").font(Typeface.sans(.caption, .semibold))
-        }
-        .buttonStyle(.bordered)
+        Button(intent: WidgetSnoozeIntent(threadId: threadId)) { capsule }
+            .buttonStyle(.plain)
         #else
-        Link(destination: AppGroup.Link.snooze(threadId)) {
-            Label("1 h", systemImage: "zzz").font(Typeface.sans(.caption, .semibold))
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(.fill.secondary, in: Capsule())
-        }
+        Link(destination: AppGroup.Link.snooze(threadId)) { capsule }
         #endif
+    }
+
+    private var capsule: some View {
+        Label("1 h", systemImage: "zzz").modifier(WidgetCapsule())
     }
 }
 
@@ -160,43 +167,48 @@ struct UnreadView: View {
     var body: some View {
         switch family {
         #if os(iOS)
+        // The Lock Screen's accessories: the count in the mono, and no
+        // colour of the app's — the system draws them in its own.
         case .accessoryCircular:
             VStack(spacing: 0) {
                 Image(systemName: "tray").font(.caption)
-                Text("\(snapshot.unreadTotal)").font(Typeface.sans(.title3, .bold)).monospacedDigit()
+                Text("\(snapshot.unreadTotal)").font(Typeface.mono(.title3, .medium))
             }
         case .accessoryRectangular:
             HStack {
                 Image(systemName: "tray")
                 VStack(alignment: .leading) {
-                    Text("\(snapshot.unreadTotal) unread").font(Typeface.sans(.headline, .semibold))
+                    Text("\(snapshot.unreadTotal) unread").font(Typeface.sans(.subheadline, .semibold))
                     Text(snapshot.accounts.map { "\($0.name) \($0.unread)" }.joined(separator: " · ")).font(Typeface.sans(.caption)).lineLimit(1)
                 }
             }
         #endif
         default:
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Image(systemName: "tray").foregroundStyle(.secondary)
+                    Image(systemName: "tray").foregroundStyle(WidgetPalette.textSecondary)
                     Spacer()
-                    Text("Inbox").font(Typeface.sans(.caption, .semibold)).foregroundStyle(.secondary)
+                    WidgetTitle(text: "Inbox")
                 }
                 Spacer(minLength: 0)
                 Text("\(snapshot.unreadTotal)")
-                    .font(Typeface.sans(size: 44, weight: .bold)).monospacedDigit()
+                    .font(Typeface.mono(size: 44, weight: .medium))
+                    .foregroundStyle(WidgetPalette.textPrimary)
                     .contentTransition(.numericText())
-                Text("unread").font(Typeface.sans(.caption)).foregroundStyle(.secondary)
+                Text("unread").font(Typeface.sans(.caption)).foregroundStyle(WidgetPalette.textSecondary)
+                    .padding(.top, 2)
                 // One bar per account, in its colour, proportional to its share.
                 if snapshot.accounts.count > 1, snapshot.unreadTotal > 0 {
                     GeometryReader { geo in
                         HStack(spacing: 2) {
                             ForEach(snapshot.accounts.filter { $0.unread > 0 }) { a in
-                                Capsule().fill(WidgetPalette.account(a.color))
+                                Rectangle().fill(WidgetPalette.account(a.color))
                                     .frame(width: max(4, geo.size.width * CGFloat(a.unread) / CGFloat(snapshot.unreadTotal) - 2))
                             }
                         }
                     }
                     .frame(height: 5)
+                    .padding(.top, 8)
                 }
             }
         }
@@ -249,7 +261,7 @@ struct NextReminderView: View {
     private var circular: some View {
         VStack(spacing: 0) {
             Image(systemName: isDue ? "clock.badge.exclamationmark" : "clock").font(.caption).widgetAccentable(isDue)
-            Text(dueText).font(Typeface.sans(.title3, .bold)).monospacedDigit()
+            Text(dueText).font(Typeface.mono(.title3, .medium))
         }
         .opacity(isDue ? 1 : 0.6)
         .widgetURL(AppGroup.Link.folder("scheduled"))
@@ -259,13 +271,13 @@ struct NextReminderView: View {
         Group {
             if let row {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(isDue ? "\(dueText) due" : "Next in \(row.at, style: .relative)").font(Typeface.sans(.headline, .semibold)).lineLimit(1)
+                    Text(isDue ? "\(dueText) due" : "Next in \(row.at, style: .relative)").font(Typeface.sans(.subheadline, .semibold)).lineLimit(1)
                     Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(Typeface.sans(.caption)).lineLimit(2)
                 }
                 .widgetURL(AppGroup.Link.thread(row.id))
             } else {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("No reminders").font(Typeface.sans(.headline, .semibold))
+                    Text("No reminders").font(Typeface.sans(.subheadline, .semibold))
                     Text("Nothing scheduled").font(Typeface.sans(.caption))
                 }
                 .widgetURL(AppGroup.Link.folder("scheduled"))
@@ -295,26 +307,34 @@ struct NextReminderView: View {
         if let row {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label(isDue ? (snapshot.due.count == 1 ? "Due now" : "\(snapshot.due.count) due") : "Next reminder",
-                          systemImage: row.isFollowUp ? "clock.arrow.circlepath" : "clock")
-                        .font(Typeface.sans(.caption, .semibold)).foregroundStyle(isDue ? WidgetPalette.reminder : .secondary)
+                    // Due is a state, said in the reminder's colour; a
+                    // reminder still ahead is a plain title, with the
+                    // reminder's clock before it.
+                    WidgetTitle(text: isDue ? (snapshot.due.count == 1 ? "Due now" : "\(snapshot.due.count) due") : "Next reminder",
+                                systemImage: row.isFollowUp ? "clock.arrow.circlepath" : "clock",
+                                glyph: WidgetPalette.reminder,
+                                tint: isDue ? WidgetPalette.reminder : nil)
                     Spacer()
-                    Text(isDue ? "now" : Self.when(row.at)).font(Typeface.sans(.caption)).foregroundStyle(.secondary).monospacedDigit()
+                    Text(isDue ? "now" : Self.when(row.at))
+                        .font(Typeface.mono(size: 11.5, relativeTo: .caption))
+                        .foregroundStyle(WidgetPalette.textSecondary)
                 }
                 Link(destination: AppGroup.Link.thread(row.id)) {
                     RowView(row: row)
                 }
                 Spacer(minLength: 0)
-                HStack {
+                HStack(spacing: 8) {
                     WidgetDoneButton(threadId: row.id) {
-                        Label("Done", systemImage: "checkmark").font(Typeface.sans(.caption, .semibold))
+                        Label("Done", systemImage: "checkmark")
                     }
                     if isDue {
                         WidgetSnoozeButton(threadId: row.id)
                     }
                     Spacer()
                     if snapshot.due.count + snapshot.upcoming.count > 1 {
-                        Text("+\(snapshot.due.count + snapshot.upcoming.count - 1) more").font(Typeface.sans(.caption2)).foregroundStyle(.secondary)
+                        Text("+\(snapshot.due.count + snapshot.upcoming.count - 1) more")
+                            .font(Typeface.mono(.caption2))
+                            .foregroundStyle(WidgetPalette.textSecondary)
                     }
                 }
             }
@@ -379,7 +399,7 @@ struct NeedReplyView: View {
     private var circular: some View {
         VStack(spacing: 0) {
             Image(systemName: "arrowshape.turn.up.left").font(.caption).widgetAccentable(snapshot.needReplyTotal > 0)
-            Text("\(snapshot.needReplyTotal)").font(Typeface.sans(.title3, .bold)).monospacedDigit()
+            Text("\(snapshot.needReplyTotal)").font(Typeface.mono(.title3, .medium))
         }
         .opacity(snapshot.needReplyTotal > 0 ? 1 : 0.6)
         .widgetURL(AppGroup.Link.folder("needReply"))
@@ -388,10 +408,10 @@ struct NeedReplyView: View {
     private var rectangular: some View {
         VStack(alignment: .leading, spacing: 1) {
             if let row = snapshot.needReply.first {
-                Text(countText).font(Typeface.sans(.headline, .semibold)).lineLimit(1)
+                Text(countText).font(Typeface.sans(.subheadline, .semibold)).lineLimit(1)
                 Text("\(row.from) · \(row.subject.isEmpty ? "(no subject)" : row.subject)").font(Typeface.sans(.caption)).lineLimit(2)
             } else {
-                Text("Nothing to answer").font(Typeface.sans(.headline, .semibold))
+                Text("Nothing to answer").font(Typeface.sans(.subheadline, .semibold))
                 Text("No thread needs a reply").font(Typeface.sans(.caption))
             }
         }
@@ -413,40 +433,89 @@ struct NeedReplyView: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Label(countText, systemImage: "arrowshape.turn.up.left")
-                        .font(Typeface.sans(.caption, .semibold)).foregroundStyle(WidgetPalette.needReply)
+                    // The count is the state itself, said in its colour.
+                    WidgetTitle(text: countText, systemImage: "arrowshape.turn.up.left",
+                                glyph: WidgetPalette.needReply, tint: WidgetPalette.needReply)
                     Spacer()
                 }
-                ForEach(shown) { row in
-                    HStack(alignment: .top, spacing: 8) {
-                        Link(destination: AppGroup.Link.thread(row.id)) { RowView(row: row) }
-                        WidgetDoneButton(threadId: row.id) {
-                            Image(systemName: "checkmark").font(.caption.weight(.bold))
-                        }
+                // Ruled as the inbox's rows are: a hairline between two
+                // rows, none over the first or under the last.
+                VStack(spacing: 0) {
+                    ForEach(shown) { row in
+                        replyRow(row, first: row.id == shown.first?.id)
                     }
                 }
                 Spacer(minLength: 0)
             }
         }
     }
+
+    /// One thread and its Done. The button draws a check alone, so it
+    /// says what it does.
+    private func replyRow(_ row: WidgetSnapshot.Row, first: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Link(destination: AppGroup.Link.thread(row.id)) { RowView(row: row) }
+            WidgetDoneButton(threadId: row.id) {
+                Image(systemName: "checkmark").font(.caption.weight(.bold))
+            }
+            .accessibilityLabel("Done")
+        }
+        .padding(.top, first ? 0 : 4)
+        .padding(.bottom, 4)
+        .overlay(alignment: .top) {
+            if !first { WidgetRule() }
+        }
+    }
 }
 
 // MARK: - Pieces
 
-/// The inbox row, widget-sized: sender · time, subject, one preview line.
+/// The inbox row, widget-sized: the account's dot, the sender, the
+/// subject, one preview line. Unread is what it is on the inbox's row: a
+/// bold sender under the highlighter. Read, the sender steps back to a
+/// medium weight in the secondary grey.
 struct RowView: View {
     let row: WidgetSnapshot.Row
+    @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Circle().fill(WidgetPalette.account(row.accountColor)).frame(width: 6, height: 6).padding(.top, 5)
+            Circle().fill(WidgetPalette.account(row.accountColor)).frame(width: 6, height: 6).padding(.top, 6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.from).font(Typeface.sans(.caption, row.isUnread ? .bold : .semibold)).lineLimit(1)
-                Text(row.subject.isEmpty ? "(no subject)" : row.subject).font(Typeface.sans(.caption, row.isUnread ? .semibold : .regular)).lineLimit(1)
-                Text(row.snippet).font(Typeface.sans(.caption2)).foregroundStyle(.secondary).lineLimit(1)
+                sender
+                Text(row.subject.isEmpty ? "(no subject)" : row.subject)
+                    .font(Typeface.sans(.caption, row.isUnread ? .semibold : .regular))
+                    .foregroundStyle(WidgetPalette.textPrimary)
+                    .lineLimit(1)
+                Text(row.snippet)
+                    .font(Typeface.sans(.caption2))
+                    .foregroundStyle(WidgetPalette.textTertiary)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The sender, with the highlighter's band behind its lower half
+    /// while unread (the app's `marker()`, which this target cannot see:
+    /// the text's own background scaled down towards its baseline, the
+    /// padding it adds at the sides taken back). Only in full colour:
+    /// where the system recolours the widget the band would come out in
+    /// the words' own colour and cover them, and the weight says unread
+    /// alone.
+    private var sender: some View {
+        Text(row.from)
+            .font(Typeface.sans(.footnote, row.isUnread ? .bold : .medium))
+            .foregroundStyle(row.isUnread ? WidgetPalette.textPrimary : WidgetPalette.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 3)
+            .background {
+                if row.isUnread, renderingMode == .fullColor {
+                    Rectangle().fill(WidgetPalette.marker)
+                        .scaleEffect(x: 1, y: 0.42, anchor: UnitPoint(x: 0.5, y: 0.862))
+                }
+            }
+            .padding(.horizontal, -3)
     }
 }
 
@@ -457,11 +526,86 @@ struct EmptyWidgetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: systemImage).foregroundStyle(.secondary)
+            Image(systemName: systemImage).foregroundStyle(WidgetPalette.textSecondary)
             Spacer(minLength: 0)
-            Text(title).font(Typeface.sans(.headline, .semibold))
-            Text(detail).font(Typeface.sans(.caption)).foregroundStyle(.secondary)
+            Text(title).font(Typeface.sans(.headline, .semibold)).foregroundStyle(WidgetPalette.textPrimary)
+            Text(detail).font(Typeface.sans(.caption)).foregroundStyle(WidgetPalette.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+/// A widget's title: small mono capitals, as a section's title is in the
+/// app (`SectionTitle`, which this target cannot see). A plain name
+/// ("Inbox", "Next reminder") stands back in the light grey of titles. A
+/// title that says a state ("2 due", "1 needs a reply") is that state's
+/// writing and takes its colour; on a Live Activity, whose platter is
+/// not the paper, it is ink. A glyph before the words keeps a colour of
+/// its own: the state's, or the AI's pink ink.
+struct WidgetTitle: View {
+    let text: String
+    var systemImage: String? = nil
+    var glyph: Color = WidgetPalette.textSecondary
+    /// The words' colour when they are not the title grey.
+    var tint: Color? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(glyph)
+                    .accessibilityHidden(true)
+            }
+            if let tint {
+                words.foregroundStyle(tint)
+            } else {
+                words.foregroundStyle(WidgetPalette.titleInk)
+            }
+        }
+    }
+
+    private var words: some View {
+        Text(text)
+            .font(Typeface.mono(size: 11, weight: .medium, relativeTo: .caption2))
+            .tracking(0.9)
+            .textCase(.uppercase)
+            .lineLimit(1)
+    }
+}
+
+/// The hairline between two rows of a widget (the app's `RowRule`).
+struct WidgetRule: View {
+    var body: some View {
+        Rectangle().fill(WidgetPalette.separator).frame(height: 1).accessibilityHidden(true)
+    }
+}
+
+/// A button on a widget or a Live Activity as the look draws one: an ink
+/// capsule with the paper's colour for its words (Done, a row's one
+/// action), or the ink as an outline (1 h, Stop). Where the system
+/// recolours the widget (a tinted Home Screen, StandBy at night) a fill
+/// and its words would come out in the one colour, so there every
+/// capsule is the outline. Goes on a button's label.
+struct WidgetCapsule: ViewModifier {
+    var filled = false
+    var height: CGFloat = 28
+    @Environment(\.widgetRenderingMode) private var renderingMode
+
+    func body(content: Content) -> some View {
+        let fills = filled && renderingMode == .fullColor
+        return content
+            .font(Typeface.sans(.caption, .semibold))
+            .foregroundStyle(fills ? WidgetPalette.onPrimary : WidgetPalette.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 44, minHeight: height)
+            .background {
+                if fills {
+                    Capsule().fill(WidgetPalette.textPrimary)
+                } else {
+                    Capsule().strokeBorder(WidgetPalette.textPrimary, lineWidth: 1)
+                }
+            }
+            .contentShape(Capsule())
     }
 }

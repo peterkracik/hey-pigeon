@@ -232,7 +232,7 @@ struct ParcelCardView: View {
             } label: {
                 Label(model.parcelsExpanded ? "Show less" : "+\(more) more",
                       systemImage: model.parcelsExpanded ? "chevron.up" : "chevron.down")
-                    .font(Theme.text(.bodySmall, .medium))
+                    .font(Theme.text(.preview, .medium))
                     .foregroundStyle(Theme.textSecondary)
                     .tapArea(horizontal: 14, vertical: 12)
             }
@@ -242,7 +242,7 @@ struct ParcelCardView: View {
             if model.parcelsExpanded {
                 Button { model.dismissAllParcels() } label: {
                     Text("Dismiss all")
-                        .font(Theme.text(.bodySmall, .medium))
+                        .font(Theme.text(.preview, .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .tapArea(horizontal: 14, vertical: 12)
                 }
@@ -268,7 +268,7 @@ private struct ParcelRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(ParcelCard.title(parcel, bundle: bundle))
-                        .font(Theme.sans(.body, .semibold))
+                        .font(Theme.text(.row, .semibold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(2)
                     status
@@ -325,7 +325,7 @@ private struct ParcelRow: View {
     /// An outlined capsule: the inbox's one ink action is Compose.
     private var trackButton: some View {
         Button(action: track) {
-            Text("Track parcel").font(Theme.text(.bodySmall, .semibold))
+            Text("Track parcel").font(Theme.text(.preview, .semibold))
         }
         .buttonStyle(OutlineButtonStyle())
         .accessibilityLabel(ParcelCard.trackLabel(parcel))
@@ -335,7 +335,7 @@ private struct ParcelRow: View {
     private var detailsButton: some View {
         Button { model.openParcelDetails(parcel) } label: {
             Text("View details")
-                .font(Theme.text(.bodySmall, .medium))
+                .font(Theme.text(.preview, .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .tapArea(horizontal: 8, vertical: 12)
         }

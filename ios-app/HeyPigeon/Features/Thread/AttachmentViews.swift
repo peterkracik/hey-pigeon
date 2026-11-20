@@ -195,7 +195,7 @@ struct AttachmentInsightSheet: View {
                     ResultState(working: "Reading \(attachment.filename)…", error: error, isReady: insight != nil,
                                 retry: { attempt += 1 }) {
                         if let insight {
-                            Text(insight.summary).font(Theme.sans(.body)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
+                            Text(insight.summary).font(Theme.text(.row)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
                             InsightFields(insight: insight)
                             AttachmentActionChips(actions: AttachmentUnderstanding.actions(for: insight), row: row)
                         }

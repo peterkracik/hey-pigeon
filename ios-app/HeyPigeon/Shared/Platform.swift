@@ -1149,6 +1149,20 @@ extension View {
         #endif
     }
 
+    /// An icon button of the composer's footer (attach, Aa, the AI,
+    /// discard, More): the phone's glass circle; on the Mac a bare glyph
+    /// that tints under the pointer, as a bar's buttons do. As outlined
+    /// capsules, which is what a plain pill is there, a row of them
+    /// beside Send read as six more actions of its weight.
+    @ViewBuilder
+    func composeIconButton() -> some View {
+        #if os(iOS)
+        buttonStyle(.glass)
+        #else
+        buttonStyle(MacBarButtonStyle())
+        #endif
+    }
+
     /// The composer's scroll view opens at its end when `on`: on the Mac a
     /// reply sits under the thread's messages, as in Superhuman, and the
     /// draft is what the sheet opens on; the phone keeps the thread under

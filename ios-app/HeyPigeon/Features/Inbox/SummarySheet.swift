@@ -33,7 +33,7 @@ struct SummarySheet: View {
                     ResultState(working: "Summarizing…", error: summary?.error, isReady: summary?.text != nil,
                                 retry: { model.retrySummary(presentation) }) {
                         SummaryTextView(text: summary?.text ?? "")
-                            .font(Theme.sans(.body)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
+                            .font(Theme.text(.row)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
                     }
                     Text(footnote)
                         .font(Theme.secondary).foregroundStyle(Theme.textTertiary)

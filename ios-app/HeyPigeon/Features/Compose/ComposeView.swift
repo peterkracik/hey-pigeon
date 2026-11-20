@@ -440,7 +440,7 @@ struct ComposeView: View {
                 Button("\(item.preset.title) · \(Formatters.reminder(item.date))") { send(at: item.date) }
             }
         } label: { Image(systemName: "clock").frame(width: 22, height: 22) }
-            .pillButton()
+            .composeIconButton()
             .labelOnlyMenu()
             .disabled(!canSend)
             .help("Send later — from this \(Device.name), while Hey Pigeon is open")
@@ -449,7 +449,7 @@ struct ComposeView: View {
 
     private var discardButton: some View {
         Button { discard() } label: { Image(systemName: "trash").frame(width: 22, height: 22) }
-            .pillButton()
+            .composeIconButton()
             .accessibilityLabel("Discard")
     }
 
@@ -461,7 +461,7 @@ struct ComposeView: View {
         Button { draft.trackOpens = !tracksOpens } label: {
             Image(systemName: tracksOpens ? "eye" : "eye.slash").frame(width: 22, height: 22)
         }
-        .pillButton()
+        .composeIconButton()
         .foregroundStyle(Theme.textPrimary)
         .help(tracksOpens ? ReadStatusSetting.composerOn : ReadStatusSetting.composerOff)
         .accessibilityLabel(ReadStatusSetting.title)
@@ -471,7 +471,7 @@ struct ComposeView: View {
     /// The AI: its sparkle in pink ink, the one pink of the footer.
     private var aiButton: some View {
         Button { openAI() } label: { Image(systemName: "sparkles").foregroundStyle(Theme.pinkInk).frame(width: 22, height: 22) }
-            .pillButton()
+            .composeIconButton()
             .accessibilityLabel("Write or edit with AI")
     }
 
@@ -484,7 +484,7 @@ struct ComposeView: View {
 
     private var snippetsMenu: some View {
         Menu { snippetItems } label: { Image(systemName: "text.quote").frame(width: 22, height: 22) }
-            .pillButton()
+            .composeIconButton()
             .labelOnlyMenu()
             .help("Insert a snippet (Settings › Compose)")
             .accessibilityLabel("Insert a snippet")
@@ -495,7 +495,7 @@ struct ComposeView: View {
             Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
             Button { showPhotos = true } label: { Label("Photo library", systemImage: "photo") }
         } label: { Image(systemName: "paperclip").frame(width: 22, height: 22) }
-            .pillButton()
+            .composeIconButton()
             .labelOnlyMenu()
             .accessibilityLabel("Attach file")
     }
@@ -507,7 +507,7 @@ struct ComposeView: View {
         Button { withAnimation { showFormat.toggle() } } label: {
             Text("Aa").font(Theme.text(.bodySmall, .bold)).frame(width: 22, height: 22)
         }
-        .pillButton()
+        .composeIconButton()
         .foregroundStyle(Theme.textPrimary)
         .accessibilityLabel("Formatting")
         .accessibilityAddTraits(showFormat ? .isSelected : [])
@@ -529,7 +529,7 @@ struct ComposeView: View {
             Divider()
             Button(role: .destructive) { discard() } label: { Label("Discard draft", systemImage: "trash") }
         } label: { Image(systemName: "ellipsis").frame(width: 22, height: 22) }
-            .pillButton()
+            .composeIconButton()
             .labelOnlyMenu()
             .accessibilityLabel("More")
     }

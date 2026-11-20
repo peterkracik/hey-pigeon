@@ -106,7 +106,7 @@ struct TranslationPanel: View {
                 ResultState(working: "Translating…", error: error, isReady: result != nil, retry: retry) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(result ?? "")
-                            .font(Theme.sans(.body))
+                            .font(Theme.text(.row))
                             .lineSpacing(4)
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)

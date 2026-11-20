@@ -30,8 +30,11 @@ struct TriageLiveActivity: Widget {
                         .foregroundStyle(context.state.isFinished ? WidgetPalette.done : WidgetPalette.pinkInk)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
+                    // A size under the other counts: the mono's letters
+                    // are wider, and the tally has only the island's
+                    // corner to stand in.
                     Text(TriageTally.short(context.state))
-                        .font(Typeface.mono(.caption, .medium)).foregroundStyle(WidgetPalette.textSecondary)
+                        .font(Typeface.mono(.caption2, .medium)).foregroundStyle(WidgetPalette.textSecondary)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(alignment: .leading, spacing: 2) {

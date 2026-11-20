@@ -81,7 +81,7 @@ struct BundleFoldRow: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
                 Text(fold.summary)
-                    .font(Theme.sans(size: 14, relativeTo: .footnote))
+                    .font(Theme.text(.preview))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
             }
@@ -333,7 +333,7 @@ struct BundleListRow: View {
             BundleIcon(category: bundle.category)
             VStack(alignment: .leading, spacing: 2) {
                 Text(bundle.name)
-                    .font(Theme.sans(.body, .semibold))
+                    .font(Theme.text(.row, .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 // The counts are data and set in the mono; the user's own
@@ -496,19 +496,19 @@ struct BundleScreen: View {
 
     private func emails(_ c: BundleContents) -> some View {
         // Read once: each is a filter over the bundle's threads.
-        let open = c.open
-        let done = c.done
+        let openRows = c.open
+        let doneRows = c.done
         // Past three, the done emails fold behind a row that opens them.
-        let folds = done.count > Self.doneShownUnfolded
+        let folds = doneRows.count > Self.doneShownUnfolded
         // The title's count: how many are still open, when any are.
-        let openCount: String? = open.isEmpty ? nil : "\(open.count) open"
+        let openCount: String? = openRows.isEmpty ? nil : "\(openRows.count) open"
         return List {
             if c.bundle.isAutomatic {
                 // A section with no name: the rule alone opens it.
                 SectionRule().bundleTitleRow(first: true)
                 Label {
                     Text("Made automatically. Tap ⊖ on an email that doesn't belong, or rename the bundle, and it's yours.")
-                        .font(Theme.sans(.footnote))
+                        .font(Theme.text(.footer))
                         .foregroundStyle(Theme.textTertiary)
                 } icon: {
                     Image(systemName: "sparkles").font(.footnote).foregroundStyle(Theme.pinkInk)
@@ -520,21 +520,21 @@ struct BundleScreen: View {
                 .bundleTitleRow(first: !c.bundle.isAutomatic)
             if c.threads.isEmpty {
                 Text("No emails yet. Choose Add to bundle… on an email; mail that shares its booking, order or tracking number follows on its own.")
-                    .font(Theme.sans(.footnote))
+                    .font(Theme.text(.footer))
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.vertical, 8)
                     .bundlePlainRow()
             }
-            ForEach(open) { row in
-                threadRow(row, last: done.isEmpty && row.id == open.last?.id)
+            ForEach(openRows) { row in
+                threadRow(row, last: doneRows.isEmpty && row.id == openRows.last?.id)
             }
             if folds {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) { showDone.toggle() }
                 } label: {
                     HStack {
-                        Text(showDone ? "Hide \(done.count) done" : "\(done.count) done")
-                            .font(Theme.sans(.subheadline, .medium))
+                        Text(showDone ? "Hide \(doneRows.count) done" : "\(doneRows.count) done")
+                            .font(Theme.text(.preview, .medium))
                         Spacer()
                         Image(systemName: showDone ? "chevron.up" : "chevron.down").font(.footnote)
                     }
@@ -542,12 +542,12 @@ struct BundleScreen: View {
                     .frame(minHeight: 46)
                     .contentShape(Rectangle())
                 }
-                .accessibilityLabel(showDone ? "Hide \(done.count) done emails" : "Show \(done.count) done emails")
+                .accessibilityLabel(showDone ? "Hide \(doneRows.count) done emails" : "Show \(doneRows.count) done emails")
                 .bundleRow(last: !showDone)
             }
-            if !done.isEmpty && (showDone || !folds) {
-                ForEach(done) { row in
-                    threadRow(row, last: row.id == done.last?.id)
+            if !doneRows.isEmpty && (showDone || !folds) {
+                ForEach(doneRows) { row in
+                    threadRow(row, last: row.id == doneRows.last?.id)
                 }
             }
         }
@@ -602,7 +602,7 @@ struct BundleScreen: View {
         return List {
             if hasBrief {
                 BriefCard(state: model.brief(for: c)) { model.summarizeBundle(c) }
-                    .padding(.top, 8).padding(.bottom, 4)
+                    .padding(.top, 2).padding(.bottom, 4)
                     .bundlePlainRow()
             }
             if hasNote {
@@ -630,7 +630,7 @@ struct BundleScreen: View {
             if c.links.isEmpty && c.facts.isEmpty && !hasBrief {
                 SectionRule().bundleTitleRow(first: !hasNote)
                 Text("Nothing to show yet: booking, order and tracking numbers appear here as the bundle's mail arrives.")
-                    .font(Theme.sans(.footnote))
+                    .font(Theme.text(.footer))
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.vertical, 8)
                     .bundlePlainRow()
@@ -828,7 +828,7 @@ struct BundleFields: View {
     var body: some View {
         Group {
             TextField("Name, e.g. Lisbon trip", text: $name)
-                .font(Theme.sender(false))
+                .font(Theme.text(.row, .medium))
                 .borderlessFields()
                 .bundleField()
                 .padding(.bottom, 8)
@@ -838,20 +838,20 @@ struct BundleFields: View {
                     Label(c.title, systemImage: c.systemImage).tag(c)
                 }
             } label: {
-                Text("Kind").font(Theme.sender(false))
+                Text("Kind").font(Theme.text(.row, .medium))
             }
             .tint(Theme.textTertiary)
             .frame(minHeight: 46)
             .bundleRow(inset: inset)
             TextField("What it is about (optional)", text: $description, axis: .vertical)
                 .lineLimit(1...3)
-                .font(Theme.text(.bodySmall))
+                .font(Theme.text(.row))
                 .borderlessFields()
                 .bundleField()
                 .padding(.bottom, 8)
                 .bundlePlainRow(inset: inset)
             Text("Mail that shares a booking, order or tracking number with an email in the bundle joins it on its own.")
-                .font(Theme.secondary)
+                .font(Theme.text(.footer))
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.top, 8)
                 .bundlePlainRow(inset: inset)
@@ -926,7 +926,7 @@ struct AddToBundleSheet: View {
             } else {
                 Button { withAnimation { creating = true } } label: {
                     Label("New bundle…", systemImage: "plus")
-                        .font(Theme.sender(false))
+                        .font(Theme.text(.row, .medium))
                         .foregroundStyle(Theme.textPrimary)
                         .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
                         .contentShape(Rectangle())
@@ -940,7 +940,7 @@ struct AddToBundleSheet: View {
                     dismiss()
                 } label: {
                     Label("Remove from \(current.name)", systemImage: "minus.circle")
-                        .font(Theme.sender(false))
+                        .font(Theme.text(.row, .medium))
                         .foregroundStyle(Theme.dangerText)
                         .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
                         .contentShape(Rectangle())
@@ -969,7 +969,7 @@ struct AddToBundleSheet: View {
             HStack(spacing: 12) {
                 BundleIcon(category: b.category, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(b.name).font(Theme.sender(false)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(b.name).font(Theme.text(.row, .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     if let reason {
                         Text(reason).font(Theme.caption).foregroundStyle(Theme.textTertiary)
                     }

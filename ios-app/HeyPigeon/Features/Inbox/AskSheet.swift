@@ -73,7 +73,7 @@ struct AskSheet: View {
     private var starter: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Ask about your own mail — who said what, when something is, what is still open.")
-                .font(Theme.sans(.body)).foregroundStyle(Theme.textSecondary)
+                .font(Theme.text(.row)).foregroundStyle(Theme.textSecondary)
             // A question to try is a boxed chip: an outline, no fill.
             ForEach(Self.suggestions, id: \.self) { s in
                 Button { question = s; ask() } label: {
@@ -142,7 +142,7 @@ private struct ConversationView: View {
             ResultState(working: "Looking through your mail…", error: conversation.error,
                         isReady: conversation.error == nil && !conversation.answer.isEmpty, retry: retry) {
                 SummaryTextView(text: conversation.answer)
-                    .font(Theme.sans(.body)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.text(.row)).lineSpacing(4).foregroundStyle(Theme.textPrimary)
             }
             if !conversation.citations.isEmpty {
                 // The mail an answer rests on: ruled rows, as in the

@@ -33,7 +33,7 @@ struct ResultState<Content: View>: View {
         } else {
             HStack(spacing: 10) {
                 ProgressView()
-                Text(working).font(Theme.sans(.body)).foregroundStyle(Theme.textSecondary)
+                Text(working).font(Theme.text(.row)).foregroundStyle(Theme.textSecondary)
             }
         }
     }

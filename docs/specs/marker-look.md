@@ -96,9 +96,11 @@ feature file never writes a hex value or a system font.
   has no fill: an ink underline, or a box with an `outline` for a text of
   several lines. A key is a mono letter in an `outline` box.
 - **R12. What floats is the system's.** The tab bar, the bars over a
-  thread, the label pill, the toast and the search field stay Liquid Glass
-  as the system draws it. On the Mac a floating panel is the paper with a
-  hairline, the Spotlight-style panel the paper with an ink outline.
+  thread, the label pill and the search field stay Liquid Glass as the
+  system draws it. On the Mac a floating panel is the paper with a
+  hairline, the Spotlight-style panel the paper with an ink outline. The
+  one exception is the toast: an ink capsule on every platform, its words
+  `onPrimary` and its Undo in `onPrimaryPink`.
 - **R13. Dark.** The same rules with the dark column of the table. The
   surfaces are a dark grey a step off black, so the canvas lifts off the
   status bar and glass still reads. An ink fill turns light and its words

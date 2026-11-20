@@ -539,19 +539,14 @@ enum ToastMetrics {
 }
 
 extension View {
-    /// The toast's surface: the phone's glass capsule; on the Mac the
-    /// window's bordered panel with its one soft shadow (macos-app
-    /// `macPanel`, spelled out here so the shared shell does not reach
-    /// into the Mac folder).
-    @ViewBuilder
+    /// The toast's surface: an ink capsule on the phone and the Mac
+    /// alike, with one soft shadow under it. It says what just happened
+    /// and offers the way back, so it is the one thing on the screen
+    /// drawn in solid ink that is not a button; its words are
+    /// `onPrimary` and its Undo `onPrimaryPink` (RootChrome's ToastStack).
     func toastSurface() -> some View {
-        #if os(iOS)
-        glassEffect(.regular.interactive(), in: .capsule)
-        #else
-        background(Theme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
-            .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-        #endif
+        background(Theme.textPrimary, in: Capsule())
+            .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 
     /// The toast's Undo: the phone's text button as it is; plain on the

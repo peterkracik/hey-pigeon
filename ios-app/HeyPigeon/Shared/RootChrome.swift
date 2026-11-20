@@ -24,9 +24,11 @@ struct ToastStack: View {
                         Button("Undo") { model.undo(toast: toast.id) }
                             .toastButton()
                             .font(Theme.sans(.subheadline, .bold))
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.onPrimaryPink)
                     }
                 }
+                // The toast is ink (`toastSurface`), so its words are the paper's colour.
+                .foregroundStyle(Theme.onPrimary)
                 .padding(.horizontal, 16).padding(.vertical, ToastMetrics.verticalPadding)
                 .toastSurface()
                 // With Reduce Motion the toast fades where it stands.

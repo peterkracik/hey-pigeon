@@ -34,6 +34,9 @@ enum Theme {
     /// Pink as writing or a glyph (the AI's sparkle, a suggestion's
     /// words): dark enough to read on the paper, light enough on dark.
     static let pinkInk = Color(light: Color(hex: 0xCC2277), dark: Color(hex: 0xF58BBE))
+    /// Pink as writing on an ink fill (the toast's Undo): the marker's
+    /// pale pink on light's dark ink, the dark pink on dark's light ink.
+    static let onPrimaryPink = Color(light: Color(hex: 0xFFC9E2), dark: Color(hex: 0xCC2277))
 
     // MARK: Surfaces
 

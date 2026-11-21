@@ -14,7 +14,7 @@ Models and widget work — reached the Mac.
 | --- | --- | --- |
 | Builds | Yes: `TARGETED_DEVICE_FAMILY` is `1,2`; `ios-ci` builds for an iPad simulator on every PR | Yes: `macos-ci` builds and tests on every PR; `publish-macos` notarizes a zip on every push to `main` (the `mac-latest` release, with the Sparkle appcast installed apps update from) and on `mac-v*` tags |
 | Platform calls | Behind `Shared/Platform.swift` | The AppKit branches of `Platform.swift`, compiled |
-| Layout | The phone's at every width: the tabs, one list and a thread in its place (`TabView` + `NavigationStack`), each in a readable column on a wide screen. The three columns (`Features/Pad/PadSplitView`) are no longer shown | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a grey sidebar; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
+| Layout | The phone's at every width: the tabs, one list and a thread in its place (`TabView` + `NavigationStack`), each in a readable column on a wide screen. The three columns (`Features/Pad/PadSplitView`) are no longer shown | The phone's one column: the list full width to a readable maximum, a thread in its place (`NavigationStack`), the folders in a sidebar on the same paper; a standard toolbar, the triage labels as the phone's glass pill at the bottom and Spotlight-style search, in the first desktop client's manner; single-line rows that open in place; Settings as a page of the window, ⌘↩ for a thread in its own window |
 | Keyboard | `e` `h` `n` `s` `⌘⌫` on the open thread (its own buttons), `r` on the reply pill, `⌘N` compose. The list's keys (`PadKeys`: `j` `k`, `#` `u` `a` `f` `c` `/` `z` `Esc`) went with the columns and return with a cursor (step 2 below) | The desktop's whole map (`WindowState.handle`), menus with ⌘ equivalents, ⌘K palette |
 | Device copy | `Device.name` → "iPad" | `Device.name` → "Mac" |
 | Rust core | Same xcframework slices (`aarch64-apple-ios`, `-sim`) | `aarch64-apple-darwin` from the same `build-rust.sh` when `PLATFORM_NAME=macosx` (macOS 27 is Apple Silicon only; `ARCHS` can still add `x86_64`) |
@@ -74,9 +74,10 @@ and whether it crowds the list's ≡ circle, title and sparkle.
    back; `e` `h` `n` `s` `⌘⌫` act on the cursor's row while no thread is
    open (the open thread's are ThreadView's own). `PadState` keeps its
    movement logic and holds the cursor instead of an open thread.
-3. **Finish.** The thread's glass bars capped at the readable column,
-   each day's rows on one rounded card at regular width (the Mac's day
-   cards), a hover tint on rows.
+3. **Finish.** The thread's glass bars capped at the readable column
+   and a hover tint on rows (the Mac's `sunken` under the pointer). The
+   rows stay ruled on the paper at every width, as on the Mac: no cards
+   (`docs/specs/marker-look.md`).
 4. **Multiple windows.** `AppModel` is one per process (`AppModel.current`);
    per-window state (open thread, sheets) would move into a scene-scoped
    object before `UIApplicationSupportsMultipleScenes` is turned on.
@@ -107,7 +108,7 @@ What is Mac-only, in `macos-app/HeyPigeonMac/Features`:
 - `MainWindow` — the split view, the composer's sheet; the toast, the row sheets and the disconnected alert are the shared `Shared/RootChrome.swift`.
 - `SidebarColumn` — accounts, folders (Scheduled and Need reply among them), labels, Add account · Settings.
 - `InboxPage` — the list (single-line `MailRow`s that open in place, the search in `SearchSpotlight` with the Search tab's filter bar and recent searches), the rows with the hover bar and the trackpad swipes, the Jev pill, the batch bar.
-- `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back, then the shared sparkle and actions menu; no title), in a 760 pt reading column with its messages on one card, the reply pills at the last message's foot and the triage buttons on a small card at the bottom; `ThreadWindow` for a thread in its own window.
+- `ThreadPage` — the shared `ThreadView` under the window's toolbar (the window's own Back, then the shared sparkle and actions menu; no title), in a 760 pt reading column with its messages flat on the paper, the reply pills at the last message's foot and the triage buttons on a small paper panel at the bottom; `ThreadWindow` for a thread in its own window.
 - `WindowState` — the selection, auto-advance, `KeyboardMap` (the desktop's keys and `g`-chords) and every action.
 - `CommandPalette` (⌘K, with the `l` / `v` stages and the ⌘B bundles stage), `ShortcutsSheet` (`?`), `MenuBarExtraView`.
 

@@ -586,7 +586,7 @@ struct ThreadList: View {
                     // As far in as the rows' own text, with air above:
                     // the title opens its group.
                     GroupHeader(group: group)
-                        .listRowInsets(EdgeInsets(top: 18, leading: 16, bottom: 6, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: titleAir(group), leading: 16, bottom: 6, trailing: 16))
                 }
             }
         }
@@ -604,6 +604,15 @@ struct ThreadList: View {
         // row is animated where the rows change (AppModel.perform). Keyed
         // on every row id, the animation re-laid the whole list out on
         // each reload, mid-scroll.
+    }
+
+    /// The air over a group's title. A plain list puts 22 pt of its own
+    /// over every section header but the list's first, so only the group
+    /// that opens the list needs it from here: with both, two groups
+    /// stood 22 pt further apart than they are drawn (seen in the first
+    /// pictures of the look).
+    private func titleAir(_ group: RowGroup) -> CGFloat {
+        model.inboxParcels.isEmpty && group.id == model.groupedRows.first?.id ? 18 : 0
     }
 
     /// One row with its gestures, annotation and menu. Its own builder so

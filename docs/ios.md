@@ -92,7 +92,7 @@ floating "splits" pill above the tab bar. Here that maps to:
   unread badge, Remind me the number of reminders due today, Need reply its
   count. The app icon badge is unified unread + reminders due today.
 - **The sidebar (≡)** is the desktop sidebar as a sheet: Search, Inbox, then the
-  accounts (All / each account) on a card of their own — a disconnected
+  accounts (All / each account) in a group of their own — a disconnected
   one with a Reconnect row under it — then Recent Opens (with read
   status in the build), the bundles, the desktop's folders in
   its order — Pinned (Gmail's Starred) · Sent · Drafts · Archive · Remind me · Need reply ·
@@ -107,10 +107,10 @@ floating "splits" pill above the tab bar. Here that maps to:
 - **Groups** are the desktop's: Pinned (when "Pinned list" is on) · Today ·
   Last 7 days · Older. Remind me buckets by due date; Need reply has no
   Pinned group.
-- **Rows:** flat, edge to edge, one colour. Unread is a bar on the left
-  edge (white on dark, the accent on light) and the bold sender. In the
-  unified view the sender's first letter takes the account colour — no
-  dot, no avatar.
+- **Rows:** flat, edge to edge, on the paper, a hairline between two.
+  Unread is the sender in bold under the pink highlighter; a read sender
+  steps back to grey. In the unified view the account is a small dot in
+  its colour before the time — no avatar.
 - **The title** sits between the top bar's circles: folder, unread count and —
   with more than one account — the account's dot and name. Tapping it
   switches account (All · each).
@@ -139,29 +139,34 @@ floating "splits" pill above the tab bar. Here that maps to:
   the one sparkle is a menu of the two (`MailListScreen.aiBarItem`), so
   the top bar never holds more than the sidebar, the title and one circle.
   A thread has the summary sparkle in its top bar.
-- **Triage chips** (Jev labels + priority) appear inline on rows, not as a
-  filter bar; a priority filter can join the account pill later.
+- **Triage labels** appear on rows as words (`#Travel`), not as a filter
+  bar (the priority is in the thread's header line); a priority filter can
+  join the account pill later.
 - **The thread view hides the tab bar** and shows two floating glass bars in
   its place: Reply (+ new message), and the triage actions.
 
 ### The parcel card
 
 Over the plain inbox (no search, no label filter), above Pinned: parcels
-that are on their way, as the one card in a list that otherwise has none
+that are on their way, as a group of its own under the title "Parcels"
 — it is not mail, and should not read as a row (`ParcelCardView`,
 `docs/specs/parcel-card.md`). Collapsed it is the first parcel and
-"+N more"; the X dismisses them all, with Undo.
+"+N more"; the X at the end of the title's rule dismisses them all, with
+Undo.
 
 ```text
-┌──────────────────────────────────────────────┐
-│ Parcels                                    ✕ │
-│ ┌──┐ Merino crew-neck jumper, navy + 1 more  │
-│ │🛍│ Expected tomorrow · www.dhl.com · 2 up… │
-│ └──┘ (Track parcel)  View details        ⋯   │
-│ ──────────────────────────────────────────── │
-│ ⌄ +1 more                                    │
-└──────────────────────────────────────────────┘
+ PARCELS ──────────────────────────────────── ✕
+ ┌──┐ Merino crew-neck jumper, navy + 1 more
+ │🛍│ Expected tomorrow · www.dhl.com · 2 updates
+ └──┘ (Track parcel)  View details          ⋯
+ ──────────────────────────────────────────────
+ ⌄ +1 more
 ```
+
+It is drawn as the list around it is, and "card" is only its name: no
+box and no fill around the group, the bundle's icon in an outlined
+square, the host in the mono, Track parcel an outlined capsule (the
+inbox's one ink action is Compose) and View details plain text.
 
 The bundle's icon stands where Gmail shows the product: a picture would
 be a request to the shop from the inbox. Status, day and title are the
@@ -173,29 +178,44 @@ the Mac window's list.
 
 ### Rows
 
-Three lines, flat, a 1 pt gap between rows, no cards and no avatar — and
-a fourth line of chips (the bundle, up to two Jev labels) only when there
-is something to say:
+Three lines on the paper, a hairline between two rows, no cards and no
+avatar — and a fourth line (the bundle, up to two Jev labels as words)
+only when there is something to say (`ThreadRowView`; the rules of the
+look are [specs/marker-look.md](./specs/marker-look.md)):
 
 ```text
-▌Sender name  3                                ⏰ 10:42
-▌Subject line                          [Suggested] 📎
-▌First line of the snippet…
+ Sender name  3                              ⏰ ● 10:42
+ Subject line                        ✦ Need reply  📎
+ First line of the snippet…
+ ✈ Lisbon trip   #Travel
 ```
 
-- The unread mark is a 3 pt bar on the row's left edge (the accent on
-  light, white on dark) and the bolder sender; a read row has neither. In
-  the unified view the sender's first letter takes the account's colour.
+- Unread is the sender in bold under the highlighter (`marker()`: a pink
+  band behind the lower part of the name), the subject in semibold and
+  the time in ink. A read row's sender is medium weight in the secondary
+  grey and its time tertiary. There is no bar on the row's edge and no
+  dot for unread. In the unified view the account is a 6 pt dot in its
+  colour before the time.
   VoiceOver reads the row's state as its value (`ThreadRow.spokenState`:
   Unread, Reminder, Need reply, Pinned, Done, Has attachment).
-- Sender in semibold (14 pt Manrope, bold when unread), subject semibold
-  when unread, one line of snippet in grey.
-- Reminder, need-reply, pin and done marks sit next to the time; the AI's
-  suggestion, a Draft chip and the attachment clip sit at the end of the
-  subject line, only when present.
-- Day groups have a small grey header (Pinned · Today · Last 7 days ·
-  Older); Remind me has its due buckets (Overdue · Today · Tomorrow ·
-  This week · Later).
+- The sender is Instrument Sans at 16 pt (`Theme.sender`), the subject 15,
+  one line of snippet at 14 in the tertiary grey; the time, the message
+  count and the labels are DM Mono. All of it scales with Dynamic Type,
+  and the time never gives way to a long name.
+- Reminder, need-reply, pin and done marks sit before the time, each a
+  glyph in its state's colour (the pin in ink); the AI's suggestion (a
+  sparkle and its words in the AI's pink, `StateMark`), a "Draft" mark and
+  the attachment clip sit at the end of the subject line, only when
+  present. Nothing on a row is a filled chip: a state is writing, a label
+  a word (`TagText`).
+- A group is titled by `SectionTitle`: its name in small mono capitals, a
+  rule to the row's end and how many rows it holds, all in the light grey
+  of structure (Pinned · Today · Last 7 days · Older); Remind me has its
+  due buckets (Overdue · Today · Tomorrow · This week · Later).
+- A done email listed in its bundle steps back to the tertiary grey with
+  its subject and preview struck through, and so does a row while a swipe
+  is about to mark it done; anywhere else a done thread has a mint check
+  before its time.
 - Pagination is keyset (`before = last row's last_msg_at`), 50 rows a page.
   Scheduled and Need reply are bounded lists and come back whole (never
   paged). The loaded rows never hold a thread twice, whatever the engine
@@ -231,11 +251,16 @@ drawing its own chrome:
   of glass (`glassEffectID`), so the bar shrinks into the pill.
 - No navigation title (`toolbar(removing: .title)`): the bar is just the
   two glass circles, and the list starts right under them.
-- Toolbar items, the account pill, the undo toast, the thread's participant
-  pill and both bottom bars are glass (`glassEffect`, `.buttonStyle(.glass)`).
-- Sheets (Remind me, Sidebar) are plain iOS 26 sheets: the system draws the
-  glass background and grabber; content is a grouped list with a title row
-  and a close button, no navigation bar.
+- Toolbar items, the account pill, the thread's participant pill and the
+  thread's triage bar are glass (`glassEffect`, `.buttonStyle(.glass)`).
+  What floats is the system's; what the app says on it is ink. Two things
+  are not glass: the selected label of the pill and the thread's Reply are
+  ink capsules, and the undo toast is an ink capsule on every platform
+  (`toastSurface`), its Undo in pink.
+- Sheets (Remind me, Sidebar) are plain iOS 26 sheets on the raised paper
+  (`menuSheet`), with the system's grabber; content is a list of ruled
+  rows under their titles with a title row and a close button, no
+  navigation bar and no cards.
 
 ### Gestures (the keyboard map, translated)
 
@@ -252,9 +277,9 @@ archive), **Pin** (`s`, the Gmail star), **Remind me** (`h`), **Need reply**
 | Desktop | iOS default | Notes |
 | --- | --- | --- |
 | `u` read/unread | **swipe right, short** | grey |
-| `e` mark done | **swipe right, long** | accent pink: the "check off" moment, row slides out, Undo toast for 5 s |
+| `e` mark done | **swipe right, long** | ink: the "check off" moment, the row's words are struck through while it is armed, the row slides out, Undo toast for 5 s |
 | `h` remind me | **swipe left, short** | opens the Remind sheet |
-| `n` need reply | **swipe left, long** | blue; toggles, row gets the ↩︎ mark |
+| `n` need reply | **swipe left, long** | sky; toggles, row gets the ↩︎ mark |
 | `s` pin, `#` delete, `v` move, `l` label | long-press menu | also in the thread's More menu |
 | `enter` open | tap | |
 | `esc` back | back / edge swipe | |
@@ -281,26 +306,28 @@ Pull-to-refresh runs `sync_all`. The app also syncs on every foreground.
 
 ### Remind sheet
 
-Half-height sheet: the title row (`SheetHeader`, shared with Add to
-bundle), then the toggle **"Only if nobody replies"** (desktop's
-follow-up) — first, because a preset sets the reminder and closes the
-sheet — then the presets as a grouped list — *Later today (18:00)*,
-*Tomorrow (09:00)*, *This weekend*, *Next week*, *In a month*, *Pick date…* —
-and a *Remove reminder* row when one is set. Times respect the user's locale and a
-"day starts at" setting (default 09:00).
+Half-height sheet on the raised paper: the title row (`SheetHeader`,
+shared with Add to bundle), then, under one rule, the toggle **"Only if
+nobody replies"** (desktop's follow-up) — first, because a preset sets
+the reminder and closes the sheet — then the presets as ruled rows, each
+with its time in the mono — *Later today (18:00)*, *Tomorrow (09:00)*,
+*This weekend*, *Next week*, *In a month*, *Pick date…* — and a *Remove
+reminder* row when one is set. No cards. Times respect the user's locale
+and a "day starts at" setting (default 09:00).
 
 ### Thread view
 
 Pushed onto the stack. The top bar holds the back circle, the other people's
-names and the AI + More circles; the subject sits in the content with one
-line of the list's chips (priority, Jev labels and a "+" to edit them, the
-reminder and need-reply badges as coloured pills) and, at the line's end,
-the count in words ("6 messages", quiet: a bare number read as one more
-badge). Messages are the inbox's rows — sender · time, one
-snippet line, the unread bar on the left edge, 1 pt gaps: latest expanded on
-the card surface, older ones collapsed on the canvas, tap to expand. A
-closed message that was read has its sender in the secondary colour; the
-open one and the unread ones keep the primary. Past four
+names and the AI + More circles; the subject sits in the content, large,
+with one line of marks under it (the priority's three bars, the Jev
+labels as words and a "+" to edit them, the reminder and Need reply as
+writing in their state's colour) and, at the line's end, the count in
+words ("6 messages", quiet: a bare number read as one more mark).
+Messages are the inbox's rows under one rule — sender · time, one snippet
+line, a hairline between two, all on the paper: latest expanded, older
+ones collapsed, tap to expand. A closed message that was read has its
+sender in the secondary colour; the open one is bold ink and an unread
+one is bold under the highlighter, as on a row. Past four
 messages the middle folds into one "N earlier messages" line — small, in the
 tertiary colour, a chevron before it; a run of unread
 messages before the last two stays visible.
@@ -316,8 +343,8 @@ the times of open and closed messages share one right edge.
 The three devices share all of this and differ in the container only
 (`ThreadChrome`): flat and edge to edge on the phone (no cards), a 760 pt
 column on a regular-width iPad (`readableColumn`), and on the Mac the same
-column with the messages as one rounded card
-([macos-app/CLAUDE.md](../macos-app/CLAUDE.md)).
+column, flat on the paper too, with the reply pills at the last message's
+foot ([macos-app/CLAUDE.md](../macos-app/CLAUDE.md)).
 
 - **Body** renders in a `WKWebView` with JavaScript off, a strict CSP meta
   tag, `about:blank` origin and remote images blocked by default; a one-tap
@@ -330,23 +357,27 @@ column with the messages as one rounded card
   The trailing quoted history (`div.gmail_quote`, Outlook's reference
   container, a trailing `<blockquote>`, or `>` lines in plain text) folds
   behind a small, quiet ••• pill, same rules as desktop.
-- **Attachments** are chips under the message: tap fetches the bytes
-  (`messages.attachments.get`, cached as a file) and opens Quick Look. Never
-  auto-open. On images and PDFs, **Explain attachment** has the on-device
-  model read it (OCR, barcodes) and offers one-tap chips — remind me on
-  travel day, copy the tracking number; mail that smells like a receipt,
-  ticket or shipment gets the chips under the subject as the thread opens
+- **Attachments** are boxed tiles under the message (an outline, no
+  fill): tap fetches the bytes (`messages.attachments.get`, cached as a
+  file) and opens Quick Look. Never auto-open. On images and PDFs,
+  **Explain attachment** has the on-device model read it (OCR, barcodes)
+  and offers one-tap actions — remind me on travel day, copy the tracking
+  number — each the action's words under the highlighter, as everything
+  the AI suggests is; mail that smells like a receipt, ticket or shipment
+  gets them under the subject as the thread opens
   ([ios-intelligence.md](./ios-intelligence.md) "Attachment understanding").
 - **AI summary** card at the top when a summary exists or auto-summarize is
   on; "Summarize" in the toolbar menu otherwise.
 - **Two floating bars** replace the tab bar while a thread is open: the
-  Reply pill and the AI circle, and under it, as one glass bar,
-  the triage bar: Done · Remind · Need reply · Pin · Delete. A set toggle
-  shows a filled icon in its state colour (done mint, reminder lavender,
-  need reply sky, pin amber). Labels, Mark unread, Add to bundle, Forward,
+  Reply pill — the screen's one ink action, an ink capsule — with the AI
+  circle beside it (the app's one pink fill), and under it, as one glass
+  bar, the triage bar: Done · Remind · Need reply · Pin · Delete, ink
+  glyphs with Delete in the danger colour. A set toggle shows a filled
+  glyph in its state's colour (done mint, reminder lavender, need reply
+  sky; the pin stays ink). Labels, Mark unread, Add to bundle, Forward,
   Report spam and Delete live in the top-right More menu — only what the
-  bar does not hold: Pin and Remind me are the bar's, Unsubscribe is the
-  chip under the subject.
+  bar does not hold: Pin and Remind me are the bar's, Unsubscribe is a
+  mark in the line under the subject.
 - **Reply pill** works like Superhuman's: tapping it runs the default (Reply
   all when others are on the latest message, else Reply), the chevron picks
   Reply · Reply all · Forward with each one's recipients (the pick sticks for
@@ -355,7 +386,7 @@ column with the messages as one rounded card
   the rules are in `docs/specs/reply-recipients.md`), and the AI draft is its own circle beside it. There are no action
   links under the bodies on the phone and the iPad (the Mac ends the last
   message with Reply · Reply all · Forward and keeps the triage alone on
-  its floating card): an open message's ••• or a long press on any
+  its floating bar): an open message's ••• or a long press on any
   message's header line replies to or forwards that one (the body is left
   to the long press that starts a text selection).
 - Thread-level swipe between adjacent threads is deliberately **not** in v1
@@ -418,7 +449,8 @@ The desktop's sections, same wording. The root is short: **AI** and
 Settings is a page of the window, and the window's own Back, Esc and
 title follow a pushed page (`WindowState.settingsPath`).
 
-- **Accounts** — avatar, name, email, connection state; Name, Color (the
+- **Accounts** — the initial in an outlined circle, name, email,
+  connection state; Name, Color (the
   five tags), Sync (reminder sync over the account's Drive app folder),
   Signature; Reconnect, Remove (asks once); Add account.
 - **AI** — one *Provider* select box: *Apple Intelligence · on this
@@ -452,7 +484,7 @@ title follow a pushed page (`WindowState.settingsPath`).
   round, never on its own timer — except that a pass with mail left keeps
   going round after round while the app is in front, with its progress in
   the inbox, in Settings and (20+ emails) as a Live Activity. The labels are the bottom pill and the
-  chips on rows; a thread's labels can be edited by hand (sticky until
+  words on rows (`#Travel`); a thread's labels can be edited by hand (sticky until
   Reanalyze). *Siri triage* opens one page for "Hey Siri, triage my
   inbox": the run, its *Rules* (a dry-run switch and your own triage rules
   in your words, both synced) and the journal.
@@ -461,9 +493,17 @@ title follow a pushed page (`WindowState.settingsPath`).
   menu bar* (the menu bar extra with the unread count).
 - **About** — version, links. Updates come through TestFlight / App Store.
 
+The page is drawn as every menu is (`SettingsList`, `menuList`,
+`menuCard`): sections under their light grey titles (`SectionTitle`; a
+section with no name opens with the rule alone), rows parted by
+hairlines, no cards. A switch that is on is ink, a field has an ink
+underline, a text of several lines an outlined box, a small button at a
+row's end is an outlined capsule, and what deletes is written in the
+danger colour.
+
 ### Compose
 
-The desktop Composer: From chip (account dot + address, switching swaps
+The desktop Composer: From (account dot + address, switching swaps
 the signature while the body is pristine), To with recipient chips and a
 Cc/Bcc toggle, Subject, a rich-text body (iOS 26 `TextEditor` over
 `AttributedString`), attachment chips (Files or Photos, 18 MB cap), and the
@@ -472,6 +512,12 @@ underline, strikethrough, link). A footer narrower than 480 pt (the
 phone) keeps Send at full size and shows Send · ✨ · Attach · Aa · More,
 with the read status switch, the snippets and Discard under More. Plain
 text always goes out; an html part only when formatting was applied.
+
+On the paper a field has no fill: its name in small mono capitals and a
+hairline under it. A recipient and an attachment are boxed chips (an
+outline, 6 pt corners). Send is the sheet's one ink action and the AI's
+sparkle its pink; the message itself is written in the system font, as
+it will be read.
 
 ### States and motion
 
@@ -495,23 +541,26 @@ text always goes out; an html part only when formatting was applied.
   phone, in the iPad's list column (its thread column stays blank until
   there is mail) and in the Mac window.
 - Loading is skeleton rows, never a spinner in the list.
-- Behind the mail lists (Inbox, Remind me, Need reply; the iPad's list
-  column and its "No thread open") the canvas carries a wash
-  (`Theme.listWash`, the Mac window's too): a trace of coral from the top
-  leading corner and of lavender from the bottom trailing one, a few
-  steps of 255, flat with Increase Contrast. The rows are opaque cards
-  (the swipe panel sits behind them), so it shows behind the top bar and
-  the day titles, between rows and across "All clear". A thread, Search,
-  Settings and the sheets stay on the flat canvas.
+- Every screen stands on one flat paper (`Theme.canvas`; white, and a
+  dark grey a step off black in dark): the lists, a thread, Search and
+  "All clear" alike. A sheet is the raised paper (`Theme.raised`), the
+  same white on light and a step up on dark. There is no wash and no
+  card; a mail row is opaque only so the swipe panel can sit behind it.
 - The only animation of note is archive: the row slides out in ~150 ms with
   a haptic. Everything else is the system's.
-- Dark mode from day one, following the system. Colours come from the same
-  tokens as `desktop-app/src/styles/colors.css` (navy scale, pink accent,
-  five account tags).
-- Typography: Manrope for titles and sender names (brand), the system font
-  for body text and the mail content (legibility, Dynamic Type for free).
-  Every custom size is declared `relativeTo` a text style so Dynamic Type
-  scales it.
+- Dark mode from day one, following the system (or Settings ›
+  Appearance). The colours are `Theme`'s tokens: paper, ink, three greys
+  of text, the light grey of titles, one pink (a highlighter's band, the
+  AI's ink, one fill) and the five state colours with a lighter pair for
+  dark. The table and the rules for using them are
+  [specs/marker-look.md](./specs/marker-look.md).
+- Typography: Instrument Sans for the interface and DM Mono for what is
+  read as data — times, counts, sizes, tags, keys and the titles of groups
+  (`Theme.sans`, `Theme.mono`, the roles of `Theme.text`; the files are in
+  `HeyPigeon/Resources/Fonts`, `Typeface` loads them for the app and both
+  extensions). Mail content keeps the system font. Every size is declared
+  `relativeTo` a text style so Dynamic Type scales it, and a weight is
+  asked for by name, never with `.weight()` on a custom font.
 
 ### iPad and hardware keyboards
 

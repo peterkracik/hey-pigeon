@@ -46,10 +46,9 @@ enum WidgetPalette {
 
     // MARK: Pink
 
-    /// The pink as a fill, and only for a progress bar or ring (the
-    /// analysis pass) and the Dynamic Island's keyline: the same in both
-    /// appearances (`Theme.accent`). As a mark it is `marker`, as writing
-    /// `pinkInk`.
+    /// The pink as a fill: here only the Dynamic Island's keyline, the
+    /// same in both appearances (`Theme.accent`; in the app it is the
+    /// AI's own button). As a mark it is `marker`, as writing `pinkInk`.
     static let accent = hex(0xEE4D9B)
     /// The highlighter: the band behind an unread sender. Half the pink
     /// on dark, where the pale band would glare (`Theme.marker`).
@@ -76,7 +75,7 @@ enum WidgetPalette {
     private static let sky = pair(0x2A6BAE, 0x7FB2E8)
 
     /// An account's colour, for its dot on a row and its share of the
-    /// unread bar.
+    /// Unread widget's bar.
     static func account(_ raw: String) -> Color {
         states[raw] ?? sky
     }

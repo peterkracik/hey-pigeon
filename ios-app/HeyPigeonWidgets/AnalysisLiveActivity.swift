@@ -4,10 +4,11 @@
 // (AnalysisLiveActivityController); a tap opens the inbox.
 //
 // In the app's look (docs/specs/marker-look.md): the sparkle is the AI's
-// pink ink, the bar and the ring are the one pink fill, the counts are in
-// the mono, and a finished pass is the mint of done — pink never says
-// done. The Lock Screen's platter is a dark tint in both appearances, so
-// what stands on it is drawn with the palette's dark column.
+// pink ink, the bar and the ring are ink as the inbox's own bar is
+// (progress is content, not "look here"), the counts are in the mono, and
+// a finished pass is the mint of done — pink never says done. The Lock
+// Screen's platter is a dark tint in both appearances, so what stands on
+// it is drawn with the palette's dark column, where ink is light.
 
 import ActivityKit
 import SwiftUI
@@ -41,7 +42,7 @@ struct AnalysisLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: s.fraction).tint(WidgetPalette.accent)
+                        ProgressView(value: s.fraction).tint(WidgetPalette.textPrimary)
                         Text(AnalysisCopy.detail(s, isStale: context.isStale))
                             .font(AnalysisCopy.detailFont(s, isStale: context.isStale, count: .caption, sentence: .caption))
                             .foregroundStyle(WidgetPalette.textSecondary)
@@ -93,7 +94,7 @@ private struct AnalysisRing: View {
         } else {
             ProgressView(value: state.fraction)
                 .progressViewStyle(.circular)
-                .tint(WidgetPalette.accent)
+                .tint(WidgetPalette.textPrimary)
                 .frame(width: 18, height: 18)
         }
     }
@@ -120,7 +121,7 @@ private struct AnalysisLockScreenView: View {
                         .foregroundStyle(WidgetPalette.textSecondary)
                 }
             }
-            ProgressView(value: state.fraction).tint(WidgetPalette.accent)
+            ProgressView(value: state.fraction).tint(WidgetPalette.textPrimary)
             Text(AnalysisCopy.detail(state, isStale: isStale))
                 .font(AnalysisCopy.detailFont(state, isStale: isStale, count: .footnote, sentence: .subheadline))
                 .foregroundStyle(WidgetPalette.textSecondary)

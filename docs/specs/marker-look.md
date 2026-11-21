@@ -1,6 +1,6 @@
 # The paper look ("Marker")
 
-Status: Draft — being implemented
+Status: Implemented
 Related: `docs/ios.md` ("UX"), `macos-app/CLAUDE.md`, `.claude/agents/ux-ui.md`
 ("The design system as built"). Drawn first on the owner's design canvas as
 "version 3b": every screen of the three apps in this look, light and dark.
@@ -44,7 +44,7 @@ feature file never writes a hex value or a system font.
 | `titleInk` | tertiary at 50 % | tertiary at 50 % | Titles of groups and sections, their rule and count |
 | `marker` | `#FFC9E2` | pink at 50 % | The highlighter's band |
 | `pinkInk` | `#CC2277` | `#F58BBE` | The AI's glyph and a suggestion's words |
-| `accent` | `#EE4D9B` | `#EE4D9B` | A pink fill: the AI's draft button, a progress bar |
+| `accent` | `#EE4D9B` | `#EE4D9B` | The one pink fill: the AI's draft button |
 | `state(_:)` | coral `#B34E2E`, mint `#1F7A5C`, lavender `#6A4FC4`, sky `#2A6BAE`, amber `#A9761E` | `#F0916F`, `#5CC6A0`, `#A995F2`, `#7FB2E8`, `#E3B341` | A state as writing or a glyph |
 
 - **R1. Paper.** One surface. A list, its rows, a thread and its messages
@@ -61,14 +61,19 @@ feature file never writes a hex value or a system font.
   is ink, a read row's `textTertiary`.
 - **R4. Pink means "look here".** The highlighter marks an unread sender
   and an action the AI suggests. The AI's sparkle and a suggestion's words
-  are `pinkInk`. The pink fill (`accent`) is the AI's own button and a
-  progress bar. Pink is never decoration, never "done", never an error.
+  are `pinkInk`. The pink fill (`accent`) is the AI's own button (the
+  draft circle beside Reply) and nothing else. Pink is never decoration,
+  never "done", never an error, and never progress: a progress bar is ink
+  on a `separator` track, in the app and on the Lock Screen.
 - **R5. Titles stand back.** A group of rows and a section of a form are
   titled the same way (`SectionTitle`): the name in small mono capitals, a
   rule filling the line, a count at the far end where there is one — all in
   `titleInk`. A section with no name opens with the rule alone
   (`SectionRule`). A glyph before the name and a control after the rule
-  keep their own strength.
+  keep their own strength. In a menu sheet and in Settings the grouped
+  list's own lines over a section's first row and under its last are
+  hidden (`menuCard()`): the title's rule opens a group and nothing
+  closes it.
 - **R6. Type.** Instrument Sans (regular, medium, semibold, bold) for the
   interface; DM Mono (regular, medium) for times, counts, sizes, tags,
   keys, tracking and order numbers, and titles. Sizes on the phone are
@@ -91,9 +96,13 @@ feature file never writes a hex value or a system font.
 - **R9. Selection is ink.** The selected tab, segment or label is an ink
   capsule; the highlighted row of a list or a panel is `sunken` with a
   heavier name.
-- **R10. Done is struck through.** Where a done thread is still shown
-  (Archive aside), its subject is struck through and it steps back to
-  `textTertiary`. The Mark done swipe panel is ink.
+- **R10. Done is struck through.** A done email listed in its bundle
+  (under Done there) has its subject and preview struck through and steps
+  back to `textTertiary`; so does a row while a swipe, or the Mac's Done
+  under the pointer, is about to mark it done. In a folder or a search a
+  done thread keeps its row and has a mint check before its time (most of
+  what a search finds is done, and a list of struck lines is hard to
+  read). The Mark done swipe panel is ink.
 - **R11. Controls.** A switch that is on is ink (`switchOn`). A text field
   has no fill: an ink underline, or a box with an `outline` for a text of
   several lines. A key is a mono letter in an `outline` box.
@@ -153,12 +162,12 @@ at the same size and weight.
 
 ## Acceptance criteria
 
-- [ ] R1–R13 hold on every screen of the canvas, on iPhone, iPad and Mac, light and dark
-- [ ] No hex colour outside `Theme`, `MacTheme` and `WidgetPalette`; no system text font in a feature file except on an SF Symbol and for mail content
-- [ ] No `.weight()` or `.bold()` applied to a `Theme` or `Typeface` font
-- [ ] The views are unchanged: same elements, order, words and actions (the unit and UI tests pass untouched)
-- [ ] `ios-ci` and `macos-ci` green
-- [ ] `docs/ios.md`, `macos-app/CLAUDE.md`, both READMEs and the ux-ui guide describe this look
+- [ ] R1–R13 hold on every screen of the canvas, on iPhone, iPad and Mac, light and dark — converted screen by screen and read; seen only where "Verification" says
+- [x] No hex colour outside `Theme`, `MacTheme` and `WidgetPalette` (the CSS of a message's own page aside: that is mail); no system text font in a feature file except on an SF Symbol and for mail content
+- [x] No `.weight()` or `.bold()` applied to a `Theme` or `Typeface` font
+- [x] The views are unchanged: same elements, order, words and actions (the unit and UI tests pass untouched)
+- [x] `ios-ci` and `macos-ci` green
+- [x] `docs/ios.md`, `macos-app/CLAUDE.md`, both READMEs and the ux-ui guide describe this look
 
 ## Open questions / assumptions
 
@@ -171,6 +180,20 @@ at the same size and weight.
   the system's.
 - The fonts are committed to the repository (about 450 KB), so every build
   has them. Manrope, which was dropped in by hand, is no longer used.
+
+Where what is built differs from the canvas, for the owner to keep or
+change:
+
+- **A widget's container** keeps the system's fill, not the paper: the
+  system draws it and recolours it (a tinted Home Screen, StandBy), and
+  the Lock Screen accessories take the system's colours.
+- **A Live Activity's platter** on the Lock Screen is the dark tint it
+  was, in both appearances, drawn with the dark column; the canvas drew
+  it light.
+- **The Mac's thread** starts its subject 16 pt in, where its messages'
+  text does; the canvas has 32.
+- **A group's count** is of the rows loaded so far, so "Older" grows as
+  the list pages in.
 
 ## Verification
 

@@ -116,7 +116,8 @@ is what ships: follow it, and correct the doc in the same change.
   `InboxPage`, `MailRow`, `ThreadPage`, `BundlesPage`, `SearchSpotlight`,
   `CommandPalette`, `ShortcutsSheet`, `MenuBarExtraView`, `WindowState`
   (per-window state, the keyboard map, every action) and `MacStyle.swift`
-  (`MacTheme`, `MacLayout`, `IconButton`, `Hairline`, `macPanel`).
+  (`MacTheme`, `MacLayout`, `IconButton`, `Hairline`, `KeyCap`,
+  `InkCircleButtonStyle`, `MacEmptyState`, `macPanel`).
 - `site/` — heypigeon.app: static HTML and one `styles.css` with its own
   copy of the tokens (Inter, the navy scale, pink tag for the eyebrow).
 - History, for reference only: `desktop-app/src/` is the first (Tauri +
@@ -149,7 +150,7 @@ light/dark pair through `Color(light:dark:)`; design both every time.
 | Titles of groups and sections | `titleInk` | tertiary at 50 % | tertiary at 50 % |
 | The highlighter's band | `marker` | `#FFC9E2` | pink at 50 % |
 | The AI's glyph and words | `pinkInk` | `#CC2277` | `#F58BBE` |
-| A pink fill (AI button, progress) | `accent` | `#EE4D9B` | `#EE4D9B` |
+| The one pink fill (the AI's own button) | `accent` | `#EE4D9B` | `#EE4D9B` |
 | A switch that is on | `switchOn` | `#0B0D12` | `#B6B9C0` |
 | Reminder | `state(.lavender)` | `#6A4FC4` | `#A995F2` |
 | Need reply | `state(.sky)` | `#2A6BAE` | `#7FB2E8` |
@@ -183,13 +184,16 @@ light/dark pair through `Color(light:dark:)`; design both every time.
 | Done | The subject struck through, the row in `textTertiary` |
 | A field | No fill: an ink underline; a box with an `outline` for several lines |
 | A key | A mono letter in an `outline` box |
+| A progress bar | Ink on a `separator` track, square ends (the analysis pass, in the app and on the Lock Screen) |
+| A group of a menu or of Settings | Opens with its title or, with no name, the rule alone; hairlines between its rows, none over the first or under the last (`menuCard()`); no card |
 | What floats | The system's Liquid Glass on the phone; on the Mac the paper with a hairline, the Spotlight panel with an ink outline |
 
 - **Colour** (`Theme`): the roles of the chart. `tagForeground(_:)` is a
   tag's colour as a fill that carries white text (a swipe panel);
   `state(_:)` is the same colour as writing, with a dark pair.
-  `danger`, `dangerText`, `needReply`, `pinStrong`, `priorityColor(_:)`
-  stay. There are no tinted chips, no cards and no wash.
+  `danger` and `dangerText` are what deletes or went wrong; `doneFill`,
+  `remindFill`, `needReply`, `pinStrong` and `readFill` are the swipe
+  panels' fills. There are no tinted chips, no cards and no wash.
 - **Mac surfaces** (`MacTheme`): `sidebar`, `listBackground`, `hover`,
   `selected`, `panel`, `hairline`. Measures in `MacLayout` (`maxWidth`
   for the list, `readingWidth` for a thread and Settings, `sidebarWidth`,
@@ -221,14 +225,16 @@ one-platform modifiers go behind a helper in `Platform.swift`, and the iOS
 branch stays exactly what ships. Copy names the device with `Device.name`.
 
 **iPhone / iPad** (iOS 27 floor): the floating glass tab bar (Inbox ·
-Remind me · Need reply, Search as the separate circle) that minimises on
-scroll; no navigation title — two glass circles and the list; the label
-pill above the tab bar; rows flat and edge to edge; two-tier swipes in
+Remind me · Need reply, Compose as the separate circle); no navigation
+title — two glass circles and the list; the label pill above the tab bar
+(it folds on a scroll down; its selected label is an ink capsule); rows
+flat and edge to edge, ruled; two-tier swipes in
 each direction, each threshold ticking with a haptic and changing colour
 and icon so release is never a guess (tiers are configurable in Settings ›
-Inbox); long-press for the rest; a thread hides the tab bar for two glass
-bars (Reply pill + AI circle; the triage bar). Sheets are plain system
-sheets with a grouped list. Respect safe areas, 44 pt targets, and the
+Inbox); long-press for the rest; a thread hides the tab bar for two
+floating bars (the ink Reply pill + the AI's pink circle; the glass
+triage bar). Sheets are plain system sheets on the raised paper: ruled
+rows under their titles, no cards. Respect safe areas, 44 pt targets, and the
 system back-swipe (nothing horizontal may fight it).
 
 **Mac** (macOS 27): the phone's one column made bigger, under the standard
@@ -239,7 +245,8 @@ day titles, no cards and no floating section headers; hover tints the
 row and shows the hover bar (Done first); a click opens a row in place, Return opens the
 full thread. Settings and Bundles are pages of the window, not sheets
 (a sheet read as a dialog). A reply is written inline under its thread.
-Search and the palette are one Spotlight-style glass panel. Scroll bars
+Search and the palette are one Spotlight-style panel: the paper with an
+ink outline over the dimmed window. Scroll bars
 hidden; nothing drawn over the columns by the toolbar. `Menu`s with a chip
 or icon label take `labelOnlyMenu()`.
 

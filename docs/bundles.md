@@ -21,10 +21,13 @@ narrative and attention line, auto-archive, folding on the Mac. Code:
 
 Full screen on iPhone and iPad (a sheet read as a dialog), a page of the
 window on the Mac. Two pages, swiped between on iOS under a segmented
-control; on the Mac two capsule tabs, as the toolbar's are, on a glass
-capsule over the top of the page ("Emails" carries the open count):
-**Emails** — the rows below — and **Info** — the summary, tracking links
-and key facts as one-line lists.
+control (its selection ink); on the Mac two capsule tabs, as the
+toolbar's are, on a glass capsule over the top of the page ("Emails"
+carries the open count): **Emails** — the rows below — and **Info** —
+the summary, tracking links and key facts as one-line lists. Both are
+drawn in the paper look (`specs/marker-look.md`): the inbox's ruled rows
+on the canvas, each section under its light grey title (`SectionTitle`)
+or, with no name, under the rule alone; no cards.
 
 - **Summary** — the model's brief (`ai_summarize_bundle`): a STATUS line
   (where things stand, the latest decision or change) and up to three TO DO
@@ -33,8 +36,8 @@ and key facts as one-line lists.
   for the summary otherwise). It runs on open when the model is on this
   device or auto-summarize is on, otherwise on a tap, like every summary.
   The on-open request for the device model names it; if the model has
-  gone by the time of the call nothing is sent and the card waits for a
-  tap.
+  gone by the time of the call nothing is sent and the summary waits for
+  a tap.
 - **Tracking** — links found in the bundle's mail whose address or link text
   says "track", or that carry a tracking number: one per email and host
   (an order with three "Track package" buttons is one row), never a picture
@@ -43,8 +46,9 @@ and key facts as one-line lists.
   link here only as a plain web address — http or https, no user or
   password before the host (`MailLink.url`) — and the host a row shows
   is the URL's own, so it is the one the tap opens.
-- **Key facts**, then the emails, open first, done dimmed and folded past
-  three.
+- **Key facts** (their values in the mono), then the emails, open first,
+  done set back to the tertiary grey with the subject struck through and
+  folded past three.
 - Every email row works like an inbox row: the same swipes, the same
   long-press menu, and the thread opens inside the bundle's stack. On the
   phone the shared sheets (Remind me, Add to bundle, the composer, a
@@ -55,8 +59,8 @@ and key facts as one-line lists.
   leaves the bundle, never comes back to it, and its subject becomes a "not
   this" example the model sees for that bundle.
 - On the Mac the Info page is the window's own too (`macos-app`
-  `BundleInfo.swift`): cards on the list's background in a reading
-  column, under the list's small grey titles. **Tracking** is one row
+  `BundleInfo.swift`): ruled rows on the paper in a reading column,
+  under the list's light grey titles. **Tracking** is one row
   per shipment, named after the carrier or shop (`BundleTracking.name`:
   `www.amazon.de` → "Amazon"; a click-redirect's host is never a name,
   the email's sender stands in). Links fold into one shipment only when
@@ -73,14 +77,15 @@ and key facts as one-line lists.
   core, also folds an email's number-less link into that email's
   numbered one.) A click opens the
   tracking page. **Key facts** stand kind by kind, the kind named on
-  its first row; a click copies the value, "Track" is a pill on a
-  tracking number that has a link, and the email a fact came from is
+  its first row; a click copies the value, "Track" is a boxed chip (a
+  word in the mono inside an outline) on a tracking number that has a
+  link, and the email a fact came from is
   in the hover bar and the context menu. The summary's to-dos carry an
   arrow, not a circle: they are the model's words and nothing stores a
   tick.
 - On the Mac the Emails page is the window's own list
-  (`macos-app` `BundleEmails.swift`): the inbox's single-line row on the
-  inbox's white card, with its hover bar (⊖ before the arrow), trackpad
+  (`macos-app` `BundleEmails.swift`): the inbox's single-line ruled
+  row on the paper, with its hover bar (⊖ before the arrow), trackpad
   swipes and context menu; a click opens the row in place and its arrow
   opens the thread in the bundle's stack. The open emails have no title,
   the done ones sit under "Done" (the fold's button past three). The
@@ -398,14 +403,16 @@ on open (cheap, no model) and is the only part that is.
 ## UI
 
 Three touchpoints, and since the parcel card a fourth: parcels that are
-on their way stand in a card at the top of the plain inbox, one row per
+on their way stand in a group of their own at the top of the plain inbox
+(the "parcel card"; it is no longer drawn as one), one row per
 parcel with a Track parcel button (`docs/specs/parcel-card.md` — what a
 parcel is, what is read about it and from where, when it leaves, how it
 is dismissed). Nothing else is added.
 
-1. **Row chip.** One small chip (icon + short name) on rows in a bundle, next to
-   the triage chips. At most one, because a thread is in at most one bundle.
-   Tapping it opens the bundle.
+1. **Row mark.** One small mark (icon + short name, written in the mono
+   in the sky of a state; `BundleChip`, named from when it was a chip) on
+   rows in a bundle, next to the triage labels. At most one, because a
+   thread is in at most one bundle. Tapping it opens the bundle.
 2. **Bundles.** A section of the sidebar right under the inboxes (as built,
    both apps): the five most recently active bundles with their open
    counts, "N more" for the rest, then "All bundles", which opens the full

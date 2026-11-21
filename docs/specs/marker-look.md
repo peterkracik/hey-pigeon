@@ -217,12 +217,12 @@ Seen            Pictures CI kept from an iPhone simulator, light and dark: the i
                 unread, the AI's suggestion, tags, a bundle's mark, the pin, account dots),
                 the inbox with the parcel card, a thread with its message, the Remind sheet,
                 the empty Remind me and Need reply lists, the folders sheet, Settings (three
-                screens of it), Ask my inbox, the list of bundles and a bundle's Emails
-                page. The Mac window's inbox with the parcel card, light and dark (a
-                snapshot of the hosted window, which does not draw glass).
+                screens of it), Ask my inbox, a new message, the list of bundles and a
+                bundle's Emails page. The Mac window's inbox with the parcel card, light
+                and dark (a snapshot of the hosted window, which does not draw glass).
 Not seen        Anything on a device. The iPad. On the phone: search, a summary, the AI
                 edit sheet, the swipe panels, the toast, Recent opens, Mailbox care, the
-                triage journal, a bundle's Info page, the composer. On the Mac: a thread,
+                triage journal, a bundle's Info page, a reply. On the Mac: a thread,
                 the composer, Settings, the sidebar, the palette and the search panel, the
                 bundle pages, the shortcuts sheet, the menu bar extra. The widgets, the
                 Live Activities and the share sheet. Large text sizes, Increase Contrast,

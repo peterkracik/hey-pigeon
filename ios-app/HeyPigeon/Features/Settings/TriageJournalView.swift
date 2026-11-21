@@ -74,6 +74,8 @@ struct TriageJournalView: View {
                         Text("Clear journal").foregroundStyle(Theme.dangerText)
                     }
                     .settingsRowButton()
+                } header: {
+                    SectionRule()
                 } footer: {
                     Text("Kept on this \(Device.name) only, the last \(TriageJournal.cap) tool calls.").settingsFooter()
                 }

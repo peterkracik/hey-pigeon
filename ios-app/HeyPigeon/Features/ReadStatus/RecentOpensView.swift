@@ -62,6 +62,7 @@ struct RecentOpensView: View {
                     Text(RecentOpens.footer(anyAccountOn: model.accounts.contains(where: \.readStatus)))
                         .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 }
+                .listSectionSeparator(.hidden)
             }
         }
         .groupedListStyle()

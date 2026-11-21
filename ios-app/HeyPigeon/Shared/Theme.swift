@@ -377,8 +377,9 @@ extension View {
 
     /// A section of a menu sheet: its rows straight on the sheet's paper
     /// (the grouped list's card is cleared away) with the app's hairline
-    /// between them. The name is from when a section was a card. On the
-    /// Mac the grouped form lays its sections out itself.
+    /// between them and none above the first or under the last. The name
+    /// is from when a section was a card. On the Mac the grouped form
+    /// lays its sections out itself.
     @ViewBuilder
     func menuCard() -> some View {
         #if os(iOS)
@@ -387,6 +388,12 @@ extension View {
             // The hairline runs the row's whole width, under its glyph
             // too; the system starts it at the row's words.
             .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+            // With its card cleared away, the grouped list draws a line of
+            // its own across the sheet over a section's first row and
+            // under its last: a band around every group, and two lines
+            // where two groups met. A group opens with its title's rule
+            // (`SectionTitle`, `SectionRule`) and ends without one.
+            .listSectionSeparator(.hidden)
         #else
         self
         #endif

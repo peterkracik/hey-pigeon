@@ -44,12 +44,17 @@ final class ScreenTourTests: XCTestCase {
         guard row.waitForExistence(timeout: 40) else { return }
         keep("\(prefix)-01-inbox", app)
 
-        // A thread, and back.
+        // A thread (its message is a web view: it gets longer to draw),
+        // the Remind sheet over it, and back.
         row.tap()
         let other = element(app, containing: "Weekend ride?")
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: other)
         if XCTWaiter().wait(for: [gone], timeout: 20) == .completed {
-            keep("\(prefix)-02-thread", app)
+            keep("\(prefix)-02-thread", app, settle: 3)
+            if tap(app.buttons["Remind me"].firstMatch) {
+                keep("\(prefix)-02-thread-remind", app)
+                closeSheet(app)
+            }
             back(app)
             _ = other.waitForExistence(timeout: 20)
         }
@@ -79,13 +84,28 @@ final class ScreenTourTests: XCTestCase {
             closeSheets(app)
         }
 
+        // Ask my inbox.
+        if tap(app.buttons["Ask my inbox"].firstMatch) {
+            keep("\(prefix)-10-ask", app)
+            closeSheets(app)
+        }
+
         // A new message.
         let compose = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Compose")).firstMatch
         if tap(compose) {
-            keep("\(prefix)-10-compose", app)
+            keep("\(prefix)-11-compose", app)
             closeSheets(app)
         } else {
-            keepTree("\(prefix)-10-compose-tree", app)
+            keepTree("\(prefix)-11-compose-tree", app)
+        }
+
+        // The bundles and one of them, last: the walk ends inside their
+        // cover and nothing has to find its way back out.
+        if tap(app.buttons["Folders and accounts"].firstMatch), tap(element(app, containing: "All bundles")) {
+            keep("\(prefix)-12-bundles", app)
+            if tapFirstHittable(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Lisbon trip"))) {
+                keep("\(prefix)-13-bundle", app)
+            }
         }
     }
 
@@ -128,11 +148,27 @@ final class ScreenTourTests: XCTestCase {
         if buttons.count > 0 { buttons.element(boundBy: buttons.count - 1).tap() }
     }
 
-    /// Taps `element` if it shows up and can be tapped; says whether it did.
+    /// Taps `element` if it shows up and can be tapped; says whether it
+    /// did. A sheet on its way out still covers what is under it, so the
+    /// element gets the same time again to come free (Compose was
+    /// "not there" for the moment the folders took to leave).
     private func tap(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-        guard element.waitForExistence(timeout: timeout), element.isHittable else { return false }
+        guard element.waitForExistence(timeout: timeout) else { return false }
+        let free = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: element)
+        guard XCTWaiter().wait(for: [free], timeout: timeout) == .completed else { return false }
         element.tap()
         return true
+    }
+
+    /// Taps the first of `query`'s elements that can be tapped: the same
+    /// words may stand on the screen under a cover too.
+    private func tapFirstHittable(_ query: XCUIElementQuery, timeout: TimeInterval = 5) -> Bool {
+        guard query.firstMatch.waitForExistence(timeout: timeout) else { return false }
+        for candidate in query.allElementsBoundByIndex where candidate.exists && candidate.isHittable {
+            candidate.tap()
+            return true
+        }
+        return false
     }
 
     /// Back from a pushed screen: the bar's button, or the edge swipe when
@@ -147,23 +183,28 @@ final class ScreenTourTests: XCTestCase {
         }
     }
 
-    /// Closes whatever sheets are up: their close button, else a drag
-    /// down from the top of the sheet. Twice at most (Settings over the
-    /// folders).
+    /// Closes whatever sheets are up over the list. Twice at most
+    /// (Settings over the folders).
     private func closeSheets(_ app: XCUIApplication) {
         for _ in 0..<2 {
             let list = element(app, containing: subject)
             if list.exists, list.isHittable { return }
-            let close = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Close")).firstMatch
-            if close.exists, close.isHittable {
-                close.tap()
-            } else {
-                let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
-                top.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
-            }
-            // The sheet's own animation; a bounded wait.
-            _ = element(app, containing: subject).waitForExistence(timeout: 3)
+            closeSheet(app)
         }
+    }
+
+    /// Closes the sheet on top: its close button, else a drag down from
+    /// the top of the sheet.
+    private func closeSheet(_ app: XCUIApplication) {
+        let close = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Close")).firstMatch
+        if close.exists, close.isHittable {
+            close.tap()
+        } else {
+            let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
+            top.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        }
+        // The sheet's own animation; a bounded wait.
+        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "sheet leaves")], timeout: 1.5)
     }
 
     /// Keeps what the test can see of the screen, as text, where the walk
@@ -176,9 +217,9 @@ final class ScreenTourTests: XCTestCase {
     }
 
     /// Keeps a picture of the screen under `name`, once it has settled.
-    private func keep(_ name: String, _ app: XCUIApplication) {
+    private func keep(_ name: String, _ app: XCUIApplication, settle: TimeInterval = 1.2) {
         // Transitions and the glass bars take a moment; a bounded wait.
-        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "settle")], timeout: 1.2)
+        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "settle")], timeout: settle)
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name
         shot.lifetime = .keepAlways

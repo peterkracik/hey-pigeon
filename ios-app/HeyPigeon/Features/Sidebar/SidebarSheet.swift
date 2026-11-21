@@ -60,10 +60,14 @@ struct SidebarList: View {
         List {
             Section {
                 tabRow(.search, count: 0)
+            } header: {
+                SectionRule()
             }
             .menuCard()
             Section {
                 folderRow(.inbox)
+            } header: {
+                SectionRule()
             }
             .menuCard()
             // Whose mail every list shows. A section of its own: in one
@@ -92,6 +96,8 @@ struct SidebarList: View {
                         }
                     }
                 }
+            } header: {
+                SectionRule()
             }
             .menuCard()
             // Read status's list (docs/specs/read-status.md R7), between
@@ -101,6 +107,8 @@ struct SidebarList: View {
             if model.readStatusAvailable {
                 Section {
                     Button { onPick(); model.showRecentOpens() } label: { Label(RecentOpens.title, systemImage: RecentOpens.symbol) }
+                } header: {
+                    SectionRule()
                 }
                 .menuCard()
             }
@@ -117,6 +125,8 @@ struct SidebarList: View {
                 folderRow(.all)
                 folderRow(.spam)
                 folderRow(.trash)
+            } header: {
+                SectionRule()
             }
             .menuCard()
             if !labels.isEmpty || model.labelAccountId != nil {
@@ -144,6 +154,8 @@ struct SidebarList: View {
                         .accessibilityLabel(allLabels ? "Show pinned labels only" : "Show all labels, \(rows.hidden) more")
                     }
                     Button { labelEditing.startNew() } label: { Label("New label", systemImage: "plus") }
+                } header: {
+                    SectionRule()
                 }
                 .menuCard()
             }
@@ -151,6 +163,8 @@ struct SidebarList: View {
             // was a second door to something done once.
             Section {
                 Button { onPick(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+            } header: {
+                SectionRule()
             }
             .menuCard()
         }

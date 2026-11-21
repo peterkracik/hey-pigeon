@@ -92,6 +92,9 @@ struct AIEditSheet: View {
                         }
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
+                        // No line of the list's own over or under the
+                        // control (`menuCard` says why).
+                        .listSectionSeparator(.hidden)
                     }
                     switch mode {
                     case .write: writeSections(shown)
@@ -109,6 +112,7 @@ struct AIEditSheet: View {
                 } footer: {
                     Text(footnote(shown)).font(Self.footerFont).foregroundStyle(Theme.textTertiary)
                 }
+                .listSectionSeparator(.hidden)
             }
             // The menu sheets' list: the raised paper, ruled rows, no cards.
             .menuList()

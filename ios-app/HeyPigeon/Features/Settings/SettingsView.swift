@@ -76,6 +76,8 @@ struct SettingsView: View {
                     NavigationLink(value: SettingsRoute.triage) {
                         pageLabel("Triage", "Sorting new mail into your labels", systemImage: "tray.2")
                     }
+                } header: {
+                    SectionRule()
                 }
                 .menuCard()
                 SiriSection()

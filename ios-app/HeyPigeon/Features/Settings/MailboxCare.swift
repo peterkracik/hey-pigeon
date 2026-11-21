@@ -33,6 +33,8 @@ struct OutboxSection: View {
                         .foregroundStyle(model.failedChanges > 0 ? Theme.warning : Theme.textTertiary)
                 }
             }
+        } header: {
+            SectionRule()
         } footer: {
             Text("What you do is applied on this \(Device.name) at once and sent to Gmail after. A change that could not be sent waits in the Outbox for you to send again or discard.").settingsFooter()
         }
@@ -70,6 +72,8 @@ struct OutboxView: View {
                         .font(Theme.sans(.body)).foregroundStyle(Theme.textSecondary)
                 }
                 ForEach(changes) { change in row(change) }
+            } header: {
+                SectionRule()
             }
             .menuCard()
         }
@@ -175,6 +179,8 @@ struct RulesSection: View {
                             .foregroundStyle(Theme.textTertiary)
                     }
                 }
+            } header: {
+                SectionRule()
             } footer: {
                 Text("A muted thread is marked done again when a reply arrives; a thread whose mail is all from a blocked address goes to Spam. Both are this app's own rules, applied on each of your devices after a sync, and kept with your other settings in your Google Drive.").settingsFooter()
             }

@@ -65,7 +65,7 @@ feature file never writes a hex value or a system font.
   is ink, a read row's `textTertiary`. On the phone a mail row and the
   hairline under it run from edge to edge; its words and the group's
   title stand 16 pt in. In a thread and in the menu bar extra unread is
-  the weight alone; the widgets still draw the highlighter.
+  the weight alone; a widget's row has the corner too.
 - **R4. Pink means "look here".** The corner marks an unread row and the
   highlighter an action the AI suggests. The AI's sparkle and a suggestion's words
   are `pinkInk`. The pink fill (`accent`) is the AI's own button (the

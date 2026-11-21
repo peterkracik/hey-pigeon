@@ -1275,3 +1275,24 @@ struct SwipePages<Page: Hashable, Content: View>: View {
         #endif
     }
 }
+
+/// A coloured dot for a menu item. A menu draws an SF Symbol as a
+/// template in its own ink and ignores the symbol's colour, so the dot
+/// is made as a picture that keeps its colour (UIKit's "always
+/// original"), resolved for the appearance it is shown in. The Mac's
+/// menus take a symbol's palette as it is.
+enum MenuDot {
+    static func image(_ color: Color, checked: Bool, scheme: ColorScheme) -> Image {
+        let name = checked ? "checkmark.circle.fill" : "circle.fill"
+        #if canImport(UIKit)
+        let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
+        let tint = UIColor(color).resolvedColor(with: traits)
+        if let symbol = UIImage(systemName: name)?.withTintColor(tint, renderingMode: .alwaysOriginal) {
+            return Image(uiImage: symbol)
+        }
+        return Image(systemName: name)
+        #else
+        return Image(systemName: name)
+        #endif
+    }
+}

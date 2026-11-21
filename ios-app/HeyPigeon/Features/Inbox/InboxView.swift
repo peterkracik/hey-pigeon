@@ -248,6 +248,7 @@ struct OfflineBar: View {
 struct ListTitle: View {
     let tab: MainTab
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var scheme
 
     private var title: String { tab == .inbox ? model.folder.title : tab.title }
     private var count: Int {
@@ -294,15 +295,14 @@ struct ListTitle: View {
                 model.selectedAccountId = a.id
                 Haptics.light()
             } label: {
-                // The account's own colour on its glyph: a menu tints a
-                // plain symbol with the app's ink, so the colour is asked
-                // for as the symbol's palette. The one in use is checked.
+                // The account's own colour on its dot. A menu draws a
+                // symbol as a template in its own ink whatever style the
+                // symbol is given, so the dot is handed over as a picture
+                // already in its colour (`MenuDot`).
                 Label {
                     Text(a.displayName)
                 } icon: {
-                    Image(systemName: a.id == model.selectedAccountId ? "checkmark.circle.fill" : "circle.fill")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(Theme.state(a.color))
+                    MenuDot.image(Theme.state(a.color), checked: a.id == model.selectedAccountId, scheme: scheme)
                 }
             }
         }

@@ -472,8 +472,8 @@ struct NeedReplyView: View {
 
 /// The inbox row, widget-sized: the account's dot, the sender, the
 /// subject, one preview line. Unread is what it is on the inbox's row: a
-/// bold sender under the highlighter. Read, the sender steps back to a
-/// medium weight in the secondary grey.
+/// bold sender and a small pink corner at the row's foot. Read, the
+/// sender steps back to a medium weight in the secondary grey.
 struct RowView: View {
     let row: WidgetSnapshot.Row
     @Environment(\.widgetRenderingMode) private var renderingMode
@@ -494,28 +494,36 @@ struct RowView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Unread: the app's pink corner (`unreadCorner()`, which this
+        // target cannot see). Only in full colour: where the system
+        // recolours the widget the weight says unread alone.
+        .overlay(alignment: .bottomLeading) {
+            if row.isUnread, renderingMode == .fullColor {
+                WidgetCorner().fill(WidgetPalette.accent).frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
-    /// The sender, with the highlighter's band behind its lower half
-    /// while unread (the app's `marker()`, which this target cannot see:
-    /// the text's own background scaled down towards its baseline, the
-    /// padding it adds at the sides taken back). Only in full colour:
-    /// where the system recolours the widget the band would come out in
-    /// the words' own colour and cover them, and the weight says unread
-    /// alone.
+    /// The sender: bold in ink while unread, medium in the secondary grey
+    /// once read.
     private var sender: some View {
         Text(row.from)
             .font(Typeface.sans(.footnote, row.isUnread ? .bold : .medium))
             .foregroundStyle(row.isUnread ? WidgetPalette.textPrimary : WidgetPalette.textSecondary)
             .lineLimit(1)
-            .padding(.horizontal, 3)
-            .background {
-                if row.isUnread, renderingMode == .fullColor {
-                    Rectangle().fill(WidgetPalette.marker)
-                        .scaleEffect(x: 1, y: 0.42, anchor: UnitPoint(x: 0.5, y: 0.862))
-                }
-            }
-            .padding(.horizontal, -3)
+    }
+}
+
+/// The triangle of the unread corner: its right angle bottom leading.
+struct WidgetCorner: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 

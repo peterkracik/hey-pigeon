@@ -41,7 +41,7 @@ feature file never writes a hex value or a system font.
 | `onPrimary` | `#FFFFFF` | `#16181D` | Writing on an ink fill |
 | `textSecondary` | `#454850` | `#B6B9C0` | A read sender, a tag, a quiet button |
 | `textTertiary` | `#6B6E76` | `#8B8E96` | Previews, times, footers: 5:1 on the paper |
-| `titleInk` | tertiary at 50 % | tertiary at 50 % | The words of a group's or a section's title: its name and its count |
+| `titleInk` | tertiary at 40 % | tertiary at 40 % | The words of a group's or a section's title: its name and its count |
 | `titleRule` | `#E7E7EA` | `#2B2E36` | That title's rule, and the rule that opens a group with no name: the `separator` grey |
 | `marker` | `#FFC9E2` | pink at 50 % | The highlighter's band |
 | `pinkInk` | `#CC2277` | `#F58BBE` | The AI's glyph and a suggestion's words |
@@ -120,9 +120,9 @@ feature file never writes a hex value or a system font.
   status bar and glass still reads. An ink fill turns light and its words
   dark. State colours take their lighter pair.
 - **R14. Accessibility.** Text is at least 4.5:1 on its surface in both
-  appearances, with one exception: a title's words (R5) are about 2:1, by
-  the owner's choice, and become `textTertiary` with Increase Contrast, as
-  its rule does.
+  appearances, with one exception: a title's words (R5) are under 2:1
+  (about 1.7:1 on the paper), by the owner's choice, and become
+  `textTertiary` with Increase Contrast, as its rule does.
   Colour is never the only signal: a state has a glyph or a word, unread
   has a weight. Dynamic Type may not clip the sender or the time.
 
@@ -175,11 +175,12 @@ at the same size and weight.
 
 ## Open questions / assumptions
 
-- Titles at about 2:1 are the owner's choice (tried on the canvas at half
-  the tertiary grey). Increase Contrast restores them. The rule was that
-  grey too in 0.3.0; seen on a phone, three such lines down a screen of
-  mail still drew the eye, and it took the hairline's grey (the canvas
-  page "Marker: quieter separators", step 2).
+- Titles under 2:1 are the owner's choice. In 0.3.0 the words and the
+  rule were half the tertiary grey (tried on the canvas); seen on a
+  phone, three such titles down a screen of mail still drew the eye. The
+  owner then chose the lightest of three steps (the canvas page "Marker:
+  quieter separators", step 3): the rule in the hairline's grey and the
+  words at 40 %. Increase Contrast restores both.
 - Dark surfaces are lifted off black (`#16181D`), keeping the earlier rule
   that the canvas must not be near-black under the glass bars. The canvas'
   first dark board was darker.

@@ -147,7 +147,7 @@ light/dark pair through `Color(light:dark:)`; design both every time.
 | Writing on an ink fill | `onPrimary` | `#FFFFFF` | `#16181D` |
 | A read sender, a tag, a quiet button | `textSecondary` | `#454850` | `#B6B9C0` |
 | Previews, times, footers (5:1) | `textTertiary` | `#6B6E76` | `#8B8E96` |
-| A title's words (name, count) | `titleInk` | tertiary at 50 % | tertiary at 50 % |
+| A title's words (name, count) | `titleInk` | tertiary at 40 % | tertiary at 40 % |
 | A title's rule | `titleRule` | `#E7E7EA` | `#2B2E36` |
 | The highlighter's band | `marker` | `#FFC9E2` | pink at 50 % |
 | The AI's glyph and words | `pinkInk` | `#CC2277` | `#F58BBE` |
@@ -279,9 +279,10 @@ is never the only signal (a state has a symbol too). Check contrast in
 both appearances, especially tertiary text and tag foregrounds on their
 backgrounds. Honour Reduce Motion. Everything reachable by pointer on the
 Mac is reachable by keyboard. One known exception to contrast, by the
-owner's choice: the titles of groups and sections (`titleInk`) are about
-2:1, and take the full tertiary grey when Increase Contrast is on. Do
-not use `titleInk` for anything that is not such a title.
+owner's choice: the words of the titles of groups and sections
+(`titleInk`) are under 2:1, their rule (`titleRule`) is the hairline's
+grey, and both take the full tertiary grey when Increase Contrast is on.
+Do not use either for anything that is not such a title.
 
 ## How to work
 

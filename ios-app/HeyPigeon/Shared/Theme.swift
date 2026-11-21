@@ -58,8 +58,8 @@ enum Theme {
     /// The outline of something boxed: a filter chip, a key, a text box.
     static let outline = Color(light: Color(hex: 0xC9CACF), dark: Color(hex: 0x3A3D45))
     /// The words of a group's or a section's title — its name and its
-    /// count (`SectionTitle`): structure, so half the tertiary grey, and
-    /// the whole of it with Increase Contrast.
+    /// count (`SectionTitle`): structure, so the tertiary grey at 40 %,
+    /// and the whole of it with Increase Contrast.
     static let titleInk = TitleInk()
     /// The rule of that title, and the rule that opens a group with no
     /// name (`SectionRule`): the grey of the lines between rows, and the
@@ -316,14 +316,15 @@ enum Theme {
 }
 
 /// The colour of the words of a section's or a group's title: its name
-/// and its count. They are structure, so they stand back: half the
-/// tertiary grey, about 2:1 on the paper. A day group's title repeats
-/// what each row's own date says; where a title is the only name of its
+/// and its count. They are structure, so they stand back: the tertiary
+/// grey at 40 %, under 2:1 on the paper, by the owner's choice (half of
+/// it still drew the eye on a phone). A day group's title repeats what
+/// each row's own date says; where a title is the only name of its
 /// group (Settings, the folders) that is thin for some eyes, so with
 /// Increase Contrast it is the whole tertiary grey.
 struct TitleInk: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
-        AnyShapeStyle(Theme.textTertiary.opacity(environment.colorSchemeContrast == .increased ? 1 : 0.5))
+        AnyShapeStyle(Theme.textTertiary.opacity(environment.colorSchemeContrast == .increased ? 1 : 0.4))
     }
 }
 

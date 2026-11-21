@@ -294,7 +294,16 @@ struct ListTitle: View {
                 model.selectedAccountId = a.id
                 Haptics.light()
             } label: {
-                Label(a.displayName, systemImage: a.id == model.selectedAccountId ? "checkmark" : "circle.fill")
+                // The account's own colour on its glyph: a menu tints a
+                // plain symbol with the app's ink, so the colour is asked
+                // for as the symbol's palette. The one in use is checked.
+                Label {
+                    Text(a.displayName)
+                } icon: {
+                    Image(systemName: a.id == model.selectedAccountId ? "checkmark.circle.fill" : "circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Theme.state(a.color))
+                }
             }
         }
     }

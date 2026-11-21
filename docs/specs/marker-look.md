@@ -197,6 +197,39 @@ change:
 
 ## Verification
 
-Not verified yet. Nothing in this look has been seen on a device or in a
-simulator by its author; CI proves that it compiles and that the tests
-pass, not how it looks.
+2026-11-21, on the branch of PR #164.
+
+```
+Spec: docs/specs/marker-look.md   Verdict: Verified with notes
+
+Rules           R1–R3, R5, R7–R9, R11–R13 ✓ seen, on the screens listed under "Seen" ·
+                R4, R6, R10, R14 ✓ read in the code (Theme, Marker, ThreadRowView, the two
+                Live Activities); R4's "one pink fill" and R6's "no .weight()" also by search
+Parity          iPhone ✓ · iPad ✓ (the phone's views in a column; built, not seen) · Mac ✓
+                (its own window over the same tokens and pieces)
+Layering        ✓ tokens and type in Theme / Typeface, the pieces in Marker.swift, the
+                Mac's surfaces in MacStyle.swift, the extensions' copy in WidgetPalette;
+                nothing in the core or the bridge
+Tests / CI      ios-ci ✓ (iPhone: the unit and UI tests; iPad: the build) · macos-ci ✓ (the
+                build and the tests), with the tests untouched but for one new unit test
+                (ParcelCard.statusPieces) and the two that keep pictures
+Seen            Pictures CI kept from an iPhone simulator, light and dark: the inbox (groups,
+                unread, the AI's suggestion, tags, a bundle's mark, the pin, account dots),
+                the inbox with the parcel card, a thread with its message, the Remind sheet,
+                the empty Remind me and Need reply lists, the folders sheet, Settings (three
+                screens of it), Ask my inbox, the list of bundles and a bundle's Emails
+                page. The Mac window's inbox with the parcel card, light and dark (a
+                snapshot of the hosted window, which does not draw glass).
+Not seen        Anything on a device. The iPad. On the phone: search, a summary, the AI
+                edit sheet, the swipe panels, the toast, Recent opens, Mailbox care, the
+                triage journal, a bundle's Info page, the composer. On the Mac: a thread,
+                the composer, Settings, the sidebar, the palette and the search panel, the
+                bundle pages, the shortcuts sheet, the menu bar extra. The widgets, the
+                Live Activities and the share sheet. Large text sizes, Increase Contrast,
+                VoiceOver.
+Drift / fixes   Found in the pictures and fixed: the grouped list's own lines around every
+                section of a menu (menuCard hides them; a group with no name opens with
+                SectionRule); 22 pt too much between two groups of the mail list. Found
+                against the canvas and fixed: a progress bar is ink, not pink (this spec's
+                R4 said pink). Left, for the owner: the list under "Open questions".
+```

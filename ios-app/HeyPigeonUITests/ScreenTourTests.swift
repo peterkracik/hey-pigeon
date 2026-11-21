@@ -90,9 +90,10 @@ final class ScreenTourTests: XCTestCase {
             closeSheets(app)
         }
 
-        // A new message.
-        let compose = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Compose")).firstMatch
-        if tap(compose) {
+        // A new message. Two buttons are called Compose: the one in the
+        // tab bar and the one that only carries ⌘N and draws nothing, so
+        // the first that can be tapped is the one wanted.
+        if tapFirstHittable(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Compose"))) {
             keep("\(prefix)-11-compose", app)
             closeSheets(app)
         } else {

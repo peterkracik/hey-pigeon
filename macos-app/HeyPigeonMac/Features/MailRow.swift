@@ -84,6 +84,8 @@ struct MailRow: View {
         .overlay(alignment: .top) {
             if opensGroup { SectionRule().allowsHitTesting(false) }
         }
+        // Unread: the pink corner at the row's foot, with the bold sender.
+        .unreadCorner(!row.isRead)
         // The cursor's row, a selected one and the one open in place carry
         // an ink rule down their leading edge, the open row's message
         // too. Drawn over the row, never clipped into it and with no
@@ -301,7 +303,6 @@ struct MailLineSender: View {
                 .font(font)
                 .foregroundStyle(ink)
                 .lineLimit(1)
-                .marker(!row.isRead)
             if showsCount && row.isConversation {
                 Text("\(row.messageCount)")
                     .font(Theme.mono(size: 11))

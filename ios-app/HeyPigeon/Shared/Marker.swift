@@ -133,9 +133,36 @@ extension View {
             .padding(.horizontal, -3)
     }
 
+    /// Unread, on a mail row: a small pink triangle in the row's bottom
+    /// leading corner, with the sender in bold. It took the place of the
+    /// highlighter behind the sender's name (the owner's choice, on the
+    /// canvas page "Marker: edge to edge, pink corner"). Goes on the
+    /// row's whole surface, so the corner is the row's own.
+    func unreadCorner(_ on: Bool) -> some View {
+        overlay(alignment: .bottomLeading) {
+            if on {
+                UnreadCorner().fill(Theme.accent).frame(width: 10, height: 10)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+    }
+
     /// A word struck through: what is done.
     func struckThrough(_ on: Bool = true) -> some View {
         strikethrough(on, color: Theme.textTertiary)
+    }
+}
+
+/// The right-angled triangle of `unreadCorner`: its right angle in the
+/// bottom leading corner.
+struct UnreadCorner: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 

@@ -43,9 +43,7 @@ struct MessageHeaderLine<Trailing: View>: View {
                     .font(Theme.sender(stands))
                     .foregroundStyle(stands ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
-                    // Unread is the highlighter, as on a row: no bar on
-                    // the message's edge.
-                    .marker(!message.isRead)
+                    // Unread is the bold weight, as on a row.
                 Spacer(minLength: 8)
                 Text(expanded ? Formatters.messageTime(message.date) : Formatters.rowTime(message.date))
                     .font(Theme.meta)

@@ -56,14 +56,20 @@ feature file never writes a hex value or a system font.
   the last row of a group has none. On the phone a mail row is three lines
   (sender · marks · time, subject, preview) and a fourth for its tags when
   it has any; on the Mac it is one line.
-- **R3. Unread is the highlighter.** An unread row's sender is bold and
-  marked with `marker()`; a read row's sender is medium weight in
-  `textSecondary`. No bar on the row's edge, no dot. The unread row's time
-  is ink, a read row's `textTertiary`.
-- **R4. Pink means "look here".** The highlighter marks an unread sender
-  and an action the AI suggests. The AI's sparkle and a suggestion's words
+- **R3. Unread is a pink corner.** An unread row's sender is bold and the
+  row has a 10 pt pink triangle (`accent`) in its bottom leading corner
+  (`unreadCorner()`); a read row's sender is medium weight in
+  `textSecondary`. No bar on the row's edge, no dot, and no highlighter
+  behind the name (0.3.0 had one; the owner chose the corner on the
+  canvas page "Marker: edge to edge, pink corner"). The unread row's time
+  is ink, a read row's `textTertiary`. On the phone a mail row and the
+  hairline under it run from edge to edge; its words and the group's
+  title stand 16 pt in. In a thread and in the menu bar extra unread is
+  the weight alone; the widgets still draw the highlighter.
+- **R4. Pink means "look here".** The corner marks an unread row and the
+  highlighter an action the AI suggests. The AI's sparkle and a suggestion's words
   are `pinkInk`. The pink fill (`accent`) is the AI's own button (the
-  draft circle beside Reply) and nothing else. Pink is never decoration,
+  draft circle beside Reply) and the unread corner, nothing else. Pink is never decoration,
   never "done", never an error, and never progress: a progress bar is ink
   on a `separator` track, in the app and on the Lock Screen.
 - **R5. Titles stand back.** A group of rows and a section of a form are

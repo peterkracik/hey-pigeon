@@ -174,7 +174,7 @@ light/dark pair through `Color(light:dark:)`; design both every time.
 
 | Piece | How it is drawn |
 | --- | --- |
-| A mail row | Ruled (`separator`), no card. Unread: bold sender with `marker()`, ink time. Read: medium sender in `textSecondary`, grey time |
+| A mail row | Ruled (`separator`, edge to edge on the phone), no card. Unread: bold sender, a 10 pt pink corner at the row's bottom leading edge (`unreadCorner()`), ink time. Read: medium sender in `textSecondary`, grey time |
 | A title (`SectionTitle`) | Mono capitals and a count at the far end in `titleInk`, a rule filling the line between them in `titleRule` (the hairline's grey); a nameless section is the rule alone (`SectionRule`) |
 | A label | A word in the mono, `#Travel` (`TagText`); never a chip |
 | A state | A glyph and a few words in its colour (`StateMark`); never a fill |

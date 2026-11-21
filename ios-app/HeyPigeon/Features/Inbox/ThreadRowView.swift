@@ -69,10 +69,8 @@ struct ThreadRowView: View {
                     .font(Theme.sender(!row.isRead))
                     .foregroundStyle(senderInk)
                     .lineLimit(1)
-                    // Unread is the highlighter. Not on a row that is set
-                    // back: pink says "look here", and that one is dealt
-                    // with (its weight still says it was not read).
-                    .marker(!row.isRead && !setBack && !row.fromSummary.isEmpty)
+                    // Unread is this weight and the pink corner the list
+                    // puts on the row (`unreadCorner`).
                 if row.isConversation {
                     Text("\(row.messageCount)").font(Theme.meta).foregroundStyle(Theme.textTertiary)
                 }

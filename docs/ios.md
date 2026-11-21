@@ -190,9 +190,10 @@ look are [specs/marker-look.md](./specs/marker-look.md)):
  ✈ Lisbon trip   #Travel
 ```
 
-- Unread is the sender in bold under the highlighter (`marker()`: a pink
-  band behind the lower part of the name), the subject in semibold and
-  the time in ink. A read row's sender is medium weight in the secondary
+- Unread is the sender in bold, a small pink triangle in the row's
+  bottom leading corner (`unreadCorner()`), the subject in semibold and
+  the time in ink. The row and the hairline under it run from edge to
+  edge; the words stand 16 pt in. A read row's sender is medium weight in the secondary
   grey and its time tertiary. There is no bar on the row's edge and no
   dot for unread. In the unified view the account is a 6 pt dot in its
   colour before the time.

@@ -17,16 +17,18 @@ struct ToastStack: View {
         VStack(spacing: 8) {
             ForEach(model.toasts) { toast in
                 HStack(spacing: 12) {
-                    Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(2)
+                    Text(toast.text).font(Theme.sans(.subheadline, .medium)).lineLimit(2)
                     if toast.undo != nil {
                         // Through the model: the action leaves the undo
                         // stack with it, so `z` cannot take it back twice.
                         Button("Undo") { model.undo(toast: toast.id) }
                             .toastButton()
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Theme.accent)
+                            .font(Theme.sans(.subheadline, .bold))
+                            .foregroundStyle(Theme.onPrimaryPink)
                     }
                 }
+                // The toast is ink (`toastSurface`), so its words are the paper's colour.
+                .foregroundStyle(Theme.onPrimary)
                 .padding(.horizontal, 16).padding(.vertical, ToastMetrics.verticalPadding)
                 .toastSurface()
                 // With Reduce Motion the toast fades where it stands.

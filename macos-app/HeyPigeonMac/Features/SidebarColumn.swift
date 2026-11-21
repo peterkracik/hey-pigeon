@@ -1,10 +1,14 @@
-// The sidebar: a grey column under the top bar — the main folders with no
-// header, then "Folders" and "Labels" as small grey headers that fold
-// their rows away, and at the bottom the account: its initial, its name,
-// a chevron that opens the switch (All accounts, each account, Add
-// account). Labels carry a pin on hover; once any is pinned, only the
-// pinned ones show, with ••• for the rest (AppModel.sidebarLabels). A row only tints: on hover, and a stronger tint on the folder
-// the list shows. New message, Search, Ask and Settings are the top bar's.
+// The sidebar: a column of the paper beside the content, a hairline
+// between them — the main folders with no header, then "Bundles",
+// "Folders" and "Labels" under light grey titles (small mono capitals, a
+// chevron, a rule filling the line) that fold their rows away, and at the
+// bottom the account: its initial, its name, a chevron that opens the
+// switch (All accounts, each account, Add account). Labels carry a pin on
+// hover; once any is pinned, only the pinned ones show, with ••• for the
+// rest (AppModel.sidebarLabels). A row only tints: the sunken grey on
+// hover, a step stronger and a heavier name on the folder the list shows.
+// Counts are in the mono. New message, Search, Ask and Settings are the
+// top bar's.
 // The phone shows the same list as a sheet
 // (Features/Sidebar/SidebarSheet); here ⌘S and the window's corner button
 // slide it in and out, and a folder picked here closes the open thread.
@@ -109,7 +113,7 @@ struct SidebarColumn: View {
     }
 
     /// A folder row with its count; `badge` is the Scheduled row's due
-    /// count, in the accent so a reminder that came due stands out.
+    /// count, in the reminder's lavender so one that came due stands out.
     /// `pin`: a label row, with the pin that keeps it in the short list.
     private func folder(_ view: MailView, count: Int? = nil, badge: Int = 0, pin label: MailLabelItem? = nil) -> some View {
         let n = count ?? model.counts[view.countKey] ?? 0
@@ -181,15 +185,17 @@ struct SidebarColumn: View {
         }
     }
 
-    /// The due count in the accent when there is one, else the plain count.
+    /// The due count in the reminder's colour when there is one, else the
+    /// plain count. (Not pink: pink is the unread sender's and the AI's.)
     static func badgeText(count: Int, due: Int) -> Text? {
-        if due > 0 { return Text("\(due)").foregroundStyle(Theme.accent) }
+        if due > 0 { return Text("\(due)").foregroundStyle(Theme.state(.lavender)) }
         return count > 0 ? Text("\(count)") : nil
     }
 }
 
-/// One sidebar row: an icon, a title, an optional count; tinted on hover
-/// and when it is the shown folder.
+/// One sidebar row: an icon, a title, an optional count in the mono; the
+/// sunken grey under the pointer, a step stronger with a heavier name
+/// when it is the shown folder.
 private struct SidebarRow: View {
     let title: String
     let systemImage: String
@@ -223,11 +229,11 @@ private struct SidebarRow: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: selected ? .medium : .regular))
                     .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                     .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 13))
+                    .font(Theme.sans(size: 13, weight: selected ? .semibold : .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -235,14 +241,13 @@ private struct SidebarRow: View {
                     Color.clear.frame(width: 18, height: 1)
                 } else if let trailing {
                     trailing
-                        .font(.system(size: 11, weight: .medium))
+                        .font(Theme.mono(size: 11, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
-                        .monospacedDigit()
                 }
             }
             .padding(.horizontal, 8)
             .frame(height: 30)
-            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -297,13 +302,13 @@ private struct MoreLabelsRow: View {
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 18)
                 Text(expanded ? "Show less" : "\(hidden) more")
-                    .font(.system(size: 13))
+                    .font(Theme.sans(size: 13, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
             .padding(.horizontal, 8)
             .frame(height: 30)
-            .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -312,7 +317,11 @@ private struct MoreLabelsRow: View {
     }
 }
 
-/// A small grey group header with a chevron that folds its rows away.
+/// A group's title as the look draws every title — small mono capitals
+/// and a rule filling the line, in the light grey of structure — with a
+/// chevron between the two that folds the group's rows away. (Not
+/// `SectionTitle`: the chevron stands before the rule, and the whole line
+/// is the button.)
 private struct SectionHeader: View {
     let title: String
     @Binding var open: Bool
@@ -321,16 +330,20 @@ private struct SectionHeader: View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { open.toggle() }
         } label: {
-            HStack(spacing: 5) {
-                Text(title).font(.system(size: 12, weight: .medium))
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(Theme.label)
+                    .tracking(Theme.labelTracking)
+                    .textCase(.uppercase)
+                    .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 7, weight: .bold))
                     .rotationEffect(.degrees(open ? 0 : -90))
-                Spacer()
+                Rectangle().fill(MacTheme.sectionHeader).frame(height: 1)
             }
             .foregroundStyle(MacTheme.sectionHeader)
             .padding(.horizontal, 8)
-            .padding(.top, 18).padding(.bottom, 6)
+            .padding(.top, 10).padding(.bottom, 5)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -338,8 +351,8 @@ private struct SectionHeader: View {
     }
 }
 
-/// The sidebar's foot: the shown account (its initial on its colour, its
-/// name, the unread count) as a menu that switches it.
+/// The sidebar's foot: the shown account (its initial in its colour, its
+/// name, the unread count in the mono) as a menu that switches it.
 private struct AccountFooter: View {
     @Environment(AppModel.self) private var model
     @State private var hovering = false
@@ -347,8 +360,15 @@ private struct AccountFooter: View {
     private var name: String { model.currentAccount?.displayName ?? (model.accounts.isEmpty ? "No account" : "All accounts") }
     private var detail: String {
         let unread = model.engineUnread(accountId: model.selectedAccountId)
-        if let a = model.currentAccount, a.email != a.displayName { return a.email }
+        if showsAddress, let a = model.currentAccount { return a.email }
         return unread > 0 ? "\(unread) unread" : "Up to date"
+    }
+    /// The line under the name is the account's address (an address is
+    /// writing); otherwise it is the unread count, which is data and set
+    /// in the mono.
+    private var showsAddress: Bool {
+        guard let a = model.currentAccount else { return false }
+        return a.email != a.displayName
     }
 
     var body: some View {
@@ -371,8 +391,9 @@ private struct AccountFooter: View {
                 HStack(spacing: 8) {
                     avatar
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        Text(name).font(Theme.sans(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Text(detail).font(showsAddress ? Theme.sans(size: 11) : Theme.mono(size: 11))
+                            .foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -380,7 +401,7 @@ private struct AccountFooter: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 6).padding(.vertical, 5)
-                .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(hovering ? MacTheme.hover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .contentShape(Rectangle())
             }
             .menuStyle(.button)
@@ -394,24 +415,24 @@ private struct AccountFooter: View {
         .padding(.leading, 50).padding(.trailing, 8).padding(.vertical, 8)
     }
 
-    /// The account's initial on its colour; for All accounts, the first
-    /// few accounts' dots.
+    /// The account's initial in its colour, in an outlined circle (a
+    /// colour is writing, not a fill); for All accounts, the first few
+    /// accounts' 6 pt dots on the sunken grey.
     @ViewBuilder private var avatar: some View {
         if let a = model.currentAccount {
             Text(String(a.displayName.prefix(1)).uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.tagForeground(a.color))
+                .font(Theme.sans(size: 11, weight: .bold))
+                .foregroundStyle(Theme.state(a.color))
                 .frame(width: 24, height: 24)
-                .background(Theme.tagBackground(a.color), in: Circle())
+                .overlay(Circle().strokeBorder(Theme.outline, lineWidth: 1))
         } else {
-            HStack(spacing: -4) {
+            HStack(spacing: 2) {
                 ForEach(model.accounts.prefix(3)) { a in
-                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 10, height: 10)
-                        .overlay(Circle().strokeBorder(MacTheme.sidebar, lineWidth: 1.5))
+                    Circle().fill(Theme.state(a.color)).frame(width: 6, height: 6)
                 }
             }
             .frame(width: 24, height: 24)
-            .background(MacTheme.selected, in: Circle())
+            .background(Theme.sunken, in: Circle())
         }
     }
 

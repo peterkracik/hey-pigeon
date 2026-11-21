@@ -89,9 +89,10 @@ struct MailListScreen: View {
             }
             // On a wide iPad the rows keep to a readable column.
             .readableColumn()
-            // The wash, not the flat canvas: behind the list, the
-            // skeleton and "All clear" alike, in all three tabs.
-            .background(Theme.listWash)
+            // The paper: behind the list, the skeleton and "All clear"
+            // alike, in all three tabs. (A wash lay here while rows were
+            // cards; it went with them.)
+            .background(Theme.canvas)
             // ListTitle is the principal item. No .toolbar(removing: .title)
             // here: the principal counts as the title and went with it.
             .navigationTitle(tab == .inbox ? model.folder.title : tab.title)
@@ -191,36 +192,54 @@ extension MailListScreen {
 
 /// A line over the list while there is no network: what is done meanwhile
 /// is kept and sent when it is back, and the line says how much is waiting.
+/// It is the one grey band in the list (`sunken`): a notice, not a row.
 struct OfflineBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         if !Connectivity.shared.isOnline {
-            Label(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send when it is back" : "Offline",
-                  systemImage: "wifi.slash")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(Theme.sunken)
-                .accessibilityLabel(model.queuedChanges > 0 ? "Offline. \(model.queuedChanges) changes to send." : "Offline")
+            Label {
+                if model.queuedChanges > 0 {
+                    Text("Offline · \(number(model.queuedChanges)) to send when it is back")
+                } else {
+                    Text("Offline")
+                }
+            } icon: {
+                Image(systemName: "wifi.slash").font(Theme.glyph(.secondary, .medium))
+            }
+            .font(Theme.sans(.footnote, .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(Theme.sunken)
+            .accessibilityLabel(model.queuedChanges > 0 ? "Offline. \(model.queuedChanges) changes to send." : "Offline")
         } else if model.failedChanges > 0 {
             // Something could not be sent for good: say so, and open the
             // Outbox. Silence left this device and Gmail disagreeing with
-            // nobody the wiser.
+            // nobody the wiser. In the warning's colour as writing: an
+            // error is said, not filled.
             Button { model.openOutbox() } label: {
-                Label("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent · Review",
-                      systemImage: "exclamationmark.triangle")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(Theme.warning)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(Theme.sunken)
-                    .contentShape(Rectangle())
+                Label {
+                    Text("\(number(model.failedChanges)) \(model.failedChanges == 1 ? "change was" : "changes were") not sent · Review")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle").font(Theme.glyph(.secondary, .medium))
+                }
+                .font(Theme.sans(.footnote, .medium))
+                .foregroundStyle(Theme.warning)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(Theme.sunken)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(model.failedChanges) \(model.failedChanges == 1 ? "change was" : "changes were") not sent")
             .accessibilityHint("Opens the Outbox")
         }
+    }
+
+    /// A number of changes to stand in the line's sentence: in the mono,
+    /// as every count is.
+    private func number(_ n: Int) -> Text {
+        Text("\(n)").font(Theme.meta)
     }
 }
 
@@ -280,23 +299,29 @@ struct ListTitle: View {
         }
     }
 
+    /// The name in the bold interface face, its count in the mono a step
+    /// back, then the account: its dot (every account's, overlapping,
+    /// for All) and its name. The dots are the state colours, which have
+    /// a lighter pair for dark.
     private var label: some View {
-        HStack(spacing: 6) {
-            Text(title).font(Theme.display(17, relativeTo: .headline)).foregroundStyle(Theme.textPrimary)
+        HStack(spacing: 7) {
+            Text(title).font(Theme.display(18, relativeTo: .headline)).tracking(-0.18)
+                .foregroundStyle(Theme.textPrimary)
             if count > 0 {
-                Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                Text("\(count)").font(Theme.mono(size: 13, weight: .medium, relativeTo: .footnote))
+                    .foregroundStyle(Theme.textTertiary)
             }
             if model.accounts.count > 1 {
                 if let a = model.currentAccount {
-                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
-                    Text(a.displayName).font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    Circle().fill(Theme.state(a.color)).frame(width: 7, height: 7)
+                    Text(a.displayName).font(Theme.sans(.subheadline, .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 } else {
                     HStack(spacing: -2) {
                         ForEach(model.accounts.prefix(3)) { a in
-                            Circle().fill(Theme.tagForeground(a.color)).frame(width: 7, height: 7)
+                            Circle().fill(Theme.state(a.color)).frame(width: 7, height: 7)
                         }
                     }
-                    Text("All").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                    Text("All").font(Theme.sans(.subheadline, .medium)).foregroundStyle(Theme.textSecondary)
                 }
                 Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
             }
@@ -385,14 +410,20 @@ struct TriageSplitBar: View {
     }
 
     /// One label as it is drawn: its name, the count behind the folder's.
+    /// The one in use is an ink capsule with the paper's colour for its
+    /// words (selection is ink) and its count a step lighter; the others
+    /// are plain words on the glass.
     private func segmentLabel(title: String, count: Int, on: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text(title).font(.subheadline.weight(on ? .bold : .medium))
-            if count > 0 { Text("\(count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textTertiary) }
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title).font(Theme.text(.preview, on ? .semibold : .medium))
+            if count > 0 {
+                Text("\(count)").font(Theme.text(.meta, .medium))
+                    .foregroundStyle(on ? Theme.onPrimary.opacity(0.75) : Theme.textTertiary)
+            }
         }
-        .foregroundStyle(on ? Theme.textPrimary : Theme.textSecondary)
+        .foregroundStyle(on ? Theme.onPrimary : Theme.textSecondary)
         .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(on ? Theme.card.opacity(0.95) : .clear, in: Capsule())
+        .background(on ? Theme.textPrimary : Color.clear, in: Capsule())
     }
 }
 
@@ -517,7 +548,10 @@ private struct PullDownReporter: ViewModifier {
 }
 
 /// The flat list with the gesture map and the desktop's day groups
-/// (Pinned · Today · Last 7 days · Older; due buckets in Scheduled).
+/// (Pinned · Today · Last 7 days · Older; due buckets in Scheduled). Its
+/// rows stand on the list's own paper, parted by a hairline; the last row
+/// of a group has none, the next group's title follows it
+/// (docs/specs/marker-look.md, R1, R2).
 struct ThreadList: View {
     @Binding var path: [ThreadRow]
     @Environment(AppModel.self) private var model
@@ -546,10 +580,13 @@ struct ThreadList: View {
             }
             ForEach(model.groupedRows) { group in
                 Section {
-                    ForEach(group.folds) { fold in foldCell(fold) }
-                    ForEach(group.rows) { row in cell(row) }
+                    ForEach(group.folds) { fold in foldCell(fold, ruled: !group.isLast(fold)) }
+                    ForEach(group.rows) { row in cell(row, ruled: !group.isLast(row)) }
                 } header: {
+                    // As far in as the rows' own text, with air above:
+                    // the title opens its group.
                     GroupHeader(group: group)
+                        .listRowInsets(EdgeInsets(top: titleAir(group), leading: 16, bottom: 6, trailing: 16))
                 }
             }
         }
@@ -569,16 +606,30 @@ struct ThreadList: View {
         // each reload, mid-scroll.
     }
 
+    /// The air over a group's title. A plain list puts 22 pt of its own
+    /// over every section header but the list's first, so only the group
+    /// that opens the list needs it from here: with both, two groups
+    /// stood 22 pt further apart than they are drawn (seen in the first
+    /// pictures of the look).
+    private func titleAir(_ group: RowGroup) -> CGFloat {
+        model.inboxParcels.isEmpty && group.id == model.groupedRows.first?.id ? 18 : 0
+    }
+
     /// One row with its gestures, annotation and menu. Its own builder so
-    /// the list body type-checks in reasonable time.
-    private func cell(_ row: ThreadRow) -> some View {
+    /// the list body type-checks in reasonable time. `ruled`: the hairline
+    /// under it, which every row but the last of its group has.
+    private func cell(_ row: ThreadRow, ruled: Bool) -> some View {
         // The thread open beside the list (the iPad's columns) is tinted.
         RowSwipes.row(row, model: model, background: row.id == openThreadId ? Theme.rowOpen : Theme.card) {
             ThreadRowView(row: row, showAccountDot: model.selectedAccountId == nil,
                           highlight: model.tab == .search ? model.searchTerms : [])
-                .padding(.horizontal, 16).padding(.vertical, 7)
+                // 16 pt in from each edge and 12 above and below (the
+                // row's own 2 included).
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                // The rule is the row's: it slides with it under a swipe,
+                // and the panel shows through where it was.
+                .ruledBelow(ruled)
                 .contentShape(Rectangle())
-                .unreadEdge(!row.isRead)
                 .onTapGesture {
                     Keyboard.dismiss()
                     if model.view == .drafts { model.openDraft(row); return }
@@ -591,7 +642,8 @@ struct ThreadList: View {
         // the second one" and "archive everything from Lufthansa
         // here" resolve against what is on screen.
         .siriEntity(MailThreadEntity.identifier(row.id))
-        .padding(.bottom, 1) // the gap between rows, canvas showing through
+        // No gap between rows and no separator of the list's: the rule
+        // above is drawn 16 pt in at both ends, 1 pt, in the app's grey.
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -600,21 +652,24 @@ struct ThreadList: View {
     }
 
     /// A bundle's quiet mail as one row (AppModel.fold): tap opens the
-    /// bundle, any swipe marks every email in it done.
-    private func foldCell(_ fold: BundleFold) -> some View {
-        let done = SwipeAction(title: "Mark all done", systemImage: "checkmark", tint: Theme.accent) {
+    /// bundle, any swipe marks every email in it done — the done moment,
+    /// so its panel is ink.
+    private func foldCell(_ fold: BundleFold, ruled: Bool) -> some View {
+        let done = SwipeAction(title: "Mark all done", systemImage: "checkmark", tint: Theme.textPrimary,
+                               ink: Theme.onPrimary, marksDone: true) {
             model.markDone(fold)
         }
         return SwipeableRow(leading: [done, done], trailing: [done, done], background: Theme.card) {
             BundleFoldRow(fold: fold)
-                .padding(.horizontal, 16).padding(.vertical, 7)
+                // As a mail row: 12 above and below with the row's own 2.
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .ruledBelow(ruled)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     Keyboard.dismiss()
                     model.openBundles(at: fold.bundle.id)
                 }
         }
-        .padding(.bottom, 1)
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -625,20 +680,61 @@ struct ThreadList: View {
     }
 }
 
+private extension RowGroup {
+    /// The group's last row on screen is the one with no rule under it.
+    /// Its folded bundles stand over its threads, so a fold is the last
+    /// only in a group that has no thread of its own.
+    func isLast(_ row: ThreadRow) -> Bool {
+        row.id == rows.last?.id
+    }
+
+    func isLast(_ fold: BundleFold) -> Bool {
+        rows.isEmpty && fold.id == folds.last?.id
+    }
+}
+
 /// The swipe tiers from Settings as actions on one row: the inbox list and
-/// the bundle view use the same ones. The words, glyph and colour are the
-/// action's own (Shared/RowActionPresentation.swift), as on the Mac.
+/// the bundle view use the same ones. The words and the glyph are the
+/// action's own (Shared/RowActionPresentation.swift), as on the Mac; the
+/// panel's fill is too, but for the two this look draws in ink and grey
+/// (`fill`).
 enum RowSwipes {
     @MainActor
     static func action(_ action: RowAction, _ row: ThreadRow, model: AppModel) -> SwipeAction {
-        SwipeAction(title: action.shortLabel(for: row), systemImage: action.glyph(for: row), tint: action.tint) {
+        SwipeAction(title: action.shortLabel(for: row), systemImage: action.glyph(for: row),
+                    tint: fill(action), ink: ink(action),
+                    // Not on a thread that is done already: there the
+                    // same tier undoes it ("Not done").
+                    marksDone: action == .done && !row.isDone) {
             model.run(action, on: row)
         }
     }
 
-    /// A row behind the four swipe tiers from Settings, on the card
-    /// surface: the inbox's cell and the bundle's (they each spelled the
-    /// tiers out).
+    /// The fill of an action's swipe panel. Mark done is ink: done is
+    /// ink and a strike in this look, never pink
+    /// (docs/specs/marker-look.md, R4, R10). Read / unread is the quiet
+    /// grey. The others keep the action's own fill (`RowAction.tint`: a
+    /// tag's colour, the same in both appearances).
+    static func fill(_ action: RowAction) -> Color {
+        switch action {
+        case .done: Theme.textPrimary
+        case .read: Theme.textTertiary
+        default: action.tint
+        }
+    }
+
+    /// The glyph and the word on that panel. Ink and the grey follow the
+    /// appearance (they turn light on dark), so what is written on them
+    /// is `onPrimary`; a tag's fill does not, and carries white.
+    static func ink(_ action: RowAction) -> Color {
+        switch action {
+        case .done, .read: Theme.onPrimary
+        default: Color.white
+        }
+    }
+
+    /// A row behind the four swipe tiers from Settings, on the paper: the
+    /// inbox's cell and the bundle's (they each spelled the tiers out).
     @MainActor
     static func row<Content: View>(_ row: ThreadRow, model: AppModel, background: Color = Theme.card,
                                    @ViewBuilder content: @escaping () -> Content) -> SwipeableRow<Content> {
@@ -649,29 +745,32 @@ enum RowSwipes {
 }
 
 extension View {
-    /// The unread mark: a 3 pt bar on the row's left edge, flush with
-    /// the screen (the inbox's rows and the bundle's).
-    func unreadEdge(_ unread: Bool) -> some View {
-        overlay(alignment: .leading) {
-            if unread { Rectangle().fill(Theme.unreadBar).frame(width: 3) }
+    /// The hairline under a row of a list (docs/specs/marker-look.md,
+    /// R2), as far in as the row's own text. It is part of the row: it
+    /// takes the row's background and moves with it under a swipe. The
+    /// last row of a group has none (`ruled` false).
+    func ruledBelow(_ ruled: Bool = true, inset: CGFloat = 16) -> some View {
+        VStack(spacing: 0) {
+            self
+            if ruled { RowRule().padding(.horizontal, inset) }
         }
     }
 }
 
-/// Day-group label in the desktop's small grey style. The AI summary of
-/// the whole view is the sparkle in the top bar.
+/// A day group's title: its name in the small mono capitals of every
+/// title, a rule filling the line and how many rows stand under it, all in
+/// the light grey of structure (`SectionTitle`). Pinned is titled as any
+/// other group. The AI summary of the whole view is the sparkle in the
+/// top bar.
 struct GroupHeader: View {
     let group: RowGroup
 
     var body: some View {
-        HStack {
-            Text(group.title)
-                .font(Theme.display(13, relativeTo: .caption))
-                .foregroundStyle(group.isPinned ? Theme.textSecondary : Theme.textTertiary)
-                .textCase(nil)
-            Spacer()
-        }
-        .padding(.horizontal, 4)
+        // A folded bundle is one row, as it is on screen.
+        SectionTitle(group.title, count: group.folds.count + group.rows.count)
+            // One stop for VoiceOver ("Today, 3"), as the title alone was.
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -817,19 +916,30 @@ struct FolderMoveItem: View {
     }
 }
 
+/// The list before its first load: rows of placeholder bars, ruled as the
+/// rows that will take their place are. Never a spinner in a list.
 struct SkeletonList: View {
+    /// How many placeholder rows: a phone's screenful.
+    private static let rows = 8
+
     var body: some View {
         List {
-            ForEach(0..<8, id: \.self) { _ in
+            ForEach(0..<Self.rows, id: \.self) { index in
                 VStack(alignment: .leading, spacing: 8) {
-                    RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(width: 140, height: 12)
-                    RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(height: 10)
-                    RoundedRectangle(cornerRadius: 4).fill(Theme.sunken).frame(width: 220, height: 10)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.separator).frame(width: 140, height: 12)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.separator).frame(height: 10)
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.separator).frame(width: 220, height: 10)
                 }
-                .padding(.vertical, 8)
+                // A mail row's measures: 16 pt in, 12 above and below,
+                // the hairline under every row but the last.
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .ruledBelow(index < Self.rows - 1)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 // Clear, so the skeleton stands on what the list will (the
-                // wash; the Mac window's grey), not on a flat canvas over it.
+                // phone's paper, the Mac window's own), not on a fill of
+                // its own over it.
                 .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
@@ -866,14 +976,15 @@ struct EmptyState: View {
     var body: some View {
         if let connect, !searching {
             ContentUnavailableView {
-                Label("Connect your Gmail", systemImage: "bird")
-                    .font(Theme.display(22, relativeTo: .title2))
+                Title(title: "Connect your Gmail", systemImage: "bird")
             } description: {
-                Text("Sign in with Google to bring your mail to this \(Device.name).")
+                Self.sentence(Text("Sign in with Google to bring your mail to this \(Device.name)."))
             } actions: {
+                // The screen's one ink action: an ink capsule with the
+                // paper's colour for its words.
                 Button(action: connect) {
                     Text("Add Google account")
-                        .font(.subheadline.weight(.bold))
+                        .font(Theme.text(.bodySmall, .semibold))
                         .foregroundStyle(Theme.onPrimary)
                         .padding(.horizontal, 6)
                 }
@@ -882,17 +993,49 @@ struct EmptyState: View {
             }
         } else {
             ContentUnavailableView {
-                Label(searching ? "No matches" : (view == .inbox ? "All clear" : "Nothing here"),
+                Title(title: searching ? "No matches" : (view == .inbox ? "All clear" : "Nothing here"),
                       systemImage: searching ? "magnifyingglass" : "bird")
-                    .font(Theme.display(22, relativeTo: .title2))
             } description: {
                 if searching {
-                    Text("Try other words or remove a filter.")
+                    Self.sentence(Text("Try other words or remove a filter."))
                 } else if let lastSyncAt {
-                    Text("Up to date as of \(Formatters.rowTime(lastSyncAt)).")
+                    // The time in the mono, as every time is.
+                    Self.sentence(Text("Up to date as of \(Self.syncTime(lastSyncAt))."))
                 } else {
-                    Text("Pull down to sync.")
+                    Self.sentence(Text("Pull down to sync."))
                 }
+            }
+        }
+    }
+
+    /// The sentence under the title: the interface face and the grey of
+    /// what is read second, set on the text itself (the system would
+    /// dress it in its own font and grey).
+    private static func sentence(_ text: Text) -> some View {
+        text.font(Theme.text(.bodySmall)).foregroundStyle(Theme.textSecondary)
+    }
+
+    /// The last sync's time, to stand in that sentence.
+    private static func syncTime(_ date: Date) -> Text {
+        Text(Formatters.rowTime(date)).font(Theme.mono(size: 14, relativeTo: .subheadline))
+    }
+
+    /// An empty state's title and symbol, as `ContentUnavailableView`
+    /// takes them: the title in the display face, drawn a little tight,
+    /// as a sheet's is; the symbol in ink at the size the system gives
+    /// it (the one drawing on an otherwise empty page). Both are set on
+    /// the text and the image themselves, where the system's own style
+    /// cannot replace them.
+    struct Title: View {
+        let title: String
+        let systemImage: String
+
+        var body: some View {
+            Label {
+                Text(title).font(Theme.display(24, relativeTo: .title2)).tracking(-0.4)
+                    .foregroundStyle(Theme.textPrimary)
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(Theme.textPrimary)
             }
         }
     }

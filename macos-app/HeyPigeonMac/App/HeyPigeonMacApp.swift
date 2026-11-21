@@ -56,6 +56,9 @@ struct HeyPigeonMacApp: App {
                 .environment(model)
                 .environment(updater)
                 .preferredColorScheme(scheme)
+                // Text that names no font of its own is set in the
+                // interface face too, here and in the scenes below.
+                .font(Theme.sans(.body))
                 .task {
                     await ReminderScheduler.requestPermission()
                     model.push.requestRegistration()
@@ -104,6 +107,7 @@ struct HeyPigeonMacApp: App {
             ThreadWindow(threadId: threadId)
                 .environment(model)
                 .preferredColorScheme(scheme)
+                .font(Theme.sans(.body))
         }
         .defaultSize(width: 760, height: 760)
 
@@ -111,6 +115,7 @@ struct HeyPigeonMacApp: App {
             MenuBarExtraView()
                 .environment(model)
                 .preferredColorScheme(scheme)
+                .font(Theme.sans(.body))
         } label: {
             MenuBarExtraLabel()
                 .environment(model)

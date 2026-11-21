@@ -24,16 +24,16 @@ struct ResultState<Content: View>: View {
         } else if let error {
             VStack(alignment: .leading, spacing: 8) {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.footnote).foregroundStyle(Theme.dangerText)
+                    .font(Theme.sans(.footnote)).foregroundStyle(Theme.dangerText)
                 if let retry {
                     Button("Try again", action: retry)
-                        .font(.subheadline.weight(.semibold))
+                        .font(Theme.sans(.subheadline, .semibold))
                 }
             }
         } else {
             HStack(spacing: 10) {
                 ProgressView()
-                Text(working).font(.body).foregroundStyle(Theme.textSecondary)
+                Text(working).font(Theme.text(.row)).foregroundStyle(Theme.textSecondary)
             }
         }
     }

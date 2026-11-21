@@ -9,8 +9,11 @@
 import SwiftUI
 
 /// The thread of a reply: optionally the subject, then each message as the
-/// thread view shows it — one line collapsed, the latest open. Loads what
-/// the store has at once and the full thread after.
+/// thread view shows it — one line collapsed, the latest open, on the
+/// composer's paper with a hairline between two of them. On the phone it
+/// opens under its own title ("Conversation" over a rule, with "Quote in
+/// reply" after it). Loads what the store has at once and the full
+/// thread after.
 struct ComposeThreadHistory: View {
     let threadId: String
     /// The subject over the messages: the Mac's reply folds its Subject
@@ -35,33 +38,35 @@ struct ComposeThreadHistory: View {
                     let subject = detail.thread.subject
                     Text(subject.isEmpty ? "(no subject)" : subject)
                         .font(Theme.display(20, relativeTo: .title2))
+                        .tracking(-0.4)
                         .foregroundStyle(Theme.textPrimary)
                         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
+                    // As in the thread: the messages open with the rule.
+                    SectionRule().padding(.horizontal, 16)
                 }
                 if let onQuote, let last = mail.last {
-                    HStack {
-                        Text(mail.count == 1 ? "Replying to" : "Conversation")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Theme.textTertiary)
-                        Spacer()
+                    // The conversation's title, and its one control after
+                    // the rule: ink, as something to press is, where the
+                    // title stands back.
+                    SectionTitle(title: mail.count == 1 ? "Replying to" : "Conversation") {
                         Button { onQuote(last) } label: {
                             Label("Quote in reply", systemImage: "text.quote")
-                                .font(.footnote.weight(.semibold))
+                                .font(Theme.text(.secondary, .semibold))
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(Theme.textPrimary)
                         .accessibilityHint("Adds the latest message to your reply as quoted text")
                     }
-                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 4)
                 }
-                VStack(spacing: 1) {
+                VStack(spacing: 0) {
                     ForEach(Array(mail.enumerated()), id: \.element.id) { index, m in
-                        HistoryMessageRow(message: m, expanded: expanded.contains(m.id) || index == mail.count - 1) {
+                        HistoryMessageRow(message: m, expanded: expanded.contains(m.id) || index == mail.count - 1,
+                                          ruled: index != mail.count - 1) {
                             if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
                         }
                     }
                 }
-                .background(Theme.separator.opacity(0.6))
             } else if !loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 24)
             }
@@ -81,10 +86,13 @@ struct ComposeThreadHistory: View {
 }
 
 /// One message of the history: sender · time and a snippet line; open, the
-/// recipients and the body. The thread view's row without its actions.
+/// recipients and the body. The thread view's row without its actions:
+/// on the composer's own paper, with the hairline under it that parts it
+/// from the next (the last has none).
 private struct HistoryMessageRow: View {
     let message: MessageItem
     let expanded: Bool
+    let ruled: Bool
     let onToggle: () -> Void
 
     var body: some View {
@@ -99,8 +107,12 @@ private struct HistoryMessageRow: View {
                     .padding(.top, 12)
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, expanded ? 12 : 9)
+        .padding(.horizontal, 16).padding(.vertical, expanded ? 14 : 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(expanded ? Theme.card : Theme.canvas)
+        .overlay(alignment: .bottom) {
+            if ruled {
+                RowRule().padding(.horizontal, 16).allowsHitTesting(false)
+            }
+        }
     }
 }

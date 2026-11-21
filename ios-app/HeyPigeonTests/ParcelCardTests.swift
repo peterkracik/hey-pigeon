@@ -160,6 +160,21 @@ struct ParcelRuleTests {
         #expect(ParcelCard.dismissedToast(3) == "3 parcels dismissed")
     }
 
+    /// The status line comes apart around the host its button opens (the
+    /// view sets the host in the mono) and goes back together to the same
+    /// words; a line that does not name the host stays whole.
+    @Test func theStatusLineSplitsAroundItsHost() {
+        let line = "Expected tomorrow · www.dhl.test · 2 updates"
+        let pieces = ParcelCard.statusPieces(line, host: "www.dhl.test")
+        #expect(pieces.before == "Expected tomorrow · ")
+        #expect(pieces.host == "www.dhl.test")
+        #expect(pieces.after == " · 2 updates")
+        #expect(pieces.before + pieces.host + pieces.after == line)
+        let whole = ParcelCard.statusPieces("Expected tomorrow", host: "www.dhl.test")
+        #expect(whole.before == "Expected tomorrow")
+        #expect(whole.host.isEmpty && whole.after.isEmpty)
+    }
+
     @MainActor @Test func aBundleUnderTheCardGetsNoFoldedRowAndItsMailIsCounted() {
         let rows = [quiet("r1", bundle: "b1"), quiet("r2", bundle: "b1"), quiet("r3", bundle: "b2"),
                     quiet("r4", bundle: "b2"), makeRow("plain", read: false)]

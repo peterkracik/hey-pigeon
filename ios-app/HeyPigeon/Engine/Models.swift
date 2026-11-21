@@ -438,9 +438,9 @@ enum ReadStatusText {
 }
 
 extension ThreadRow {
-    /// The row's state in words, for VoiceOver on both apps: unread is a
-    /// bar (a dot on the Mac) and a font weight, the rest bare symbols or
-    /// a time. In the app's own words ("Need reply", "Follow up … if no
+    /// The row's state in words, for VoiceOver on both apps: unread is
+    /// the highlighter and a font weight, the rest bare symbols or a
+    /// time. In the app's own words ("Need reply", "Follow up … if no
     /// reply").
     func spokenState(showsDone: Bool) -> String {
         var parts: [String] = []

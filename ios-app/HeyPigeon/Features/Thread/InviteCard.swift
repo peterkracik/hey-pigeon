@@ -3,6 +3,11 @@
 // with Accept · Maybe · Decline, which answer the organizer by mail from
 // the account that was invited (through the send's usual Undo), and Add
 // to Calendar.
+//
+// It is a block of the thread's paper under its own title, not a card
+// (docs/specs/marker-look.md): "Invitation" over a rule, the event as
+// writing with its time in the mono, and the answers as outlined
+// capsules. None of them is ink: the thread's one ink action is Reply.
 
 import SwiftUI
 
@@ -18,16 +23,18 @@ struct InviteCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("Invitation")
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: invite.isCancellation ? "calendar.badge.minus" : "calendar")
                     .font(.title3)
                     .foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(invite.summary.isEmpty ? "Invitation" : invite.summary)
-                        .font(Theme.bodySmall.weight(.semibold))
+                        .font(Theme.text(.bodySmall, .semibold))
                         .foregroundStyle(Theme.textPrimary)
+                    // A date and a time are data: the mono.
                     if let when = invite.whenText {
-                        Text(when).font(Theme.secondary).foregroundStyle(Theme.textSecondary)
+                        Text(when).font(Theme.meta).foregroundStyle(Theme.textSecondary)
                     }
                     if let place = invite.location {
                         Text(place).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(2)
@@ -48,26 +55,34 @@ struct InviteCard: View {
                         ForEach(CalendarInvite.Answer.allCases) { answer in
                             Button { send(answer) } label: {
                                 Label(answer.title, systemImage: answered == answer ? "checkmark" : symbol(answer))
+                                    .font(Self.answerFont)
                             }
                             .disabled(answered != nil)
                         }
                     }
                     if canAdd {
-                        Button { add() } label: { Label(added ? "Added" : "Add to Calendar", systemImage: added ? "checkmark" : "calendar.badge.plus") }
-                            .disabled(added)
+                        Button { add() } label: {
+                            Label(added ? "Added" : "Add to Calendar", systemImage: added ? "checkmark" : "calendar.badge.plus")
+                                .font(Self.answerFont)
+                        }
+                        .disabled(added)
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                // The small capsule: four of them stand in a line of the
+                // thread, under the event they answer.
+                .buttonStyle(OutlineButtonStyle(compact: true))
             }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.separator, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Invitation: \(invite.summary)")
     }
+
+    /// The answers' words: the thread's small text in semibold, a step
+    /// under the event's own name. Said on the labels: the capsule's own
+    /// size is a text style, which is smaller than this in the Mac's
+    /// window.
+    private static let answerFont = Theme.text(.secondary, .semibold)
 
     private var canAdd: Bool { CalendarAccess.isAvailable && !invite.isCancellation && invite.start != nil }
 

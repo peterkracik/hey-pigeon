@@ -9,14 +9,17 @@ a Mac has: a menu bar, the desktop's keyboard map, a command palette, hover
 actions, a Settings window, a menu bar extra, and a thread in its own
 window. The window follows the first desktop client (the Svelte one)
 under a standard Mac toolbar: the traffic lights, then Inbox · Remind me ·
-Need reply at the left, the actions at the right; a grey sidebar (folders,
-labels, the account menu) that starts hidden, behind a glass button in
-the bottom corner; single-line rows on white day-group cards that open in
-place with "Open full thread ›"; the triage labels as the phone's glass
-pill at the bottom; search and the command palette as Spotlight panels
-over the blurred window; Settings (⌘,) as a page of the window; no
-scroll bars. Design notes in
-[docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
+Need reply at the left, the actions at the right; a sidebar (folders,
+labels, the account menu) on the same paper as the list, parted from it
+by a hairline, that starts hidden, behind a glass button in the bottom
+corner; single-line ruled rows under their day's light grey title that
+open in place with "Open full thread ›"; the triage labels as the
+phone's glass pill at the bottom; search and the command palette as
+Spotlight-style panels (the paper with an ink outline) over the dimmed
+window; Settings (⌘,) as a page of the window; no scroll bars. The look
+is the phone's — paper, ink and one pink highlighter
+([docs/specs/marker-look.md](../docs/specs/marker-look.md)). Design notes
+in [docs/porting-macos-ipados.md](../docs/porting-macos-ipados.md).
 
 ```text
 macos-app/
@@ -29,7 +32,7 @@ macos-app/
                           batch bar), ThreadPage (the title row over the shared ThreadView; + ThreadWindow),
                           WindowState (the open thread, the cursor, the keyboard map, every action),
                           CommandPalette (⌘K; ⌘B for bundles), ShortcutsSheet (?), MenuBarExtraView
-    Resources/            The Mac icon set; drop Manrope-*.ttf into Fonts/ for the brand typeface
+    Resources/            The Mac icon set (the fonts are the phone's: ../ios-app/HeyPigeon/Resources/Fonts)
   HeyPigeonMacShare/      The share menu's "Hey Pigeon": NSViewController over the shared ShareView
   HeyPigeonMacTests/      Swift Testing: the keyboard map, the selection, the palette filter, the widget links
   scripts/build-rust.sh   cargo (aarch64-apple-darwin) → uniffi → xcframework, via the iOS script
@@ -42,7 +45,7 @@ macos-app/
 
 | | Phone | Mac |
 | --- | --- | --- |
-| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1120 pt), a thread in its place (`NavigationStack`) as a 760 pt reading column — the messages on one white card, Reply · Reply all · Forward at the last one's foot, the triage buttons on a small floating card — the folders in a grey sidebar (⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no window title; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
+| Layout | Tabs + a stack + sheets | One column like the phone: the list full width (to 1120 pt), a thread in its place (`NavigationStack`) as a 760 pt reading column — the messages flat on the paper, parted by hairlines, Reply · Reply all · Forward at the last one's foot, the triage buttons on a small floating panel — the folders in a sidebar (⌘S); a standard toolbar, the triage labels as a glass pill at the bottom, Spotlight-style search; a click opens a row in place, Return or its arrow the full thread; no window title; Settings is a page of the window (⌘,); ⌘↩ opens a thread in its own window |
 | Actions on a row | Two-tier swipes, long-press menu | The keyboard map (`e h n s u # r a f l v i j k`, `g`-chords, `0 1 2`, `/`, `⌘K`, `?`), a hover bar (Done + the four swipe actions from Settings), two-finger trackpad swipes (the same four), the context menu, the Message menu with ⌘ equivalents |
 | After Mark done | Undo toast, back to the list | Undo toast, and `Z` / ⌘Z for two minutes after it; in a thread the next one opens, in the list the next row takes the cursor (auto-advance) |
 | Several at once | — | ⌘/⇧-click rows, or ⇧J / ⇧K / X and ⌘A from the keyboard: a batch bar on a bordered panel at the bottom; rows drag onto a label, a bundle or a folder in the sidebar |
@@ -56,9 +59,10 @@ macos-app/
 | Compose | Full-screen sheet | A reply is written under its thread, scrolled to the middle (a sheet for a new message, a forward, or a reply pulled out into a window): an HTML editor (paragraphs, lists, ⌘B/⌘I/⌘U, ⌘K, a floating toolbar over a selection), attachments (also dropped on the composer or pasted), snippets, send later (the clock beside Send: sent by this Mac while the app is open), From with the account's Gmail aliases, the AI as a panel under the text (⌘J), ⌘↩ sends |
 | Gmail | — | Labels are made, renamed and deleted from the sidebar; Report spam, Not spam and Move to inbox in the menus and the palette; Unsubscribe on a list's mail; "Search all of Gmail" under the search results; an invitation's card answers the organizer and adds the event to Calendar |
 
-Everything else — the rows, the thread view with its glass bars, the Remind
-sheet, the summaries, Ask my inbox, attachments and "Explain attachment",
-Settings' sections — is the phone's code.
+Everything else — the thread view, the Remind sheet, the summaries, Ask
+my inbox, attachments and "Explain attachment", Settings' sections — is
+the phone's code, and so are the look's tokens and pieces (`Theme`,
+`Marker.swift`); `MacStyle.swift` holds the window's own.
 
 ## Build
 

@@ -137,7 +137,7 @@ final class WindowState: Equatable {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "sidebarShown") }
     }
     /// The row opened in place: a click shows its latest message under the
-    /// row, the desktop's preview card, without leaving the list; its arrow
+    /// row, the desktop's preview, without leaving the list; its arrow
     /// (or Return) opens the full thread.
     var expanded: String?
     /// The list and the open thread side by side (View › Reading Pane, on
@@ -161,8 +161,9 @@ final class WindowState: Equatable {
     /// it. The window's, so the open email is the window's open thread.
     var bundlePath: [BundleRoute] = []
     /// A bundle's own screen (its Emails or Info page) is the top of the
-    /// Bundles page's stack: the page then stands on the list's
-    /// background, to the window's edges, as the inbox's cards do.
+    /// Bundles page's stack. (The page's background used to follow it,
+    /// while a bundle's pages stood on a grey of their own; every page is
+    /// the paper now.)
     var showsBundleScreen: Bool {
         if case .bundle? = bundlePath.last { true } else { false }
     }
@@ -374,7 +375,7 @@ final class WindowState: Equatable {
         showSettings = false
         searching = false
         showPalette = false
-        // A row's open card is its page's: the list's does not follow
+        // A row's open preview is its page's: the list's does not follow
         // into a bundle, nor a bundle's back to the list.
         expanded = nil
         bundlePath = id.map { [.bundle($0)] } ?? []
@@ -396,8 +397,8 @@ final class WindowState: Equatable {
         if bundlePath.isEmpty { closeBundles() } else { bundlePath.removeLast() }
     }
 
-    /// Esc on the Bundles page: a row's open card closes first, as in the
-    /// list; then one step back.
+    /// Esc on the Bundles page: a row's open preview closes first, as in
+    /// the list; then one step back.
     private func escapeInBundles() {
         if case .bundle? = bundlePath.last, expanded != nil { expanded = nil } else { backInBundles() }
     }
@@ -457,8 +458,8 @@ final class WindowState: Equatable {
     /// a folder switch just clears it.
     func rowsChanged(in model: AppModel) {
         let ids = flatIds(model)
-        // The previewed row left (done, delete, a reminder): its card goes
-        // with it; the highlight moves on below as for any row.
+        // The previewed row left (done, delete, a reminder): its preview
+        // goes with it; the highlight moves on below as for any row.
         if let open = expanded, !ids.contains(open) { expanded = nil }
         if let open = path.last {
             guard !ids.contains(open.id) else { return }

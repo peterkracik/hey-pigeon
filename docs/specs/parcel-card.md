@@ -96,7 +96,11 @@ What a parcel is and what is known about it (core):
   link's text is looked for only after a quoted address and within 512
   bytes.
 
-The card (shared shell):
+The card (shared shell). "Card" is its name, not its shape: it is drawn
+as the list around it is (`marker-look.md`) — a group under the title's
+rule, no box and no fill, the bundle's icon in an outlined square, the
+host in the mono (`ParcelCard.statusPieces` finds it in the line), Track
+parcel an outlined capsule and View details plain text.
 
 - R9. The card shows in the **plain inbox** only — the Inbox view with no
   search and no triage-label filter, for one account or all (a parcel
@@ -176,7 +180,7 @@ The card (shared shell):
 | --- | --- |
 | Core (`crates/core/src/parcels.rs`) | `Delivery`, `ParcelStatus`; `from_markup` (JSON-LD, microdata), `from_text`; `remember_deliveries` (after a full fetch) and the text pass in `bundles::link_pass`; `overview` (R1–R7). `Message.delivery` carries what the Gmail adapter read before sanitizing (`adapter-gmail` `full_fetch`), as `open_token` does. Port: `Store::set_thread_deliveries`, `thread_deliveries` (default impls; `MemStore`, SQLite), and `Store::list_recent_bundle_threads` (the overview's fifteen newest threads of the window, by `LIMIT`, not the whole bundle). Migration v35: `thread_deliveries`, and a one-time re-read (scan and body) of **bundled** mail from the last 45 days so parcels already on their way get a status; mail in no bundle is not touched, so the upgrade moves no thread into a bundle and reopens none. |
 | Bridge (`crates/ffi/src/bundles.rs`) | `Engine::tracking_overview(utc_offset_minutes) -> [Parcel]`, records `Parcel`, `ParcelStatus`. `RustEngine` / `RustStoreReader.parcels()`, which makes a parcel only of a link `MailLink.url(_:host:)` accepts (http/https, no user or password, the URL's own host equal to the core's); `MockEngine.parcels()` over `parcelStore`, and a sample order in the sample inbox (`MockEngine.withSampleOrder`; `HEYPIGEON_MOCK_ORDER=0` runs the mock without it). |
-| Shared shell (`ios-app/HeyPigeon`) | `ParcelItem`; `ListSnapshot.parcels`; `AppModel`: `parcels`, `inboxParcels`, `parcelFolds`, `parcelUpdates`, `listIsEmpty`, `openParcelDetails`, `openThread(id:)`, `dismiss(_:)`, `dismissAllParcels`, `markDone(_ fold)`, the two prefs (Track parcel is `Browser.open`, from the view: it changes no state); pure rules in `ParcelCard` (`visible`, `dismissing`, `statusLine`, `expected`, `updates`, `title`, `trackLabel`) and `MailLink`; the view `ParcelCardView` (`Features/Bundles/ParcelCard.swift`); the Settings toggle. |
+| Shared shell (`ios-app/HeyPigeon`) | `ParcelItem`; `ListSnapshot.parcels`; `AppModel`: `parcels`, `inboxParcels`, `parcelFolds`, `parcelUpdates`, `listIsEmpty`, `openParcelDetails`, `openThread(id:)`, `dismiss(_:)`, `dismissAllParcels`, `markDone(_ fold)`, the two prefs (Track parcel is `Browser.open`, from the view: it changes no state); pure rules in `ParcelCard` (`visible`, `dismissing`, `statusLine`, `statusPieces`, `expected`, `updates`, `title`, `trackLabel`) and `MailLink`; the view `ParcelCardView` (`Features/Bundles/ParcelCard.swift`); the Settings toggle. |
 | iPhone / iPad only | The card as the first section of `ThreadList`. |
 | Mac only (`macos-app/HeyPigeonMac`) | The card as the first row of `InboxPage`'s list; palette entries. |
 

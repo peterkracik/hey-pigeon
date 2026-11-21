@@ -50,16 +50,18 @@ extension RowAction {
     }
 
     /// The swipe panel's colour, on the phone and under the Mac's trackpad
-    /// swipe: the accent for the "done" moment, the tag colours for the
-    /// rest. White text sits on every one of them.
+    /// swipe: ink for the "done" moment, the tag colours for the rest.
+    /// White text sits on every one of them (the Mac's swipe draws its
+    /// glyph white whatever the app says, so each is dark in both
+    /// appearances; the phone's own Done panel is `textPrimary`).
     var tint: Color {
         switch self {
-        case .done: Theme.accent
+        case .done: Theme.doneFill
         case .delete: Theme.danger
-        case .remind: Theme.navy700
+        case .remind: Theme.remindFill
         case .needReply: Theme.needReply
         case .pin: Theme.pinStrong
-        case .read: Theme.navy500
+        case .read: Theme.readFill
         }
     }
 

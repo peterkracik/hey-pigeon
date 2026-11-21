@@ -19,8 +19,9 @@ HeyPigeon/
   Features/   SwiftUI screens: Inbox, Thread, Compose, Search, Sidebar, Settings, Remind
   Intents/    App Intents, entities, Mail schema, Spotlight indexer, donations
   AI/         Foundation Models backend + providers, triage prompt/agent/tools, Ask my inbox, attachments, translation, usage
-  Shared/     Platform (UIKit/AppKit door), Theme, Formatters, notifications, widgets snapshot, Live Activities, deep links
-    WidgetShared/  compiled into the app AND both extensions — Foundation/SwiftUI/AppIntents/ActivityKit only
+  Shared/     Platform (UIKit/AppKit door), Theme (tokens, type), Marker (the look's shared pieces), Formatters, notifications, widgets snapshot, Live Activities, deep links
+    WidgetShared/  compiled into the app AND both extensions — Foundation/SwiftUI/AppIntents/ActivityKit only (Typeface, WidgetPalette)
+  Resources/  the app icon, the two type families (Fonts/, with their licences)
 HeyPigeonWidgets/  widget extension (reads the App Group snapshot; never links Rust)
 HeyPigeonShare/    share extension (writes a PendingShare; never sends)
 HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt harnesses
@@ -103,6 +104,18 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   the sample inbox. Every wait in a test has a timeout.
 - **SwiftUI `List` aborts on duplicate ids.** Rows go through
   `AppModel.unique`; keep it that way when adding sources of rows.
+- **The look is `Theme` and `Marker.swift`.** Paper, ink and one pink
+  highlighter (`../docs/specs/marker-look.md`). A feature file names a
+  token (`Theme.textSecondary`, `Theme.state(_:)`), a type role
+  (`Theme.text(.row, .medium)`: the weight is an argument, never
+  `.weight()` or `.bold()` on the result; an SF Symbol takes
+  `Theme.glyph`) and a shared piece (`SectionTitle`, `SectionRule`,
+  `StateMark`, `TagText`, `marker()`, `InkButtonStyle`,
+  `OutlineButtonStyle`, `menuCard()`) — never a hex value, a system text
+  font, a card or a tinted chip. Pink only says "look here" (an unread
+  sender, what the AI suggests). The widgets and the share extension
+  cannot see `Theme`: they use `Typeface` and `WidgetPalette`, which
+  carry the same values. Mail itself stays in the system font.
 - **The parcel card is the list's first section, and the model's.**
   Parcels on their way (`docs/specs/parcel-card.md`) come with the
   reload (`ListSnapshot.parcels`, one engine call, only ever made off

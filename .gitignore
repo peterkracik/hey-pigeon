@@ -21,7 +21,6 @@ macos-app/HeyPigeonMac/ShareInfo.plist
 macos-app/HeyPigeonMac/*.entitlements
 macos-app/Config/Local.xcconfig
 macos-app/build
-macos-app/HeyPigeonMac/Resources/Fonts/*.ttf
 *.xcuserstate
 # Terraform (terraform/, terraform/bootstrap/)
 **/.terraform/

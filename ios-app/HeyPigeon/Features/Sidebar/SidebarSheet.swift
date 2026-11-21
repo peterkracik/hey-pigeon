@@ -1,7 +1,10 @@
 // The sidebar: accounts (desktop 0/1/2), folders, labels, Settings — the
-// desktop sidebar as a sheet, opened from the top-left circle. Same canvas
-// as the main screens, sections on white cards, close in the nav bar.
-// Each label has a pin; once any is pinned, the card shows only those,
+// desktop sidebar as a sheet, opened from the top-left circle. The menu
+// sheets' look (docs/specs/marker-look.md): ruled rows on the sheet's
+// paper, a title only where a section has a name, close in the nav bar.
+// The folder and the account on screen are the sunken rows with the
+// heavier name and the checkmark; a count is in the mono.
+// Each label has a pin; once any is pinned, the section shows only those,
 // with ••• for the rest (AppModel.sidebarLabels, shared with the Mac).
 // The list itself is `SidebarList`: the sheet shows it on the phone, and
 // the iPad's split layout as its sidebar column (Features/Pad).
@@ -35,9 +38,9 @@ struct SidebarList: View {
     private let isColumn: Bool
     private let onPick: () -> Void
     @Environment(AppModel.self) private var model
-    /// ••• in the labels card: the unpinned labels too. Per device.
+    /// ••• in the labels section: the unpinned labels too. Per device.
     @AppStorage("sidebarAllLabels") private var allLabels = false
-    /// "N more" in the bundles card: every active bundle, hidden ones too.
+    /// "N more" in the bundles section: every active bundle, hidden ones too.
     @AppStorage("sidebarAllBundles") private var allBundles = false
     /// Gmail labels made, renamed and deleted from here (LabelDialogs).
     @State private var labelEditing = LabelEditing()
@@ -57,15 +60,19 @@ struct SidebarList: View {
         List {
             Section {
                 tabRow(.search, count: 0)
+            } header: {
+                SectionRule()
             }
             .menuCard()
             Section {
                 folderRow(.inbox)
+            } header: {
+                SectionRule()
             }
             .menuCard()
-            // Whose mail every list shows. A card of its own: in one card
-            // with Inbox, the folder's checkmark and the account's sat one
-            // above the other and meant different things.
+            // Whose mail every list shows. A section of its own: in one
+            // section with Inbox, the folder's checkmark and the account's
+            // sat one above the other and meant different things.
             Section {
                 accountRow(nil, title: "All accounts", subtitle: nil, color: nil)
                 ForEach(model.accounts) { a in
@@ -75,7 +82,9 @@ struct SidebarList: View {
                     // its sign-in: the line used to send the user to
                     // Settings to find the same button. The consent sheet
                     // needs a window to present over, and closing this sheet
-                    // first tore it down: stay up until it finishes.
+                    // first tore it down: stay up until it finishes. What
+                    // went wrong is the account's own line, in its colour;
+                    // the way out of it is an action, so ink.
                     if disconnected {
                         Button {
                             Task {
@@ -84,10 +93,11 @@ struct SidebarList: View {
                             }
                         } label: {
                             Label("Reconnect \(a.displayName)", systemImage: "arrow.clockwise")
-                                .foregroundStyle(Theme.dangerText)
                         }
                     }
                 }
+            } header: {
+                SectionRule()
             }
             .menuCard()
             // Read status's list (docs/specs/read-status.md R7), between
@@ -97,6 +107,8 @@ struct SidebarList: View {
             if model.readStatusAvailable {
                 Section {
                     Button { onPick(); model.showRecentOpens() } label: { Label(RecentOpens.title, systemImage: RecentOpens.symbol) }
+                } header: {
+                    SectionRule()
                 }
                 .menuCard()
             }
@@ -113,6 +125,8 @@ struct SidebarList: View {
                 folderRow(.all)
                 folderRow(.spam)
                 folderRow(.trash)
+            } header: {
+                SectionRule()
             }
             .menuCard()
             if !labels.isEmpty || model.labelAccountId != nil {
@@ -140,6 +154,8 @@ struct SidebarList: View {
                         .accessibilityLabel(allLabels ? "Show pinned labels only" : "Show all labels, \(rows.hidden) more")
                     }
                     Button { labelEditing.startNew() } label: { Label("New label", systemImage: "plus") }
+                } header: {
+                    SectionRule()
                 }
                 .menuCard()
             }
@@ -147,10 +163,15 @@ struct SidebarList: View {
             // was a second door to something done once.
             Section {
                 Button { onPick(); model.showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+            } header: {
+                SectionRule()
             }
             .menuCard()
         }
         .menuList()
+        // A row's name is the interface face at its medium weight; the
+        // row on screen asks for the heavier one itself (`rowFont`).
+        .font(Theme.text(.row, .medium))
         .foregroundStyle(Theme.textPrimary)
         .labelDialogs($labelEditing)
     }
@@ -161,31 +182,50 @@ struct SidebarList: View {
         onPick()
     }
 
+    /// The name of a row: heavier on the row that is on screen (the
+    /// folder, the account, a column's tab). With the sunken step under
+    /// it and the checkmark, that is how the look marks a selected row
+    /// (marker-look R9); the checkmark keeps it from resting on a colour.
+    private static func rowFont(_ selected: Bool) -> Font {
+        Theme.text(.row, selected ? .semibold : .medium)
+    }
+
+    /// What lies under a row: the sunken step for the row on screen, the
+    /// sheet's paper for every other (`menuCard` clears the list's own).
+    private static func rowBackground(_ selected: Bool) -> Color {
+        selected ? Theme.sunken : Color.clear
+    }
+
     private func folderRow(_ view: MailView, title: String? = nil, count: Int? = nil) -> some View {
         let n = count ?? model.counts[view.countKey] ?? 0
+        let selected = model.tab == .inbox && model.folder == view
         return Button { go(view) } label: {
             HStack {
                 Label(title ?? view.title, systemImage: view.systemImage)
+                    .font(Self.rowFont(selected))
                 Spacer()
-                if n > 0 { Text("\(n)").font(.subheadline).foregroundStyle(Theme.textTertiary) }
-                if model.tab == .inbox && model.folder == view {
+                if n > 0 { Text("\(n)").font(Theme.meta).foregroundStyle(Theme.textTertiary) }
+                if selected {
                     Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                 }
             }
         }
+        .listRowBackground(Self.rowBackground(selected))
     }
 
     /// A label, with a pin on the right: pinned labels are the ones the
-    /// card shows until ••• opens the rest.
+    /// section shows until ••• opens the rest.
     private func labelRow(_ l: MailLabelItem) -> some View {
         let view = MailView.label(id: l.id, name: l.name)
         let pinned = model.pinnedLabelIds.contains(l.id)
+        let selected = model.tab == .inbox && model.folder == view
         return HStack {
             Button { go(view) } label: {
                 HStack {
                     Label(l.name, systemImage: "tag")
+                        .font(Self.rowFont(selected))
                     Spacer()
-                    if model.tab == .inbox && model.folder == view {
+                    if selected {
                         Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                     }
                 }
@@ -202,9 +242,10 @@ struct SidebarList: View {
             .buttonStyle(.plain)
             .accessibilityLabel(pinned ? "Unpin \(l.name)" : "Pin \(l.name)")
         }
+        .listRowBackground(Self.rowBackground(selected))
     }
 
-    /// The Bundles card, under the inboxes and Recent Opens: the most recent ones,
+    /// The Bundles section, under the inboxes and Recent Opens: the most recent ones,
     /// "N more" for the rest (hidden ones included, to show them again),
     /// then the whole list. A bundle opens its own sheet; this one closes.
     private var bundlesSection: some View {
@@ -225,7 +266,7 @@ struct SidebarList: View {
                 Label(model.activeBundles.isEmpty ? "Bundles" : "All bundles", systemImage: "square.stack")
             }
         } header: {
-            Text("Bundles").textCase(nil)
+            SectionTitle("Bundles")
         }
         .menuCard()
     }
@@ -241,7 +282,7 @@ struct SidebarList: View {
                         .opacity(hidden ? 0.5 : 1)
                     Spacer()
                     if b.openCount > 0 {
-                        Text("\(b.openCount)").font(.subheadline).foregroundStyle(Theme.textTertiary)
+                        Text("\(b.openCount)").font(Theme.meta).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 .contentShape(Rectangle())
@@ -267,52 +308,58 @@ struct SidebarList: View {
     }
 
     private func tabRow(_ tab: MainTab, count: Int) -> some View {
-        Button { model.tab = tab; onPick() } label: {
+        // Beside the list there is no tab bar to say which place is
+        // shown; the sheet has one behind it.
+        let selected = isColumn && model.tab == tab
+        return Button { model.tab = tab; onPick() } label: {
             HStack {
                 Label(tab.title, systemImage: tab.systemImage)
+                    .font(Self.rowFont(selected))
                 Spacer()
-                if count > 0 { Text("\(count)").font(.subheadline).foregroundStyle(Theme.textTertiary) }
-                // Beside the list there is no tab bar to say which place
-                // is shown; the sheet has one behind it.
-                if isColumn && model.tab == tab {
+                if count > 0 { Text("\(count)").font(Theme.meta).foregroundStyle(Theme.textTertiary) }
+                if selected {
                     Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                 }
             }
         }
+        .listRowBackground(Self.rowBackground(selected))
     }
 
     private func accountRow(_ id: String?, title: String, subtitle: String?, color: AccountColor?, disconnected: Bool = false) -> some View {
-        Button {
+        let selected = id == model.selectedAccountId
+        return Button {
             model.selectedAccountId = id
             Haptics.light()
             onPick()
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 1) {
-                    // The account dot sits right in front of the name.
+                    // The account's dot sits right in front of the name:
+                    // 6 pt in the account's colour, as on a mail row.
                     HStack(spacing: 7) {
                         if let color {
-                            Circle().fill(Theme.tagForeground(color)).frame(width: 9, height: 9)
+                            Circle().fill(Theme.state(color)).frame(width: 6, height: 6)
                         } else {
-                            HStack(spacing: -3) {
+                            HStack(spacing: -2) {
                                 ForEach(model.accounts.prefix(3)) { a in
-                                    Circle().fill(Theme.tagForeground(a.color)).frame(width: 9, height: 9)
+                                    Circle().fill(Theme.state(a.color)).frame(width: 6, height: 6)
                                 }
                             }
                         }
-                        Text(title)
+                        Text(title).font(Self.rowFont(selected))
                     }
                     if disconnected {
-                        Text("Disconnected — mail is not syncing").font(.caption).foregroundStyle(Theme.dangerText)
+                        Text("Disconnected — mail is not syncing").font(Theme.secondary).foregroundStyle(Theme.dangerText)
                     } else if let subtitle {
-                        Text(subtitle).font(.caption).foregroundStyle(Theme.textTertiary)
+                        Text(subtitle).font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 Spacer()
-                if id == model.selectedAccountId {
+                if selected {
                     Image(systemName: "checkmark").font(.footnote.weight(.semibold))
                 }
             }
         }
+        .listRowBackground(Self.rowBackground(selected))
     }
 }

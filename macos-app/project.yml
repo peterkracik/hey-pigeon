@@ -36,7 +36,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.2.0"
+    MARKETING_VERSION: "0.3.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: false # build-rust.sh writes into the package dir
     # Required for notarized direct distribution (publish-macos.yml).
@@ -59,11 +59,10 @@ targets:
           - "App/AppDelegate.swift"
           - "Resources/**"
       - path: HeyPigeonMac
-        excludes:
-          - "Resources/Fonts/**"
-      # Drop Manrope-*.ttf here for the brand typeface (ATSApplicationFontsPath
-      # below); without the files SwiftUI falls back to the system font.
-      - path: HeyPigeonMac/Resources/Fonts
+      # The app's two typefaces and their licences, the phone's own files
+      # (Shared/WidgetShared/Typeface.swift): a folder in the bundle's
+      # Resources, which ATSApplicationFontsPath below names.
+      - path: ../ios-app/HeyPigeon/Resources/Fonts
         type: folder
         buildPhase: resources
     entitlements:
@@ -204,6 +203,10 @@ targets:
           - "AnalysisLiveActivity.swift"
       - path: ../ios-app/HeyPigeon/Shared/WidgetShared
         name: WidgetShared
+      # The typefaces: an extension has a bundle of its own.
+      - path: ../ios-app/HeyPigeon/Resources/Fonts
+        type: folder
+        buildPhase: resources
     entitlements:
       path: HeyPigeonMac/HeyPigeonWidgets.entitlements
       properties:
@@ -224,6 +227,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         HeyPigeonAppGroup: $(TeamIdentifierPrefix)group.app.heypigeon
+        ATSApplicationFontsPath: Fonts
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
@@ -238,6 +242,10 @@ targets:
         name: SharedShare
       - path: ../ios-app/HeyPigeon/Shared/WidgetShared
         name: WidgetShared
+      # The typefaces: an extension has a bundle of its own.
+      - path: ../ios-app/HeyPigeon/Resources/Fonts
+        type: folder
+        buildPhase: resources
     entitlements:
       path: HeyPigeonMac/HeyPigeonShare.entitlements
       properties:
@@ -258,6 +266,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         HeyPigeonAppGroup: $(TeamIdentifierPrefix)group.app.heypigeon
+        ATSApplicationFontsPath: Fonts
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController

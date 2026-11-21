@@ -1,8 +1,9 @@
 // The window's root page, under the window's toolbar (MainToolbar): the
 // list, full width up to a readable maximum, in the first desktop
-// client's shape — single-line rows, like a to-do list, with Done first
-// in the hover bar (MailRow), the day groups between them, a click opening the row's
-// latest message in place as a card with "Open full thread ›". ⌘-click
+// client's shape — single-line ruled rows, like a to-do list, with Done
+// first in the hover bar (MailRow), under their day's light grey title, a
+// click opening the row's latest message in place, between two rules,
+// with "Open full thread ›". ⌘-click
 // and ⇧-click gather rows for the batch bar. Search results, the From /
 // To / Unread / account filters and the recent searches are the phone's
 // Search tab's pieces (Features/Search/SearchScreen.swift); the field is
@@ -22,19 +23,23 @@ struct InboxPage: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.isSearching {
-                SearchFilterBar(picking: $picking).padding(.top, 8)
-                ResultCount(count: model.searchResults.count)
+                // The phone's pieces stand 16 pt in from their edges; the
+                // rest takes them to the list's margin, where the day
+                // titles and their rules start.
+                Group {
+                    SearchFilterBar(picking: $picking).padding(.top, 8)
+                    ResultCount(count: model.searchResults.count)
+                }
+                .padding(.horizontal, MacLayout.listMargin - 16)
             }
             content
         }
         .frame(maxWidth: MacLayout.maxWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // One wash to the window's edges and under the toolbar, behind
-        // the readable column and its margins alike. (A bundle's pages
-        // keep the flat grey: each paints its own column inside the
-        // page's background, and two washes of different sizes would
-        // meet in an edge.)
-        .background(MacTheme.listWash)
+        // The paper, to the window's edges and under the toolbar, behind
+        // the readable column and its margins alike: no wash and no step
+        // between the list and its rows.
+        .background(MacTheme.listBackground)
         .safeAreaInset(edge: .bottom) {
             if state.selection.count > 1 {
                 BatchBar(state: state)
@@ -69,33 +74,41 @@ struct InboxPage: View {
         ScrollViewReader { proxy in
             List {
                 // Parcels on their way, over the day groups of the plain
-                // inbox (docs/specs/parcel-card.md): the shared card on
-                // the list's white, as wide as a day's card. It is not a
-                // thread: the list's cursor (j / k) walks past it, and the
-                // palette has its actions.
+                // inbox (docs/specs/parcel-card.md): the shared view on
+                // the list's paper, a titled section as wide as a day's
+                // rows (it is handed the row at the titles' margin, so it
+                // adds none of its own). It is not a thread: the list's
+                // cursor (j / k) walks past it, and the palette has its
+                // actions.
                 if !model.inboxParcels.isEmpty {
-                    ParcelCardView(surface: MacTheme.groupCard)
-                        .padding(.horizontal, 16).padding(.top, 14)
+                    ParcelCardView(inset: 0)
+                        .padding(.horizontal, MacLayout.listMargin).padding(.top, 12)
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                 }
                 // No section headers: on the Mac a list's header floats on
-                // its own grey band. The group's title is a plain row, and
-                // its rows share one white card (MailRow draws its piece).
+                // its own grey band. A day's title is a plain row — the
+                // phone's `GroupHeader`: its name, a rule and how many
+                // rows stand under it, in the light grey of titles — and
+                // its rows follow, ruled (MailRow draws the hairline
+                // under itself).
                 ForEach(model.groupedRows) { group in
                     GroupHeader(group: group)
-                        .padding(.horizontal, 30).padding(.top, 16).padding(.bottom, 6)
+                        .padding(.horizontal, MacLayout.listMargin).padding(.top, 18).padding(.bottom, 2)
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
-                        MailRow(row: row, state: state,
-                                position: .init(first: index == 0, last: index == group.rows.count - 1))
+                        MailRow(row: row, state: state, isLast: index == group.rows.count - 1)
                     }
                 }
             }
             .listStyle(.plain)
+            // A row is as tall as what it draws: a 40 pt line of mail, a
+            // title and its rule. The list's own least height would
+            // leave air between two rows' fills.
+            .environment(\.defaultMinListRowHeight, 1)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.never)
             .contentMargins(.top, 6, for: .scrollContent)
@@ -136,33 +149,44 @@ struct InboxPage: View {
 }
 
 /// Several rows highlighted: how many, and the actions that make sense for
-/// all of them at once, on a bordered panel at the bottom edge.
+/// all of them at once, on a paper panel with a hairline at the bottom edge.
 private struct BatchBar: View {
     @Bindable var state: WindowState
     @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack(spacing: 4) {
-            Text("\(state.selection.count) selected")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.leading, 10).padding(.trailing, 6)
-            Divider().frame(height: 18)
+            // The count is data, so it is in the mono; VoiceOver still
+            // reads the two as one ("3 selected").
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("\(state.selection.count)").font(Theme.mono(size: 12, weight: .medium))
+                Text("selected").font(Theme.sans(size: 13, weight: .semibold))
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.leading, 10).padding(.trailing, 6)
+            .accessibilityElement(children: .combine)
+            divider
             IconButton("checkmark.circle", help: "Mark done") { state.run(.markDone, in: model) }
             IconButton("envelope.open", help: "Read / unread") { state.run(.toggleRead, in: model) }
             IconButton("pin", help: "Pin") { state.run(.pin, in: model) }
             IconButton("arrowshape.turn.up.left", help: "Need reply") { state.run(.needReply, in: model) }
             IconButton("trash", help: "Delete") { state.run(.delete, in: model) }
-            Divider().frame(height: 18)
+            divider
             Button("Clear") { state.selection = [] }
                 .buttonStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.sans(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10)
                 .help("Clear the selection (Esc)")
         }
         .padding(.horizontal, 6).padding(.vertical, 4)
-        .macPanel(cornerRadius: 12)
+        .macPanel(cornerRadius: 10)
         .padding(.bottom, 14)
+    }
+
+    /// Between the count, the actions and Clear: the outline's grey, as
+    /// tall as the words.
+    private var divider: some View {
+        Rectangle().fill(Theme.outline).frame(width: 1, height: 18).accessibilityHidden(true)
     }
 }

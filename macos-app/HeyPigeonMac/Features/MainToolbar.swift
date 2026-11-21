@@ -2,19 +2,21 @@
 // lights sit where every Mac app has them and behave as they do. At the
 // leading end, over the list column (past the sidebar when it is out:
 // SidebarInset), the three places the phone has as tabs — Inbox · Remind
-// me · Need reply — with their counts (another folder picked in the
-// sidebar shows its name after them, and so do Settings and the Bundles
-// page); at the trailing end summarize, ask,
-// new message and search. The sidebar button is the
+// me · Need reply — with their counts, the shown one an ink capsule
+// (another folder picked in the sidebar shows its name after them, and so
+// do Settings and the Bundles page); at the trailing end summarize, ask
+// and search on the toolbar's glass, then New message alone at the far
+// end: the window's one ink action, an ink circle, unless something else
+// on screen is the ink action (`composeIsInk`). The sidebar button is the
 // glass circle in the window's bottom corner (MainWindow), Settings is in
 // the app menu (⌘,). A page over the list (a thread; a bundle or an email
 // on the Bundles page) gets the window's own Back as the first item over
 // the content column — the stack's sat beside the traffic lights, over the
 // sidebar — and, but for a thread, its name after the tabs; the shared
 // view's items (the thread's sparkle and actions menu) join at the
-// trailing end. While the
-// search or the command palette floats over the window the bar is left
-// empty, so nothing sharp sits above the blur.
+// trailing end. While the search or the command palette floats over the
+// window the bar is left empty, so nothing stands over the dim but the
+// panel.
 
 import SwiftUI
 
@@ -36,6 +38,16 @@ struct MainToolbar: ToolbarContent {
         if state.showBundles { return state.bundlesTitle(in: model) }
         if model.isSearching { return "Search" }
         return ViewTabs.views.contains(model.view) ? nil : model.view.title
+    }
+
+    /// New message is drawn in ink while nothing else on screen is the
+    /// ink action: an open thread and a row opened in place end with
+    /// their own ink Reply, and the composer has Send. One ink action a
+    /// screen (docs/specs/marker-look.md, R8).
+    private var composeIsInk: Bool {
+        if state.isThreadOpen || model.composeDraft != nil { return false }
+        // A row open in the list is out of sight under Settings.
+        return state.showSettings || state.expanded == nil
     }
 
     var body: some ToolbarContent {
@@ -63,7 +75,7 @@ struct MainToolbar: ToolbarContent {
             if let otherTitle {
                 ToolbarItem(placement: .navigation) {
                     Text(otherTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(Theme.sans(size: 14, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                         .padding(.horizontal, 6)
@@ -75,9 +87,14 @@ struct MainToolbar: ToolbarContent {
             ToolbarItemGroup {
                 // No network: say so, with what is waiting to be sent.
                 if !Connectivity.shared.isOnline {
-                    Label(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send" : "Offline", systemImage: "wifi.slash")
+                    // The words in the app's face, the glyph in the system's.
+                    Label {
+                        Text(model.queuedChanges > 0 ? "Offline · \(model.queuedChanges) to send" : "Offline")
+                            .font(Theme.sans(size: 12, weight: .medium))
+                    } icon: {
+                        Image(systemName: "wifi.slash").font(.system(size: 12, weight: .medium))
+                    }
                         .labelStyle(.titleAndIcon)
-                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 6)
                         .help("No network. What you do is kept and sent when it is back.")
@@ -106,11 +123,27 @@ struct MainToolbar: ToolbarContent {
                             .help("Ask my inbox (⌥⌘A)")
                     }
                 }
-                Button { model.compose(SendDraft()) } label: { Label("New message", systemImage: "square.and.pencil") }
-                    .help("New message (⌘N)")
                 Button { state.run(.search, in: model) } label: { Label("Search", systemImage: "magnifyingglass") }
                     .help("Search (/)")
             }
+            // New message, an item of its own after the glass group and a
+            // little apart from it (the spacer keeps the toolbar from
+            // putting the two on one piece of glass): an ink circle that
+            // the toolbar puts no glass behind, or — when something else
+            // is the screen's ink action — the system's plain glass
+            // button like its neighbours.
+            ToolbarSpacer(.fixed)
+            ToolbarItem {
+                if composeIsInk {
+                    Button { model.compose(SendDraft()) } label: { Label("New message", systemImage: "square.and.pencil") }
+                        .buttonStyle(InkCircleButtonStyle())
+                        .help("New message (⌘N)")
+                } else {
+                    Button { model.compose(SendDraft()) } label: { Label("New message", systemImage: "square.and.pencil") }
+                        .help("New message (⌘N)")
+                }
+            }
+            .sharedBackgroundVisibility(composeIsInk ? .hidden : .automatic)
         }
     }
 }
@@ -184,9 +217,9 @@ private struct WindowXProbe: NSViewRepresentable {
     }
 }
 
-/// Inbox · Remind me · Need reply, the phone's tabs, as one segmented
-/// control on the toolbar's glass: the shown one in bold on a light pill,
-/// a count beside each (Remind me's due count in the accent).
+/// Inbox · Remind me · Need reply, the phone's tabs, as one switcher on
+/// the toolbar's glass: the shown one an ink capsule, a count in the mono
+/// beside each (Remind me's due count in the reminder's lavender).
 struct ViewTabs: View {
     @Bindable var state: WindowState
     let model: AppModel
@@ -211,14 +244,14 @@ struct ViewTabs: View {
     }
 
     /// The count beside a tab and its colour (Remind me's due count in
-    /// the accent); none when there is nothing to count.
+    /// the reminder's colour); none when there is nothing to count.
     private func count(_ view: MailView) -> (number: Int, color: Color)? {
         switch view {
         case .inbox:
             let n = model.engineUnread(accountId: model.selectedAccountId)
             return n > 0 ? (number: n, color: Theme.textTertiary) : nil
         case .scheduled:
-            if model.dueCount > 0 { return (number: model.dueCount, color: Theme.accent) }
+            if model.dueCount > 0 { return (number: model.dueCount, color: Theme.state(.lavender)) }
             return model.scheduledCount > 0 ? (number: model.scheduledCount, color: Theme.textTertiary) : nil
         case .needReply:
             return model.needReplyCount > 0 ? (number: model.needReplyCount, color: Theme.textTertiary) : nil

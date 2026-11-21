@@ -4,6 +4,10 @@
 // will do. The system's swipeActions can't do distance tiers, hence this.
 //
 // Which action sits on which tier comes from Settings (AppModel.swipeActions).
+// Mark done's panel is ink, and while it is armed the row under the finger
+// is told so (`swipeMarksDone`): it strikes its subject and preview
+// through, the check-off seen before the finger lets go
+// (docs/specs/marker-look.md, R10).
 
 import SwiftUI
 
@@ -11,7 +15,15 @@ import SwiftUI
 struct SwipeAction {
     let title: String
     let systemImage: String
+    /// The panel's fill.
     let tint: Color
+    /// The glyph and the word on the panel: white on a fill that is the
+    /// same in both appearances, `Theme.onPrimary` on one that follows
+    /// them (ink turns light on dark, and white would be lost on it).
+    var ink: Color = .white
+    /// Letting go marks the row done: the row is struck through while
+    /// this tier is armed.
+    var marksDone = false
     let perform: () -> Void
 }
 
@@ -56,9 +68,9 @@ struct SwipeableRow<Content: View>: View {
                     if tier < 0 { Spacer(minLength: 0) }
                     VStack(spacing: 3) {
                         Image(systemName: action.systemImage).font(.title3.weight(.semibold))
-                        Text(action.title).font(.caption2.weight(.semibold)).lineLimit(1)
+                        Text(action.title).font(Theme.sans(.caption2, .semibold)).lineLimit(1)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(action.ink)
                     .frame(width: max(abs(offset), 64))
                     if tier > 0 { Spacer(minLength: 0) }
                 }
@@ -68,7 +80,10 @@ struct SwipeableRow<Content: View>: View {
                 .animation(Motion.animation(.easeOut(duration: 0.12)), value: tier)
             }
             // The row itself tracks the finger; only the revealed action animates.
+            // It hears whether letting go would mark it done, and strikes
+            // itself through for as long as that is so.
             content()
+                .environment(\.swipeMarksDone, armed?.marksDone == true)
                 .background(background)
                 .offset(x: offset)
         }
@@ -130,5 +145,21 @@ enum SwipeGeometry {
         if abs(dx) <= limit { return dx }
         let extra = abs(dx) - limit
         return (limit + extra * 0.25) * (dx < 0 ? -1 : 1)
+    }
+}
+
+// MARK: - The done moment
+
+/// Whether letting go of the swipe on the row would mark it done: false
+/// wherever no swipe is in progress. The row reads it (`ThreadRowView`)
+/// and strikes its subject and preview through meanwhile.
+private struct SwipeMarksDoneKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+    var swipeMarksDone: Bool {
+        get { self[SwipeMarksDoneKey.self] }
+        set { self[SwipeMarksDoneKey.self] = newValue }
     }
 }

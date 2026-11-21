@@ -1,8 +1,13 @@
 // The parcel card (docs/specs/parcel-card.md): the parcels that are on
-// their way, as a card at the top of the plain inbox — what each one is,
-// when it is expected, and a Track parcel button. One view for the phone,
-// the iPad and the Mac window; each puts it at the head of its own list
+// their way, at the top of the plain inbox — what each one is, when it is
+// expected, and a Track parcel button. One view for the phone, the iPad
+// and the Mac window; each puts it at the head of its own list
 // (`ThreadList`, macos-app `InboxPage`).
+//
+// A card in name only. In the paper look (docs/specs/marker-look.md) it
+// is a section of the list like any other: the title "Parcels" with its
+// rule, the dismiss button after the rule, and each parcel a ruled row.
+// Nothing is filled or outlined around it.
 //
 // The core works out what a parcel is and what its mail says about it
 // (crates/core/src/parcels.rs: status, expected day, item title; nothing
@@ -13,11 +18,11 @@
 //
 // No product pictures: loading one would be a request to the shop from
 // the inbox, which the remote-images default forbids. The bundle's icon
-// stands in the thumbnail's place.
+// in its outlined box stands in the thumbnail's place.
 
 import SwiftUI
 
-/// The card's rules and words, apart from any view.
+/// The section's rules and words, apart from any view.
 enum ParcelCard {
     /// How long a dismissal is kept, counted from the parcel's email: by
     /// then the parcel left the card by itself long ago.
@@ -137,6 +142,22 @@ enum ParcelCard {
         return line
     }
 
+    /// The status line cut in three around the host its button opens, so
+    /// the view can set the host in the mono: it is an address, read as
+    /// data, where the words around it are the interface's. The line's
+    /// parts are joined by " · " and the host is one whole part, the
+    /// first that is exactly it (it stands before the mail's own
+    /// subject, which may hold anything). Put back together the three
+    /// are the line; a line without the host comes back whole.
+    static func statusPieces(_ line: String, host: String) -> (before: String, host: String, after: String) {
+        let separator = " · "
+        let parts = line.components(separatedBy: separator)
+        guard !host.isEmpty, let at = parts.firstIndex(of: host) else { return (line, "", "") }
+        let before = parts[..<at].map { $0 + separator }.joined()
+        let after = parts[(at + 1)...].map { separator + $0 }.joined()
+        return (before, host, after)
+    }
+
     /// How much folded mail stands under a parcel's row: the quiet inbox
     /// mail of its bundle, counted on the bundle's first parcel in the
     /// card and on no other. Nothing where the inbox does not fold.
@@ -151,12 +172,19 @@ enum ParcelCard {
     }
 }
 
-/// The card: "Parcels", the first parcel, and "+N more" for the rest;
+/// The section: "Parcels", the first parcel, and "+N more" for the rest;
 /// expanded, every parcel and a footer with Show less and Dismiss all.
+/// It stands straight on the list's paper: the title with its rule (the
+/// dismiss button after it), a hairline between two parcels and over the
+/// footer, and no card around any of it.
 struct ParcelCardView: View {
-    /// The card's surface: the list's card colour (the Mac window hands
-    /// its own white group card).
-    var surface: Color = Theme.card
+    /// How far the section stands in from the row its host hands it. The
+    /// phone's list hands the row over 12 pt from the screen's edges
+    /// (`ThreadList`, from when this was a card with a margin of its
+    /// own) and its mail rows and their titles start at 16: 4 pt more
+    /// lines the section up with them. A host that hands the row over at
+    /// its own titles' margin passes 0 (the Mac window's `InboxPage`).
+    var inset: CGFloat = 4
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -167,34 +195,26 @@ struct ParcelCardView: View {
                 ParcelRow(parcel: first)
                 if model.parcelsExpanded {
                     ForEach(parcels.dropFirst()) { parcel in
-                        divider
+                        RowRule()
                         ParcelRow(parcel: parcel)
                     }
                 }
                 if parcels.count > 1 {
-                    divider
+                    RowRule()
                     footer(more: parcels.count - 1)
                 }
             }
-            .background(surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.separator))
+            .padding(.horizontal, inset)
         }
     }
 
-    private var divider: some View {
-        Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 14)
-    }
-
+    /// The section's title, as every group of rows has one; dismissing
+    /// all is the control after its rule.
     private var header: some View {
-        HStack {
-            Text("Parcels")
-                .font(Theme.display(13, relativeTo: .caption))
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityAddTraits(.isHeader)
-            Spacer()
+        SectionTitle(title: "Parcels") {
             Button { model.dismissAllParcels() } label: {
                 Image(systemName: "xmark")
-                    .font(Theme.caption.weight(.semibold))
+                    .font(Theme.glyph(.caption, .semibold))
                     .foregroundStyle(Theme.textTertiary)
                     .tapArea(horizontal: 14, vertical: 14)
             }
@@ -202,7 +222,7 @@ struct ParcelCardView: View {
             .accessibilityLabel("Dismiss all parcels")
             .help("Dismiss all")
         }
-        .padding(.leading, 14).padding(.trailing, 14).padding(.top, 12).padding(.bottom, 2)
+        .padding(.top, 6).padding(.bottom, 6)
     }
 
     private func footer(more: Int) -> some View {
@@ -212,7 +232,7 @@ struct ParcelCardView: View {
             } label: {
                 Label(model.parcelsExpanded ? "Show less" : "+\(more) more",
                       systemImage: model.parcelsExpanded ? "chevron.up" : "chevron.down")
-                    .font(Theme.bodySmall.weight(.medium))
+                    .font(Theme.text(.preview, .medium))
                     .foregroundStyle(Theme.textSecondary)
                     .tapArea(horizontal: 14, vertical: 12)
             }
@@ -222,14 +242,14 @@ struct ParcelCardView: View {
             if model.parcelsExpanded {
                 Button { model.dismissAllParcels() } label: {
                     Text("Dismiss all")
-                        .font(Theme.bodySmall.weight(.medium))
+                        .font(Theme.text(.preview, .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .tapArea(horizontal: 14, vertical: 12)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
+        .padding(.vertical, 12)
     }
 }
 
@@ -248,10 +268,10 @@ private struct ParcelRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(ParcelCard.title(parcel, bundle: bundle))
-                        .font(Theme.sender(false))
+                        .font(Theme.text(.row, .semibold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(2)
-                    Text(ParcelCard.statusLine(parcel, updates: model.parcelUpdates(parcel)))
+                    status
                         .font(Theme.secondary)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
@@ -265,9 +285,17 @@ private struct ParcelRow: View {
                 actions
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
+        .padding(.top, 10).padding(.bottom, 12)
         .contentShape(Rectangle())
         .contextMenu { ParcelMenu(parcel: parcel) }
+    }
+
+    /// Where the parcel stands, with the host its button opens in the
+    /// mono: the same words, read as one line.
+    private var status: Text {
+        let line = ParcelCard.statusLine(parcel, updates: model.parcelUpdates(parcel))
+        let pieces = ParcelCard.statusPieces(line, host: parcel.host)
+        return Text("\(Text(pieces.before))\(Text(pieces.host).font(Theme.meta))\(Text(pieces.after))")
     }
 
     /// Side by side; under each other at the accessibility text sizes,
@@ -294,15 +322,12 @@ private struct ParcelRow: View {
         Browser.open(parcel.url)
     }
 
+    /// An outlined capsule: the inbox's one ink action is Compose.
     private var trackButton: some View {
         Button(action: track) {
-            Text("Track parcel")
-                .font(Theme.bodySmall.weight(.bold))
-                .foregroundStyle(Theme.onPrimary)
-                .padding(.horizontal, 6)
+            Text("Track parcel").font(Theme.text(.preview, .semibold))
         }
-        .pillButton(prominent: true)
-        .tint(Theme.textPrimary)
+        .buttonStyle(OutlineButtonStyle())
         .accessibilityLabel(ParcelCard.trackLabel(parcel))
         .help("Opens \(parcel.host)")
     }
@@ -310,7 +335,7 @@ private struct ParcelRow: View {
     private var detailsButton: some View {
         Button { model.openParcelDetails(parcel) } label: {
             Text("View details")
-                .font(Theme.bodySmall.weight(.medium))
+                .font(Theme.text(.preview, .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .tapArea(horizontal: 8, vertical: 12)
         }
@@ -323,9 +348,9 @@ private struct ParcelRow: View {
             ParcelMenu(parcel: parcel)
         } label: {
             Image(systemName: "ellipsis")
-                .font(Theme.bodySmall.weight(.semibold))
+                .font(Theme.glyph(.bodySmall, .semibold))
                 .foregroundStyle(Theme.textTertiary)
-                .frame(width: 32, height: 32)
+                .frame(width: 32, height: 32, alignment: .trailing)
                 .tapArea(horizontal: 6, vertical: 6)
         }
         .labelOnlyMenu()

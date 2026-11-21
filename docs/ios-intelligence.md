@@ -345,7 +345,7 @@ core  ──AiProvider──►  ffi::ForeignAiProvider  ──UniFFI with_forei
 | Draft reply | one completion over the transcript | same, with the transcript cut by the core to the newest messages that fit (`trim_history`); a writing prompt is never split and re-answered like a summary (`CompletionStyle`) |
 | Edit with AI (tone presets, instruction) | one completion | same, at a lower temperature; "Fix spelling and grammar" is `ai_proofread` and a new message from a brief is `ai_write_message`, each with its own instruction |
 | Jev triage (priority + labels) | `adapter-jev`, BYO key | **done**: `TriageCall`, a `@Generable` struct `{ priority, labels: [String] }` with the Settings label names in the prompt; the engine maps names to ids and drops the rest. Jev stays selectable (Settings › Triage › Classifier). |
-| Attachments | none | **done** (iOS 27): "Explain attachment" and the receipt / ticket / shipment chips — image input with the OCR and barcode tools, on device only ("Attachment understanding" below) |
+| Attachments | none | **done** (iOS 27): "Explain attachment" and the receipt / ticket / shipment actions — image input with the OCR and barcode tools, on device only ("Attachment understanding" below) |
 | Longer threads | — | **done** (iOS 27): Apple's Private Cloud Compute as the `apple-cloud` provider, a 32K-token window, Apple-private and never stored; a network hop the user opts into through *Prefer* / *If it can't answer*, with "Stay on this iPhone" as the no-hop setting ("One model layer" below). A long thread still summarizes in parts on the device model. |
 
 Quality expectation to set in Settings copy: the on-device model is small.
@@ -382,7 +382,13 @@ Widgets run out of process, so they get a **snapshot, not the engine**
 - Widgets: **Unread** (small, plus the Lock Screen accessories: the count
   and one bar per account in its colour), **Next reminder** (medium: the
   row, Done, and Snooze 1 h when due), **Need reply** (medium and large:
-  up to five rows, each with Done).
+  up to five rows, each with Done). They are drawn in the app's look
+  (`../docs/specs/marker-look.md`) with what the extension has in
+  `Theme`'s place — `Typeface` for the two faces, `WidgetPalette` for the
+  colours: counts and times in the mono, a title in small mono capitals,
+  an unread sender bold under the highlighter, Done an ink capsule and
+  1 h its outline. The container's fill is the system's, and so are the
+  Lock Screen accessories' colours.
 - **Buttons run in the app's process.** `WidgetMarkDoneIntent` and
   `WidgetSnoozeIntent` are `LiveActivityIntent`s — the one intent kind the
   system performs in the app rather than the extension without opening the
@@ -404,7 +410,10 @@ Widgets run out of process, so they get a **snapshot, not the engine**
 - **Analysis Live Activity** (`AnalysisLiveActivity`): a pass of
   auto-triage worth following (20+ emails — "Reanalyze all emails", a first
   pass over the mailbox) shows "Analyzing emails · 40 of 120" with a bar on
-  the Lock Screen and a filling ring in the Dynamic Island, then "Done".
+  the Lock Screen and a filling ring in the Dynamic Island (both ink, as
+  the inbox's own bar is; the sparkle is the AI's pink), then "Done" in
+  the mint of done. The Lock Screen's platter is a dark tint in both
+  appearances, so the activity is drawn with the dark colours.
   The core reports every classified email (`EngineListener.
   on_analysis_progress`, an `AnalysisPass`); `AnalysisLiveActivityController`
   coalesces those to one update per percent. The app keeps the pass going
@@ -700,9 +709,10 @@ journal": run from the app, apply or leave as is, read every run back.
 
 Each new unread email gets one proposal: **Need reply** (someone waits on
 an answer) or **Remind me** on the date it names (a meeting, a deadline),
-or nothing. Nothing changes on its own: the row shows a sparkles chip,
-the thread shows a card with the proposal and a dismiss button, and the
-row's long-press menu has both. Accepting is the existing flag or
+or nothing. Nothing changes on its own: the row shows the proposal as a
+sparkle and its words in the AI's pink, the thread a line boxed by a
+hairline with the proposal's action under the highlighter and a dismiss
+button, and the row's long-press menu has both. Accepting is the existing flag or
 reminder (`set_needs_reply` / `set_schedule`), which drops the proposal
 in the core; dismissing drops it without acting.
 
@@ -733,15 +743,15 @@ Attachments reach the phone: `MailEngine.attachments` / `attachmentFile`
 over the engine's `list_attachments` / `fetch_attachment` (the Gmail
 adapter walks the parts tree; embedded parts get `inline:<n>` ids; bytes
 are fetched on tap and cached as a file under the data directory, never
-auto-opened), as chips under each expanded message that open Quick Look,
+auto-opened), as boxed tiles under each expanded message that open Quick Look,
 with **Explain attachment** on images and PDFs. `AI/AttachmentUnderstanding.swift`
 lets the on-device model look at the file — iOS 27 image input
 (`Attachment` in the prompt; images downscaled to 1,024 px, a PDF's first
 page rendered through PDFKit) with the Vision-backed **`OCRTool`** and
 **`BarcodeReaderTool`** — answering a `@Generable AttachmentInsight`
 (kind, summary, merchant, total, date, tracking number, carrier, flight,
-departure, code). From the fields come one-tap chips on the existing
-reminder plumbing: remind me on travel day, remind me before an amount is
+departure, code). From the fields come one-tap actions (each its words
+under the highlighter) on the existing reminder plumbing: remind me on travel day, remind me before an amount is
 due, copy the tracking number or the code. The **triage hook** runs it as
 a thread opens when the subject smells like a receipt, ticket or shipment
 and an image or PDF is attached (cheap heuristic first). On device only:

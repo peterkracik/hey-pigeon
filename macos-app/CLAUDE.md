@@ -82,20 +82,21 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   it is the window's open thread for every key and the inline reply.
   A bundle's Emails page is the window's list, not the phone's
   (`BundleEmailList`, handed to the shared screen as `BundleScreenParts`):
-  `MailRow` with `inBundle` on the inbox's white card over the list's
-  background — the open emails untitled, the done ones under the list's
-  group title, set back and folded past three — with ⊖ (not part of this
+  `MailRow` with `inBundle`, ruled, on the paper — the open emails under
+  a rule and no title, the done ones under the list's group title, struck
+  through, set back and folded past three — with ⊖ (not part of this
   bundle) in the hover bar and the context menu; a click opens a row in
   place, its arrow opens the thread in the page's stack
   (`WindowState.open`), and the page still has no cursor. (The phone's
   three-line rows in a grouped list, a ⊖ button on every row and a bold
   section header read as another app's here.) Emails · Info is
   `BundlePageTabs`: the toolbar's tabs (`TabPill`, shared with
-  `ViewTabs`) on a glass capsule floating over the top of the page. A
-  switcher in the window is `TabPill`s, never the system's segmented
-  control, whose selection is the system blue. The Info page is the
-  window's too (`BundleInfoPage`): the same surface as the Emails page —
-  white cards on the list's background under the list's group titles —
+  `ViewTabs`; the shown one an ink capsule) on a glass capsule floating
+  over the top of the page. A switcher in the window is `TabPill`s, never
+  the system's segmented control, whose selection is the system blue. The
+  Info page is the window's too (`BundleInfoPage`): the same surface as
+  the Emails page — the paper, each section under the list's light grey
+  title (`SectionTitle`) with hairlines between its rows and no card —
   in a reading column (`MacLayout.readingWidth`, Settings' width), not
   the phone's grouped list, which lay on the canvas here with bold list
   headers and rows stretched across the window. Summary, then Tracking
@@ -128,42 +129,47 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   container (`ThreadChrome`): a reading column of
   `MacLayout.readingWidth` in the middle of the window or of the
   reading pane (`threadColumn`, the shared view's own, so a thread
-  window and an email on the Bundles page have it too) on the list's
-  background, its messages as one white card (`threadCard`: 16 pt in,
-  14 pt corners carried by its first and last rows
-  (`ThreadChrome.rowShape`) — no clip and no shadow, either would lie
-  over the messages' web views; closed messages and the fold on
-  the card's surface with the pointer's tint, hairlines between), the
-  subject and the chips 32 pt in so they start where the card's text
+  window and an email on the Bundles page have it too) on the paper,
+  its messages straight on it, one under the other, parted by hairlines
+  (`ThreadChrome`'s Mac values: no card, so no inset and no corners;
+  `threadCard` and `rowShape` stay for the shape a row carries itself —
+  never a clip and never a shadow, either would lie over the messages'
+  web views; closed messages and the fold tint under the pointer), the
+  subject and the marks 16 pt in so they start where the messages' text
   does, and the body at 15 px on a line of 1.5 (`MailTypography`; the
   phone keeps Dynamic Type). The last message ends with Reply · Reply
-  all · Forward as the preview's pills (`ThreadReplyFoot`,
-  `ThreadChrome.replyAtFoot`; gone while a reply is written under it),
-  and the triage buttons alone are one small card in the middle of the
-  bottom edge (`ThreadChrome.oneBar`, `floatingBar`, `barButton`): the
-  Reply pill and the AI circle sat on that card too, a second place
-  for what the keys (`r` · `a` · `f`) and the foot of the message do,
-  and the phone's two glass capsules stretched across the thread
-  smeared the message under them. The AI draft is the palette's and
+  all · Forward as the preview's pills, Reply the ink one
+  (`ThreadReplyFoot`, `ThreadChrome.replyAtFoot`; gone while a reply is
+  written under it), and the triage buttons alone are one small paper
+  panel with a hairline in the middle of the bottom edge
+  (`ThreadChrome.oneBar`, `floatingBar`, `barButton`): the Reply pill and
+  the AI circle sat on that panel too, a second place for what the keys
+  (`r` · `a` · `f`) and the foot of the message do, and the phone's two
+  capsules stretched across the thread smeared the message under them.
+  The AI draft is the palette's and
   the menu bar's "Draft Reply with AI", and ⌘J in the composer. A `Menu` whose label is a chip
   or an icon takes `labelOnlyMenu()`: the Mac's default draws a white
   bezel around it under the pointer. The triage labels are the phone's
   glass pill (`TriageSplitBar`) at the bottom of the list. Search and the command
-  palette are one shape (`SpotlightPanel`: Liquid Glass over the blurred,
-  dimmed window, one at a time); while one is up the toolbar is empty
-  and clear. The list has no section headers (a Mac list's header floats
-  on a grey band): each day group's title is a plain row and its rows
-  share one white card (`MailRow.Position`); the hover and cursor tint
-  fills a row to 1 pt of the card's edge, rounded only where the card
-  is. Behind the inbox's list the grey carries a wash
-  (`MacTheme.listWash`, the shared `Wash`): a trace of coral in the top
-  leading corner and of lavender in the bottom trailing one, a few steps
-  of 255, the plain `listBackground` through the middle and the flat
-  colour with Increase Contrast. It is one background to the window's
-  edges, never a row's or a card's; the sidebar, a thread, Settings and
-  the panels stay flat, and so do a bundle's pages, whose columns paint
-  their own background inside the page's (two washes of different sizes
-  would meet in an edge). The command palette's ⌘B stage lists the bundles, the recently
+  palette are one shape (`SpotlightPanel`: the paper with an ink outline
+  over the dimmed window, one at a time; a key in them is a `KeyCap`);
+  while one is up the toolbar is empty and clear. The list has no
+  section headers (a Mac list's header floats on a grey band): each day
+  group's title is a plain row (`SectionTitle`: the name, a rule and the
+  count in the light grey of titles) and its rows are single lines of
+  `MacLayout.rowHeight`, `MacLayout.listMargin` in, with a hairline under
+  each but the group's last. Nothing is a card: the sidebar, the list, a
+  thread, Settings and a bundle's pages are one paper to the window's
+  edges (`MacTheme`, over the shared `Theme`; the rules are
+  `../docs/specs/marker-look.md`). A row under the pointer is the sunken
+  grey; the cursor's and a selected one a step stronger, with an ink rule
+  down its leading edge. Unread is the sender in bold under the
+  highlighter. What floats is the paper with a hairline (`macPanel`, the
+  batch bar, the thread's bar); Liquid Glass is kept for the toolbar's
+  own items, the label pill, a bundle's page tabs and the sidebar's
+  button. The toolbar's selected tab is an ink capsule (`TabPill`) and
+  New message its one ink action (`InkCircleButtonStyle`).
+  The command palette's ⌘B stage lists the bundles, the recently
   active first, and one opens as the Bundles page
   (`PaletteStage.bundles`, `MailCommand.bundles`). Rows are single lines; Done
   is the first hover action (a done circle at the start read as a
@@ -179,7 +185,8 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   out) and drew a lighter strip across the top, behind the traffic
   lights too. The sidebar is ⌘S (View › Show Folders), nothing in the
   app saves by hand. The open
-  row's card shows the whole message, as the first client's did; the
+  row shows the whole message between two rules, as the first client's
+  card did; the
   pointer over a row is the hand. The composer on
   the Mac (shared `ComposeView`) takes the window's look through
   Platform helpers: `composeChrome` (title, close and full-screen at the
@@ -197,17 +204,20 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   (`ComposePresentation.inlineReplies`, `AppModel.composeDetached`) and
   scrolls it to the middle. It sits under the thread's lazy stack, never
   in it (a lazy stack lets go of a row scrolled out of view, and the
-  draft fell back to its card), and a thread that has a saved draft
+  draft fell back to its row under the messages), and a thread that has
+  a saved draft
   opens with it in the composer (`ThreadView.reopenDraft`: once an open,
   without taking the keyboard from the thread's keys or scrolling to
-  it); the card is what the X leaves. The thread's small text takes the
+  it); the draft's row (`DraftRow`) is what the X leaves. The thread's
+  small text takes the
   list's sizes through `Theme.secondary` · `meta` · `caption` ·
   `caption2` · `bodySmall` (the system's text styles are 10 and 11 pt
   here); a reply from the list or a row's preview
   opens the thread first (`WindowState.showThread`); `MainWindow` shows
   the sheet only for a new message, a forward, a reply pulled out with
-  the card's window button, or a reply to a thread no window shows
-  (`ComposePlacement`, `ThreadWindows`). The card's "Draft to …" line
+  the inline reply's window button, or a reply to a thread no window
+  shows (`ComposePlacement`, `ThreadWindows`). The inline reply's
+  "Draft to …" line
   keeps the prefilled fields folded; the sheet shows the thread's
   messages above a reply itself. A selection gets a floating toolbar;
   the footer's Aa opens a format bar with the same tools; and the AI is
@@ -230,8 +240,8 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   a line of mail across the list's width was too long to read.
 - **The parcel card is the shared view, outside the cursor.** Parcels on
   their way (`docs/specs/parcel-card.md`) are the first row of the
-  inbox's list: the shell's `ParcelCardView` on the list's white
-  (`MacTheme.groupCard`), as wide as a day's card. It is not a thread:
+  inbox's list: the shell's `ParcelCardView` on the paper, under its
+  own title, as wide as a day's rows. It is not a thread:
   `j` / `k`, the selection and the batch bar walk `flatRowIds` and never
   see it, and it has no bare key. Its actions are the pointer's (the
   buttons, the "…" menu, the same menu on a right-click) and the

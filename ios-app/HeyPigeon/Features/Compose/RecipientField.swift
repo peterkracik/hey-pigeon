@@ -1,7 +1,9 @@
 // Recipient chips + an input, like the desktop RecipientField: comma,
 // space or return commits the typed address. While typing, known people
 // (who mail comes from) that match show under the field; a tap, or return
-// on a name, adds one.
+// on a name, adds one. A chip is boxed, not filled: an outline with 6 pt
+// corners around the address (docs/specs/marker-look.md), and the input
+// has no fill of its own — the composer rules a hairline under the row.
 
 import SwiftUI
 
@@ -41,10 +43,10 @@ struct RecipientField<Field: Hashable>: View {
         VStack(alignment: .leading, spacing: 0) {
             FlowLayout(spacing: 6) {
                 ForEach(addresses, id: \.self) { a in
-                    HStack(spacing: 4) {
-                        Text(a).font(.footnote).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(a).font(Theme.sans(size: 14, weight: .medium, relativeTo: .footnote)).lineLimit(1)
                         Button { addresses.removeAll { $0 == a } } label: {
-                            Image(systemName: "xmark").font(.caption2.weight(.bold))
+                            Image(systemName: "xmark").font(.caption2.weight(.bold)).foregroundStyle(Theme.textTertiary)
                                 // As tall as its chip and no taller: the next
                                 // line of chips and the field are right below.
                                 .tapArea(horizontal: 8, vertical: 6)
@@ -53,12 +55,13 @@ struct RecipientField<Field: Hashable>: View {
                         .accessibilityLabel("Remove \(a)")
                     }
                     .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Theme.sunken, in: Capsule())
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.outline, lineWidth: 1))
                 }
                 // Next to chips the input only needs room for a caret, so the
                 // first chip does not push it onto a line of its own.
                 TextField(addresses.isEmpty ? "Email address" : "", text: $text)
+                    .font(Theme.text(.bodySmall))
                     .plainInput(.email)
                     .submitLabel(.next)
                     .focused(focused, equals: field)
@@ -105,9 +108,9 @@ struct RecipientField<Field: Hashable>: View {
     private func suggestion(_ p: PersonSuggestion) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             if p.person.name != p.person.address {
-                Text(p.person.name).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(p.person.name).font(Theme.text(.bodySmall, .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
             }
-            Text(p.person.address).font(.footnote).foregroundStyle(Theme.textTertiary).lineLimit(1)
+            Text(p.person.address).font(Theme.secondary).foregroundStyle(Theme.textTertiary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)

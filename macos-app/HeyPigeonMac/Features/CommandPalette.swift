@@ -1,10 +1,12 @@
 // ⌘K: the desktop's command palette. One field, every command and folder
 // filtered as you type, arrows to pick, Return to run — in the search's
-// Spotlight panel (SpotlightPanel) over the blurred window, not a sheet. `l` and `v` open
-// it pre-staged on the label and move pickers for the selected thread; ⌘B
-// (or the Bundles… row) on the bundles stage, the recently active ones
-// first, where one opens as the Bundles page. The filter is a pure
-// function (PaletteFilter) so it can be tested.
+// Spotlight panel (SpotlightPanel: the paper with an ink outline) over
+// the dimmed window, not a sheet. Its rows are ruled; the highlighted one
+// is the sunken grey with a heavier name, and a command's key is a
+// keycap. `l` and `v` open it pre-staged on the label and move pickers
+// for the selected thread; ⌘B (or the Bundles… row) on the bundles stage,
+// the recently active ones first, where one opens as the Bundles page.
+// The filter is a pure function (PaletteFilter) so it can be tested.
 
 import SwiftUI
 
@@ -87,6 +89,46 @@ enum PaletteRecents {
     /// Pure, for the tests.
     static func pushed(_ id: String, onto list: [String]) -> [String] {
         Array(([id] + list.filter { $0 != id }).prefix(limit))
+    }
+}
+
+/// One row of the palette, ruled: the command's glyph, its name and the
+/// thread or the detail it is about, and the key that does the same as a
+/// keycap. The highlighted row (the arrows', the pointer's) is the sunken
+/// grey with a heavier name and its glyph in ink.
+private struct PaletteRow: View {
+    let item: PaletteItem
+    let highlighted: Bool
+    /// The last row has no hairline under it.
+    var isLast = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: item.systemImage)
+                .font(.system(size: 14, weight: highlighted ? .semibold : .regular))
+                .frame(width: 20)
+                .foregroundStyle(highlighted ? Theme.textPrimary : Theme.textSecondary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.title)
+                    .font(Theme.sans(size: 13, weight: highlighted ? .semibold : .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if let s = item.subtitle {
+                    Text(s).font(Theme.sans(size: 11.5)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if let key = item.key {
+                KeyCaps(keys: key)
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(height: 44)
+        .background(highlighted ? Theme.sunken : Color.clear)
+        .overlay(alignment: .bottom) {
+            if !isLast { RowRule() }
+        }
+        .contentShape(Rectangle())
     }
 }
 
@@ -185,14 +227,17 @@ struct CommandPalette: View {
     }
 
     private var panel: some View {
-        VStack(spacing: 0) {
+        // Filtered once a render: every row asks whether it is the last.
+        let shown = items
+        return VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: stageImage)
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(Theme.textTertiary)
                 TextField(placeholder, text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 20))
+                    .font(Theme.sans(size: 20, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
                     .focused($focused)
                     .onSubmit { runCursor() }
                     .onExitCommand { close() }
@@ -201,44 +246,25 @@ struct CommandPalette: View {
             }
             .padding(.horizontal, 20)
             .frame(height: 60)
-            Hairline().opacity(0.6)
+            // The commands are a group with no name: it opens with the
+            // rule alone.
+            SectionRule().padding(.horizontal, 16)
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
                             Button { run(item) } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: item.systemImage)
-                                        .frame(width: 20)
-                                        .foregroundStyle(index == cursor ? Theme.textPrimary : Theme.textSecondary)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(item.title).font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary)
-                                        if let s = item.subtitle {
-                                            Text(s).font(.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                                        }
-                                    }
-                                    Spacer()
-                                    if let key = item.key {
-                                        Text(key).font(.caption.weight(.semibold).monospaced())
-                                            .foregroundStyle(Theme.textTertiary)
-                                            .padding(.horizontal, 6).padding(.vertical, 2)
-                                            .background(Theme.sunken, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                                    }
-                                }
-                                .padding(.horizontal, 12).padding(.vertical, 7)
-                                .background(index == cursor ? MacTheme.selected : Color.clear,
-                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .contentShape(Rectangle())
+                                PaletteRow(item: item, highlighted: index == cursor, isLast: index == shown.count - 1)
                             }
                             .buttonStyle(.plain)
                             .id(item.id)
                             .onHover { if $0 { cursor = index } }
                         }
-                        if items.isEmpty {
-                            Text("No matches").font(.subheadline).foregroundStyle(Theme.textTertiary).padding(20)
+                        if shown.isEmpty {
+                            Text("No matches").font(Theme.sans(size: 13)).foregroundStyle(Theme.textTertiary).padding(20)
                         }
                     }
-                    .padding(8)
+                    .padding(.horizontal, 16).padding(.bottom, 8)
                 }
                 .scrollIndicators(.never)
                 .frame(maxHeight: 400)

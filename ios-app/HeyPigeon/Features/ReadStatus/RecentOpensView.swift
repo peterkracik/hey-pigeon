@@ -10,6 +10,10 @@
 // rows stand under "Last 7 days", "Earlier this month" and a heading for
 // each month before that. "Delivered to a device that hides opens" is
 // not an open and is not listed here.
+//
+// The look is the menu sheets' (docs/specs/marker-look.md): the raised
+// paper, each group under its title (`SectionTitle`), ruled rows, the
+// time in the mono.
 
 import SwiftUI
 
@@ -29,8 +33,8 @@ struct RecentOpensView: View {
                         let empty = RecentOpens.emptyState(available: model.readStatusAvailable,
                                                            anyAccountOn: model.accounts.contains(where: \.readStatus))
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(empty.title).font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary)
-                            Text(empty.detail).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                            Text(empty.title).font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary)
+                            Text(empty.detail).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                         }
                         .padding(.vertical, 6)
                         .accessibilityElement(children: .combine)
@@ -47,19 +51,25 @@ struct RecentOpensView: View {
                             .buttonStyle(.plain)
                     }
                 } header: {
-                    // As written ("Last 7 days", "October"), not in capitals.
-                    Text(section.title).textCase(nil)
+                    // The group's name as every title of a group is set:
+                    // small mono capitals and a rule to the row's end.
+                    SectionTitle(section.title)
                 }
                 .menuCard()
             }
             if !sections.isEmpty {
                 Section {} footer: {
                     Text(RecentOpens.footer(anyAccountOn: model.accounts.contains(where: \.readStatus)))
+                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
                 }
+                .listSectionSeparator(.hidden)
             }
         }
         .groupedListStyle()
         .scrollContentBackground(.hidden)
+        // A sheet stands on the raised paper (a step up on dark); the
+        // list's own grouped background is hidden just above.
+        .background(Theme.raised)
         .sheetSize(.large)
         .task { await model.loadRecentOpens() }
     }
@@ -67,17 +77,18 @@ struct RecentOpensView: View {
     private func row(_ item: RecentOpenItem, _ format: RecentOpens.Format) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             // The time follows the name, it is not pushed to the far edge;
-            // a long name gives way, the time never does.
+            // a long name gives way, the time never does. A time is data:
+            // the mono.
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(RecentOpens.who(item))
-                    .font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    .font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(format.time(item.openedAt))
-                    .font(.subheadline).foregroundStyle(Theme.textTertiary).monospacedDigit()
+                    .font(Theme.meta).foregroundStyle(Theme.textTertiary)
                     .lineLimit(1).fixedSize().layoutPriority(1)
                 Spacer(minLength: 0)
             }
             Text(RecentOpens.subject(item))
-                .font(.subheadline).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

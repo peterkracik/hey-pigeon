@@ -41,7 +41,8 @@ feature file never writes a hex value or a system font.
 | `onPrimary` | `#FFFFFF` | `#16181D` | Writing on an ink fill |
 | `textSecondary` | `#454850` | `#B6B9C0` | A read sender, a tag, a quiet button |
 | `textTertiary` | `#6B6E76` | `#8B8E96` | Previews, times, footers: 5:1 on the paper |
-| `titleInk` | tertiary at 50 % | tertiary at 50 % | Titles of groups and sections, their rule and count |
+| `titleInk` | tertiary at 40 % | tertiary at 40 % | The words of a group's or a section's title: its name and its count |
+| `titleRule` | `#E7E7EA` | `#2B2E36` | That title's rule, and the rule that opens a group with no name: the `separator` grey |
 | `marker` | `#FFC9E2` | pink at 50 % | The highlighter's band |
 | `pinkInk` | `#CC2277` | `#F58BBE` | The AI's glyph and a suggestion's words |
 | `accent` | `#EE4D9B` | `#EE4D9B` | The one pink fill: the AI's draft button |
@@ -55,21 +56,29 @@ feature file never writes a hex value or a system font.
   the last row of a group has none. On the phone a mail row is three lines
   (sender · marks · time, subject, preview) and a fourth for its tags when
   it has any; on the Mac it is one line.
-- **R3. Unread is the highlighter.** An unread row's sender is bold and
-  marked with `marker()`; a read row's sender is medium weight in
-  `textSecondary`. No bar on the row's edge, no dot. The unread row's time
-  is ink, a read row's `textTertiary`.
-- **R4. Pink means "look here".** The highlighter marks an unread sender
-  and an action the AI suggests. The AI's sparkle and a suggestion's words
+- **R3. Unread is a pink corner.** An unread row's sender is bold and the
+  row has a 10 pt pink triangle (`accent`) in its bottom leading corner
+  (`unreadCorner()`); a read row's sender is medium weight in
+  `textSecondary`. No bar on the row's edge, no dot, and no highlighter
+  behind the name (0.3.0 had one; the owner chose the corner on the
+  canvas page "Marker: edge to edge, pink corner"). The unread row's time
+  is ink, a read row's `textTertiary`. On the phone a mail row and the
+  hairline under it run from edge to edge; its words and the group's
+  title stand 16 pt in. In a thread and in the menu bar extra unread is
+  the weight alone; the widgets still draw the highlighter.
+- **R4. Pink means "look here".** The corner marks an unread row and the
+  highlighter an action the AI suggests. The AI's sparkle and a suggestion's words
   are `pinkInk`. The pink fill (`accent`) is the AI's own button (the
-  draft circle beside Reply) and nothing else. Pink is never decoration,
+  draft circle beside Reply) and the unread corner, nothing else. Pink is never decoration,
   never "done", never an error, and never progress: a progress bar is ink
   on a `separator` track, in the app and on the Lock Screen.
 - **R5. Titles stand back.** A group of rows and a section of a form are
   titled the same way (`SectionTitle`): the name in small mono capitals, a
-  rule filling the line, a count at the far end where there is one — all in
-  `titleInk`. A section with no name opens with the rule alone
-  (`SectionRule`). A glyph before the name and a control after the rule
+  rule filling the line, a count at the far end where there is one. The
+  words are `titleInk`; the rule is `titleRule`, as faint as the lines
+  between rows, so a group's rule is one more hairline with a name on it
+  and not a second, stronger kind of line down the page. A section with
+  no name opens with the rule alone (`SectionRule`), in the same grey. A glyph before the name and a control after the rule
   keep their own strength. In a menu sheet and in Settings the grouped
   list's own lines over a section's first row and under its last are
   hidden (`menuCard()`): the title's rule opens a group and nothing
@@ -117,8 +126,9 @@ feature file never writes a hex value or a system font.
   status bar and glass still reads. An ink fill turns light and its words
   dark. State colours take their lighter pair.
 - **R14. Accessibility.** Text is at least 4.5:1 on its surface in both
-  appearances, with one exception: titles (R5) are about 2:1, by the
-  owner's choice, and become `textTertiary` with Increase Contrast.
+  appearances, with one exception: a title's words (R5) are under 2:1
+  (about 1.7:1 on the paper), by the owner's choice, and become
+  `textTertiary` with Increase Contrast, as its rule does.
   Colour is never the only signal: a state has a glyph or a word, unread
   has a weight. Dynamic Type may not clip the sender or the time.
 
@@ -171,8 +181,12 @@ at the same size and weight.
 
 ## Open questions / assumptions
 
-- Titles at about 2:1 are the owner's choice (tried on the canvas at half
-  the tertiary grey). Increase Contrast restores them.
+- Titles under 2:1 are the owner's choice. In 0.3.0 the words and the
+  rule were half the tertiary grey (tried on the canvas); seen on a
+  phone, three such titles down a screen of mail still drew the eye. The
+  owner then chose the lightest of three steps (the canvas page "Marker:
+  quieter separators", step 3): the rule in the hairline's grey and the
+  words at 40 %. Increase Contrast restores both.
 - Dark surfaces are lifted off black (`#16181D`), keeping the earlier rule
   that the canvas must not be near-black under the glass bars. The canvas'
   first dark board was darker.

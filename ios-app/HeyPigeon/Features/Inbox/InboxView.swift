@@ -626,9 +626,12 @@ struct ThreadList: View {
                 // 16 pt in from each edge and 12 above and below (the
                 // row's own 2 included).
                 .padding(.horizontal, 16).padding(.vertical, 10)
+                // Unread: the pink corner, at the screen's edge.
+                .unreadCorner(!row.isRead)
                 // The rule is the row's: it slides with it under a swipe,
-                // and the panel shows through where it was.
-                .ruledBelow(ruled)
+                // and the panel shows through where it was. Edge to edge,
+                // as the row is; only the group's title stands 16 pt in.
+                .ruledBelow(ruled, inset: 0)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     Keyboard.dismiss()
@@ -663,7 +666,7 @@ struct ThreadList: View {
             BundleFoldRow(fold: fold)
                 // As a mail row: 12 above and below with the row's own 2.
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                .ruledBelow(ruled)
+                .ruledBelow(ruled, inset: 0)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     Keyboard.dismiss()
@@ -933,7 +936,7 @@ struct SkeletonList: View {
                 // A mail row's measures: 16 pt in, 12 above and below,
                 // the hairline under every row but the last.
                 .padding(.horizontal, 16).padding(.vertical, 12)
-                .ruledBelow(index < Self.rows - 1)
+                .ruledBelow(index < Self.rows - 1, inset: 0)
                 .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 // Clear, so the skeleton stands on what the list will (the
                 // phone's paper, the Mac window's own), not on a fill of

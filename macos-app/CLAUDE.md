@@ -155,8 +155,9 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   over the dimmed window, one at a time; a key in them is a `KeyCap`);
   while one is up the toolbar is empty and clear. The list has no
   section headers (a Mac list's header floats on a grey band): each day
-  group's title is a plain row (`SectionTitle`: the name, a rule and the
-  count in the light grey of titles) and its rows are single lines of
+  group's title is a plain row (`SectionTitle`: the name and the count
+  in the light grey of titles, a hairline-grey rule between them) and
+  its rows are single lines of
   `MacLayout.rowHeight`, `MacLayout.listMargin` in, with a hairline under
   each but the group's last. Nothing is a card: the sidebar, the list, a
   thread, Settings and a bundle's pages are one paper to the window's

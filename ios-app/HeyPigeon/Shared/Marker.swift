@@ -7,8 +7,9 @@ import SwiftUI
 
 /// The title of a group of rows or of a section: its name in small mono
 /// capitals, a rule that fills the rest of the line, a count at the far
-/// end when there is one — all in `Theme.titleInk`, the light grey of
-/// structure. A glyph before the name (the AI's sparkle) keeps its own
+/// end when there is one. The words are `Theme.titleInk`, the light grey
+/// of structure, and the rule `Theme.titleRule`, as faint as the lines
+/// between rows. A glyph before the name (the AI's sparkle) keeps its own
 /// colour, and so does a control placed after the rule (`accessory`:
 /// "Clear", a language menu), which is something to press, not structure.
 struct SectionTitle<Accessory: View>: View {
@@ -33,7 +34,7 @@ struct SectionTitle<Accessory: View>: View {
                     .foregroundStyle(Theme.titleInk)
                     .lineLimit(1)
             }
-            Rectangle().fill(Theme.titleInk).frame(height: 1)
+            Rectangle().fill(Theme.titleRule).frame(height: 1)
             if let count {
                 Text(count).font(Theme.label).foregroundStyle(Theme.titleInk).lineLimit(1)
             }
@@ -57,7 +58,7 @@ extension SectionTitle where Accessory == EmptyView {
 /// The rule that opens a section which has no name.
 struct SectionRule: View {
     var body: some View {
-        Rectangle().fill(Theme.titleInk).frame(height: 1).accessibilityHidden(true)
+        Rectangle().fill(Theme.titleRule).frame(height: 1).accessibilityHidden(true)
     }
 }
 
@@ -132,9 +133,36 @@ extension View {
             .padding(.horizontal, -3)
     }
 
+    /// Unread, on a mail row: a small pink triangle in the row's bottom
+    /// leading corner, with the sender in bold. It took the place of the
+    /// highlighter behind the sender's name (the owner's choice, on the
+    /// canvas page "Marker: edge to edge, pink corner"). Goes on the
+    /// row's whole surface, so the corner is the row's own.
+    func unreadCorner(_ on: Bool) -> some View {
+        overlay(alignment: .bottomLeading) {
+            if on {
+                UnreadCorner().fill(Theme.accent).frame(width: 10, height: 10)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+    }
+
     /// A word struck through: what is done.
     func struckThrough(_ on: Bool = true) -> some View {
         strikethrough(on, color: Theme.textTertiary)
+    }
+}
+
+/// The right-angled triangle of `unreadCorner`: its right angle in the
+/// bottom leading corner.
+struct UnreadCorner: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 

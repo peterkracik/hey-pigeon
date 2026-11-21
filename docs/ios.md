@@ -190,9 +190,10 @@ look are [specs/marker-look.md](./specs/marker-look.md)):
  ✈ Lisbon trip   #Travel
 ```
 
-- Unread is the sender in bold under the highlighter (`marker()`: a pink
-  band behind the lower part of the name), the subject in semibold and
-  the time in ink. A read row's sender is medium weight in the secondary
+- Unread is the sender in bold, a small pink triangle in the row's
+  bottom leading corner (`unreadCorner()`), the subject in semibold and
+  the time in ink. The row and the hairline under it run from edge to
+  edge; the words stand 16 pt in. A read row's sender is medium weight in the secondary
   grey and its time tertiary. There is no bar on the row's edge and no
   dot for unread. In the unified view the account is a 6 pt dot in its
   colour before the time.
@@ -208,10 +209,11 @@ look are [specs/marker-look.md](./specs/marker-look.md)):
   the attachment clip sit at the end of the subject line, only when
   present. Nothing on a row is a filled chip: a state is writing, a label
   a word (`TagText`).
-- A group is titled by `SectionTitle`: its name in small mono capitals, a
-  rule to the row's end and how many rows it holds, all in the light grey
-  of structure (Pinned · Today · Last 7 days · Older); Remind me has its
-  due buckets (Overdue · Today · Tomorrow · This week · Later).
+- A group is titled by `SectionTitle`: its name in small mono capitals
+  and how many rows it holds in the light grey of structure, with a rule
+  between them as faint as the lines between rows (Pinned · Today · Last
+  7 days · Older); Remind me has its due buckets (Overdue · Today ·
+  Tomorrow · This week · Later).
 - A done email listed in its bundle steps back to the tertiary grey with
   its subject and preview struck through, and so does a row while a swipe
   is about to mark it done; anywhere else a done thread has a mint check

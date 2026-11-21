@@ -112,7 +112,6 @@ struct MenuBarExtraView: View {
                                     .font(Theme.sender(!row.isRead))
                                     .foregroundStyle(row.isRead ? Theme.textSecondary : Theme.textPrimary)
                                     .lineLimit(1)
-                                    .marker(!row.isRead)
                                 Text(row.subject.isEmpty ? "(no subject)" : row.subject)
                                     .font(Theme.sans(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                             }

@@ -585,7 +585,8 @@ struct BundleScreen: View {
                     .accessibilityLabel("Not part of this bundle")
                 }
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                if !last { RowRule().padding(.horizontal, 16) }
+                .unreadCorner(!row.isRead && !row.isDone)
+                if !last { RowRule() }
             }
         }
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))

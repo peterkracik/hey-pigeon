@@ -57,10 +57,14 @@ enum Theme {
     static let separator = Color(light: Color(hex: 0xE7E7EA), dark: Color(hex: 0x2B2E36))
     /// The outline of something boxed: a filter chip, a key, a text box.
     static let outline = Color(light: Color(hex: 0xC9CACF), dark: Color(hex: 0x3A3D45))
-    /// The title of a group or a section, its rule and its count
-    /// (`SectionTitle`): structure, so half the tertiary grey, and the
-    /// whole of it with Increase Contrast.
+    /// The words of a group's or a section's title — its name and its
+    /// count (`SectionTitle`): structure, so the tertiary grey at 40 %,
+    /// and the whole of it with Increase Contrast.
     static let titleInk = TitleInk()
+    /// The rule of that title, and the rule that opens a group with no
+    /// name (`SectionRule`): the grey of the lines between rows, and the
+    /// tertiary grey with Increase Contrast.
+    static let titleRule = TitleRule()
     /// A switch that is on: ink. On dark a light grey rather than the
     /// near-white ink, which the system's white knob would vanish into.
     static let switchOn = Color(light: Color(hex: 0x0B0D12), dark: Color(hex: 0xB6B9C0))
@@ -311,15 +315,28 @@ enum Theme {
     }
 }
 
-/// The colour of a section's or a group's title, of its rule and of its
-/// count. They are structure, so they stand back: half the tertiary
-/// grey, about 2:1 on the paper. A day group's title repeats what each
-/// row's own date says; where a title is the only name of its group
-/// (Settings, the folders) that is thin for some eyes, so with Increase
-/// Contrast it is the whole tertiary grey.
+/// The colour of the words of a section's or a group's title: its name
+/// and its count. They are structure, so they stand back: the tertiary
+/// grey at 40 %, under 2:1 on the paper, by the owner's choice (half of
+/// it still drew the eye on a phone). A day group's title repeats what
+/// each row's own date says; where a title is the only name of its
+/// group (Settings, the folders) that is thin for some eyes, so with
+/// Increase Contrast it is the whole tertiary grey.
 struct TitleInk: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
-        AnyShapeStyle(Theme.textTertiary.opacity(environment.colorSchemeContrast == .increased ? 1 : 0.5))
+        AnyShapeStyle(Theme.textTertiary.opacity(environment.colorSchemeContrast == .increased ? 1 : 0.4))
+    }
+}
+
+/// The colour of a title's rule. It was the words' grey, and on a phone
+/// three such lines down a screen of mail were the strongest marks on
+/// the page after the text: structure that asked to be looked at. It is
+/// the hairline's grey now — a group's rule is one more of the lines
+/// between rows, with a name on it. With Increase Contrast it is the
+/// tertiary grey, as the words are.
+struct TitleRule: ShapeStyle {
+    func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
+        AnyShapeStyle(environment.colorSchemeContrast == .increased ? Theme.textTertiary : Theme.separator)
     }
 }
 

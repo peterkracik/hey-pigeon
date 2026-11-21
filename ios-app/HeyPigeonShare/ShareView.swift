@@ -60,7 +60,7 @@ struct ShareView: View {
     /// The rule that opens a list which has no title (the app's
     /// `SectionRule`, which an extension cannot see).
     private var openingRule: some View {
-        Rectangle().fill(WidgetPalette.titleInk).frame(height: 1)
+        Rectangle().fill(WidgetPalette.titleRule).frame(height: 1)
             .accessibilityHidden(true)
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
             .listRowBackground(Color.clear)

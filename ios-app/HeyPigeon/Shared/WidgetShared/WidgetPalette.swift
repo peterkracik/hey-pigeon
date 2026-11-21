@@ -27,10 +27,13 @@ enum WidgetPalette {
     /// The lightest grey that is still read: a row's preview, a note
     /// (`Theme.textTertiary`).
     static let textTertiary = pair(0x6B6E76, 0x8B8E96)
-    /// A widget's title, and the rule that opens the share sheet's list:
-    /// structure, so half the tertiary grey, and the whole of it with
-    /// Increase Contrast (`Theme.titleInk`).
+    /// A widget's title: structure, so half the tertiary grey, and the
+    /// whole of it with Increase Contrast (`Theme.titleInk`).
     static let titleInk = WidgetTitleInk()
+    /// The rule that opens the share sheet's list: the grey of the lines
+    /// between rows, and the tertiary grey with Increase Contrast
+    /// (`Theme.titleRule`).
+    static let titleRule = WidgetTitleRule()
     /// The rule between two rows (`Theme.separator`).
     static let separator = pair(0xE7E7EA, 0x2B2E36)
     /// A sheet's paper: the share sheet. The paper white on light, a step
@@ -134,5 +137,13 @@ enum WidgetPalette {
 struct WidgetTitleInk: ShapeStyle {
     func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
         AnyShapeStyle(WidgetPalette.textTertiary.opacity(environment.colorSchemeContrast == .increased ? 1 : 0.5))
+    }
+}
+
+/// The colour of a title's rule: Theme's `TitleRule` for the targets
+/// that cannot see it.
+struct WidgetTitleRule: ShapeStyle {
+    func resolve(in environment: EnvironmentValues) -> AnyShapeStyle {
+        AnyShapeStyle(environment.colorSchemeContrast == .increased ? WidgetPalette.textTertiary : WidgetPalette.separator)
     }
 }

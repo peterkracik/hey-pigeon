@@ -35,9 +35,11 @@ enum MacTheme {
     /// row the pointer is on (an icon button's own hover).
     static let selected = Theme.textPrimary.opacity(0.09)
     /// The sidebar's collapsible titles: the light grey of every title of
-    /// a group or a section (`Theme.titleInk`), their chevron and rule in
-    /// it too.
+    /// a group or a section (`Theme.titleInk`), their chevron in it too.
     static let sectionHeader = Theme.titleInk
+    /// The rule after a sidebar title: the hairline's grey, as every
+    /// title's rule is (`Theme.titleRule`).
+    static let sectionRule = Theme.titleRule
 }
 
 /// The window's measures.

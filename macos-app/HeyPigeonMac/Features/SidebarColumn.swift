@@ -339,7 +339,7 @@ private struct SectionHeader: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
                     .rotationEffect(.degrees(open ? 0 : -90))
-                Rectangle().fill(MacTheme.sectionHeader).frame(height: 1)
+                Rectangle().fill(MacTheme.sectionRule).frame(height: 1)
             }
             .foregroundStyle(MacTheme.sectionHeader)
             .padding(.horizontal, 8)

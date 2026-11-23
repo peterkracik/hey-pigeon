@@ -44,7 +44,7 @@ struct RecentOpensView: View {
 
     // MARK: The phone's and the iPad's list
 
-    private func list(_ sections: [RecentOpens.Section], _ format: RecentOpens.Format) -> some View {
+    private func list(_ sections: [RecentOpens.Group], _ format: RecentOpens.Format) -> some View {
         List {
             Section {
                 if sections.isEmpty { emptyState.padding(.vertical, 6) }
@@ -85,7 +85,7 @@ struct RecentOpensView: View {
     /// hairline between two rows and none over the first or under the
     /// last, the footer in full. A row is tinted under the pointer from
     /// edge to edge, as a row of the window's list is.
-    private func column(_ sections: [RecentOpens.Section], _ format: RecentOpens.Format) -> some View {
+    private func column(_ sections: [RecentOpens.Group], _ format: RecentOpens.Format) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 SheetHeader(title: RecentOpens.title) { dismiss() }

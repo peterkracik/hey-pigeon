@@ -267,6 +267,7 @@ struct CommandPalette: View {
                     .padding(.horizontal, 16).padding(.bottom, 8)
                 }
                 .scrollIndicators(.never)
+                .scrollEdgeEffectHidden(true, for: .all)
                 .frame(maxHeight: 400)
                 .fixedSize(horizontal: false, vertical: true)
                 .onChange(of: cursor) { _, i in

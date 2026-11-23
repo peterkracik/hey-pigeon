@@ -131,12 +131,27 @@ struct SearchFilterBar: View {
     /// under it, so it is opaque: the canvas, unless the host stands on
     /// another surface (a panel) and names it.
     var surface: Color = Theme.canvas
+    /// The chips scroll sideways where they may not fit (the phone). The
+    /// Mac's panel and window are wide enough, and a scroll view there
+    /// brought the system's soft edge with it: a haze around the chips.
+    var scrolls = true
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        Group {
+            if scrolls {
+                ScrollView(.horizontal, showsIndicators: false) { chips }
+            } else {
+                chips.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(surface)
+        .animation(.easeOut(duration: 0.15), value: model.searchFilters)
+    }
+
+    private var chips: some View {
         @Bindable var model = model
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+        return HStack(spacing: 6) {
                 person(.from, model.searchFilters.from)
                 person(.to, model.searchFilters.to)
                 Button {
@@ -174,9 +189,6 @@ struct SearchFilterBar: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-        }
-        .background(surface)
-        .animation(.easeOut(duration: 0.15), value: model.searchFilters)
     }
 
     /// From / To: opens the picker; when set, shows the name and an ×.

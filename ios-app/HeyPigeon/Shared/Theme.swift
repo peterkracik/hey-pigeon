@@ -412,7 +412,10 @@ extension View {
             // (`SectionTitle`, `SectionRule`) and ends without one.
             .listSectionSeparator(.hidden)
         #else
-        self
+        // The Mac's inset list (Recent Opens) drew its own lines over and
+        // under each section as well, beside the title's rule.
+        listRowSeparatorTint(Theme.separator)
+            .listSectionSeparator(.hidden)
         #endif
     }
 

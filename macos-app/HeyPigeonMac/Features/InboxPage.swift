@@ -27,7 +27,7 @@ struct InboxPage: View {
                 // rest takes them to the list's margin, where the day
                 // titles and their rules start.
                 Group {
-                    SearchFilterBar(picking: $picking).padding(.top, 8)
+                    SearchFilterBar(picking: $picking, scrolls: false).padding(.top, 8)
                     ResultCount(count: model.searchResults.count)
                 }
                 .padding(.horizontal, MacLayout.listMargin - 16)

@@ -34,7 +34,7 @@ struct SearchSpotlight: View {
             field
             // The phone's filter bar paints the canvas behind itself; here
             // it stands on the panel's surface.
-            SearchFilterBar(picking: $picking, surface: MacTheme.panel).padding(.bottom, 6)
+            SearchFilterBar(picking: $picking, surface: MacTheme.panel, scrolls: false).padding(.bottom, 6)
             // What the field found is a group with no name: it opens
             // with the rule alone.
             SectionRule().padding(.horizontal, 16)
@@ -115,6 +115,7 @@ struct SearchSpotlight: View {
                     .padding(.horizontal, 16)
                 }
                 .scrollIndicators(.never)
+                .scrollEdgeEffectHidden(true, for: .all)
                 .frame(maxHeight: 400)
                 .fixedSize(horizontal: false, vertical: true)
                 .onChange(of: highlight) { _, i in
@@ -193,7 +194,7 @@ private struct ResultRow: View {
 
 /// The floating shape the search and the command palette share, like
 /// Spotlight's: near the top of the window, the paper with a 1 pt ink
-/// outline and one shadow — the look's one outlined panel — over the
+/// outline and no shadow — the look's one outlined panel — over the
 /// dimmed window; a click outside closes. The dim reaches under the
 /// toolbar, which is transparent and empty while a panel is up. (It was
 /// Liquid Glass over a blurred window; the paper needs neither, and the
@@ -221,7 +222,6 @@ struct SpotlightPanel<Content: View>: View {
                 .scrollEdgeEffectHidden(true, for: .all)
                 .background(MacTheme.panel, in: shape)
                 .overlay(shape.strokeBorder(Theme.textPrimary, lineWidth: 1))
-                .shadow(color: .black.opacity(0.22), radius: 30, y: 18)
                 .padding(.top, 40)
                 .padding(.horizontal, 24)
         }

@@ -13,7 +13,11 @@
 //
 // The look is the menu sheets' (docs/specs/marker-look.md): the raised
 // paper, each group under its title (`SectionTitle`), ruled rows, the
-// time in the mono.
+// time in the mono. The phone and the iPad draw it as a grouped list
+// (`menuCard`). The Mac draws the same pieces in a column of its own
+// (`SheetRows.drawnByList`): its inset list ruled itself over the first
+// row, under the last and under every title, beside the app's own rules,
+// and cut the footer's lines in half.
 
 import SwiftUI
 
@@ -25,21 +29,25 @@ struct RecentOpensView: View {
         // One set of date formatters per draw, shared by every row.
         let format = RecentOpens.Format()
         let sections = RecentOpens.sections(model.recentOpens, format: format)
+        Group {
+            if SheetRows.drawnByList {
+                list(sections, format)
+            } else {
+                column(sections, format)
+            }
+        }
+        // A sheet stands on the raised paper (a step up on dark).
+        .background(Theme.raised)
+        .sheetSize(.large)
+        .task { await model.loadRecentOpens() }
+    }
+
+    // MARK: The phone's and the iPad's list
+
+    private func list(_ sections: [RecentOpens.Section], _ format: RecentOpens.Format) -> some View {
         List {
             Section {
-                if sections.isEmpty {
-                    // Before the first read there is nothing to say yet.
-                    if model.recentOpensLoaded {
-                        let empty = RecentOpens.emptyState(available: model.readStatusAvailable,
-                                                           anyAccountOn: model.accounts.contains(where: \.readStatus))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(empty.title).font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary)
-                            Text(empty.detail).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                        }
-                        .padding(.vertical, 6)
-                        .accessibilityElement(children: .combine)
-                    }
-                }
+                if sections.isEmpty { emptyState.padding(.vertical, 6) }
             } header: {
                 SheetHeader(title: RecentOpens.title) { dismiss() }
             }
@@ -58,22 +66,90 @@ struct RecentOpensView: View {
                 .menuCard()
             }
             if !sections.isEmpty {
-                Section {} footer: {
-                    Text(RecentOpens.footer(anyAccountOn: model.accounts.contains(where: \.readStatus)))
-                        .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
-                        // The whole sentence: the Mac's list cut it to one line.
-                        .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
-                }
-                .listSectionSeparator(.hidden)
+                Section {} footer: { footer }
+                    .listSectionSeparator(.hidden)
             }
         }
         .groupedListStyle()
+        // The list's own grouped background, for the sheet's paper.
         .scrollContentBackground(.hidden)
-        // A sheet stands on the raised paper (a step up on dark); the
-        // list's own grouped background is hidden just above.
-        .background(Theme.raised)
-        .sheetSize(.large)
-        .task { await model.loadRecentOpens() }
+    }
+
+    // MARK: The Mac's column
+
+    /// The sheet's margin on the Mac: Remind me's and Add to bundle's.
+    private static let inset: CGFloat = 20
+
+    /// The same pieces, one under the other, with nothing drawn that is
+    /// not written here: the title row, each group under its title, a
+    /// hairline between two rows and none over the first or under the
+    /// last, the footer in full. A row is tinted under the pointer from
+    /// edge to edge, as a row of the window's list is.
+    private func column(_ sections: [RecentOpens.Section], _ format: RecentOpens.Format) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                SheetHeader(title: RecentOpens.title) { dismiss() }
+                    .padding(.top, 20)
+                    .padding(.horizontal, Self.inset)
+                if sections.isEmpty {
+                    emptyState
+                        .padding(.top, 10)
+                        .padding(.horizontal, Self.inset)
+                }
+                ForEach(sections) { section in
+                    SectionTitle(section.title)
+                        // The air that parts two groups; less under the
+                        // sheet's title.
+                        .padding(.top, section.id == sections.first?.id ? 12 : 24)
+                        .padding(.bottom, 4)
+                        .padding(.horizontal, Self.inset)
+                    ForEach(section.items) { item in
+                        Button { model.open(item) } label: {
+                            row(item, format)
+                                .padding(.vertical, 9)
+                                .padding(.horizontal, Self.inset)
+                        }
+                        .buttonStyle(.plain)
+                        .threadRowHover()
+                        if item.id != section.items.last?.id {
+                            RowRule().padding(.horizontal, Self.inset)
+                        }
+                    }
+                }
+                if !sections.isEmpty {
+                    footer
+                        .padding(.top, 20)
+                        .padding(.horizontal, Self.inset)
+                }
+            }
+            .padding(.bottom, 24)
+        }
+        // The Mac's lists show no scroll bar.
+        .scrollIndicators(.never)
+    }
+
+    // MARK: The pieces
+
+    /// What the sheet says while there is nothing to list; nothing before
+    /// the first read, when there is nothing to say yet.
+    @ViewBuilder private var emptyState: some View {
+        if model.recentOpensLoaded {
+            let empty = RecentOpens.emptyState(available: model.readStatusAvailable,
+                                               anyAccountOn: model.accounts.contains(where: \.readStatus))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(empty.title).font(Theme.sans(.body, .medium)).foregroundStyle(Theme.textPrimary)
+                Text(empty.detail).font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// What the list holds and for how long, under the last group.
+    private var footer: some View {
+        Text(RecentOpens.footer(anyAccountOn: model.accounts.contains(where: \.readStatus)))
+            .font(Theme.text(.footer)).foregroundStyle(Theme.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func row(_ item: RecentOpenItem, _ format: RecentOpens.Format) -> some View {

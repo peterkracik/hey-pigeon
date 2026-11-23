@@ -185,6 +185,8 @@ private struct ResultRow: View {
         .overlay(alignment: .bottom) {
             if !isLast { RowRule() }
         }
+        // Unread: the pink corner, as in the window's list.
+        .unreadCorner(!row.isRead)
         .contentShape(Rectangle())
     }
 }
@@ -213,6 +215,10 @@ struct SpotlightPanel<Content: View>: View {
                 .ignoresSafeArea()
             content()
                 .frame(maxWidth: 680)
+                // No soft edge of the system's on what scrolls in the
+                // panel: it laid a haze over the filter chips and a
+                // shadow on the first result, on what is flat paper.
+                .scrollEdgeEffectHidden(true, for: .all)
                 .background(MacTheme.panel, in: shape)
                 .overlay(shape.strokeBorder(Theme.textPrimary, lineWidth: 1))
                 .shadow(color: .black.opacity(0.22), radius: 30, y: 18)

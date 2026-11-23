@@ -441,7 +441,9 @@ struct ThreadView: View {
                                replyFoot: ThreadChrome.replyAtFoot && index == lastIndex && inlineDraft == nil) {
                         allCollapsed = false
                         if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
-                    } onAction: { kind in run(kind, on: m) }
+                    } onAction: { kind in run(kind, on: m) } onAdvanced: { action in
+                        model.advanced(action, on: m, in: current)
+                    }
                 }
             }
         }
@@ -967,7 +969,9 @@ enum ReplyKind: String, CaseIterable, Identifiable {
 /// highlighter (MessageHeaderLine), and no bar on its edge. Expanded, it
 /// stays on the same paper with the recipients and the body, and its •••
 /// at the end of the "to" line (or a long press on the header line)
-/// replies to or forwards this message. The thread's last message ends
+/// replies to or forwards this message, and holds its Advanced menu
+/// (Copy original HTML · Copy plain text · Show headers:
+/// docs/specs/message-advanced.md). The thread's last message ends
 /// with the Mac's reply pills (`replyFoot`). The body is outside that
 /// menu on purpose: a context menu on the whole row took the long press
 /// before the web view or the text view saw it, so no selection could
@@ -988,6 +992,8 @@ struct MessageRow: View {
     var replyFoot = false
     let onToggle: () -> Void
     let onAction: (ReplyKind) -> Void
+    /// One of the message's Advanced actions was chosen (MessageAdvanced).
+    let onAdvanced: (MessageAdvancedAction) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1000,11 +1006,7 @@ struct MessageRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .contextMenu {
-                ForEach(ReplyKind.allCases) { kind in
-                    Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
-                }
-            }
+            .contextMenu { menuItems }
             if expanded {
                 // Received mail can be translated from a selection; what the
                 // user wrote themselves is theirs to read.
@@ -1040,11 +1042,19 @@ struct MessageRow: View {
         }
     }
 
+    /// What the ••• and the long press on the header line both offer:
+    /// one list, so the two cannot come apart.
+    @ViewBuilder private var menuItems: some View {
+        ForEach(ReplyKind.allCases) { kind in
+            Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
+        }
+        Divider()
+        MessageAdvancedMenu(run: onAdvanced)
+    }
+
     private var actionsMenu: some View {
         Menu {
-            ForEach(ReplyKind.allCases) { kind in
-                Button { onAction(kind) } label: { Label(kind.title, systemImage: kind.systemImage) }
-            }
+            menuItems
         } label: {
             Image(systemName: "ellipsis").font(Theme.glyph(.secondary, .semibold)).foregroundStyle(Theme.textTertiary)
                 .frame(width: ThreadChrome.actionsSize.width, height: ThreadChrome.actionsSize.height)

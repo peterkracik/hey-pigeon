@@ -32,6 +32,11 @@ enum MailCommand: Hashable {
     case summarizeView, ask, triage, syncNow
     /// G then O: the Recent Opens sheet (docs/specs/read-status.md R7).
     case recentOpens
+    /// A message's Advanced menu (Copy original HTML · Copy plain text ·
+    /// Show headers: docs/specs/message-advanced.md), on the latest
+    /// message of the open or highlighted email. The menu bar's and the
+    /// palette's; no bare key.
+    case advanced(MessageAdvancedAction)
 }
 
 /// A key press, reduced to what the map decides on.
@@ -687,6 +692,9 @@ final class WindowState: Equatable {
                 }
                 ThreadPrinter.print(detail, in: window)
             }
+        case .advanced(let action):
+            guard let row else { return }
+            Task { await model.advanced(action, onLatestOf: row) }
         case .open:
             // On the Bundles page the email is already open where it is.
             guard let row, !showBundles else { return }

@@ -386,6 +386,16 @@ struct CommandPalette: View {
                     })
                 }
             }
+            // A message's Advanced menu, on this email's latest message
+            // (docs/specs/message-advanced.md): the shared view's words
+            // and glyphs. After the everyday commands, so "c" still
+            // finds them first.
+            for action in MessageAdvancedAction.allCases {
+                out.append(PaletteItem(id: "thread.advanced.\(action.rawValue)", title: action.title, subtitle: row.subject,
+                                       systemImage: action.systemImage) {
+                    state.run(.advanced(action), in: model)
+                })
+            }
             if model.aiConfigured {
                 out.append(PaletteItem(id: "ai.summarize", title: "Summarize thread", subtitle: row.subject, systemImage: "sparkles", key: "I") {
                     state.run(.summarizeThread, in: model)

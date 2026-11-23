@@ -216,6 +216,21 @@ pub trait MailProvider {
         async { Err(MailError::Provider("attachments not supported".into())) }
     }
 
+    /// One message as it was sent (docs/specs/message-advanced.md): every
+    /// header and the HTML part untouched — not sanitized, unlike every
+    /// other body a provider hands over. Asked only when the user asks
+    /// for it; the caller copies or shows it and keeps nothing. Default
+    /// errors, like `get_draft`.
+    fn fetch_source(
+        &self,
+        account_id: &AccountId,
+        message_id: &MessageId,
+    ) -> impl std::future::Future<Output = Result<crate::source::MessageSource, MailError>> + Send
+    {
+        let _ = (account_id, message_id);
+        async { Err(MailError::Provider("message source not supported".into())) }
+    }
+
     /// Apply one local mutation remotely (used by the outbox drain).
     fn apply(
         &self,

@@ -206,6 +206,19 @@ final class RustEngine: MailEngine {
         return URL(fileURLWithPath: path)
     }
 
+    func originalMessage(threadId: String, messageId: String) async throws -> OriginalMessage {
+        let source = try await engine.messageSource(threadId: threadId, messageId: messageId)
+        let html: OriginalHTML = switch source.html {
+        case .sent(let html): .sent(html)
+        case .missing: .missing
+        case .tooLarge: .tooLarge
+        }
+        return OriginalMessage(
+            headers: source.headers.enumerated().map { HeaderLine(id: $0.offset, name: $0.element.name, value: $0.element.value) },
+            html: html
+        )
+    }
+
     func perform(_ action: MailAction, accountId: String) async throws {
         try await engine.mutate(accountId: accountId, mutation: action.mutation)
     }
@@ -781,6 +794,14 @@ extension AnalysisProgress {
 enum MailHTML {
     static func sanitize(_ html: String) -> String {
         sanitizeHtml(html: html)
+    }
+
+    /// The text of an HTML body, by the core (core/src/source.rs
+    /// `plain_text`): what "Copy plain text" copies for a message that
+    /// came without a text part. The core's, so the three apps copy the
+    /// same characters; local, nothing is fetched.
+    static func plainText(_ html: String) -> String {
+        plainTextOfHtml(html: html)
     }
 }
 

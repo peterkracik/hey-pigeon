@@ -160,6 +160,31 @@ struct MessageItem: Identifiable, Hashable, Sendable {
     }
 }
 
+/// One header of a message as it was sent; `id` is its place among them.
+struct HeaderLine: Identifiable, Hashable, Sendable {
+    let id: Int
+    let name: String
+    let value: String
+}
+
+/// The HTML part of a message as it was sent (the core's `SourceHtml`).
+enum OriginalHTML: Hashable, Sendable {
+    /// Unsanitized, as the sender wrote it: for the clipboard only. No
+    /// view may be handed this string.
+    case sent(String)
+    /// The message has no HTML part.
+    case missing
+    /// Over the core's cap (`source::MAX_HTML_BYTES`); nothing was kept.
+    case tooLarge
+}
+
+/// A message as it was sent (`MailEngine.originalMessage`): its headers in
+/// the order they were sent, and its HTML part.
+struct OriginalMessage: Hashable, Sendable {
+    let headers: [HeaderLine]
+    let html: OriginalHTML
+}
+
 /// The status of a message the user sent (docs/specs/read-status.md, R1).
 /// The core decides it (`heypigeon_core::readstatus`); the shells only
 /// show it.
@@ -1549,6 +1574,11 @@ protocol MailEngine: AnyObject {
     /// except for the inline pictures a body shows as `cid:`: those are
     /// part of the message, from Gmail, not a remote image.
     func attachmentFile(_ attachment: AttachmentItem) async throws -> URL
+    /// One message as it was sent (docs/specs/message-advanced.md): every
+    /// header and its HTML part untouched, asked from Gmail now — one
+    /// request, never stored. Only on the user's own ask (the Advanced
+    /// menu); the HTML is for the clipboard and is never shown.
+    func originalMessage(threadId: String, messageId: String) async throws -> OriginalMessage
 
     func perform(_ action: MailAction, accountId: String) async throws
     /// How many changes (done, read, a label, a send) are still waiting to

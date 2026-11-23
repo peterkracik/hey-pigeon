@@ -17,6 +17,7 @@ use heypigeon_core::ports::{
     HistoryChange, HistoryPage, MailError, MailProvider, SecretStore, ThreadPage, WatchState,
 };
 use heypigeon_core::sanitize;
+use heypigeon_core::source::{MessageSource, SourceHtml, MAX_HTML_BYTES};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -2104,6 +2105,49 @@ impl MailProvider for GmailProvider {
         decode_b64url(&data).ok_or_else(|| MailError::Provider("attachment is not base64".into()))
     }
 
+    /// `messages.get?format=full`: Gmail lists every header and hands each
+    /// part with its transfer encoding undone and nothing else changed,
+    /// without downloading the attachments (`format=raw` would bring them
+    /// all, and need a MIME parser here). The HTML part is taken as it
+    /// is — this is the one read that does not sanitize — and neither it
+    /// nor the headers are logged or kept.
+    async fn fetch_source(
+        &self,
+        account_id: &AccountId,
+        message_id: &MessageId,
+    ) -> Result<MessageSource, MailError> {
+        let wire: WireMessage = self
+            .get_json_big(
+                account_id,
+                &format!("{API}/messages/{message_id}?format=full"),
+            )
+            .await?;
+        let headers = source_headers(&wire);
+        let html = match source_html_body(&wire) {
+            None => SourceHtml::Missing,
+            // Gmail's own count, before anything more is downloaded.
+            Some(body) if body.size > MAX_HTML_BYTES as i64 => SourceHtml::TooLarge,
+            Some(body) => {
+                let data = match (body.data.as_deref(), body.attachment_id.as_deref()) {
+                    (Some(d), _) => Some(d.to_string()),
+                    // A long part is handed over like an attachment.
+                    (None, Some(aid)) => {
+                        let part: WireBody = self
+                            .get_json_big(
+                                account_id,
+                                &format!("{API}/messages/{message_id}/attachments/{aid}"),
+                            )
+                            .await?;
+                        part.data
+                    }
+                    (None, None) => None,
+                };
+                SourceHtml::from_sent(data.as_deref().and_then(decode_source))
+            }
+        };
+        Ok(MessageSource { headers, html })
+    }
+
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
         if let Mutation::Send {
             to,
@@ -2328,6 +2372,31 @@ impl MailProvider for GmailProvider {
 /// A Gmail message id (hex, no dashes) rather than a composer UUID key.
 fn is_gmail_message_id(key: &str) -> bool {
     !key.is_empty() && key.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Every header of the message, in Gmail's order, as it reports them.
+fn source_headers(wire: &WireMessage) -> Vec<(String, String)> {
+    wire.payload
+        .iter()
+        .flat_map(|p| &p.headers)
+        .map(|h| (h.name.clone(), h.value.clone()))
+        .collect()
+}
+
+/// The body of the message's HTML part: the part the reader shows
+/// (`to_message` picks the same one), so what is copied is the source of
+/// what was read.
+fn source_html_body(wire: &WireMessage) -> Option<&WireBody> {
+    wire.payload
+        .as_ref()
+        .and_then(|p| find_part(p, "text/html"))
+        .and_then(|p| p.body.as_ref())
+}
+
+/// A part's text for the clipboard. Lossy on a body that is not UTF-8,
+/// as `decode_body` is: a few replacement characters, not nothing.
+fn decode_source(data: &str) -> Option<String> {
+    decode_b64url(data).map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
 /// Base64url as Gmail sends it, padded or not.
@@ -3620,6 +3689,52 @@ mod tests {
         let listed = to_message(&"acc".to_string(), "t1", &wire);
         assert!(!listed.body_fetched);
         assert_eq!(listed.body_html.as_deref(), Some(RAW_HTML));
+    }
+
+    /// docs/specs/message-advanced.md R3: the source is the HTML part as
+    /// it was sent — handlers, script and all — where every other read
+    /// sanitizes, and every header in Gmail's order.
+    #[test]
+    fn source_is_the_html_part_as_sent_with_every_header() {
+        let wire: WireMessage = serde_json::from_value(html_message()).unwrap();
+        let body = source_html_body(&wire).unwrap();
+        assert_eq!(
+            decode_source(body.data.as_deref().unwrap()).as_deref(),
+            Some(RAW_HTML)
+        );
+        assert_eq!(
+            source_headers(&wire),
+            vec![
+                ("From".to_string(), "Alias Name <alias@y.com>".to_string()),
+                ("To".to_string(), "a@x.com".to_string()),
+                ("Subject".to_string(), "Hi".to_string()),
+            ]
+        );
+    }
+
+    /// Mail that is its HTML part alone carries it on the payload; mail
+    /// without one has no source HTML; Gmail's unpadded base64 is read.
+    #[test]
+    fn source_html_of_single_part_and_plain_mail() {
+        let single: WireMessage = serde_json::from_value(serde_json::json!({
+            "id": "m1", "payload": {"mimeType": "text/html", "headers": [],
+                "body": {"data": part_data(RAW_HTML).trim_end_matches('='), "size": 10}}
+        }))
+        .unwrap();
+        let body = source_html_body(&single).unwrap();
+        assert_eq!(
+            decode_source(body.data.as_deref().unwrap()).as_deref(),
+            Some(RAW_HTML)
+        );
+        let plain: WireMessage = serde_json::from_value(serde_json::json!({
+            "id": "m2", "payload": {"mimeType": "text/plain", "headers": [],
+                "body": {"data": part_data("Hello")}}
+        }))
+        .unwrap();
+        assert!(source_html_body(&plain).is_none());
+        let bare: WireMessage = serde_json::from_value(serde_json::json!({"id": "m3"})).unwrap();
+        assert!(source_html_body(&bare).is_none());
+        assert!(source_headers(&bare).is_empty());
     }
 
     /// docs/specs/parcel-card.md R3: the shop's schema.org markup is read

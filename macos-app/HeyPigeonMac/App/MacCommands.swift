@@ -107,6 +107,16 @@ struct MacCommands: Commands {
                     .disabled(!hasOne)
                 Divider()
             }
+            // A message's Advanced menu (docs/specs/message-advanced.md),
+            // on the latest message of the open or highlighted email; any
+            // other message has it in its own ••• in the thread.
+            Menu(MessageAdvanced.menuTitle) {
+                ForEach(MessageAdvancedAction.allCases) { action in
+                    Button(action.menuBarTitle) { run(.advanced(action)) }
+                }
+            }
+            .disabled(!hasOne)
+            Divider()
             Button("Open in New Window") { run(.openInWindow) }
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(!hasOne)

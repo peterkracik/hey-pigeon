@@ -251,6 +251,14 @@ HeyPigeonMacTests/   the Mac window's own tests; the phone's tests run here too
   Mac's inbox does not fold, so a parcel's line carries no "· N updates"
   here; Mark all done in its menu acts on the same quiet mail as the
   phone's.
+- **A message's Advanced menu is the shared one.** Copy original HTML ·
+  Copy plain text · Show headers (`docs/specs/message-advanced.md`) are
+  in each message's ••• and right-click, from the shared `ThreadView`.
+  The Mac adds the menu bar's Message › Advanced and three palette
+  entries (`MailCommand.advanced`), which act on the latest message of
+  the open or highlighted email through `AppModel.advanced(_:onLatestOf:)`;
+  no bare key. The Headers sheet is a column the sheet draws itself, on
+  every platform, never the inset list.
 - **Bare letters only through `onKeyPress`.** A single-letter menu key
   equivalent steals the letter from every text field on macOS, so the
   Superhuman map lives in `WindowState.handle` (attached to the list, the

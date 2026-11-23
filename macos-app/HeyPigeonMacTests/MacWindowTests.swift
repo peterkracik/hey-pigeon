@@ -710,3 +710,46 @@ struct MacComposeEditorTests {
     }
 }
 
+
+/// A message's Advanced menu on the Mac (docs/specs/message-advanced.md):
+/// the menu bar and the palette run the shared actions, on the latest
+/// message of the email the window points at. What each action does is
+/// tested once, in the shared tests (MessageAdvancedTests).
+@MainActor
+struct MessageAdvancedMacTests {
+    /// What the model copied, in place of the Mac's clipboard.
+    private final class CopyBox {
+        var text: String?
+    }
+
+    @Test func theCommandRunsTheSharedActionOnTheEmailsLatestMessage() async throws {
+        let engine = MockEngine()
+        let model = AppModel(engine: engine)
+        let state = WindowState()
+        let box = CopyBox()
+        model.copyText = { box.text = $0 }
+        let found = try await engine.thread(id: "t1")
+        let detail = try #require(found)
+        let last = try #require(detail.mail.last)
+
+        // Nothing highlighted and nothing open: the command has no email.
+        state.run(.advanced(.copyPlainText), in: model)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(box.text == nil)
+
+        state.run(.advanced(.copyPlainText), in: model, rows: [detail.thread])
+        // The command reads the thread off the main actor first: wait for
+        // it, but not for ever.
+        for _ in 0..<100 where box.text == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(box.text == last.bodyText)
+        #expect(model.toast?.text == "Text copied")
+
+        state.run(.advanced(.showHeaders), in: model, rows: [detail.thread])
+        for _ in 0..<100 where model.headersSheet == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(model.headersSheet?.id == last.id)
+    }
+}

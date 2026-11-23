@@ -47,3 +47,23 @@ pub use types::*;
 pub fn sanitize_html(html: String) -> String {
     heypigeon_core::sanitize::html(&html)
 }
+
+/// The text of an HTML body (`heypigeon_core::source::plain_text`): what
+/// "Copy plain text" copies for a message that came without a text part.
+/// Local and pure; the shells never derive this text themselves, so the
+/// three apps copy the same characters.
+#[uniffi::export]
+pub fn plain_text_of_html(html: String) -> String {
+    heypigeon_core::source::plain_text(&html)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn plain_text_of_html_is_the_cores() {
+        assert_eq!(
+            super::plain_text_of_html("<p>Hi <b>there</b></p><div>Bye</div>".into()),
+            "Hi there\n\nBye"
+        );
+    }
+}

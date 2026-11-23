@@ -13,4 +13,5 @@ pub mod readstatus;
 pub mod rules;
 pub mod sanitize;
 pub mod search;
+pub mod source;
 pub mod sync;

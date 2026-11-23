@@ -1039,6 +1039,21 @@ enum ComposePresentation {
     #endif
 }
 
+/// How a sheet of titled groups of rows is built (Recent Opens). The
+/// phone and the iPad hand them to the grouped list, whose own lines
+/// `menuCard` takes away. The Mac has no grouped list, and its inset one
+/// rules itself over a section's first row, under its last and under its
+/// title whatever it is asked, and gives a footer of several lines the
+/// height of one: there the sheet lays the same pieces out in a column of
+/// its own and draws each hairline itself.
+enum SheetRows {
+    #if os(iOS)
+    static let drawnByList = true
+    #else
+    static let drawnByList = false
+    #endif
+}
+
 /// `dismissKeyboardOnScroll`'s two iOS behaviours.
 enum KeyboardScrollDismissal {
     case immediately, interactively

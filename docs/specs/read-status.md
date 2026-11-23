@@ -807,6 +807,15 @@ Step 6, 2026-11-19 — **Verified with notes**. Not merged.
   turned off, until they are 30 days old (R11), and the footer and the
   privacy page gained a sentence saying so; the thread opens with the
   chosen message open, without scrolling to it.
+- The Mac draws the sheet itself (`SheetRows.drawnByList`,
+  `RecentOpensView.column`): a scroll view with the title row, each
+  group under its `SectionTitle`, a `RowRule` between two rows and none
+  over the first or under the last, the footer in full, 20 pt in from
+  the sheet's edges. As a list in the Mac's inset style (tried twice,
+  with `listSectionSeparator(.hidden)`) it kept a line of its own under
+  the title, under each group's title and under the last row, and cut
+  the footer's first and last lines in half. The phone and the iPad keep
+  the grouped list.
 - Not seen on a device: the sheet, its rows and headings, the sidebar
   rows, and the message opening expanded.
 

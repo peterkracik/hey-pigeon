@@ -412,8 +412,10 @@ extension View {
             // (`SectionTitle`, `SectionRule`) and ends without one.
             .listSectionSeparator(.hidden)
         #else
-        // The Mac's inset list (Recent Opens) drew its own lines over and
-        // under each section as well, beside the title's rule.
+        // Asked of the Mac's inset list too (the triage journal's sheet),
+        // which does not always listen: it still ruled itself over and
+        // under each section of Recent Opens, beside the title's rule,
+        // and that sheet draws its rows itself now (`SheetRows`).
         listRowSeparatorTint(Theme.separator)
             .listSectionSeparator(.hidden)
         #endif

@@ -61,6 +61,8 @@ struct RecentOpensView: View {
                 Section {} footer: {
                     Text(RecentOpens.footer(anyAccountOn: model.accounts.contains(where: \.readStatus)))
                         .font(Theme.secondary).foregroundStyle(Theme.textTertiary)
+                        // The whole sentence: the Mac's list cut it to one line.
+                        .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
                 }
                 .listSectionSeparator(.hidden)
             }

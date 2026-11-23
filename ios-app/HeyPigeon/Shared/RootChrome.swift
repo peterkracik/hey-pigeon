@@ -1,6 +1,6 @@
 // What every root of the app carries, once: the toast, the "Account
 // disconnected" alert and the sheets a row's actions open (Remind me, Add
-// to bundle, a summary). The phone's root (HeyPigeonApp), the Mac's
+// to bundle, a summary, a message's headers). The phone's root (HeyPigeonApp), the Mac's
 // window (macos-app MainWindow) and the phone's Bundles cover each spelled
 // these out, word for word; the two toasts differed only in their surface
 // and where they sit (Platform.swift: `toastSurface`, `ToastMetrics`).
@@ -44,7 +44,8 @@ struct ToastStack: View {
     }
 }
 
-/// The sheets an email's actions open, wherever the email is shown. The
+/// The sheets an email's actions open (Remind me, Add to bundle, a
+/// summary, a message's headers), wherever the email is shown. The
 /// root presents them while the phone's Bundles cover is closed, the cover
 /// while it is open (`AppModel.modal`): one view cannot present a sheet
 /// over another view's sheet.
@@ -65,6 +66,11 @@ struct SharedSheets: ViewModifier {
             }
             .sheet(item: model.modal(\.summarySheet, inBundles: inBundles)) { p in
                 SummarySheet(presentation: p)
+            }
+            // A message's headers (its Advanced menu): the sheet reads
+            // them off the model, where they arrive after it has opened.
+            .sheet(item: model.modal(\.headersSheet, inBundles: inBundles), onDismiss: closed) { _ in
+                MessageHeadersSheet()
             }
     }
 
@@ -96,7 +102,7 @@ struct DisconnectedAlert: ViewModifier {
 }
 
 extension View {
-    /// Remind me, Add to bundle and the summary sheet, for a root
+    /// Remind me, Add to bundle, the summary and the headers sheet, for a root
     /// (`inBundles: false`) or the phone's Bundles cover (`true`).
     func sharedSheets(inBundles: Bool, dismissesKeyboard: Bool = false) -> some View {
         modifier(SharedSheets(inBundles: inBundles, dismissesKeyboard: dismissesKeyboard))

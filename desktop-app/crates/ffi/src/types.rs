@@ -509,6 +509,52 @@ pub struct MailAttachment {
     pub content_id: Option<String>,
 }
 
+/// One header of a message as it was sent.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MailHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// The HTML part of a message as it was sent
+/// (`heypigeon_core::source::SourceHtml`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum SourceHtml {
+    /// Unsanitized, exactly as the sender wrote it: for the clipboard,
+    /// never for a view.
+    Sent { html: String },
+    /// The message has no HTML part.
+    Missing,
+    /// The part is over the core's cap; nothing was kept.
+    TooLarge,
+}
+
+/// One message as it was sent (`Engine::message_source`): every header in
+/// Gmail's order, and its HTML part.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageSource {
+    pub headers: Vec<MailHeader>,
+    pub html: SourceHtml,
+}
+
+impl From<heypigeon_core::source::MessageSource> for MessageSource {
+    fn from(s: heypigeon_core::source::MessageSource) -> Self {
+        use heypigeon_core::source::SourceHtml as Core;
+        Self {
+            headers: s
+                .headers
+                .into_iter()
+                .map(|(name, value)| MailHeader { name, value })
+                .collect(),
+            html: match s.html {
+                Core::Sent(html) => SourceHtml::Sent { html },
+                Core::Missing => SourceHtml::Missing,
+                Core::TooLarge => SourceHtml::TooLarge,
+            },
+        }
+    }
+}
+
 /// One outgoing attachment (standard base64 content).
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct OutAttachment {

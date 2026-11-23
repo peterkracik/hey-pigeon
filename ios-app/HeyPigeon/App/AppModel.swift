@@ -363,6 +363,17 @@ final class AppModel {
     }
     /// "Ask my inbox" (AskSheet); the string is a question to ask at once.
     var askSheet: AskPresentation?
+    /// The Show headers sheet of a message's Advanced menu, while it is
+    /// open (docs/specs/message-advanced.md; the actions are in
+    /// Features/Thread/MessageAdvanced.swift). The headers live here and
+    /// nowhere else: closing the sheet lets them go.
+    var headersSheet: MessageHeadersPresentation?
+    /// Messages whose original is being fetched for the clipboard: a
+    /// second ask for the same one waits for the first.
+    @ObservationIgnored var originalsInFlight: Set<String> = []
+    /// Where a copy goes: the system clipboard. A test puts its own in,
+    /// to read what was copied without touching the simulator's.
+    @ObservationIgnored var copyText: (String) -> Void = { Clipboard.copy($0) }
     /// The Recent Opens sheet, when it is open (`showRecentOpens`).
     var recentOpensSheet: RecentOpensPresentation?
     /// Its rows: read when the sheet opens and again whenever the store
@@ -1678,6 +1689,7 @@ final class AppModel {
         showSidebar = false
         showSettings = false
         recentOpensSheet = nil
+        headersSheet = nil
         navigate(to: .inbox)
         // The message to open the thread at (a row of Recent Opens); a
         // plain open forgets one left over from before.

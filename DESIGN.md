@@ -476,6 +476,10 @@ renders untrusted HTML all day. Threat model + mitigations:
   ids, `cid:` and `data:image` pictures. Links keep their exact http, https and
   mailto address. Bodies stored before the sanitizer existed are cleaned on their
   way out until the thread's next fetch replaces them.
+  The one read that does not sanitize is `MailProvider::fetch_source`
+  (`docs/specs/message-advanced.md`): a message's HTML as it was sent, fetched when
+  the user picks Copy original HTML, for the clipboard only — never stored, never
+  logged, never handed to a view.
 - The view is the second layer: in the native apps a `WKWebView` with the mail's
   JavaScript off, a strict CSP (`default-src 'none'`: no scripts, frames or forms,
   images only when allowed), and every navigation cancelled and handed to the

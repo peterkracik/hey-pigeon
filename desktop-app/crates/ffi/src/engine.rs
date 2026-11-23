@@ -595,6 +595,45 @@ impl Engine {
         }))
     }
 
+    /// One message as it was sent (docs/specs/message-advanced.md): its
+    /// headers and its HTML part untouched, asked from Gmail now — one
+    /// request, with the account's own grant. Nothing of the answer is
+    /// stored or logged: the shell copies or lists it and lets it go.
+    /// `EngineError::Invalid` when the store does not hold the message in
+    /// that thread (nothing is asked of Gmail then).
+    pub async fn message_source(
+        &self,
+        thread_id: String,
+        message_id: String,
+    ) -> Result<MessageSource, EngineError> {
+        let thread = self
+            .store
+            .get_thread(&thread_id)?
+            .ok_or_else(|| EngineError::Invalid(format!("unknown thread {thread_id}")))?;
+        let known = self
+            .store
+            .list_message_meta(&thread_id)?
+            .iter()
+            .any(|m| m.id == message_id);
+        if !known {
+            return Err(EngineError::Invalid(format!(
+                "unknown message {message_id}"
+            )));
+        }
+        let fetched = {
+            let provider = self.provider.read().await;
+            provider.fetch_source(&thread.account_id, &message_id).await
+        };
+        match fetched {
+            Ok(source) => Ok(source.into()),
+            Err(MailError::AuthExpired) => {
+                self.mark_disconnected(&thread.account_id);
+                Err(MailError::AuthExpired.into())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
     // ------------------------------------------------------------ writes
 
     /// Apply a mutation locally now (the row changes before this returns)
@@ -1925,6 +1964,40 @@ mod tests {
         drop(e);
         let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
         assert!(e.account_status().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A message the store does not hold is refused before Gmail is
+    /// asked for anything (no account, no network in this test).
+    #[tokio::test]
+    async fn message_source_refuses_what_the_store_does_not_hold() {
+        let dir = temp_dir("source");
+        let e = Engine::open(dir.to_string_lossy().into_owned(), client()).unwrap();
+        let err = e
+            .message_source("t1".into(), "m1".into())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err}");
+        e.store
+            .upsert_account(&domain::Account {
+                id: "a@x.com".into(),
+                email: "a@x.com".into(),
+                display_name: "a".into(),
+                color: "sky".into(),
+                history_id: None,
+                avatar_url: None,
+                signature: String::new(),
+                read_status: false,
+            })
+            .unwrap();
+        e.store
+            .upsert_thread(&sample_thread("t1", "a@x.com"))
+            .unwrap();
+        let err = e
+            .message_source("t1".into(), "m1".into())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, EngineError::Invalid(_)), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -370,6 +370,50 @@ final class MockEngine: MailEngine {
     }
 
     /// A tiny file in the temporary directory stands in for the download.
+    /// What `originalMessage` answers for a message id instead of the
+    /// sample below (a plain-text mail, an oversized one), and the error
+    /// it throws instead of answering (Gmail unreachable).
+    var originals: [String: OriginalMessage] = [:]
+    var originalFailure: (any Error)?
+    /// The message ids asked for, in order: a test reads that nothing
+    /// was asked while offline.
+    private(set) var originalRequests: [String] = []
+
+    /// The core's `message_source` (crates/ffi/src/engine.rs): refused
+    /// for a message the store does not hold in that thread; otherwise
+    /// the headers a real mail carries, in the order it was sent, and the
+    /// HTML as its sender wrote it — with the script and the tracking
+    /// pixel the stored, sanitized body no longer has.
+    func originalMessage(threadId: String, messageId: String) async throws -> OriginalMessage {
+        originalRequests.append(messageId)
+        if let originalFailure { throw originalFailure }
+        guard let row = rows[threadId], let detail = try await thread(id: threadId),
+              let message = detail.messages.first(where: { $0.id == messageId }) else {
+            throw MockError.invalid("unknown message \(messageId)")
+        }
+        if let given = originals[messageId] { return given }
+        let from = message.isMine ? row.accountId : "\(message.fromName) <\(message.fromAddress)>"
+        let to = message.isMine ? row.lastFromAddress : row.accountId
+        let fields: [(String, String)] = [
+            ("Delivered-To", to),
+            ("Received", "from mail.example.test by mx.example.test with ESMTPS id \(messageId)"),
+            ("Return-Path", "<bounce@\(message.fromAddress.split(separator: "@").last ?? "example.test")>"),
+            ("From", from),
+            ("To", to),
+            ("Subject", row.subject),
+            ("Date", message.date.formatted(.iso8601)),
+            ("Message-ID", "<\(messageId)@mail.example.test>"),
+            ("MIME-Version", "1.0"),
+            ("Content-Type", "multipart/alternative; boundary=\"mock\""),
+        ]
+        let html = "<html><head><title>\(row.subject)</title><script>track()</script></head><body>"
+            + "<p>\(row.snippet)</p><p>Second paragraph with a <a href=\"https://example.com\" onclick=\"t()\">link</a> "
+            + "and an image that must not load: <img src=\"https://tracker.example/pixel.gif\" width=\"1\" height=\"1\"></p>"
+            + "</body></html>"
+        return OriginalMessage(headers: fields.enumerated().map { HeaderLine(id: $0.offset, name: $0.element.0, value: $0.element.1) },
+                               html: .sent(html))
+    }
+
     func attachmentFile(_ a: AttachmentItem) async throws -> URL {
         try? await Task.sleep(for: .milliseconds(200))
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mock-\(a.attachmentId)-\(a.filename)")

@@ -1624,6 +1624,32 @@ impl MailProvider for FakeProvider {
             .unwrap_or_default())
     }
 
+    /// The message's stored fields as the headers it was sent with, and
+    /// its HTML as it stands in the fake (nothing here sanitizes).
+    async fn fetch_source(
+        &self,
+        _account_id: &AccountId,
+        message_id: &MessageId,
+    ) -> Result<crate::source::MessageSource, MailError> {
+        let (thread, message) = self
+            .threads
+            .iter()
+            .find_map(|(t, msgs)| msgs.iter().find(|m| &m.id == message_id).map(|m| (t, m)))
+            .ok_or_else(|| MailError::Provider("no such message".into()))?;
+        let mut headers = vec![
+            ("From".to_string(), message.from_addr.clone()),
+            ("To".to_string(), message.to_addrs.join(", ")),
+            ("Subject".to_string(), thread.subject.clone()),
+        ];
+        if let Some(id) = &message.message_id_header {
+            headers.push(("Message-ID".to_string(), id.clone()));
+        }
+        Ok(crate::source::MessageSource {
+            headers,
+            html: crate::source::SourceHtml::from_sent(message.body_html.clone()),
+        })
+    }
+
     async fn apply(&self, account_id: &AccountId, mutation: &Mutation) -> Result<(), MailError> {
         let yields = *self.apply_yields.lock().unwrap();
         for _ in 0..yields {

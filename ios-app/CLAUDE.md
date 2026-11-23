@@ -102,6 +102,13 @@ HeyPigeonTests/    Swift Testing over MockEngine; Evaluations/ for the prompt ha
   `MailDocument` holds the page and its scripts; `RenderTests` loads the
   same page in a real web view, and `HeyPigeonUITests` launches the app on
   the sample inbox. Every wait in a test has a timeout.
+  The one unsanitized HTML in the app is a message's Advanced › Copy
+  original HTML (`docs/specs/message-advanced.md`,
+  `Features/Thread/MessageAdvanced.swift`): fetched from Gmail on the
+  user's ask (`MailEngine.originalMessage`), put on the clipboard
+  (`AppModel.copyText`) and dropped. Never store it, log it or give it
+  to a view. Copy plain text and Show headers are the same menu; its
+  words are `MessageAdvancedAction`'s.
 - **SwiftUI `List` aborts on duplicate ids.** Rows go through
   `AppModel.unique`; keep it that way when adding sources of rows.
 - **The look is `Theme` and `Marker.swift`.** Paper, ink and one pink
